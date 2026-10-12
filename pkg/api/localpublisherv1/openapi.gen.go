@@ -92,6 +92,21 @@ func (e PublicationEventTransport) Valid() bool {
 	}
 }
 
+// Defines values for PublisherAuthStatusSchemaVersion.
+const (
+	PublisherAuthStatusSchemaVersionN1 PublisherAuthStatusSchemaVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the PublisherAuthStatusSchemaVersion enum.
+func (e PublisherAuthStatusSchemaVersion) Valid() bool {
+	switch e {
+	case PublisherAuthStatusSchemaVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ServiceStatusProtocol.
 const (
 	ServiceStatusProtocolHttp     ServiceStatusProtocol = "http"
@@ -206,6 +221,21 @@ func (e WebhookMetadataMethods) Valid() bool {
 	}
 }
 
+// Defines values for GetProjectPublisherAuthStatusParamsCheck.
+const (
+	GetProjectPublisherAuthStatusParamsCheckN1 GetProjectPublisherAuthStatusParamsCheck = 1
+)
+
+// Valid indicates whether the value is a known member of the GetProjectPublisherAuthStatusParamsCheck enum.
+func (e GetProjectPublisherAuthStatusParamsCheck) Valid() bool {
+	switch e {
+	case GetProjectPublisherAuthStatusParamsCheckN1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for IssueLocalAdHocCredentialParamsExport.
 const (
 	IssueLocalAdHocCredentialParamsExportN1 IssueLocalAdHocCredentialParamsExport = 1
@@ -266,8 +296,9 @@ type AppPreparationFramework string
 
 // BoundListener defines model for BoundListener.
 type BoundListener struct {
-	Owner  string `json:"owner"`
-	Target string `json:"target"`
+	BoundHost *string `json:"bound_host,omitempty"`
+	Owner     string  `json:"owner"`
+	Target    string  `json:"target"`
 }
 
 // HTTPServiceMetadata defines model for HTTPServiceMetadata.
@@ -386,6 +417,32 @@ type PublicationRequest struct {
 	Service ServiceName `json:"service"`
 }
 
+// PublisherAuthStatus defines model for PublisherAuthStatus.
+type PublisherAuthStatus struct {
+	AccessExpiresAt  *time.Time                       `json:"access_expires_at,omitempty"`
+	Checked          bool                             `json:"checked"`
+	RefreshExpiresAt *time.Time                       `json:"refresh_expires_at,omitempty"`
+	SchemaVersion    PublisherAuthStatusSchemaVersion `json:"schema_version"`
+	Server           string                           `json:"server"`
+	Source           string                           `json:"source"`
+	Status           string                           `json:"status"`
+}
+
+// PublisherAuthStatusSchemaVersion defines model for PublisherAuthStatus.SchemaVersion.
+type PublisherAuthStatusSchemaVersion int
+
+// PublisherLoginOperation defines model for PublisherLoginOperation.
+type PublisherLoginOperation struct {
+	ApprovalUrl     *string   `json:"approval_url,omitempty"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	IntervalSeconds *int      `json:"interval_seconds,omitempty"`
+	Method          string    `json:"method"`
+	OperationId     string    `json:"operation_id"`
+	Server          string    `json:"server"`
+	Status          string    `json:"status"`
+	UserCode        *string   `json:"user_code,omitempty"`
+}
+
 // ServiceName defines model for ServiceName.
 type ServiceName = string
 
@@ -444,6 +501,25 @@ type RegistrationID = string
 // RegistrationOwner defines model for RegistrationOwner.
 type RegistrationOwner = string
 
+// LoginProjectPublisherWithTokenJSONBody defines parameters for LoginProjectPublisherWithToken.
+type LoginProjectPublisherWithTokenJSONBody struct {
+	Token string `json:"token"`
+}
+
+// WaitForProjectPublisherLoginJSONBody defines parameters for WaitForProjectPublisherLogin.
+type WaitForProjectPublisherLoginJSONBody struct {
+	OperationId    string `json:"operation_id"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
+// GetProjectPublisherAuthStatusParams defines parameters for GetProjectPublisherAuthStatus.
+type GetProjectPublisherAuthStatusParams struct {
+	Check *GetProjectPublisherAuthStatusParamsCheck `form:"check,omitempty" json:"check,omitempty"`
+}
+
+// GetProjectPublisherAuthStatusParamsCheck defines parameters for GetProjectPublisherAuthStatus.
+type GetProjectPublisherAuthStatusParamsCheck int
+
 // ListLocalProjectEventsParams defines parameters for ListLocalProjectEvents.
 type ListLocalProjectEventsParams struct {
 	After       string `form:"after" json:"after"`
@@ -491,6 +567,12 @@ type GetLocalProjectStatusParams struct {
 	// Probe fresh private TCP target check; available only with owner authentication.
 	Probe *ServiceName `form:"probe,omitempty" json:"probe,omitempty"`
 }
+
+// LoginProjectPublisherWithTokenJSONRequestBody defines body for LoginProjectPublisherWithToken for application/json ContentType.
+type LoginProjectPublisherWithTokenJSONRequestBody LoginProjectPublisherWithTokenJSONBody
+
+// WaitForProjectPublisherLoginJSONRequestBody defines body for WaitForProjectPublisherLogin for application/json ContentType.
+type WaitForProjectPublisherLoginJSONRequestBody WaitForProjectPublisherLoginJSONBody
 
 // PrepareAppServiceJSONRequestBody defines body for PrepareAppService for application/json ContentType.
 type PrepareAppServiceJSONRequestBody = AppPreparation
@@ -637,6 +719,59 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// StartProjectPublisherLogin Start a device login stored only by the selected publisher
+	//
+	// Corresponds with POST /v1/auth/login/start (the `StartProjectPublisherLogin` operationId).
+	StartProjectPublisherLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LoginProjectPublisherWithTokenWithBody Redeem one login token in the publisher's own client state
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/auth/login/token (the `LoginProjectPublisherWithToken` operationId).
+	LoginProjectPublisherWithTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LoginProjectPublisherWithToken Redeem one login token in the publisher's own client state
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/auth/login/token (the `LoginProjectPublisherWithToken` operationId).
+	LoginProjectPublisherWithToken(ctx context.Context, body LoginProjectPublisherWithTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// WaitForProjectPublisherLoginWithBody Wait for approval and save the publisher control session
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/auth/login/wait (the `WaitForProjectPublisherLogin` operationId).
+	WaitForProjectPublisherLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// WaitForProjectPublisherLogin Wait for approval and save the publisher control session
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/auth/login/wait (the `WaitForProjectPublisherLogin` operationId).
+	WaitForProjectPublisherLogin(ctx context.Context, body WaitForProjectPublisherLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CancelProjectPublisherLogin Cancel a publisher-owned login operation
+	//
+	// Corresponds with DELETE /v1/auth/login/{operation_id} (the `CancelProjectPublisherLogin` operationId).
+	CancelProjectPublisherLogin(ctx context.Context, operationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InspectProjectPublisherLogin Inspect a publisher-owned login operation
+	//
+	// Corresponds with GET /v1/auth/login/{operation_id} (the `InspectProjectPublisherLogin` operationId).
+	InspectProjectPublisherLogin(ctx context.Context, operationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LogoutProjectPublisher Revoke the publisher control session without reading its tokens
+	//
+	// Corresponds with POST /v1/auth/logout (the `LogoutProjectPublisher` operationId).
+	LogoutProjectPublisher(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetProjectPublisherAuthStatus Read the publisher's own control-session status
+	//
+	// Corresponds with GET /v1/auth/status (the `GetProjectPublisherAuthStatus` operationId).
+	GetProjectPublisherAuthStatus(ctx context.Context, params *GetProjectPublisherAuthStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListLocalProjectEvents Resume bounded project events after a local cursor
 	//
 	// Corresponds with GET /v1/events (the `ListLocalProjectEvents` operationId).
@@ -725,6 +860,149 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/status (the `GetLocalProjectStatus` operationId).
 	GetLocalProjectStatus(ctx context.Context, params *GetLocalProjectStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// StartProjectPublisherLogin Start a device login stored only by the selected publisher
+//
+// Corresponds with POST /v1/auth/login/start (the `StartProjectPublisherLogin` operationId).
+func (c *Client) StartProjectPublisherLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartProjectPublisherLoginRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LoginProjectPublisherWithTokenWithBody Redeem one login token in the publisher's own client state
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/auth/login/token (the `LoginProjectPublisherWithToken` operationId).
+func (c *Client) LoginProjectPublisherWithTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoginProjectPublisherWithTokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LoginProjectPublisherWithToken Redeem one login token in the publisher's own client state
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/auth/login/token (the `LoginProjectPublisherWithToken` operationId).
+func (c *Client) LoginProjectPublisherWithToken(ctx context.Context, body LoginProjectPublisherWithTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoginProjectPublisherWithTokenRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// WaitForProjectPublisherLoginWithBody Wait for approval and save the publisher control session
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/auth/login/wait (the `WaitForProjectPublisherLogin` operationId).
+func (c *Client) WaitForProjectPublisherLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWaitForProjectPublisherLoginRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// WaitForProjectPublisherLogin Wait for approval and save the publisher control session
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/auth/login/wait (the `WaitForProjectPublisherLogin` operationId).
+func (c *Client) WaitForProjectPublisherLogin(ctx context.Context, body WaitForProjectPublisherLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWaitForProjectPublisherLoginRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CancelProjectPublisherLogin Cancel a publisher-owned login operation
+//
+// Corresponds with DELETE /v1/auth/login/{operation_id} (the `CancelProjectPublisherLogin` operationId).
+func (c *Client) CancelProjectPublisherLogin(ctx context.Context, operationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCancelProjectPublisherLoginRequest(c.Server, operationId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// InspectProjectPublisherLogin Inspect a publisher-owned login operation
+//
+// Corresponds with GET /v1/auth/login/{operation_id} (the `InspectProjectPublisherLogin` operationId).
+func (c *Client) InspectProjectPublisherLogin(ctx context.Context, operationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInspectProjectPublisherLoginRequest(c.Server, operationId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LogoutProjectPublisher Revoke the publisher control session without reading its tokens
+//
+// Corresponds with POST /v1/auth/logout (the `LogoutProjectPublisher` operationId).
+func (c *Client) LogoutProjectPublisher(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLogoutProjectPublisherRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetProjectPublisherAuthStatus Read the publisher's own control-session status
+//
+// Corresponds with GET /v1/auth/status (the `GetProjectPublisherAuthStatus` operationId).
+func (c *Client) GetProjectPublisherAuthStatus(ctx context.Context, params *GetProjectPublisherAuthStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetProjectPublisherAuthStatusRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // ListLocalProjectEvents Resume bounded project events after a local cursor
@@ -964,6 +1242,262 @@ func (c *Client) GetLocalProjectStatus(ctx context.Context, params *GetLocalProj
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewStartProjectPublisherLoginRequest constructs an http.Request for the StartProjectPublisherLogin method
+func NewStartProjectPublisherLoginRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/login/start")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewLoginProjectPublisherWithTokenRequest calls the generic LoginProjectPublisherWithToken builder with application/json body
+func NewLoginProjectPublisherWithTokenRequest(server string, body LoginProjectPublisherWithTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewLoginProjectPublisherWithTokenRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewLoginProjectPublisherWithTokenRequestWithBody constructs an http.Request for the LoginProjectPublisherWithToken method, with any body, and a specified content type
+func NewLoginProjectPublisherWithTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/login/token")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewWaitForProjectPublisherLoginRequest calls the generic WaitForProjectPublisherLogin builder with application/json body
+func NewWaitForProjectPublisherLoginRequest(server string, body WaitForProjectPublisherLoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewWaitForProjectPublisherLoginRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewWaitForProjectPublisherLoginRequestWithBody constructs an http.Request for the WaitForProjectPublisherLogin method, with any body, and a specified content type
+func NewWaitForProjectPublisherLoginRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/login/wait")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCancelProjectPublisherLoginRequest constructs an http.Request for the CancelProjectPublisherLogin method
+func NewCancelProjectPublisherLoginRequest(server string, operationId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "operation_id", operationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/login/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewInspectProjectPublisherLoginRequest constructs an http.Request for the InspectProjectPublisherLogin method
+func NewInspectProjectPublisherLoginRequest(server string, operationId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "operation_id", operationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/login/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewLogoutProjectPublisherRequest constructs an http.Request for the LogoutProjectPublisher method
+func NewLogoutProjectPublisherRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/logout")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetProjectPublisherAuthStatusRequest constructs an http.Request for the GetProjectPublisherAuthStatus method
+func NewGetProjectPublisherAuthStatusRequest(server string, params *GetProjectPublisherAuthStatusParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/status")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Check != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "check", *params.Check, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewListLocalProjectEventsRequest constructs an http.Request for the ListLocalProjectEvents method
@@ -1579,6 +2113,69 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// StartProjectPublisherLoginWithResponse Start a device login stored only by the selected publisher
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/login/start (the `StartProjectPublisherLogin` operationId).
+	StartProjectPublisherLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*StartProjectPublisherLoginResponse, error)
+
+	// LoginProjectPublisherWithTokenWithBodyWithResponse Redeem one login token in the publisher's own client state
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/login/token (the `LoginProjectPublisherWithToken` operationId).
+	LoginProjectPublisherWithTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginProjectPublisherWithTokenResponse, error)
+
+	// LoginProjectPublisherWithTokenWithResponse Redeem one login token in the publisher's own client state
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/login/token (the `LoginProjectPublisherWithToken` operationId).
+	LoginProjectPublisherWithTokenWithResponse(ctx context.Context, body LoginProjectPublisherWithTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*LoginProjectPublisherWithTokenResponse, error)
+
+	// WaitForProjectPublisherLoginWithBodyWithResponse Wait for approval and save the publisher control session
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/login/wait (the `WaitForProjectPublisherLogin` operationId).
+	WaitForProjectPublisherLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WaitForProjectPublisherLoginResponse, error)
+
+	// WaitForProjectPublisherLoginWithResponse Wait for approval and save the publisher control session
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/login/wait (the `WaitForProjectPublisherLogin` operationId).
+	WaitForProjectPublisherLoginWithResponse(ctx context.Context, body WaitForProjectPublisherLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*WaitForProjectPublisherLoginResponse, error)
+
+	// CancelProjectPublisherLoginWithResponse Cancel a publisher-owned login operation
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/auth/login/{operation_id} (the `CancelProjectPublisherLogin` operationId).
+	CancelProjectPublisherLoginWithResponse(ctx context.Context, operationId string, reqEditors ...RequestEditorFn) (*CancelProjectPublisherLoginResponse, error)
+
+	// InspectProjectPublisherLoginWithResponse Inspect a publisher-owned login operation
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/auth/login/{operation_id} (the `InspectProjectPublisherLogin` operationId).
+	InspectProjectPublisherLoginWithResponse(ctx context.Context, operationId string, reqEditors ...RequestEditorFn) (*InspectProjectPublisherLoginResponse, error)
+
+	// LogoutProjectPublisherWithResponse Revoke the publisher control session without reading its tokens
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/logout (the `LogoutProjectPublisher` operationId).
+	LogoutProjectPublisherWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LogoutProjectPublisherResponse, error)
+
+	// GetProjectPublisherAuthStatusWithResponse Read the publisher's own control-session status
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/auth/status (the `GetProjectPublisherAuthStatus` operationId).
+	GetProjectPublisherAuthStatusWithResponse(ctx context.Context, params *GetProjectPublisherAuthStatusParams, reqEditors ...RequestEditorFn) (*GetProjectPublisherAuthStatusResponse, error)
+
 	// ListLocalProjectEventsWithResponse Resume bounded project events after a local cursor
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -1685,6 +2282,335 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/status (the `GetLocalProjectStatus` operationId).
 	GetLocalProjectStatusWithResponse(ctx context.Context, params *GetLocalProjectStatusParams, reqEditors ...RequestEditorFn) (*GetLocalProjectStatusResponse, error)
+}
+
+type StartProjectPublisherLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherLoginOperation
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StartProjectPublisherLoginResponse) GetJSON200() *PublisherLoginOperation {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r StartProjectPublisherLoginResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r StartProjectPublisherLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartProjectPublisherLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartProjectPublisherLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartProjectPublisherLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type LoginProjectPublisherWithTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherAuthStatus
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r LoginProjectPublisherWithTokenResponse) GetJSON200() *PublisherAuthStatus {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r LoginProjectPublisherWithTokenResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r LoginProjectPublisherWithTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LoginProjectPublisherWithTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LoginProjectPublisherWithTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LoginProjectPublisherWithTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type WaitForProjectPublisherLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherLoginOperation
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r WaitForProjectPublisherLoginResponse) GetJSON200() *PublisherLoginOperation {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r WaitForProjectPublisherLoginResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r WaitForProjectPublisherLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r WaitForProjectPublisherLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r WaitForProjectPublisherLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r WaitForProjectPublisherLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CancelProjectPublisherLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherLoginOperation
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CancelProjectPublisherLoginResponse) GetJSON200() *PublisherLoginOperation {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r CancelProjectPublisherLoginResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CancelProjectPublisherLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CancelProjectPublisherLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CancelProjectPublisherLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CancelProjectPublisherLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type InspectProjectPublisherLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherLoginOperation
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r InspectProjectPublisherLoginResponse) GetJSON200() *PublisherLoginOperation {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r InspectProjectPublisherLoginResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r InspectProjectPublisherLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r InspectProjectPublisherLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InspectProjectPublisherLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r InspectProjectPublisherLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type LogoutProjectPublisherResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r LogoutProjectPublisherResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r LogoutProjectPublisherResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LogoutProjectPublisherResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LogoutProjectPublisherResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LogoutProjectPublisherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetProjectPublisherAuthStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherAuthStatus
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetProjectPublisherAuthStatusResponse) GetJSON200() *PublisherAuthStatus {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetProjectPublisherAuthStatusResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetProjectPublisherAuthStatusResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetProjectPublisherAuthStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetProjectPublisherAuthStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetProjectPublisherAuthStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type ListLocalProjectEventsResponse struct {
@@ -2228,6 +3154,123 @@ func (r GetLocalProjectStatusResponse) ContentType() string {
 	return ""
 }
 
+// StartProjectPublisherLoginWithResponse Start a device login stored only by the selected publisher
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/login/start (the `StartProjectPublisherLogin` operationId).
+func (c *ClientWithResponses) StartProjectPublisherLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*StartProjectPublisherLoginResponse, error) {
+	rsp, err := c.StartProjectPublisherLogin(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartProjectPublisherLoginResponse(rsp)
+}
+
+// LoginProjectPublisherWithTokenWithBodyWithResponse Redeem one login token in the publisher's own client state
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/login/token (the `LoginProjectPublisherWithToken` operationId).
+func (c *ClientWithResponses) LoginProjectPublisherWithTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginProjectPublisherWithTokenResponse, error) {
+	rsp, err := c.LoginProjectPublisherWithTokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoginProjectPublisherWithTokenResponse(rsp)
+}
+
+// LoginProjectPublisherWithTokenWithResponse Redeem one login token in the publisher's own client state
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/login/token (the `LoginProjectPublisherWithToken` operationId).
+func (c *ClientWithResponses) LoginProjectPublisherWithTokenWithResponse(ctx context.Context, body LoginProjectPublisherWithTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*LoginProjectPublisherWithTokenResponse, error) {
+	rsp, err := c.LoginProjectPublisherWithToken(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoginProjectPublisherWithTokenResponse(rsp)
+}
+
+// WaitForProjectPublisherLoginWithBodyWithResponse Wait for approval and save the publisher control session
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/login/wait (the `WaitForProjectPublisherLogin` operationId).
+func (c *ClientWithResponses) WaitForProjectPublisherLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WaitForProjectPublisherLoginResponse, error) {
+	rsp, err := c.WaitForProjectPublisherLoginWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWaitForProjectPublisherLoginResponse(rsp)
+}
+
+// WaitForProjectPublisherLoginWithResponse Wait for approval and save the publisher control session
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/login/wait (the `WaitForProjectPublisherLogin` operationId).
+func (c *ClientWithResponses) WaitForProjectPublisherLoginWithResponse(ctx context.Context, body WaitForProjectPublisherLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*WaitForProjectPublisherLoginResponse, error) {
+	rsp, err := c.WaitForProjectPublisherLogin(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWaitForProjectPublisherLoginResponse(rsp)
+}
+
+// CancelProjectPublisherLoginWithResponse Cancel a publisher-owned login operation
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/auth/login/{operation_id} (the `CancelProjectPublisherLogin` operationId).
+func (c *ClientWithResponses) CancelProjectPublisherLoginWithResponse(ctx context.Context, operationId string, reqEditors ...RequestEditorFn) (*CancelProjectPublisherLoginResponse, error) {
+	rsp, err := c.CancelProjectPublisherLogin(ctx, operationId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCancelProjectPublisherLoginResponse(rsp)
+}
+
+// InspectProjectPublisherLoginWithResponse Inspect a publisher-owned login operation
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/auth/login/{operation_id} (the `InspectProjectPublisherLogin` operationId).
+func (c *ClientWithResponses) InspectProjectPublisherLoginWithResponse(ctx context.Context, operationId string, reqEditors ...RequestEditorFn) (*InspectProjectPublisherLoginResponse, error) {
+	rsp, err := c.InspectProjectPublisherLogin(ctx, operationId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInspectProjectPublisherLoginResponse(rsp)
+}
+
+// LogoutProjectPublisherWithResponse Revoke the publisher control session without reading its tokens
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/logout (the `LogoutProjectPublisher` operationId).
+func (c *ClientWithResponses) LogoutProjectPublisherWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LogoutProjectPublisherResponse, error) {
+	rsp, err := c.LogoutProjectPublisher(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLogoutProjectPublisherResponse(rsp)
+}
+
+// GetProjectPublisherAuthStatusWithResponse Read the publisher's own control-session status
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/auth/status (the `GetProjectPublisherAuthStatus` operationId).
+func (c *ClientWithResponses) GetProjectPublisherAuthStatusWithResponse(ctx context.Context, params *GetProjectPublisherAuthStatusParams, reqEditors ...RequestEditorFn) (*GetProjectPublisherAuthStatusResponse, error) {
+	rsp, err := c.GetProjectPublisherAuthStatus(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetProjectPublisherAuthStatusResponse(rsp)
+}
+
 // ListLocalProjectEventsWithResponse Resume bounded project events after a local cursor
 //
 // Returns a wrapper object for the known response body format(s).
@@ -2423,6 +3466,233 @@ func (c *ClientWithResponses) GetLocalProjectStatusWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseGetLocalProjectStatusResponse(rsp)
+}
+
+// ParseStartProjectPublisherLoginResponse parses an HTTP response from a StartProjectPublisherLoginWithResponse call
+func ParseStartProjectPublisherLoginResponse(rsp *http.Response) (*StartProjectPublisherLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartProjectPublisherLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherLoginOperation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLoginProjectPublisherWithTokenResponse parses an HTTP response from a LoginProjectPublisherWithTokenWithResponse call
+func ParseLoginProjectPublisherWithTokenResponse(rsp *http.Response) (*LoginProjectPublisherWithTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LoginProjectPublisherWithTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherAuthStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseWaitForProjectPublisherLoginResponse parses an HTTP response from a WaitForProjectPublisherLoginWithResponse call
+func ParseWaitForProjectPublisherLoginResponse(rsp *http.Response) (*WaitForProjectPublisherLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &WaitForProjectPublisherLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherLoginOperation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCancelProjectPublisherLoginResponse parses an HTTP response from a CancelProjectPublisherLoginWithResponse call
+func ParseCancelProjectPublisherLoginResponse(rsp *http.Response) (*CancelProjectPublisherLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CancelProjectPublisherLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherLoginOperation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseInspectProjectPublisherLoginResponse parses an HTTP response from a InspectProjectPublisherLoginWithResponse call
+func ParseInspectProjectPublisherLoginResponse(rsp *http.Response) (*InspectProjectPublisherLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InspectProjectPublisherLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherLoginOperation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLogoutProjectPublisherResponse parses an HTTP response from a LogoutProjectPublisherWithResponse call
+func ParseLogoutProjectPublisherResponse(rsp *http.Response) (*LogoutProjectPublisherResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LogoutProjectPublisherResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetProjectPublisherAuthStatusResponse parses an HTTP response from a GetProjectPublisherAuthStatusWithResponse call
+func ParseGetProjectPublisherAuthStatusResponse(rsp *http.Response) (*GetProjectPublisherAuthStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetProjectPublisherAuthStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherAuthStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseListLocalProjectEventsResponse parses an HTTP response from a ListLocalProjectEventsWithResponse call
@@ -2809,6 +4079,27 @@ func ParseGetLocalProjectStatusResponse(rsp *http.Response) (*GetLocalProjectSta
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// StartProjectPublisherLogin Start a device login stored only by the selected publisher
+	// (POST /v1/auth/login/start)
+	StartProjectPublisherLogin(w http.ResponseWriter, r *http.Request)
+	// LoginProjectPublisherWithToken Redeem one login token in the publisher's own client state
+	// (POST /v1/auth/login/token)
+	LoginProjectPublisherWithToken(w http.ResponseWriter, r *http.Request)
+	// WaitForProjectPublisherLogin Wait for approval and save the publisher control session
+	// (POST /v1/auth/login/wait)
+	WaitForProjectPublisherLogin(w http.ResponseWriter, r *http.Request)
+	// CancelProjectPublisherLogin Cancel a publisher-owned login operation
+	// (DELETE /v1/auth/login/{operation_id})
+	CancelProjectPublisherLogin(w http.ResponseWriter, r *http.Request, operationId string)
+	// InspectProjectPublisherLogin Inspect a publisher-owned login operation
+	// (GET /v1/auth/login/{operation_id})
+	InspectProjectPublisherLogin(w http.ResponseWriter, r *http.Request, operationId string)
+	// LogoutProjectPublisher Revoke the publisher control session without reading its tokens
+	// (POST /v1/auth/logout)
+	LogoutProjectPublisher(w http.ResponseWriter, r *http.Request)
+	// GetProjectPublisherAuthStatus Read the publisher's own control-session status
+	// (GET /v1/auth/status)
+	GetProjectPublisherAuthStatus(w http.ResponseWriter, r *http.Request, params GetProjectPublisherAuthStatusParams)
 	// ListLocalProjectEvents Resume bounded project events after a local cursor
 	// (GET /v1/events)
 	ListLocalProjectEvents(w http.ResponseWriter, r *http.Request, params ListLocalProjectEventsParams)
@@ -2855,6 +4146,147 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// StartProjectPublisherLogin operation middleware
+func (siw *ServerInterfaceWrapper) StartProjectPublisherLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartProjectPublisherLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LoginProjectPublisherWithToken operation middleware
+func (siw *ServerInterfaceWrapper) LoginProjectPublisherWithToken(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LoginProjectPublisherWithToken(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// WaitForProjectPublisherLogin operation middleware
+func (siw *ServerInterfaceWrapper) WaitForProjectPublisherLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WaitForProjectPublisherLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelProjectPublisherLogin operation middleware
+func (siw *ServerInterfaceWrapper) CancelProjectPublisherLogin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operation_id" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operation_id", r.PathValue("operation_id"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operation_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelProjectPublisherLogin(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// InspectProjectPublisherLogin operation middleware
+func (siw *ServerInterfaceWrapper) InspectProjectPublisherLogin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operation_id" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operation_id", r.PathValue("operation_id"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operation_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.InspectProjectPublisherLogin(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LogoutProjectPublisher operation middleware
+func (siw *ServerInterfaceWrapper) LogoutProjectPublisher(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LogoutProjectPublisher(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetProjectPublisherAuthStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectPublisherAuthStatus(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetProjectPublisherAuthStatusParams
+
+	// ------------- Optional query parameter "check" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "check", r.URL.Query(), &params.Check, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "check"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "check", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectPublisherAuthStatus(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListLocalProjectEvents operation middleware
 func (siw *ServerInterfaceWrapper) ListLocalProjectEvents(w http.ResponseWriter, r *http.Request) {
@@ -3425,6 +4857,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/status", wrapper.GetLocalProjectStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/scopes/app/{service}", wrapper.IssueLocalAppCredential)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/scopes/ad-hoc", wrapper.IssueLocalAdHocCredential)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/login/start", wrapper.StartProjectPublisherLogin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/login/wait", wrapper.WaitForProjectPublisherLogin)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/auth/login/{operation_id}", wrapper.CancelProjectPublisherLogin)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/auth/login/{operation_id}", wrapper.InspectProjectPublisherLogin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/login/token", wrapper.LoginProjectPublisherWithToken)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/auth/status", wrapper.GetProjectPublisherAuthStatus)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/logout", wrapper.LogoutProjectPublisher)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/events", wrapper.ListLocalProjectEvents)
 
 	return m

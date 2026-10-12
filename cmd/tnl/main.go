@@ -450,6 +450,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runProjectLabel(ctx, flags, stdout)
 	case "project publisher credential create":
 		return runProjectPublisherCredentialCreate(ctx, flags, stdout)
+	case "project publisher credential export":
+		return runProjectPublisherCredentialExport(ctx, flags, stdout)
 	case "telemetry on":
 		return runTelemetryPreference(ctx, flags.Telemetry.On, "on", stdout)
 	case "telemetry off":
@@ -457,18 +459,39 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "telemetry status":
 		return runTelemetryPreference(ctx, flags.Telemetry.Status, "status", stdout)
 	case "auth status":
+		if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+			return runPublisherAuthStatus(ctx, project, flags.Auth.Status, stdout)
+		}
 		return runAuthStatus(ctx, flags.Auth.Status, stdout, stderr)
 	case "auth login", "auth login run":
+		if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+			return runPublisherLogin(ctx, project, flags.Auth.Login.loginCommand, os.Stdin, stdout, stderr)
+		}
 		return runLogin(ctx, flags.Auth.Login.loginCommand, os.Stdin, stdout, stderr)
 	case "auth login start":
+		if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+			return runPublisherLoginOperation(ctx, project, flags.Auth.Login.loginCommand, "", "start", stdout, stderr)
+		}
 		return runAuthLoginStart(ctx, flags.Auth.Login.loginCommand, os.Stdin, stdout, stderr)
 	case "auth login wait <operation-id>":
+		if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+			return runPublisherLoginOperation(ctx, project, flags.Auth.Login.loginCommand, flags.Auth.Login.Wait.ID, "wait", stdout, stderr)
+		}
 		return runAuthLoginOperation(ctx, flags.Auth.Login.loginCommand, flags.Auth.Login.Wait.ID, "wait", stdout, stderr)
 	case "auth login inspect <operation-id>":
+		if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+			return runPublisherLoginOperation(ctx, project, flags.Auth.Login.loginCommand, flags.Auth.Login.Inspect.ID, "inspect", stdout, stderr)
+		}
 		return runAuthLoginOperation(ctx, flags.Auth.Login.loginCommand, flags.Auth.Login.Inspect.ID, "inspect", stdout, stderr)
 	case "auth login cancel <operation-id>":
+		if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+			return runPublisherLoginOperation(ctx, project, flags.Auth.Login.loginCommand, flags.Auth.Login.Cancel.ID, "cancel", stdout, stderr)
+		}
 		return runAuthLoginOperation(ctx, flags.Auth.Login.loginCommand, flags.Auth.Login.Cancel.ID, "cancel", stdout, stderr)
 	case "auth logout":
+		if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+			return runPublisherLogout(ctx, project, flags.Auth.Logout, stdout)
+		}
 		return runLogout(ctx, flags.Auth.Logout, stdout, stderr)
 	case "version":
 		switch flags.Version.Output {

@@ -8,7 +8,12 @@ import { promisify } from "node:util";
 import { TnlError } from "../errors.js";
 import { canonicalLoopbackTarget, type CanonicalTarget } from "./target.js";
 import { resolveNativeBinary } from "./launcher.js";
-import { listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
+import {
+  listeningTarget,
+  isBunServer,
+  type LocalHTTPServer,
+  type RegistrationOptions,
+} from "./register.js";
 import {
   exactKeys,
   parseProjectRuntime,
@@ -21,6 +26,7 @@ import {
 export interface PrepareOptions {
   readonly service?: string;
   readonly directory?: string;
+  readonly targetHostname?: string;
 }
 
 type CanonicalLoopbackTarget = `http://${string}`;
@@ -30,7 +36,7 @@ export interface PreparedService extends ProjectRuntime {
   readonly hostname: string;
   readonly publicURL: `https://${string}`;
   /** acknowledges a bound listener; use tnl wait for public readiness. */
-  register(server: LocalHTTPServer): Promise<void>;
+  register(server: LocalHTTPServer, options?: RegistrationOptions): Promise<void>;
   /** unregisters publication without stopping the application listener. */
   close(): Promise<void>;
 }
@@ -67,7 +73,7 @@ const preparations = (globalThis.__tnlAppPreparations ??= new Map<
 
 const frameworkTargets = new WeakMap<
   PreparedService,
-  (target: CanonicalLoopbackTarget) => Promise<void>
+  (target: CanonicalLoopbackTarget, boundHost?: string) => Promise<void>
 >();
 
 // Next reports its framework-provided post-bind origin. its registration lives
@@ -75,10 +81,11 @@ const frameworkTargets = new WeakMap<
 export function reportFrameworkTarget(
   handle: PreparedService,
   target: CanonicalLoopbackTarget,
+  boundHost?: string,
 ): Promise<void> {
   const report = frameworkTargets.get(handle);
   if (report === undefined) throw new TnlError("sdk.configuration_invalid");
-  return report(target);
+  return report(target, boundHost);
 }
 
 type Framework = "node" | "bun" | "vite" | "next";
@@ -121,6 +128,8 @@ export async function createPreparedService(
   let assignment = parseAssignment(await dependencies.request(socket, "prepare", prepareRequest));
   let server: LocalHTTPServer | undefined;
   let reportedTarget: CanonicalTarget | undefined;
+  let reportedBoundHost: string | undefined;
+  let reportedTargetHostname: string | undefined;
   let closed = false;
   let registered = false;
   let needsPrepare = false;
@@ -130,11 +139,12 @@ export async function createPreparedService(
   let registering = Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | undefined;
 
-  const registration = (target?: string) => ({
+  const registration = (target?: string, boundHost?: string) => ({
     version: 1,
     registration_id: assignment.registrationID,
     owner,
     ...(target === undefined ? {} : { target }),
+    ...(boundHost === undefined ? {} : { bound_host: boundHost }),
   });
   const reconnect = async () => {
     socket = await dependencies.start(directory, options.service);
@@ -235,10 +245,18 @@ export async function createPreparedService(
         socket = replacementSocket;
         assignment = replacement;
         if (registered) {
-          const target = server === undefined ? reportedTarget : await listeningTarget(server);
+          const target =
+            server === undefined
+              ? reportedTarget
+              : await listeningTarget(
+                  server,
+                  reportedTargetHostname === undefined
+                    ? {}
+                    : { targetHostname: reportedTargetHostname },
+                );
           if (target === undefined) throw new TnlError("sdk.listener_failed");
           if (!closed && observedRevision === revision)
-            await dependencies.request(socket, "register", registration(target));
+            await dependencies.request(socket, "register", registration(target, reportedBoundHost));
         }
       } catch {
         /* a later renewal retries a stopped or restarting manager. */
@@ -250,7 +268,10 @@ export async function createPreparedService(
   };
   schedule();
 
-  const registerListener = async (listener: LocalHTTPServer) => {
+  const registerListener = async (
+    listener: LocalHTTPServer,
+    registrationOptions: RegistrationOptions = {},
+  ) => {
     if (closed) throw new TnlError("sdk.registration_stale");
     await releasing;
     if (needsPrepare) {
@@ -258,11 +279,28 @@ export async function createPreparedService(
       needsPrepare = false;
       schedule();
     }
-    const target = await listeningTarget(listener);
+    const selectedHostname = registrationOptions.targetHostname ?? options.targetHostname;
+    const target = await listeningTarget(
+      listener,
+      selectedHostname === undefined ? {} : { targetHostname: selectedHostname },
+    );
     if (closed) throw new TnlError("sdk.registration_stale");
     const currentRevision = ++revision;
     server = listener;
     reportedTarget = target;
+    reportedTargetHostname = selectedHostname;
+    const address = isBunServer(listener)
+      ? (listener.hostname ?? listener.url.hostname)
+      : listener.address();
+    reportedBoundHost =
+      typeof address === "string"
+        ? address
+        : address &&
+            typeof address === "object" &&
+            "address" in address &&
+            typeof address.address === "string"
+          ? address.address
+          : undefined;
     registered = false;
     if (isBunServer(listener)) {
       const original = listener.stop.bind(listener);
@@ -279,7 +317,7 @@ export async function createPreparedService(
       });
     }
     try {
-      await dependencies.request(socket, "register", registration(target));
+      await dependencies.request(socket, "register", registration(target, reportedBoundHost));
     } catch (error) {
       if (closed || revision !== currentRevision)
         throw new TnlError("sdk.listener_failed", { cause: error });
@@ -290,15 +328,20 @@ export async function createPreparedService(
         throw error;
       await reconnect();
       if (closed || revision !== currentRevision) throw new TnlError("sdk.listener_failed");
-      await dependencies.request(socket, "register", registration(target));
+      await dependencies.request(socket, "register", registration(target, reportedBoundHost));
     }
     if (closed || revision !== currentRevision || (!isBunServer(listener) && !listener.listening))
       throw new TnlError("sdk.listener_failed");
     registered = true;
   };
 
-  const register = (listener: LocalHTTPServer): Promise<void> => {
-    const operation = registering.catch(() => {}).then(() => registerListener(listener));
+  const register = (
+    listener: LocalHTTPServer,
+    registrationOptions?: RegistrationOptions,
+  ): Promise<void> => {
+    const operation = registering
+      .catch(() => {})
+      .then(() => registerListener(listener, registrationOptions));
     registering = operation;
     return operation;
   };
@@ -329,7 +372,7 @@ export async function createPreparedService(
     register,
     close,
   });
-  frameworkTargets.set(handle, async (target) => {
+  frameworkTargets.set(handle, async (target, boundHost) => {
     const parsed = new URL(target);
     if (canonicalLoopbackTarget(parsed.hostname, Number(parsed.port)) !== target)
       throw new TnlError("sdk.target_invalid");
@@ -343,7 +386,8 @@ export async function createPreparedService(
     revision++;
     server = undefined;
     reportedTarget = target;
-    await dependencies.request(socket, "register", registration(target));
+    reportedBoundHost = boundHost;
+    await dependencies.request(socket, "register", registration(target, reportedBoundHost));
     registered = true;
   });
   return handle;
@@ -354,10 +398,14 @@ function validateOptions(options: PrepareOptions): void {
     options === null ||
     typeof options !== "object" ||
     Array.isArray(options) ||
-    Object.keys(options).some((key) => key !== "service" && key !== "directory") ||
+    Object.keys(options).some(
+      (key) => key !== "service" && key !== "directory" && key !== "targetHostname",
+    ) ||
     (options.service !== undefined && !validServiceName(options.service)) ||
     (options.directory !== undefined &&
-      (typeof options.directory !== "string" || options.directory === ""))
+      (typeof options.directory !== "string" || options.directory === "")) ||
+    (options.targetHostname !== undefined &&
+      (typeof options.targetHostname !== "string" || options.targetHostname === ""))
   )
     throw new TnlError("sdk.configuration_invalid");
 }
@@ -404,6 +452,17 @@ export async function startRuntime(
   scope: { readonly service?: string; readonly adHoc?: boolean } = {},
 ): Promise<string> {
   try {
+    const selected = process.env.TNL_PUBLISHER_ENDPOINT_FILE;
+    if (selected !== undefined) {
+      if (
+        !path.isAbsolute(selected) ||
+        !selected.endsWith(".endpoint.json") ||
+        selected.includes("\0")
+      )
+        throw new TnlError("sdk.configuration_invalid");
+      if (!(await runtimeHealthy(selected))) throw new TnlError("sdk.dev_unavailable");
+      return selected;
+    }
     const { stdout } = await promisify(execFile)(
       binary,
       [
@@ -495,10 +554,14 @@ function readLocalEndpoint(endpointPath: string): { url: URL; credential: string
       throw new TnlError("sdk.response_invalid");
     }
     const url = new URL(endpoint.url);
+    const explicit = process.env.TNL_PUBLISHER_ENDPOINT_FILE === endpointPath;
+    const composeHost = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(url.hostname);
     if (
       !(
         url.protocol === "https:" ||
-        (url.protocol === "http:" && url.hostname === "127.0.0.1" && !!url.port)
+        (url.protocol === "http:" &&
+          !!url.port &&
+          (url.hostname === "127.0.0.1" || (explicit && composeHost)))
       ) ||
       !url.hostname ||
       url.pathname !== "/" ||

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -231,6 +232,7 @@ type appRuntime struct {
 	project     projectConfiguration
 	state       *clientstate.Database
 	noTelemetry bool
+	authHTTP    *http.Client
 	mu          sync.Mutex
 	prepareMu   sync.Mutex
 	prepared    map[string]appPreparation
@@ -386,18 +388,33 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	if request.Version != privateprotocol.Version || !privateprotocol.ValidOwner(request.Owner) || request.PID <= 0 || !request.Framework.Valid() {
 		return privateprotocol.Assignment{}, failure.Wrap("prepare app", failure.ProjectConfigInvalid, errors.New("invalid app preparation"))
 	}
-	directory, err := filepath.EvalSymlinks(request.Directory)
-	if err != nil || !pathInside(directory, a.project.Root) {
-		return privateprotocol.Assignment{}, failure.Wrap("select app directory", failure.ProjectConfigInvalid, errors.Join(err, errors.New("app directory is outside the project")))
-	}
-	project, _, err := runtimeProject(ctx, runtimeOptions{Directory: directory, StateDir: a.state.Root()})
-	if err != nil {
-		return privateprotocol.Assignment{}, err
-	}
-	if project.Root != a.project.Root {
-		return privateprotocol.Assignment{}, failure.Wrap("select app project", failure.ProjectConfigInvalid, errors.New("app preparation selected another project"))
+	scope := localPublisherScopeFrom(ctx)
+	project := a.project
+	var directory string
+	var err error
+	if scope.kind == localScopeApp && a.project.Config.Publisher != nil && a.project.Config.Publisher.Type != "local" {
+		// the app has a credential scoped to this project and service, but its
+		// container may mount the project at a different absolute path.
+		if !filepath.IsAbs(request.Directory) || strings.ContainsRune(request.Directory, 0) {
+			return privateprotocol.Assignment{}, failure.Wrap("select app directory", failure.ProjectConfigInvalid, errors.New("app directory must be absolute"))
+		}
+	} else {
+		directory, err = filepath.EvalSymlinks(request.Directory)
+		if err != nil || !pathInside(directory, a.project.Root) {
+			return privateprotocol.Assignment{}, failure.Wrap("select app directory", failure.ProjectConfigInvalid, errors.Join(err, errors.New("app directory is outside the project")))
+		}
+		project, _, err = runtimeProject(ctx, runtimeOptions{Directory: directory, StateDir: a.state.Root()})
+		if err != nil {
+			return privateprotocol.Assignment{}, err
+		}
+		if project.Root != a.project.Root {
+			return privateprotocol.Assignment{}, failure.Wrap("select app project", failure.ProjectConfigInvalid, errors.New("app preparation selected another project"))
+		}
 	}
 	name := request.Service
+	if name == "" && scope.kind == localScopeApp {
+		return privateprotocol.Assignment{}, failure.Wrap("select app service", failure.ServiceNotConfigured, errors.New("pass the configured app service name"))
+	}
 	if name == "" {
 		for _, candidate := range project.Config.Services {
 			if candidate.Target != nil && candidate.Target.Type == "app" {
@@ -626,7 +643,11 @@ func (a *appRuntime) handler() http.Handler {
 				if !found {
 					err = clientruntime.ErrRegistrationStale
 				} else {
-					err = a.manager.Register(request.RegistrationID, request.Owner, request.Target, string(preparation.framework))
+					target := request.Target
+					target, err = a.registeredAppTarget(r.Context(), preparation.assignment.Service, target, request.BoundHost)
+					if err == nil {
+						err = a.manager.Register(request.RegistrationID, request.Owner, target, string(preparation.framework))
+					}
 				}
 			case "renew":
 				err = a.manager.Renew(request.RegistrationID, request.Owner)
@@ -641,7 +662,41 @@ func (a *appRuntime) handler() http.Handler {
 		})
 	}
 	a.namedHandler(mux)
+	a.publisherAuthHandler(mux)
 	return mux
+}
+
+func (a *appRuntime) registeredAppTarget(ctx context.Context, service, target, boundHost string) (string, error) {
+	publisher := a.project.Config.Publisher
+	if publisher == nil || publisher.Type == "local" {
+		return target, nil
+	}
+	origin, err := url.Parse(target)
+	if err != nil || origin.Hostname() == "" || origin.Port() == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" ||
+		(origin.Scheme != "http" && origin.Scheme != "https") {
+		return "", failure.Wrap("register app listener", failure.ProjectConfigInvalid, errors.New("app target must be a canonical HTTP origin"))
+	}
+	if publisher.Type == "url" {
+		name := strings.ToLower(origin.Hostname())
+		if ip := net.ParseIP(name); ip != nil && ip.IsLoopback() || name == "localhost" || strings.HasSuffix(name, ".localhost") {
+			return "", failure.Wrap("register app listener", failure.ProjectConfigInvalid,
+				errors.New("url publisher cannot reach another host's loopback listener; use a directly reachable app target"))
+		}
+		return target, nil
+	}
+	if localPublisherScopeFrom(ctx).kind != localScopeApp || boundHost != "0.0.0.0" && boundHost != "::" {
+		return "", failure.Wrap("register app listener", failure.ProjectConfigInvalid,
+			errors.New("docker app must register with its service credential and listen on all container interfaces"))
+	}
+	if ip := net.ParseIP(origin.Hostname()); ip == nil || !ip.IsLoopback() {
+		return "", failure.Wrap("register app listener", failure.ProjectConfigInvalid,
+			errors.New("docker app must report its own bound listener port"))
+	}
+	if publisher.Compose == nil || !naming.ValidServiceName(service) {
+		return "", failure.Wrap("register app listener", failure.ProjectConfigInvalid,
+			errors.New("docker apps require a publisher in the same Compose project"))
+	}
+	return origin.Scheme + "://" + net.JoinHostPort(service, origin.Port()), nil
 }
 
 func runtimeProblem(w http.ResponseWriter, err error) {

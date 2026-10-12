@@ -45,6 +45,12 @@ volumes:
 		if err := os.WriteFile(filepath.Join(root, "compose.yaml"), []byte(content), 0600); err != nil {
 			t.Fatal(err)
 		}
+		if err := ComposeServiceDeclared(t.Context(), root, label, "compose.yaml", "db"); err != nil {
+			t.Fatalf("render Compose service before starting it: %v", err)
+		}
+		if err := ComposeServiceDeclared(t.Context(), root, label, "compose.yaml", "unknown"); err == nil {
+			t.Fatal("accepted undeclared Compose app service")
+		}
 		cleanup := func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()

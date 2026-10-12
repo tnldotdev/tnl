@@ -283,8 +283,8 @@ func TestProjectPublisherSelectsOneOwnerWithoutPuttingCredentialsInConfig(t *tes
 	service, credential := "publisher", "owner-token"
 	port := 8765
 	if err := ValidateTNL(TNL{Publisher: &ProjectPublisher{Type: "docker", DockerSelection: DockerSelection{Container: &service, ContainerPort: &port}, OwnerCredentialFile: &credential},
-		Services: Services{"web": {Target: &ServiceTarget{Type: "app"}}}}); err == nil || !strings.Contains(err.Error(), "use the local publisher for a host app") {
-		t.Fatalf("docker publisher accepted a host app: %v", err)
+		Services: Services{"web": {Target: &ServiceTarget{Type: "app"}}}}); err != nil {
+		t.Fatalf("docker publisher rejected an app on its network: %v", err)
 	}
 	endpoint := "https://publisher.example.test"
 	if err := ValidateTNL(TNL{Publisher: &ProjectPublisher{Type: "url", URL: &endpoint},

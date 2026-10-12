@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -70,6 +71,72 @@ func testAppRuntime(t *testing.T) (*appRuntime, string, <-chan uint64) {
 		}
 	})
 	return a, state, started
+}
+
+func TestAppScopedCredentialCannotManagePublisherLogin(t *testing.T) {
+	a, state, _ := testAppRuntime(t)
+	key, err := runtimeKey(a.project.Root, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := readLocalPublisherDescriptor(runtimeAppEndpointPath(key, "api"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/v1/auth/status", "/v1/auth/login/start", "/v1/auth/login/token", "/v1/auth/logout"} {
+		method := http.MethodPost
+		if path == "/v1/auth/status" {
+			method = http.MethodGet
+		}
+		request, err := http.NewRequestWithContext(t.Context(), method, endpoint.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
+		response, err := (&http.Client{Timeout: time.Second}).Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("app credential accessed %s: %d", path, response.StatusCode)
+		}
+	}
+}
+
+func TestPublisherOwnerReadsItsOwnControlSessionStatus(t *testing.T) {
+	a, state, _ := testAppRuntime(t)
+	database, err := clientstate.Open(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	a.state = database
+	server := "https://control.example.test"
+	a.project.Config.Server = &server
+	key, err := runtimeKey(a.project.Root, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := readRuntimeTCPEndpoint(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, endpoint.URL+"/v1/auth/status", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
+	response, err := (&http.Client{Timeout: time.Second}).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var status clientauth.StatusResult
+	if err := json.NewDecoder(response.Body).Decode(&status); err != nil || response.StatusCode != http.StatusOK || status.Server != server || status.Source != "none" {
+		t.Fatalf("publisher-owned session status = %+v, HTTP %d, %v", status, response.StatusCode, err)
+	}
 }
 
 func TestAppStatusRejectsPublisherWithStaleLocalCredential(t *testing.T) {
@@ -338,6 +405,38 @@ func TestRuntimeEndpointWorksWithoutProjectConfiguration(t *testing.T) {
 	}
 	if _, err := os.Stat(endpoint.Path); !os.IsNotExist(err) {
 		t.Fatalf("unconfigured endpoint lookup started the local publisher: %v", err)
+	}
+}
+
+func TestExternalPublisherMapsOnlyReachableAppListeners(t *testing.T) {
+	compose := &config.ComposeSelection{File: "compose.yaml", Project: "shop-k7n2p9", Service: "publisher"}
+	a := &appRuntime{project: projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Publisher: &config.ProjectPublisher{
+		Type: "docker", DockerSelection: config.DockerSelection{Compose: compose},
+	}}}}}
+	ctx := context.WithValue(t.Context(), localScopeContextKey{}, localPublisherScope{kind: localScopeApp, service: "web"})
+	if target, err := a.registeredAppTarget(ctx, "web", "http://127.0.0.1:49152", "0.0.0.0"); err != nil || target != "http://web:49152" {
+		t.Fatalf("docker app target = %q, %v", target, err)
+	}
+	for _, test := range []struct {
+		scope         localPublisherScope
+		target, bound string
+	}{
+		{localPublisherScope{kind: localScopeOwner}, "http://127.0.0.1:49152", "0.0.0.0"},
+		{localPublisherScope{kind: localScopeApp, service: "web"}, "http://127.0.0.1:49152", "127.0.0.1"},
+		{localPublisherScope{kind: localScopeApp, service: "web"}, "http://another:49152", "0.0.0.0"},
+	} {
+		ctx := context.WithValue(t.Context(), localScopeContextKey{}, test.scope)
+		if _, err := a.registeredAppTarget(ctx, "web", test.target, test.bound); err == nil {
+			t.Fatalf("accepted unreachable or unscoped app target %+v", test)
+		}
+	}
+	url := "https://publisher.example.test"
+	a.project.Config.Publisher = &config.ProjectPublisher{Type: "url", URL: &url}
+	if _, err := a.registeredAppTarget(ctx, "web", "http://127.0.0.1:49152", "0.0.0.0"); err == nil {
+		t.Fatal("remote url publisher accepted developer loopback")
+	}
+	if target, err := a.registeredAppTarget(ctx, "web", "http://web.internal:49152", "0.0.0.0"); err != nil || target != "http://web.internal:49152" {
+		t.Fatalf("directly reachable url publisher target = %q, %v", target, err)
 	}
 }
 

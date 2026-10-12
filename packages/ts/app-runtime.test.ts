@@ -84,6 +84,24 @@ if (process.argv.includes("serve")) writeFileSync(${JSON.stringify(join(director
   }
 });
 
+test("uses a mounted service-scoped endpoint without launching the native CLI", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tnl-sdk-compose-"));
+  const endpointPath = join(directory, "web.endpoint.json");
+  const old = process.env.TNL_PUBLISHER_ENDPOINT_FILE;
+  const bootstrap = await startTestBootstrap();
+  try {
+    await writeFile(endpointPath, await readFile(bootstrap.endpointPath));
+    process.env.TNL_PUBLISHER_ENDPOINT_FILE = endpointPath;
+    await expect(
+      startRuntime(directory, join(directory, "nonexistent-tnl"), { service: "web" }),
+    ).resolves.toBe(endpointPath);
+  } finally {
+    if (old === undefined) delete process.env.TNL_PUBLISHER_ENDPOINT_FILE;
+    else process.env.TNL_PUBLISHER_ENDPOINT_FILE = old;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("sends authenticated local publisher requests over loopback TCP", async () => {
   const directory = await mkdtemp(join(tmpdir(), "tnl-sdk-tcp-"));
   const credential = "b".repeat(43);
@@ -165,6 +183,34 @@ test("preparation exposes only public metadata and registers an actual port-0 No
   await handle.close();
   expect(server.listening).toBe(true);
   expect(bootstrap.requests.at(-1)?.path).toBe("/v1/unregister");
+});
+
+test("reports the bound interface separately from a remote-reachable target hostname", async () => {
+  const requests: Array<{ operation: string; body: unknown }> = [];
+  const handle = await createPreparedService(
+    { service: "api", targetHostname: "web.internal" },
+    "node",
+    {
+      start: async () => "/isolated/manager.sock",
+      request: async (_path, operation, body) => {
+        requests.push({ operation, body });
+        return operation === "prepare" ? assignment() : undefined;
+      },
+    },
+  );
+  const listener = {
+    listening: true,
+    address: () => ({ address: "0.0.0.0", port: 49152 }),
+    once: () => {},
+    off: () => {},
+    close: () => {},
+  };
+  await handle.register(listener);
+  expect(requests.find(({ operation }) => operation === "register")?.body).toMatchObject({
+    target: "http://web.internal:49152",
+    bound_host: "0.0.0.0",
+  });
+  await handle.close();
 });
 
 test("a surviving app reconnects and re-registers after the manager crashes", async () => {

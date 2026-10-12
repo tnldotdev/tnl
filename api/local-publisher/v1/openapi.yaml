@@ -165,6 +165,108 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/LocalEndpoint" }
         default: { $ref: "#/components/responses/Problem" }
+  /v1/auth/login/start:
+    post:
+      operationId: startProjectPublisherLogin
+      summary: Start a device login stored only by the selected publisher
+      responses:
+        "200":
+          description: Pending publisher-owned login operation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublisherLoginOperation" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/auth/login/wait:
+    post:
+      operationId: waitForProjectPublisherLogin
+      summary: Wait for approval and save the publisher control session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation_id, timeout_seconds]
+              properties:
+                operation_id: { type: string, minLength: 1, maxLength: 128 }
+                timeout_seconds: { type: integer, minimum: 1, maximum: 600 }
+      responses:
+        "200":
+          description: Completed publisher-owned login operation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublisherLoginOperation" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/auth/login/{operation_id}:
+    parameters:
+      - name: operation_id
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+    get:
+      operationId: inspectProjectPublisherLogin
+      summary: Inspect a publisher-owned login operation
+      responses:
+        "200":
+          description: Current operation state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublisherLoginOperation" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: cancelProjectPublisherLogin
+      summary: Cancel a publisher-owned login operation
+      responses:
+        "200":
+          description: Cancelled operation state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublisherLoginOperation" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/auth/login/token:
+    post:
+      operationId: loginProjectPublisherWithToken
+      summary: Redeem one login token in the publisher's own client state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token]
+              properties:
+                token: { type: string, minLength: 1, maxLength: 512 }
+      responses:
+        "200":
+          description: Publisher control session status without tokens
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublisherAuthStatus" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/auth/status:
+    get:
+      operationId: getProjectPublisherAuthStatus
+      summary: Read the publisher's own control-session status
+      parameters:
+        - name: check
+          in: query
+          schema: { type: integer, enum: [1] }
+      responses:
+        "200":
+          description: Publisher control-session status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublisherAuthStatus" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/auth/logout:
+    post:
+      operationId: logoutProjectPublisher
+      summary: Revoke the publisher control session without reading its tokens
+      responses:
+        "204": { description: Publisher control session revoked }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/events:
     get:
       operationId: listLocalProjectEvents
@@ -227,6 +329,31 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    PublisherLoginOperation:
+      type: object
+      additionalProperties: false
+      required: [operation_id, server, method, status, expires_at]
+      properties:
+        operation_id: { type: string, minLength: 1, maxLength: 128 }
+        server: { type: string, minLength: 1, maxLength: 512 }
+        method: { type: string, minLength: 1, maxLength: 64 }
+        status: { type: string, minLength: 1, maxLength: 64 }
+        approval_url: { type: string, minLength: 1, maxLength: 2048 }
+        user_code: { type: string, minLength: 1, maxLength: 128 }
+        expires_at: { type: string, format: date-time }
+        interval_seconds: { type: integer, minimum: 0 }
+    PublisherAuthStatus:
+      type: object
+      additionalProperties: false
+      required: [schema_version, server, status, source, checked]
+      properties:
+        schema_version: { type: integer, const: 1 }
+        server: { type: string, minLength: 1, maxLength: 512 }
+        status: { type: string, minLength: 1, maxLength: 64 }
+        source: { type: string, minLength: 1, maxLength: 64 }
+        checked: { type: boolean }
+        access_expires_at: { type: string, format: date-time }
+        refresh_expires_at: { type: string, format: date-time }
     LocalEndpoint:
       type: object
       additionalProperties: false
@@ -371,6 +498,7 @@ components:
       properties:
         owner: { type: string, pattern: "^[a-f0-9]{32}$" }
         target: { type: string, minLength: 1, maxLength: 2048 }
+        bound_host: { type: string, minLength: 1, maxLength: 253 }
     PublicationRequest:
       type: object
       additionalProperties: false

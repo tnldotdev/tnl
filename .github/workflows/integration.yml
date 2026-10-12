@@ -53,6 +53,8 @@ jobs:
       - name: Verify worktree Compose selection
         run: task go:test:integration:docker-selection
 
+      - name: Verify TypeScript publisher image
+        run: task go:test:integration:publisher-dev-image
       - name: Check MySQL inspector against Vitess
         run: task go:test:integration:mysql-oracle
 

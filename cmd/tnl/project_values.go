@@ -30,6 +30,13 @@ type projectPublisherCommand struct {
 
 type projectPublisherCredentialCommand struct {
 	Create projectPublisherCredentialCreateCommand `cmd:"" help:"Create the private owner credential for an external publisher."`
+	Export projectPublisherCredentialExportCommand `cmd:"" help:"Save one app-scoped endpoint for a container."`
+}
+
+type projectPublisherCredentialExportCommand struct {
+	StateDir string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	Service  string           `name:"service" required:"" help:"Configured app service using this endpoint."`
+	Output   scalarOutputMode `name:"output" enum:"human,raw,json" default:"human" help:"Output format: ${enum}."`
 }
 
 type projectPublisherCredentialCreateCommand struct {

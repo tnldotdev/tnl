@@ -99,6 +99,15 @@ func (c namedPublisherClient) request(ctx context.Context, method, path, owner s
 		if response.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("%w: %s", errNamedPublisherUnauthenticated, problem.Message)
 		}
+		if problem.Code == string(failure.AuthMethodUnavailable) {
+			return failure.Wrap("select publisher login method", failure.AuthMethodUnavailable, errors.New(problem.Message))
+		}
+		if problem.Code == string(failure.AuthWaitTimeout) {
+			return failure.Wrap("wait for publisher login", failure.AuthWaitTimeout, errors.New(problem.Message))
+		}
+		if problem.Code == string(failure.AuthOperationNotFound) {
+			return failure.Wrap("find publisher login", failure.AuthOperationNotFound, errors.New(problem.Message))
+		}
 		return fmt.Errorf("%s: %s", problem.Code, problem.Message)
 	}
 	if value == nil {
