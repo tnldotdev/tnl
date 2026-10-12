@@ -203,8 +203,8 @@ func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
 
 func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 	for filename, source := range map[string]string{
-		"tnl.json": `{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"},"http":{"readiness":{"path":"/health"},"paths":{"/api":"api"}}},"api":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"docker","service":"database","port":5432},"tunnel":{"visitor_tls":"passthrough"}}}}}`,
-		"tnl.yml":  "version: 1\ntnl:\n  services:\n    web:\n      target: {type: app}\n      http:\n        readiness: {path: /health}\n        paths: {/api: api}\n    api:\n      target: {type: address, address: 3000}\n    orders:\n      protocol: postgres\n      target: {type: docker, service: database, port: 5432}\n      tunnel: {visitor_tls: passthrough}\n",
+		"tnl.json": `{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"},"http":{"readiness":{"path":"/health"},"paths":{"/api":"api"}}},"api":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"docker","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"database"},"container_port":5432},"tunnel":{"visitor_tls":"passthrough"}}}}}`,
+		"tnl.yml":  "version: 1\ntnl:\n  services:\n    web:\n      target: {type: app}\n      http:\n        readiness: {path: /health}\n        paths: {/api: api}\n    api:\n      target: {type: address, address: 3000}\n    orders:\n      protocol: postgres\n      target: {type: docker, compose: {file: compose.yaml, project: shop-k7n2p9, service: database}, container_port: 5432}\n      tunnel: {visitor_tls: passthrough}\n",
 	} {
 		path := filepath.Join(t.TempDir(), filename)
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
@@ -217,7 +217,7 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 		web, api, orders := document.TNL.Services["web"], document.TNL.Services["api"], document.TNL.Services["orders"]
 		if web.Target.Type != "app" || web.HTTP.Readiness.Path != "/health" || ServicePaths(web)["/api"].Service != "api" ||
 			api.Target.Type != "address" || string(*api.Target.Address) != "3000" ||
-			orders.Protocol == nil || *orders.Protocol != "postgres" || orders.Target.Type != "docker" || *orders.Target.Service != "database" || *orders.Target.Port != 5432 ||
+			orders.Protocol == nil || *orders.Protocol != "postgres" || orders.Target.Type != "docker" || orders.Target.Compose == nil || orders.Target.Compose.Service != "database" || *orders.Target.ContainerPort != 5432 ||
 			*orders.Tunnel.VisitorTLS != "passthrough" {
 			t.Fatalf("%s: services = %#v", filename, document.TNL.Services)
 		}
@@ -228,11 +228,12 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 		{`{"services":{"orders":{"protocol":"mysql"}}}`, "TCP services require an address or Docker target"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"app"}}}}`, "app requires"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address"}}}}`, "address is required"},
-		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","service":"database"}}}}`, "docker requires"},
-		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","service":"database","port":0}}}}`, "docker requires"},
-		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","service":"--database","port":5432}}}}`, "docker requires"},
-		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","service":"database","port":5432,"address":"db:5432"}}}}`, "docker requires"},
-		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432","port":5432}}}}`, "address cannot"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","container":"db"}}}}`, "container_port"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","container":"db","container_port":0}}}}`, "container_port"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","compose":{"file":"../compose.yaml","project":"shop-k7n2p9","service":"database"},"container_port":5432}}}}`, "relative file"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","container":"db","container_port":5432,"address":"db:5432"}}}}`, "docker cannot use address"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","container":"db","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"db"},"container_port":5432}}}}`, "exactly one"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432","container_port":5432}}}}`, "address cannot"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"http":{"readiness":{"path":"/"}}}}}`, "cannot use HTTP"},
 		{`{"services":{"web":{"target":{"type":"app"},"tunnel":{"visitor_tls":"passthrough"}}}}`, "requires PostgreSQL or MySQL"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432","target_tls":true},"tunnel":{"visitor_tls":"passthrough"}}}}`, "cannot use private target TLS"},
@@ -250,7 +251,7 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 func TestProjectPublisherSelectsOneOwnerWithoutPuttingCredentialsInConfig(t *testing.T) {
 	for filename, source := range map[string]string{
 		"tnl.json": `{"version":1,"tnl":{"publisher":{"type":"url","url":"https://publisher.example.test:8443","owner_credential_file":".tnl/owner-token"},"services":{"web":{"target":{"type":"app"}}}}}`,
-		"tnl.yml":  "version: 1\ntnl:\n  publisher:\n    type: docker\n    service: publisher\n    port: 8765\n    owner_credential_file: .tnl/owner-token\n  services:\n    orders:\n      protocol: postgres\n      target: {type: docker, service: database, port: 5432}\n",
+		"tnl.yml":  "version: 1\ntnl:\n  publisher:\n    type: docker\n    compose: {file: compose.yaml, project: shop-k7n2p9, service: publisher}\n    container_port: 8765\n    owner_credential_file: .tnl/owner-token\n  services:\n    orders:\n      protocol: postgres\n      target: {type: docker, compose: {file: compose.yaml, project: shop-k7n2p9, service: database}, container_port: 5432}\n",
 	} {
 		path := filepath.Join(t.TempDir(), filename)
 		if err := os.WriteFile(path, []byte(source), 0600); err != nil {
@@ -266,10 +267,10 @@ func TestProjectPublisherSelectsOneOwnerWithoutPuttingCredentialsInConfig(t *tes
 		{`{"type":"url","url":"http://publisher.example","owner_credential_file":"owner"}`, "HTTPS origin"},
 		{`{"type":"url","url":"https://publisher.example/path","owner_credential_file":"owner"}`, "HTTPS origin"},
 		{`{"type":"url","url":"https://publisher.example:0","owner_credential_file":"owner"}`, "port must be"},
-		{`{"type":"url","url":"https://publisher.example"}`, "requires an HTTPS origin"},
-		{`{"type":"docker","service":"--other","port":8765,"owner_credential_file":"owner"}`, "docker publisher requires"},
-		{`{"type":"docker","service":"publisher","port":0,"owner_credential_file":"owner"}`, "docker publisher requires"},
-		{`{"type":"docker","service":"publisher","port":8765,"owner_credential_file":"  "}`, "owner_credential_file"},
+		{`{"type":"url"}`, "requires an HTTPS origin"},
+		{`{"type":"docker","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"--other"},"container_port":8765,"owner_credential_file":"owner"}`, "docker compose requires"},
+		{`{"type":"docker","container":"publisher","container_port":0,"owner_credential_file":"owner"}`, "container_port"},
+		{`{"type":"docker","container":"publisher","container_port":8765,"owner_credential_file":"  "}`, "owner_credential_file"},
 	} {
 		path := filepath.Join(t.TempDir(), "tnl.json")
 		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"publisher":`+test.publisher+`}}`), 0600); err != nil {
@@ -281,9 +282,14 @@ func TestProjectPublisherSelectsOneOwnerWithoutPuttingCredentialsInConfig(t *tes
 	}
 	service, credential := "publisher", "owner-token"
 	port := 8765
-	if err := ValidateTNL(TNL{Publisher: &ProjectPublisher{Type: "docker", Service: &service, Port: &port, OwnerCredentialFile: &credential},
+	if err := ValidateTNL(TNL{Publisher: &ProjectPublisher{Type: "docker", DockerSelection: DockerSelection{Container: &service, ContainerPort: &port}, OwnerCredentialFile: &credential},
 		Services: Services{"web": {Target: &ServiceTarget{Type: "app"}}}}); err == nil || !strings.Contains(err.Error(), "use the local publisher for a host app") {
 		t.Fatalf("docker publisher accepted a host app: %v", err)
+	}
+	endpoint := "https://publisher.example.test"
+	if err := ValidateTNL(TNL{Publisher: &ProjectPublisher{Type: "url", URL: &endpoint},
+		Services: Services{"orders": {Target: &ServiceTarget{Type: "docker", DockerSelection: DockerSelection{Container: &service, ContainerPort: &port}}}}}); err == nil || !strings.Contains(err.Error(), "select an address it can reach") {
+		t.Fatalf("url publisher accepted a host-only Docker mapping: %v", err)
 	}
 }
 

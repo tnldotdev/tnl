@@ -172,21 +172,21 @@
               },
               "additionalProperties": false,
               "type": "object",
-              "required": ["type", "url", "owner_credential_file"]
+              "required": ["type", "url"]
             },
             {
               "properties": {
                 "type": {
                   "const": "docker"
                 },
-                "service": {
-                  "type": "string",
-                  "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
-                },
-                "port": {
+                "container_port": {
                   "type": "integer",
                   "maximum": 65535,
                   "minimum": 1
+                },
+                "container": {
+                  "type": "string",
+                  "minLength": 1
                 },
                 "owner_credential_file": {
                   "type": "string",
@@ -195,7 +195,73 @@
               },
               "additionalProperties": false,
               "type": "object",
-              "required": ["type", "service", "port", "owner_credential_file"]
+              "required": ["type", "container_port", "container"]
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "docker"
+                },
+                "container_port": {
+                  "type": "integer",
+                  "maximum": 65535,
+                  "minimum": 1
+                },
+                "labels": {
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "type": "object",
+                  "maxProperties": 8,
+                  "minProperties": 1
+                },
+                "owner_credential_file": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": ["type", "container_port", "labels"]
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "docker"
+                },
+                "container_port": {
+                  "type": "integer",
+                  "maximum": 65535,
+                  "minimum": 1
+                },
+                "compose": {
+                  "properties": {
+                    "file": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "project": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "service": {
+                      "type": "string",
+                      "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": ["file", "project", "service"]
+                },
+                "owner_credential_file": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": ["type", "container_port", "compose"]
             }
           ],
           "description": "Publisher selected for this project; omitted uses the local host publisher."
@@ -260,14 +326,14 @@
                       "type": {
                         "const": "docker"
                       },
-                      "service": {
-                        "type": "string",
-                        "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
-                      },
-                      "port": {
+                      "container_port": {
                         "type": "integer",
                         "maximum": 65535,
                         "minimum": 1
+                      },
+                      "container": {
+                        "type": "string",
+                        "minLength": 1
                       },
                       "target_tls": {
                         "type": "boolean"
@@ -281,7 +347,83 @@
                     },
                     "additionalProperties": false,
                     "type": "object",
-                    "required": ["type", "service", "port"]
+                    "required": ["type", "container_port", "container"]
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "docker"
+                      },
+                      "container_port": {
+                        "type": "integer",
+                        "maximum": 65535,
+                        "minimum": 1
+                      },
+                      "labels": {
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "type": "object",
+                        "maxProperties": 8,
+                        "minProperties": 1
+                      },
+                      "target_tls": {
+                        "type": "boolean"
+                      },
+                      "target_tls_name": {
+                        "type": "string"
+                      },
+                      "target_ca_file": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["type", "container_port", "labels"]
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "docker"
+                      },
+                      "container_port": {
+                        "type": "integer",
+                        "maximum": 65535,
+                        "minimum": 1
+                      },
+                      "compose": {
+                        "properties": {
+                          "file": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "project": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "service": {
+                            "type": "string",
+                            "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["file", "project", "service"]
+                      },
+                      "target_tls": {
+                        "type": "boolean"
+                      },
+                      "target_tls_name": {
+                        "type": "string"
+                      },
+                      "target_ca_file": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["type", "container_port", "compose"]
                   }
                 ]
               },

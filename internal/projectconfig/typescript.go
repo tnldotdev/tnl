@@ -256,6 +256,7 @@ var typeScriptKeyMappings = map[string]string{
 	"max_bytes":             "maxBytes",
 	"target_ca_file":        "targetCAFile",
 	"owner_credential_file": "ownerCredentialFile",
+	"container_port":        "containerPort",
 	"target_tls":            "targetTLS",
 	"target_tls_name":       "targetTLSName",
 	"visitor_tls":           "visitorTLS",
@@ -294,18 +295,7 @@ func unmarshalTypeScriptTNL(data []byte) (config.TNL, error) {
 
 func normalizeTypeScriptObject(object map[string]any, objectType reflect.Type) error {
 	fields := make(map[string]reflect.StructField, objectType.NumField())
-	for index := 0; index < objectType.NumField(); index++ {
-		field := objectType.Field(index)
-		staticName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
-		if staticName == "" || staticName == "-" {
-			continue
-		}
-		typeScriptName := typeScriptKeyMappings[staticName]
-		if typeScriptName == "" {
-			typeScriptName = staticName
-		}
-		fields[typeScriptName] = field
-	}
+	collectTypeScriptFields(objectType, fields)
 	names := make([]string, 0, len(object))
 	for name := range object {
 		names = append(names, name)
@@ -359,6 +349,25 @@ func normalizeTypeScriptObject(object map[string]any, objectType reflect.Type) e
 		}
 	}
 	return nil
+}
+
+func collectTypeScriptFields(objectType reflect.Type, fields map[string]reflect.StructField) {
+	for index := 0; index < objectType.NumField(); index++ {
+		field := objectType.Field(index)
+		staticName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if field.Anonymous && staticName == "" && field.Type.Kind() == reflect.Struct {
+			collectTypeScriptFields(field.Type, fields)
+			continue
+		}
+		if staticName == "" || staticName == "-" {
+			continue
+		}
+		typeScriptName := typeScriptKeyMappings[staticName]
+		if typeScriptName == "" {
+			typeScriptName = staticName
+		}
+		fields[typeScriptName] = field
+	}
 }
 
 func sanitizedEnvironment(environment []string) ([]string, map[string]string) {

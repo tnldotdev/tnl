@@ -25,7 +25,7 @@ func selectedPublisherEndpoint(ctx context.Context, project projectConfiguration
 	if selection == nil || selection.Type == "local" {
 		return localPublisherEndpoint{}, errors.New("the project uses the local publisher")
 	}
-	credential, err := readPublisherOwnerCredential(project.Root, *selection.OwnerCredentialFile)
+	credential, err := readPublisherOwnerCredential(project.Root, selection.CredentialFile())
 	if err != nil {
 		return localPublisherEndpoint{}, err
 	}
@@ -33,7 +33,11 @@ func selectedPublisherEndpoint(ctx context.Context, project projectConfiguration
 	if selection.Type == "url" {
 		url = *selection.URL
 	} else {
-		address, err := dockertarget.ComposePublisherPort(ctx, project.Root, project.Worktree.Label.FullLabel, *selection.Service, *selection.Port)
+		container, err := dockertarget.SelectContainer(ctx, project.Root, project.Worktree.Label.FullLabel, selection.DockerSelection)
+		if err != nil {
+			return localPublisherEndpoint{}, failure.Wrap("connect to Docker publisher", failure.ClientStateUnavailable, err)
+		}
+		address, err := dockertarget.HostPort(container, *selection.ContainerPort, true)
 		if err != nil {
 			return localPublisherEndpoint{}, failure.Wrap("connect to Docker publisher", failure.ClientStateUnavailable, err)
 		}
@@ -90,6 +94,9 @@ func readPublisherOwnerCredential(root, selected string) (string, error) {
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", failure.Wrap("read publisher owner credential", failure.PublisherOwnerCredentialMissing, err)
+		}
 		return "", failure.Wrap("read publisher owner credential", failure.ClientStateUnavailable, err)
 	}
 	owner, ok := info.Sys().(*syscall.Stat_t)

@@ -42,6 +42,7 @@ const (
 	LoginTokenInvalid                 Reason = "TNL_CLIENT_LOGIN_TOKEN_INVALID"
 	LoginTerminalRequired             Reason = "TNL_CLIENT_LOGIN_TERMINAL_REQUIRED"
 	ProjectConfigInvalid              Reason = "TNL_CLIENT_PROJECT_CONFIG_INVALID"
+	PublisherOwnerCredentialMissing   Reason = "TNL_CLIENT_PUBLISHER_CREDENTIAL_MISSING"
 	AliasOwned                        Reason = "TNL_CLIENT_ALIAS_OWNED"
 	AliasReceiverUnready              Reason = "TNL_CLIENT_ALIAS_RECEIVER_UNREADY"
 	AliasNotSelected                  Reason = "TNL_CLIENT_ALIAS_NOT_SELECTED"
@@ -278,6 +279,10 @@ var definitions = map[Reason]Definition{
 	ProjectConfigInvalid: {
 		Class: Invalid, Message: "tnl could not use the project configuration",
 		Action: "run tnl config check and correct the reported setting", Retry: RetryAfterChange,
+	},
+	PublisherOwnerCredentialMissing: {
+		Class: Unavailable, Message: "the project publisher owner credential file is missing",
+		Action: "run tnl project publisher credential create, then start the publisher again", Retry: RetryAfterChange,
 	},
 	AliasOwned: {
 		Class: Conflict, Message: "another live worktree owns this alias",

@@ -190,6 +190,24 @@ func TestFactoryReceivesRelativeProjectDirectoryAndFrozenLabel(t *testing.T) {
 	}
 }
 
+func TestComposeSelectorsUseTheHostWorktreeLabelInTypeScript(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "tnl.config.ts")
+	source := `export default ({worktree}) => ({
+  publisher: {type: "docker", compose: {file: "compose.yaml", project: worktree.label.fullLabel, service: "publisher"}, containerPort: 3781},
+  services: {orders: {protocol: "postgres", target: {type: "docker", compose: {file: "compose.yaml", project: worktree.label.fullLabel, service: "db"}, containerPort: 5432}}}
+});`
+	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	label := WorktreeLabel{Project: "shop", ID: "k7n2p9", FullLabel: "shop-k7n2p9"}
+	project, err := loadTypeScript(t.Context(), path, root, Worktree{Root: root, Label: label})
+	if err != nil || project.Publisher == nil || project.Publisher.Compose == nil || project.Publisher.Compose.Project != label.FullLabel ||
+		project.Services["orders"].Target == nil || project.Services["orders"].Target.Compose == nil || project.Services["orders"].Target.Compose.Project != label.FullLabel {
+		t.Fatalf("TypeScript Compose project identity = %+v, %v", project, err)
+	}
+}
+
 func TestLoadAliasesValidatesComputedServiceReferences(t *testing.T) {
 	for _, test := range []struct {
 		service string

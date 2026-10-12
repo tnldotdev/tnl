@@ -611,12 +611,13 @@ func TestPublishUsesDockerServiceAndPrivatePortFromSelectedWorktree(t *testing.T
 	project := projectConfiguration{Project: projectconfig.Project{
 		Root: t.TempDir(), Worktree: projectconfig.Worktree{Label: projectconfig.WorktreeLabel{FullLabel: "shop-perf-k7n2p9"}},
 		Config: config.TNL{Services: config.Services{"orders": {Protocol: &protocol, Target: &config.ServiceTarget{
-			Type: "docker", Service: &dockerService, Port: &privatePort, TargetTLS: &targetTLS, TargetTLSName: &privateTLSName,
+			Type: "docker", DockerSelection: config.DockerSelection{Compose: &config.ComposeSelection{File: "compose.yaml", Project: "shop-perf-k7n2p9", Service: dockerService}, ContainerPort: &privatePort}, TargetTLS: &targetTLS, TargetTLSName: &privateTLSName,
 		}}}},
 	}}
 	flags := publishCommand{Target: "orders"}
 	if err := project.applyPublish(&flags); err != nil || flags.Target != "" || flags.Service != "orders" || flags.Protocol != protocol ||
-		flags.dockerTarget == nil || *flags.dockerTarget != (dockerPublishTarget{dockerService, privatePort, "shop-perf-k7n2p9"}) ||
+		flags.dockerTarget == nil || flags.dockerTarget.selection.Compose == nil || flags.dockerTarget.selection.Compose.Service != dockerService ||
+		*flags.dockerTarget.selection.ContainerPort != privatePort || flags.dockerTarget.projectLabel != "shop-perf-k7n2p9" ||
 		!flags.TargetTLS || flags.TargetTLSName != privateTLSName {
 		t.Fatalf("Docker publish configuration = %+v, %v", flags, err)
 	}

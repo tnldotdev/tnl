@@ -113,16 +113,39 @@ func projectPublisherSchema() *jsonschema.Schema {
 	url.Set("type", &jsonschema.Schema{Const: "url"})
 	url.Set("url", &jsonschema.Schema{Type: "string", Pattern: `^https://[^/?#]+$`})
 	url.Set("owner_credential_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
-	docker := jsonschema.NewProperties()
-	docker.Set("type", &jsonschema.Schema{Const: "docker"})
-	docker.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`})
-	docker.Set("port", &jsonschema.Schema{Type: "integer", Minimum: "1", Maximum: "65535"})
-	docker.Set("owner_credential_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
-	return &jsonschema.Schema{OneOf: []*jsonschema.Schema{
+	variants := []*jsonschema.Schema{
 		{Type: "object", Required: []string{"type"}, Properties: local, AdditionalProperties: jsonschema.FalseSchema},
-		{Type: "object", Required: []string{"type", "url", "owner_credential_file"}, Properties: url, AdditionalProperties: jsonschema.FalseSchema},
-		{Type: "object", Required: []string{"type", "service", "port", "owner_credential_file"}, Properties: docker, AdditionalProperties: jsonschema.FalseSchema},
-	}}
+		{Type: "object", Required: []string{"type", "url"}, Properties: url, AdditionalProperties: jsonschema.FalseSchema},
+	}
+	for _, entry := range dockerSelectorSchemas("docker") {
+		entry.Properties.Set("owner_credential_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
+		variants = append(variants, entry)
+	}
+	return &jsonschema.Schema{OneOf: variants}
+}
+
+func dockerSelectorSchemas(kind string, required ...string) []*jsonschema.Schema {
+	selectors := []string{"container", "labels", "compose"}
+	result := make([]*jsonschema.Schema, 0, len(selectors))
+	for _, selector := range selectors {
+		properties := jsonschema.NewProperties()
+		properties.Set("type", &jsonschema.Schema{Const: kind})
+		properties.Set("container_port", &jsonschema.Schema{Type: "integer", Minimum: "1", Maximum: "65535"})
+		switch selector {
+		case "container":
+			properties.Set("container", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
+		case "labels":
+			properties.Set("labels", &jsonschema.Schema{Type: "object", MinProperties: integerPointer(1), MaxProperties: integerPointer(8), AdditionalProperties: &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)}})
+		case "compose":
+			compose := jsonschema.NewProperties()
+			compose.Set("file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
+			compose.Set("project", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
+			compose.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`})
+			properties.Set("compose", &jsonschema.Schema{Type: "object", Required: []string{"file", "project", "service"}, Properties: compose, AdditionalProperties: jsonschema.FalseSchema})
+		}
+		result = append(result, &jsonschema.Schema{Type: "object", Required: append([]string{"type", "container_port", selector}, required...), Properties: properties, AdditionalProperties: jsonschema.FalseSchema})
+	}
+	return result
 }
 
 func servicesSchema() *jsonschema.Schema {
@@ -137,18 +160,17 @@ func servicesSchema() *jsonschema.Schema {
 	addressTargetProperties.Set("target_tls", &jsonschema.Schema{Type: "boolean"})
 	addressTargetProperties.Set("target_tls_name", &jsonschema.Schema{Type: "string"})
 	addressTargetProperties.Set("target_ca_file", &jsonschema.Schema{Type: "string"})
-	dockerTargetProperties := jsonschema.NewProperties()
-	dockerTargetProperties.Set("type", &jsonschema.Schema{Const: "docker"})
-	dockerTargetProperties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`})
-	dockerTargetProperties.Set("port", &jsonschema.Schema{Type: "integer", Minimum: "1", Maximum: "65535"})
-	dockerTargetProperties.Set("target_tls", &jsonschema.Schema{Type: "boolean"})
-	dockerTargetProperties.Set("target_tls_name", &jsonschema.Schema{Type: "string"})
-	dockerTargetProperties.Set("target_ca_file", &jsonschema.Schema{Type: "string"})
-	properties.Set("target", &jsonschema.Schema{OneOf: []*jsonschema.Schema{
+	variants := []*jsonschema.Schema{
 		{Type: "object", Required: []string{"type"}, Properties: appTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
 		{Type: "object", Required: []string{"type", "address"}, Properties: addressTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
-		{Type: "object", Required: []string{"type", "service", "port"}, Properties: dockerTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
-	}})
+	}
+	for _, entry := range dockerSelectorSchemas("docker") {
+		entry.Properties.Set("target_tls", &jsonschema.Schema{Type: "boolean"})
+		entry.Properties.Set("target_tls_name", &jsonschema.Schema{Type: "string"})
+		entry.Properties.Set("target_ca_file", &jsonschema.Schema{Type: "string"})
+		variants = append(variants, entry)
+	}
+	properties.Set("target", &jsonschema.Schema{OneOf: variants})
 	tunnel := tunnelSchema()
 	tunnel.Description = "PublicURL and tunnel overrides for this service."
 	properties.Set("tunnel", tunnel)
@@ -320,6 +342,10 @@ func collectTypeScriptKeys(valueType reflect.Type, result map[string]string) {
 	for index := 0; index < valueType.NumField(); index++ {
 		field := valueType.Field(index)
 		staticName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if field.Anonymous && staticName == "" && field.Type.Kind() == reflect.Struct {
+			collectTypeScriptKeys(field.Type, result)
+			continue
+		}
 		if staticName == "" || staticName == "-" {
 			continue
 		}

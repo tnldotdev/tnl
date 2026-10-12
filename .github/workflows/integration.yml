@@ -50,6 +50,9 @@ jobs:
       - name: Verify TCP clients
         run: task go:test:integration:tcp-clients
 
+      - name: Verify worktree Compose selection
+        run: task go:test:integration:docker-selection
+
       - name: Check MySQL inspector against Vitess
         run: task go:test:integration:mysql-oracle
 

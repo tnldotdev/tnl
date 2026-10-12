@@ -23,11 +23,11 @@ func runProjectPublisherCredentialCreate(ctx context.Context, flags cli, output 
 		return err
 	}
 	selected := project.Config.Publisher
-	if selected == nil || selected.Type == "local" || selected.OwnerCredentialFile == nil {
+	if selected == nil || selected.Type == "local" {
 		return failure.Wrap("create publisher credential", failure.ProjectConfigMissing,
-			errors.New("configure publisher.type as docker or url with owner_credential_file first"))
+			errors.New("configure publisher.type as docker or url first"))
 	}
-	path := *selected.OwnerCredentialFile
+	path := selected.CredentialFile()
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(project.Root, path)
 	}

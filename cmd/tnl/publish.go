@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
@@ -47,8 +48,7 @@ type publishCommand struct {
 }
 
 type dockerPublishTarget struct {
-	service      string
-	port         int
+	selection    config.DockerSelection
 	projectLabel string
 }
 

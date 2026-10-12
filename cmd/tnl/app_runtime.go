@@ -318,12 +318,12 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	listen := "127.0.0.1:0"
 	ownerCredential := ""
 	if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
-		ownerCredential, err = readPublisherOwnerCredential(project.Root, *selection.OwnerCredentialFile)
+		ownerCredential, err = readPublisherOwnerCredential(project.Root, selection.CredentialFile())
 		if err != nil {
 			return err
 		}
 		if selection.Type == "docker" {
-			listen = net.JoinHostPort("0.0.0.0", strconv.Itoa(*selection.Port))
+			listen = net.JoinHostPort("0.0.0.0", strconv.Itoa(*selection.ContainerPort))
 		} else {
 			if options.Listen == "" {
 				return failure.Wrap("start external publisher", failure.ProjectConfigInvalid, errors.New("url publishers require --listen behind HTTPS"))

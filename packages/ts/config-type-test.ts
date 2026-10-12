@@ -155,6 +155,31 @@ const projectScopedSettings = {
     web: { target: { type: "app" }, http: { readiness: { path: "/health" } } },
   },
 } satisfies TnlConfig;
+const composeProject = defineConfig(({ worktree }) => ({
+  publisher: {
+    type: "docker",
+    compose: { file: "compose.yaml", project: worktree.label.fullLabel, service: "publisher" },
+    containerPort: 3781,
+  },
+  services: {
+    orders: {
+      protocol: "postgres",
+      target: {
+        type: "docker",
+        compose: { file: "compose.yaml", project: worktree.label.fullLabel, service: "db" },
+        containerPort: 5432,
+      },
+    },
+  },
+}));
+type ComposeProjectConfig = Awaited<ReturnType<typeof composeProject>>;
+declare const composeProjectConfig: ComposeProjectConfig;
+if (
+  composeProjectConfig.services?.orders.target?.type === "docker" &&
+  "compose" in composeProjectConfig.services.orders.target
+) {
+  composeProjectConfig.services.orders.target.compose.service satisfies string;
+}
 const mountedServices = {
   services: {
     web: { http: { paths: { "/api": "api", "/v1": { service: "api", stripPrefix: true } } } },

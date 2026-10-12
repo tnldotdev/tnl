@@ -48,13 +48,36 @@ type TNL struct {
 
 type Services map[string]Service
 
+const DefaultPublisherOwnerCredentialFile = ".tnl/publisher-owner"
+
+func (p ProjectPublisher) CredentialFile() string {
+	if p.OwnerCredentialFile == nil {
+		return DefaultPublisherOwnerCredentialFile
+	}
+	return *p.OwnerCredentialFile
+}
+
 // ProjectPublisher selects the project publisher's local or external API.
 type ProjectPublisher struct {
 	Type                string  `json:"type" yaml:"type" jsonschema:"required,enum=local,enum=docker,enum=url"`
 	URL                 *string `json:"url,omitempty" yaml:"url,omitempty" jsonschema_description:"HTTPS origin of an external publisher API."`
-	Service             *string `json:"service,omitempty" yaml:"service,omitempty" jsonschema_description:"Compose service running the publisher API."`
-	Port                *int    `json:"port,omitempty" yaml:"port,omitempty" jsonschema:"minimum=1,maximum=65535" jsonschema_description:"Private TCP port of the Compose publisher API."`
+	DockerSelection     `yaml:",inline"`
 	OwnerCredentialFile *string `json:"owner_credential_file,omitempty" yaml:"owner_credential_file,omitempty" jsonschema_description:"Private file containing the project publisher owner credential; never browser metadata."`
+}
+
+// DockerSelection selects one private container port by an explicit Docker
+// container, a worktree label, or a service in a specific Compose project.
+type DockerSelection struct {
+	Container     *string           `json:"container,omitempty" yaml:"container,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Compose       *ComposeSelection `json:"compose,omitempty" yaml:"compose,omitempty"`
+	ContainerPort *int              `json:"container_port,omitempty" yaml:"container_port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+}
+
+type ComposeSelection struct {
+	File    string `json:"file" yaml:"file"`
+	Project string `json:"project" yaml:"project"`
+	Service string `json:"service" yaml:"service"`
 }
 
 // Service contains project-local overrides for one named local service.
@@ -72,13 +95,12 @@ type Service struct {
 
 // ServiceTarget chooses an app listener, private address, or Compose service.
 type ServiceTarget struct {
-	Type          string  `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=docker"`
-	Address       *Target `json:"address,omitempty" yaml:"address,omitempty" jsonschema_description:"Private HTTP origin, TCP host:port, or local port reached by the publisher."`
-	Service       *string `json:"service,omitempty" yaml:"service,omitempty" jsonschema_description:"Docker Compose service name for a Docker target."`
-	Port          *int    `json:"port,omitempty" yaml:"port,omitempty" jsonschema:"minimum=1,maximum=65535" jsonschema_description:"Private TCP port published by the Docker Compose service."`
-	TargetTLS     *bool   `json:"target_tls,omitempty" yaml:"target_tls,omitempty"`
-	TargetTLSName *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty"`
-	TargetCAFile  *string `json:"target_ca_file,omitempty" yaml:"target_ca_file,omitempty"`
+	Type            string  `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=docker"`
+	Address         *Target `json:"address,omitempty" yaml:"address,omitempty" jsonschema_description:"Private HTTP origin, TCP host:port, or local port reached by the publisher."`
+	DockerSelection `yaml:",inline"`
+	TargetTLS       *bool   `json:"target_tls,omitempty" yaml:"target_tls,omitempty"`
+	TargetTLSName   *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty"`
+	TargetCAFile    *string `json:"target_ca_file,omitempty" yaml:"target_ca_file,omitempty"`
 }
 
 type HTTPService struct {

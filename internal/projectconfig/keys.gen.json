@@ -1,6 +1,7 @@
 {
   "allow_all_ips": "allowAllIPs",
   "allow_ip": "allowIP",
+  "container_port": "containerPort",
   "max_bytes": "maxBytes",
   "owner_credential_file": "ownerCredentialFile",
   "public_url": "publicURL",
