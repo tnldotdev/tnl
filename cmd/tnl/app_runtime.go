@@ -141,8 +141,9 @@ func runtimeAvailable(ctx context.Context, socket string) bool {
 	if err != nil {
 		return false
 	}
-	response.Body.Close()
-	return response.StatusCode == http.StatusOK
+	_, readErr := io.Copy(io.Discard, response.Body)
+	closeErr := response.Body.Close()
+	return readErr == nil && closeErr == nil && response.StatusCode == http.StatusOK
 }
 
 func runRuntimeAddress(ctx context.Context, options runtimeOptions, output io.Writer) error {
