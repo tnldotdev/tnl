@@ -116,9 +116,17 @@ func servicesSchema() *jsonschema.Schema {
 	addressTargetProperties.Set("target_tls", &jsonschema.Schema{Type: "boolean"})
 	addressTargetProperties.Set("target_tls_name", &jsonschema.Schema{Type: "string"})
 	addressTargetProperties.Set("target_ca_file", &jsonschema.Schema{Type: "string"})
+	dockerTargetProperties := jsonschema.NewProperties()
+	dockerTargetProperties.Set("type", &jsonschema.Schema{Const: "docker"})
+	dockerTargetProperties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`})
+	dockerTargetProperties.Set("port", &jsonschema.Schema{Type: "integer", Minimum: "1", Maximum: "65535"})
+	dockerTargetProperties.Set("target_tls", &jsonschema.Schema{Type: "boolean"})
+	dockerTargetProperties.Set("target_tls_name", &jsonschema.Schema{Type: "string"})
+	dockerTargetProperties.Set("target_ca_file", &jsonschema.Schema{Type: "string"})
 	properties.Set("target", &jsonschema.Schema{OneOf: []*jsonschema.Schema{
 		{Type: "object", Required: []string{"type"}, Properties: appTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
 		{Type: "object", Required: []string{"type", "address"}, Properties: addressTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
+		{Type: "object", Required: []string{"type", "service", "port"}, Properties: dockerTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
 	}})
 	tunnel := tunnelSchema()
 	tunnel.Description = "PublicURL and tunnel overrides for this service."

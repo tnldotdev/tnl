@@ -198,6 +198,34 @@
                     "additionalProperties": false,
                     "type": "object",
                     "required": ["type", "address"]
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "docker"
+                      },
+                      "service": {
+                        "type": "string",
+                        "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                      },
+                      "port": {
+                        "type": "integer",
+                        "maximum": 65535,
+                        "minimum": 1
+                      },
+                      "target_tls": {
+                        "type": "boolean"
+                      },
+                      "target_tls_name": {
+                        "type": "string"
+                      },
+                      "target_ca_file": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["type", "service", "port"]
                   }
                 ]
               },
