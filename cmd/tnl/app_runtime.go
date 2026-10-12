@@ -186,7 +186,8 @@ func configuredRuntimeServices(project projectConfiguration) []clientruntime.Ser
 	services := make([]clientruntime.Service, 0, len(project.Config.Services))
 	for name := range project.Config.Services {
 		effective, _ := project.EffectiveService(name)
-		if config.ServiceProtocol(effective.Publish) != "http" {
+		service := project.Config.Services[name]
+		if config.ServiceProtocol(effective.Publish) != "http" || service.Target != nil && service.Target.Type != "app" {
 			continue
 		}
 		readiness := clientruntime.Readiness{Path: "/"}
@@ -315,6 +316,14 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 		return privateprotocol.Assignment{}, failure.Wrap("select app project", failure.ProjectConfigInvalid, errors.New("app preparation selected another project"))
 	}
 	name := request.Service
+	if name == "" {
+		for _, candidate := range project.Config.Services {
+			if candidate.Target != nil && candidate.Target.Type == "app" {
+				return privateprotocol.Assignment{}, failure.Wrap("select app service", failure.ServiceNotConfigured,
+					errors.New("pass the configured service name to tnl.prepare"))
+			}
+		}
+	}
 	if name == "" {
 		longest := -1
 		for candidate, path := range project.ServiceDirectories {
@@ -612,7 +621,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		stop := startWebhookIntegrationURL(ctx, a.state, services, project.Project, tunnel, service.Name, group, output, nil)
 		defer stop()
 	}
-	for prefix, mount := range project.Config.Services[service.Name].Paths {
+	for prefix, mount := range config.ServicePaths(project.Config.Services[service.Name]) {
 		options := localproxy.TargetOptions{}
 		mounted, err := project.EffectiveService(mount.Service)
 		if err != nil {

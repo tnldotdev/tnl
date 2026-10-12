@@ -75,6 +75,10 @@ export interface TnlConfig {
      * Exact public URL hostname or HTTPS origin to publish.
      */
     publicURL?: string;
+    /**
+     * How PostgreSQL or MySQL visitor TLS reaches the private database.
+     */
+    visitorTLS?: "terminate" | "passthrough";
   };
   publish?: Publish;
   readiness?: Readiness;
@@ -89,6 +93,21 @@ export interface TnlConfig {
            */
           directory?: string;
           inspection?: Inspection1;
+          /**
+           * Local service protocol; defaults to http.
+           */
+          protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh" | "mongodb";
+          target?:
+            | {
+                type: "app";
+              }
+            | {
+                type: "address";
+                address: string | number;
+                targetCAFile?: string;
+                targetTLS?: boolean;
+                targetTLSName?: string;
+              };
           /**
            * PublicURL and tunnel overrides for this service.
            */
@@ -135,6 +154,10 @@ export interface TnlConfig {
              * Exact public URL hostname or HTTPS origin to publish.
              */
             publicURL?: string;
+            /**
+             * How PostgreSQL or MySQL visitor TLS reaches the private database.
+             */
+            visitorTLS?: "terminate" | "passthrough";
           };
           publish?: Publish;
           readiness?: Readiness;
@@ -149,6 +172,21 @@ export interface TnlConfig {
                   stripPrefix?: boolean;
                 }
               | undefined;
+          };
+          http?: {
+            readiness?: Readiness;
+            /**
+             * Mount another configured service at a path on this service's public URL.
+             */
+            paths?: {
+              [k: string]:
+                | string
+                | {
+                    service: string;
+                    stripPrefix?: boolean;
+                  }
+                | undefined;
+            };
           };
         }
       | undefined;

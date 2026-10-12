@@ -139,9 +139,12 @@ func (p Project) EffectiveService(name string) (config.TNL, error) {
 	}
 	result.Inspection = config.MergeInspection(result.Inspection, service.Inspection)
 	result.Tunnel = mergeTunnel(result.Tunnel, service.Tunnel)
-	result.Publish = config.MergePublish(result.Publish, service.Publish)
+	result.Publish = config.ServicePublish(base.Publish, service)
 	if service.Readiness != nil {
 		result.Readiness = service.Readiness
+	}
+	if service.HTTP != nil && service.HTTP.Readiness != nil {
+		result.Readiness = service.HTTP.Readiness
 	}
 	return result, nil
 }
@@ -178,6 +181,9 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 	}
 	if override.Ephemeral != nil {
 		result.Ephemeral = override.Ephemeral
+	}
+	if override.VisitorTLS != nil {
+		result.VisitorTLS = override.VisitorTLS
 	}
 	if override.Limits != nil {
 		if result.Limits == nil {

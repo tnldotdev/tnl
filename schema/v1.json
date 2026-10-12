@@ -149,6 +149,11 @@
               "type": "boolean",
               "description": "Remove the public URL when this tunnel stops."
             },
+            "visitor_tls": {
+              "type": "string",
+              "enum": ["terminate", "passthrough"],
+              "description": "How PostgreSQL or MySQL visitor TLS reaches the private database."
+            },
             "limits": {
               "properties": {
                 "requests": {
@@ -202,6 +207,57 @@
               },
               "inspection": {
                 "$ref": "#/$defs/Inspection"
+              },
+              "protocol": {
+                "type": "string",
+                "enum": ["http", "postgres", "mysql", "redis", "ssh", "mongodb"],
+                "description": "Local service protocol; defaults to http."
+              },
+              "target": {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "app"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["type"]
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "address"
+                      },
+                      "address": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          }
+                        ]
+                      },
+                      "target_tls": {
+                        "type": "boolean"
+                      },
+                      "target_tls_name": {
+                        "type": "string"
+                      },
+                      "target_ca_file": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["type", "address"]
+                  }
+                ]
               },
               "tunnel": {
                 "allOf": [
@@ -262,6 +318,11 @@
                   "ephemeral": {
                     "type": "boolean",
                     "description": "Remove the public URL when this tunnel stops."
+                  },
+                  "visitor_tls": {
+                    "type": "string",
+                    "enum": ["terminate", "passthrough"],
+                    "description": "How PostgreSQL or MySQL visitor TLS reaches the private database."
                   },
                   "limits": {
                     "properties": {
@@ -332,6 +393,42 @@
                 "type": "object",
                 "maxProperties": 32,
                 "description": "Mount another configured service at a path on this service's public URL."
+              },
+              "http": {
+                "properties": {
+                  "readiness": {
+                    "$ref": "#/$defs/Readiness"
+                  },
+                  "paths": {
+                    "additionalProperties": {
+                      "oneOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                        },
+                        {
+                          "properties": {
+                            "service": {
+                              "type": "string",
+                              "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                            },
+                            "strip_prefix": {
+                              "type": "boolean"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["service"]
+                        }
+                      ]
+                    },
+                    "type": "object",
+                    "maxProperties": 32,
+                    "description": "Mount another configured service at a path on this service's public URL."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object"
               }
             },
             "additionalProperties": false,

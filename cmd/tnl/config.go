@@ -129,12 +129,19 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
 	}
 	applyInspection(&flags.tunnelFlags, effective)
+	if effective.Tunnel != nil && effective.Tunnel.VisitorTLS != nil && !flags.visitorTLSFromCLI {
+		flags.VisitorTLSPassthrough = *effective.Tunnel.VisitorTLS == "passthrough"
+	}
 	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
 	if flags.PublishCredential == "" {
 		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	}
 	if flags.Target == "" && flags.PublishCredential == "" {
 		if service != "" {
+			if selected := c.Config.Services[service].Target; selected != nil && selected.Type == "app" {
+				return failure.Wrap("select app service", failure.MissingTarget,
+					fmt.Errorf("service %q expects an app registration; start the app normally instead of running tnl publish", service))
+			}
 			return failure.Wrap("select target for service", failure.MissingTarget,
 				fmt.Errorf("target is required for service %q through publish.target", service))
 		}

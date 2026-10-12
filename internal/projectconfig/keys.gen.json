@@ -7,5 +7,6 @@
   "strip_prefix": "stripPrefix",
   "target_ca_file": "targetCAFile",
   "target_tls": "targetTLS",
-  "target_tls_name": "targetTLSName"
+  "target_tls_name": "targetTLSName",
+  "visitor_tls": "visitorTLS"
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 )
@@ -12,15 +13,15 @@ func resolveProjectMounts(project projectConfiguration, service string) ([]local
 	if service == "" {
 		return nil, nil
 	}
-	configuration := project.Config.Services[service]
-	prefixes := make([]string, 0, len(configuration.Paths))
-	for prefix := range configuration.Paths {
+	paths := config.ServicePaths(project.Config.Services[service])
+	prefixes := make([]string, 0, len(paths))
+	for prefix := range paths {
 		prefixes = append(prefixes, prefix)
 	}
 	slices.Sort(prefixes)
 	mounts := make([]localproxy.Mount, 0, len(prefixes))
 	for _, prefix := range prefixes {
-		mount := configuration.Paths[prefix]
+		mount := paths[prefix]
 		effective, err := project.EffectiveService(mount.Service)
 		if err != nil {
 			return nil, err

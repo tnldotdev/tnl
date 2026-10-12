@@ -257,6 +257,7 @@ var typeScriptKeyMappings = map[string]string{
 	"target_ca_file":  "targetCAFile",
 	"target_tls":      "targetTLS",
 	"target_tls_name": "targetTLSName",
+	"visitor_tls":     "visitorTLS",
 	"strip_prefix":    "stripPrefix",
 	"public_url":      "publicURL",
 }

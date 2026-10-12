@@ -108,6 +108,19 @@ func servicesSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
 	properties.Set("directory", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), Description: "Service directory relative to the project configuration."})
 	properties.Set("inspection", &jsonschema.Schema{Ref: "#/$defs/Inspection"})
+	properties.Set("protocol", &jsonschema.Schema{Type: "string", Enum: []any{"http", "postgres", "mysql", "redis", "ssh", "mongodb"}, Description: "Local service protocol; defaults to http."})
+	appTargetProperties := jsonschema.NewProperties()
+	appTargetProperties.Set("type", &jsonschema.Schema{Const: "app"})
+	addressTargetProperties := jsonschema.NewProperties()
+	addressTargetProperties.Set("type", &jsonschema.Schema{Const: "address"})
+	addressTargetProperties.Set("address", schemaForType(reflect.TypeOf(config.Target(""))))
+	addressTargetProperties.Set("target_tls", &jsonschema.Schema{Type: "boolean"})
+	addressTargetProperties.Set("target_tls_name", &jsonschema.Schema{Type: "string"})
+	addressTargetProperties.Set("target_ca_file", &jsonschema.Schema{Type: "string"})
+	properties.Set("target", &jsonschema.Schema{OneOf: []*jsonschema.Schema{
+		{Type: "object", Required: []string{"type"}, Properties: appTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
+		{Type: "object", Required: []string{"type", "address"}, Properties: addressTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
+	}})
 	tunnel := tunnelSchema()
 	tunnel.Description = "PublicURL and tunnel overrides for this service."
 	properties.Set("tunnel", tunnel)
@@ -116,14 +129,19 @@ func servicesSchema() *jsonschema.Schema {
 	mountProperties := jsonschema.NewProperties()
 	mountProperties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`})
 	mountProperties.Set("strip_prefix", &jsonschema.Schema{Type: "boolean"})
-	properties.Set("paths", &jsonschema.Schema{
+	paths := &jsonschema.Schema{
 		Type: "object", MaxProperties: integerPointer(32),
 		AdditionalProperties: &jsonschema.Schema{OneOf: []*jsonschema.Schema{
 			{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
 			{Type: "object", Required: []string{"service"}, Properties: mountProperties, AdditionalProperties: jsonschema.FalseSchema},
 		}},
 		Description: "Mount another configured service at a path on this service's public URL.",
-	})
+	}
+	properties.Set("paths", paths)
+	httpProperties := jsonschema.NewProperties()
+	httpProperties.Set("readiness", &jsonschema.Schema{Ref: "#/$defs/Readiness"})
+	httpProperties.Set("paths", paths)
+	properties.Set("http", &jsonschema.Schema{Type: "object", Properties: httpProperties, AdditionalProperties: jsonschema.FalseSchema})
 	service := &jsonschema.Schema{
 		Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
 	}
@@ -146,6 +164,7 @@ func tunnelSchema() *jsonschema.Schema {
 	})
 	properties.Set("allow_all_ips", &jsonschema.Schema{Type: "boolean", Description: "Allow visitors from every IP address."})
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the public URL when this tunnel stops."})
+	properties.Set("visitor_tls", &jsonschema.Schema{Type: "string", Enum: []any{"terminate", "passthrough"}, Description: "How PostgreSQL or MySQL visitor TLS reaches the private database."})
 	limitProperties := jsonschema.NewProperties()
 	limitProperties.Set("requests", &jsonschema.Schema{Type: "integer", Minimum: "1", Description: "Total admitted application requests for this tunnel."})
 	rateProperties := jsonschema.NewProperties()

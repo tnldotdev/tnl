@@ -173,7 +173,32 @@ func ValidateTNL(config TNL) error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := config.Services[name]
-		effectivePublish := MergePublish(config.Publish, service.Publish)
+		effectivePublish := ServicePublish(config.Publish, service)
+		if service.Target != nil {
+			if service.Publish != nil {
+				return fmt.Errorf("services.%s: target and publish cannot be combined", name)
+			}
+			switch service.Target.Type {
+			case "app":
+				if service.Target.Address != nil || service.Target.TargetTLS != nil || service.Target.TargetTLSName != nil || service.Target.TargetCAFile != nil || ServiceProtocol(effectivePublish) != "http" {
+					return fmt.Errorf("services.%s.target: app requires HTTP and no private address or TLS settings", name)
+				}
+			case "address":
+				if service.Target.Address == nil {
+					return fmt.Errorf("services.%s.target: address is required", name)
+				}
+			default:
+				return fmt.Errorf("services.%s.target: type must be app or address", name)
+			}
+		}
+		if service.HTTP != nil && (service.Readiness != nil || len(service.Paths) != 0) {
+			return fmt.Errorf("services.%s: http cannot be combined with readiness or paths", name)
+		}
+		if service.HTTP != nil {
+			if err := validateReadiness(service.HTTP.Readiness); err != nil {
+				return fmt.Errorf("services.%s.http: %w", name, err)
+			}
+		}
 		if err := validateReadiness(service.Readiness); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
@@ -190,8 +215,28 @@ func ValidateTNL(config TNL) error {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 		protocol := ServiceProtocol(effectivePublish)
+		visitorTLS := (*string)(nil)
+		if config.Tunnel != nil {
+			visitorTLS = config.Tunnel.VisitorTLS
+		}
+		if service.Tunnel != nil && service.Tunnel.VisitorTLS != nil {
+			visitorTLS = service.Tunnel.VisitorTLS
+		}
+		if visitorTLS != nil {
+			if protocol != "postgres" && protocol != "mysql" {
+				return fmt.Errorf("services.%s: tunnel.visitor_tls requires PostgreSQL or MySQL", name)
+			}
+			if *visitorTLS == "passthrough" && effectivePublish != nil &&
+				(effectivePublish.TargetTLS != nil && *effectivePublish.TargetTLS || effectivePublish.TargetTLSName != nil || effectivePublish.TargetCAFile != nil) {
+				return fmt.Errorf("services.%s: visitor TLS passthrough cannot use private target TLS settings", name)
+			}
+		}
+		paths := service.Paths
+		if service.HTTP != nil {
+			paths = service.HTTP.Paths
+		}
 		if protocol != "http" {
-			if service.Readiness != nil || config.Readiness != nil || len(service.Paths) != 0 ||
+			if service.HTTP != nil || service.Readiness != nil || config.Readiness != nil || len(paths) != 0 ||
 				service.Tunnel != nil && service.Tunnel.Open != nil && *service.Tunnel.Open ||
 				config.Tunnel != nil && config.Tunnel.Open != nil && *config.Tunnel.Open {
 				return fmt.Errorf("services.%s: TCP services cannot use HTTP readiness, path mounts, or browser opening", name)
@@ -211,7 +256,11 @@ func ValidateTNL(config TNL) error {
 				}
 			}
 			for _, sibling := range config.Services {
-				for _, mount := range sibling.Paths {
+				siblingPaths := sibling.Paths
+				if sibling.HTTP != nil {
+					siblingPaths = sibling.HTTP.Paths
+				}
+				for _, mount := range siblingPaths {
 					if mount.Service == name {
 						return fmt.Errorf("services.%s: TCP services cannot be used as HTTP path mounts", name)
 					}
@@ -221,16 +270,16 @@ func ValidateTNL(config TNL) error {
 		if err := validateRatePair(service.Tunnel, config.Tunnel); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
-		if len(service.Paths) > 32 {
+		if len(paths) > 32 {
 			return fmt.Errorf("services.%s.paths may contain at most 32 mounts", name)
 		}
-		prefixes := make([]string, 0, len(service.Paths))
-		for prefix := range service.Paths {
+		prefixes := make([]string, 0, len(paths))
+		for prefix := range paths {
 			prefixes = append(prefixes, prefix)
 		}
 		slices.Sort(prefixes)
 		for _, prefix := range prefixes {
-			mount := service.Paths[prefix]
+			mount := paths[prefix]
 			if !localproxy.ValidMountPrefix(prefix) {
 				return fmt.Errorf("services.%s.paths: %q must be a clean absolute path outside /__tnl/", name, prefix)
 			}
@@ -269,6 +318,9 @@ func validateServerAndTeam(server, team *string) error {
 
 func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	if tunnel != nil {
+		if tunnel.VisitorTLS != nil && *tunnel.VisitorTLS != "terminate" && *tunnel.VisitorTLS != "passthrough" {
+			return errors.New("tunnel.visitor_tls must be terminate or passthrough")
+		}
 		if limits := tunnel.Limits; limits != nil {
 			if limits.Requests != nil && *limits.Requests <= 0 || limits.Concurrency != nil && *limits.Concurrency <= 0 {
 				return errors.New("tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero")

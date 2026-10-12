@@ -573,3 +573,35 @@ func TestProjectDatabaseServiceAppliesProtocolAndTargetTLS(t *testing.T) {
 		t.Fatalf("explicit overrides = %#v, %v", flags, err)
 	}
 }
+
+func TestProjectServiceTargetAppliesAddressAndVisitorTLS(t *testing.T) {
+	protocol, mode, tlsName, caFile, targetTLS := "postgres", "terminate", "db.internal", "./ca.pem", true
+	target := config.Target("db.internal:5432")
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
+		"orders": {
+			Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target, TargetTLS: &targetTLS, TargetTLSName: &tlsName, TargetCAFile: &caFile},
+			Tunnel: &config.Tunnel{VisitorTLS: &mode},
+		},
+	}}}}
+	flags := publishCommand{Target: "orders"}
+	if err := project.applyPublish(&flags); err != nil || flags.Protocol != "postgres" || flags.Target != "db.internal:5432" || !flags.TargetTLS ||
+		flags.TargetTLSName != tlsName || flags.TargetCAFile != caFile || flags.VisitorTLSPassthrough {
+		t.Fatalf("named target = %+v, %v", flags, err)
+	}
+	mode = "passthrough"
+	project.Config.Services["orders"] = config.Service{Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}, Tunnel: &config.Tunnel{VisitorTLS: &mode}}
+	flags = publishCommand{Target: "orders"}
+	if err := project.applyPublish(&flags); err != nil || !flags.VisitorTLSPassthrough {
+		t.Fatalf("passthrough = %+v, %v", flags, err)
+	}
+}
+
+func TestPublishExplainsAppOwnedService(t *testing.T) {
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
+		"web": {Target: &config.ServiceTarget{Type: "app"}},
+	}}}}
+	flags := publishCommand{Target: "web"}
+	if err := project.applyPublish(&flags); err == nil || !strings.Contains(err.Error(), "expects an app registration; start the app normally") {
+		t.Fatalf("publish app service = %v", err)
+	}
+}

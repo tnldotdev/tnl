@@ -51,10 +51,35 @@ type Services map[string]Service
 type Service struct {
 	Inspection *Inspection          `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
 	Directory  *string              `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
+	Protocol   *string              `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh,enum=mongodb" jsonschema_description:"Local service protocol; defaults to http."`
+	Target     *ServiceTarget       `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"How the publisher finds this service."`
+	HTTP       *HTTPService         `json:"http,omitempty" yaml:"http,omitempty" jsonschema_description:"HTTP readiness and path mounts."`
 	Tunnel     *Tunnel              `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
 	Publish    *Publish             `json:"publish,omitempty" yaml:"publish,omitempty"`
 	Readiness  *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty"`
 	Paths      map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Mount other configured local services at paths on this service's public URL."`
+}
+
+// ServiceTarget chooses an app-reported listener or an explicit private address.
+type ServiceTarget struct {
+	Type          string  `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address"`
+	Address       *Target `json:"address,omitempty" yaml:"address,omitempty" jsonschema_description:"Private HTTP origin, TCP host:port, or local port reached by the publisher."`
+	TargetTLS     *bool   `json:"target_tls,omitempty" yaml:"target_tls,omitempty"`
+	TargetTLSName *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty"`
+	TargetCAFile  *string `json:"target_ca_file,omitempty" yaml:"target_ca_file,omitempty"`
+}
+
+type HTTPService struct {
+	Readiness *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty"`
+	Paths     map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty"`
+}
+
+// ServicePaths returns the HTTP mounts for a named service.
+func ServicePaths(service Service) map[string]PathMount {
+	if service.HTTP != nil {
+		return service.HTTP.Paths
+	}
+	return service.Paths
 }
 
 // PathMount selects a local service reached at a path on another service's public URL.
@@ -110,6 +135,7 @@ type Tunnel struct {
 	AllowIP     []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
 	AllowAllIPs *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
 	Ephemeral   *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
+	VisitorTLS  *string  `json:"visitor_tls,omitempty" yaml:"visitor_tls,omitempty" jsonschema:"enum=terminate,enum=passthrough" jsonschema_description:"How PostgreSQL or MySQL visitor TLS reaches the private database."`
 	Limits      *Limits  `json:"limits,omitempty" yaml:"limits,omitempty"`
 }
 
@@ -139,6 +165,34 @@ func ServiceProtocol(publish *Publish) string {
 		return *publish.Protocol
 	}
 	return "http"
+}
+
+// ServicePublish resolves a named service's protocol and private target settings.
+// a reported app listener has no configured target to inherit.
+func ServicePublish(base *Publish, service Service) *Publish {
+	result := MergePublish(base, service.Publish)
+	if service.Protocol != nil {
+		if result == nil {
+			result = &Publish{}
+		}
+		result.Protocol = service.Protocol
+	}
+	if service.Target == nil {
+		return result
+	}
+	if result == nil {
+		result = &Publish{}
+	}
+	if service.Target.Type == "app" {
+		result.Target = nil
+		result.TargetTLS, result.TargetTLSName, result.TargetCAFile = nil, nil, nil
+	} else {
+		result.Target = service.Target.Address
+		result.TargetTLS = service.Target.TargetTLS
+		result.TargetTLSName = service.Target.TargetTLSName
+		result.TargetCAFile = service.Target.TargetCAFile
+	}
+	return result
 }
 
 // MergePublish applies one service's publish settings over the project defaults.
