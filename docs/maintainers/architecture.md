@@ -150,14 +150,18 @@ change without changing public URL DNS.
 The [local publisher API](../../api/local-publisher/v1/openapi.yaml) describes
 the project-scoped requests that an SDK and the CLI send to the publisher:
 app registration, named publication ownership, status, and resumable events.
-the contract reserves separate owner and app-registration credential scopes;
-the current host endpoint still uses one private bearer credential for both.
+the host publisher gives the CLI an owner bearer credential, each configured
+app its own service-bound credential, and ad-hoc SDK calls another credential.
+the owner descriptor and scoped descriptors are separate mode-0600 files in a
+user-owned directory; the runtime issues a scoped file when a new app service
+is added while it is running. an app credential cannot start a named
+publication, read another service's status, or register its listener.
 an accepted registration reports a bound listener; public readiness remains a
 separate observation. The API returns browser-safe project metadata but does
 not carry visitor bytes or expose the control session to an app. the host
-publisher binds an OS-assigned loopback TCP port and saves its credential in a
-private endpoint descriptor. Node, Bun, and Python app integrations and the
-CLI use that endpoint. a configured `tnl publish NAME` now renews a named
+publisher binds an OS-assigned loopback TCP port. Node, Bun, and Python app
+integrations and the CLI authenticate to that endpoint with their own scopes.
+a configured `tnl publish NAME` now renews a named
 publication through the same project publisher as app registrations. the
 manager fences its registration, private target, and publish run before
 forwarding new visitors; its journal carries resumable publication events.

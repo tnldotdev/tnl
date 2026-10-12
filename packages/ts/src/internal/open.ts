@@ -37,7 +37,7 @@ interface Dependencies {
 }
 
 const dependencies: Dependencies = {
-  start: startRuntime,
+  start: (directory) => startRuntime(directory, undefined, { adHoc: true }),
   request: runtimeRequest,
   pause: (milliseconds) =>
     new Promise((resolve) => {

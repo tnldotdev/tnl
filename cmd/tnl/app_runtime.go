@@ -40,6 +40,9 @@ type runtimeCommand struct {
 type runtimeOptions struct {
 	Directory string `name:"directory" required:"" type:"path"`
 	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	App       bool   `name:"app" help:"Locate the credential for one configured app."`
+	Service   string `name:"service" help:"Configured app service; required when several apps are configured."`
+	AdHoc     bool   `name:"ad-hoc" help:"Locate the credential for an ad-hoc invocation."`
 }
 
 func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfiguration, string, error) {
@@ -149,10 +152,35 @@ func runRuntimeEndpoint(ctx context.Context, options runtimeOptions, output io.W
 	if err != nil {
 		return err
 	}
+	endpointPath := runtimeTCPEndpointPath(key)
+	if options.App && options.AdHoc || options.Service != "" && !options.App {
+		return failure.Wrap("select local publisher credential", failure.InvalidCommand, errors.New("select one endpoint scope"))
+	}
+	if options.App {
+		selected := options.Service
+		var names []string
+		for _, service := range configuredRuntimeServices(project) {
+			if service.ServiceProtocol == "" {
+				names = append(names, service.Name)
+			}
+		}
+		if selected == "" && len(names) == 1 {
+			selected = names[0]
+		}
+		if !slices.Contains(names, selected) {
+			return failure.Wrap("select app credential", failure.ServiceNotConfigured, errors.New("select one configured app service"))
+		}
+		endpointPath = runtimeAppEndpointPath(key, selected)
+		if err := ensureAppPublisherEndpoint(ctx, key, selected); err != nil {
+			return err
+		}
+	} else if options.AdHoc {
+		endpointPath = runtimeAdHocEndpointPath(key)
+	}
 	return json.NewEncoder(output).Encode(struct {
 		Version int    `json:"version"`
 		Path    string `json:"path"`
-	}{privateprotocol.Version, runtimeTCPEndpointPath(key)})
+	}{privateprotocol.Version, endpointPath})
 }
 
 type appPreparation struct {
@@ -249,11 +277,13 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	defer runtime.manager.Close()
 	runtime.adhoc = clientruntime.NewAdHocManager(ctx, runtime.publishAdHoc, runtime.manager.Alive, runtime.manager.BeginPreparation)
 	defer runtime.adhoc.Close()
-	tcpServer, tcpDone, err := startRuntimeTCP(key, runtime.handler())
+	tcpServer, tcpDone, err := startRuntimeTCP(key, runtime.handler(), configuredRuntimeServices(project)...)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = stopRuntimeTCP(context.Background(), tcpServer, key) }()
+	defer func() {
+		_ = stopRuntimeTCP(context.Background(), tcpServer, key)
+	}()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -347,6 +377,9 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	}
 	if target := project.Config.Services[name].Target; target != nil && target.Type != "app" {
 		return privateprotocol.Assignment{}, failure.Wrap("select app service", failure.ServiceNotConfigured, errors.New("this service requires tnl publish instead of an app registration"))
+	}
+	if scope := localPublisherScopeFrom(ctx); scope.kind == localScopeApp && scope.service != name {
+		return privateprotocol.Assignment{}, failure.Wrap("select app service", failure.ServiceNotConfigured, errors.New("app credential is scoped to another service"))
 	}
 	a.prepareMu.Lock()
 	defer a.prepareMu.Unlock()
@@ -455,8 +488,14 @@ func (a *appRuntime) handler() http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 		})
 	}
-	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
-		privateprotocol.Write(w, 200, namedProjectSnapshot(a.manager.Snapshot()))
+	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+		snapshot := a.manager.Snapshot()
+		if scope := localPublisherScopeFrom(r.Context()); scope.kind != localScopeOwner {
+			snapshot.Services = slices.DeleteFunc(snapshot.Services, func(service clientruntime.Service) bool {
+				return scope.kind != localScopeApp || service.Name != scope.service
+			})
+		}
+		privateprotocol.Write(w, 200, namedProjectSnapshot(snapshot))
 	})
 	mux.HandleFunc("POST /v1/observe", func(w http.ResponseWriter, r *http.Request) {
 		var observation clientruntime.Observation
@@ -495,6 +534,15 @@ func (a *appRuntime) handler() http.Handler {
 				return
 			}
 			var err error
+			if scope := localPublisherScopeFrom(r.Context()); scope.kind == localScopeApp {
+				a.mu.Lock()
+				prepared, found := a.prepared[request.RegistrationID]
+				a.mu.Unlock()
+				if !found || prepared.assignment.Service != scope.service {
+					runtimeProblem(w, clientruntime.ErrRegistrationStale)
+					return
+				}
+			}
 			switch operation {
 			case "register":
 				a.mu.Lock()
