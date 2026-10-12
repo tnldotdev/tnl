@@ -13,8 +13,6 @@ const schema = parseJSON(
     $schema: z.string(),
     $defs: z.object({
       TNL: schemaObject,
-      Publish: schemaObject,
-      Readiness: schemaObject,
       Inspection: schemaObject,
     }),
   }),
@@ -29,8 +27,6 @@ const client = {
   ...schema.$defs.TNL,
   $schema: schema.$schema,
   $defs: {
-    Publish: schema.$defs.Publish,
-    Readiness: schema.$defs.Readiness,
     Inspection: schema.$defs.Inspection,
   },
 };

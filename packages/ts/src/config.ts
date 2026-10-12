@@ -18,14 +18,6 @@ type TargetReferences<Config> = {
 } & {
   [Field in keyof Config as Field extends "services" ? Field : never]: {
     [Name in keyof Config[Field]]: {
-      [Paths in keyof Config[Field][Name] as Paths extends "paths" ? Paths : never]: {
-        [
-          Prefix in keyof Config[Field][Name][Paths]
-        ]: Config[Field][Name][Paths][Prefix] extends string
-          ? Exclude<ServiceNames<Config>, Name>
-          : ObjectReference<Exclude<ServiceNames<Config>, Name>>;
-      };
-    } & {
       [HTTP in keyof Config[Field][Name] as HTTP extends "http" ? HTTP : never]: {
         [Paths in keyof Config[Field][Name][HTTP] as Paths extends "paths" ? Paths : never]: {
           [
@@ -53,15 +45,7 @@ export type TnlConfigForServices<Names extends string> = Omit<
   "services" | "aliases" | "webhooks"
 > & {
   services?: {
-    [Name in Names]: Omit<Service, "http" | "paths"> & {
-      paths?: Record<
-        string,
-        | Exclude<NoInfer<Names>, Name>
-        | {
-            service: Exclude<NoInfer<Names>, Name>;
-            stripPrefix?: boolean;
-          }
-      >;
+    [Name in Names]: Omit<Service, "http"> & {
       http?: Omit<NonNullable<Service["http"]>, "paths"> & {
         paths?: Record<
           string,

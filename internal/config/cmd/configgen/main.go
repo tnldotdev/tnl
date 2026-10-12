@@ -106,7 +106,6 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 
 func servicesSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	properties.Set("directory", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), Description: "Service directory relative to the project configuration."})
 	properties.Set("inspection", &jsonschema.Schema{Ref: "#/$defs/Inspection"})
 	properties.Set("protocol", &jsonschema.Schema{Type: "string", Enum: []any{"http", "postgres", "mysql", "redis", "ssh"}, Description: "Local service protocol; defaults to http."})
 	appTargetProperties := jsonschema.NewProperties()
@@ -124,8 +123,6 @@ func servicesSchema() *jsonschema.Schema {
 	tunnel := tunnelSchema()
 	tunnel.Description = "PublicURL and tunnel overrides for this service."
 	properties.Set("tunnel", tunnel)
-	properties.Set("publish", &jsonschema.Schema{Ref: "#/$defs/Publish"})
-	properties.Set("readiness", &jsonschema.Schema{Ref: "#/$defs/Readiness"})
 	mountProperties := jsonschema.NewProperties()
 	mountProperties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`})
 	mountProperties.Set("strip_prefix", &jsonschema.Schema{Type: "boolean"})
@@ -137,9 +134,10 @@ func servicesSchema() *jsonschema.Schema {
 		}},
 		Description: "Mount another configured service at a path on this service's public URL.",
 	}
-	properties.Set("paths", paths)
 	httpProperties := jsonschema.NewProperties()
-	httpProperties.Set("readiness", &jsonschema.Schema{Ref: "#/$defs/Readiness"})
+	readinessProperties := jsonschema.NewProperties()
+	readinessProperties.Set("path", &jsonschema.Schema{Type: "string"})
+	httpProperties.Set("readiness", &jsonschema.Schema{Type: "object", Required: []string{"path"}, Properties: readinessProperties, AdditionalProperties: jsonschema.FalseSchema})
 	httpProperties.Set("paths", paths)
 	properties.Set("http", &jsonschema.Schema{Type: "object", Properties: httpProperties, AdditionalProperties: jsonschema.FalseSchema})
 	service := &jsonschema.Schema{
