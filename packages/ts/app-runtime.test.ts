@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
-import { createPreparedService, runtimeRequest, startRuntime } from "./dist/internal/app.js";
+import { createPreparedService, prepareService, runtimeRequest, startRuntime } from "./dist/internal/app.js";
 import { TnlError } from "./dist/errors.js";
 import { startTestBootstrap } from "./test-helper/bootstrap.js";
 import { testPublicProject } from "./test-helper/project.js";
@@ -95,6 +95,9 @@ test("uses a mounted service-scoped endpoint without launching the native CLI", 
     await expect(
       startRuntime(directory, join(directory, "nonexistent-tnl"), { service: "web" }),
     ).resolves.toBe(endpointPath);
+    const prepared = await prepareService({ directory, service: "api" });
+    expect(prepared.service).toBe("api");
+    await prepared.close();
   } finally {
     if (old === undefined) delete process.env.TNL_PUBLISHER_ENDPOINT_FILE;
     else process.env.TNL_PUBLISHER_ENDPOINT_FILE = old;
