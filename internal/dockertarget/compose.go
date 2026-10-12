@@ -23,7 +23,7 @@ var composeName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 func ComposePort(ctx context.Context, projectRoot, projectLabel, service string, privatePort int) (string, error) {
 	if !filepath.IsAbs(projectRoot) || !composeName.MatchString(projectLabel) || !composeName.MatchString(service) ||
 		privatePort < 1 || privatePort > 65535 {
-		return "", errors.New("Docker target requires an absolute project directory, a Compose project and service name, and a TCP port from 1 to 65535")
+		return "", errors.New("docker target requires an absolute project directory, a Compose project and service name, and a TCP port from 1 to 65535")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
