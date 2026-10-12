@@ -243,30 +243,48 @@ func runNamedPublish(ctx context.Context, flags publishCommand, stdout, stderr i
 	}
 	owner := hex.EncodeToString(ownerBytes)
 	unauthenticated := 0
+	var recoveryUntil time.Time
 	for ctx.Err() == nil {
 		client, stop, err := localPublisherForCLI(ctx, flags)
 		if err != nil {
-			return err
+			reason, known := failure.ReasonOf(err)
+			if recoveryUntil.IsZero() || time.Now().After(recoveryUntil) || !(known && reason == failure.ClientStateUnavailable || namedPublisherConnectionLost(err)) {
+				return err
+			}
+			if err := waitNamedPublisherRetry(ctx); err != nil {
+				return err
+			}
+			continue
 		}
+		recoveryUntil = time.Time{}
 		err = followNamedPublication(ctx, flags, client, owner, output)
 		stop()
 		if ctx.Err() != nil || !namedPublisherConnectionLost(err) {
 			return err
 		}
+		recoveryUntil = time.Now().Add(30 * time.Second)
 		if errors.Is(err, errNamedPublisherUnauthenticated) {
 			unauthenticated++
 			if unauthenticated > 1 {
 				return diagnostic.Wrap(diagnostic.AuthenticationRequired, err)
 			}
 		}
-		timer := time.NewTimer(250 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-		case <-timer.C:
+		if err := waitNamedPublisherRetry(ctx); err != nil {
+			return err
 		}
 	}
 	return ctx.Err()
+}
+
+func waitNamedPublisherRetry(ctx context.Context) error {
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func followNamedPublication(ctx context.Context, flags publishCommand, client namedPublisherClient, owner string, output *publishOutput) (result error) {
