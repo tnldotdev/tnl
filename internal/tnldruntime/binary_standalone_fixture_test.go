@@ -16,6 +16,7 @@ type integrationBinaryStandalone struct {
 	databaseURL      string
 	stateDirectory   string
 	trustFile        string
+	metricsAddress   string
 	environment      []string
 	server           *integrationBinaryProcess
 	pebble           integrationPebble
@@ -128,6 +129,7 @@ func startIntegrationBinaryStandaloneWithTCP(t *testing.T, tcpVisitor bool, mode
 	runIntegrationBinaryCommand(t, repositoryRoot, clientEnvironment, tnlPath, "auth", "login", "--login-token")
 	clientEnvironment = removeIntegrationEnvironment(clientEnvironment, "TNL_LOGIN_TOKEN")
 	return &integrationBinaryStandalone{repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL,
-		stateDirectory: stateDirectory, trustFile: trustFile, environment: clientEnvironment, server: server, pebble: pebble,
+		stateDirectory: stateDirectory, trustFile: trustFile, metricsAddress: metricsAddress,
+		environment: clientEnvironment, server: server, pebble: pebble,
 		stopVisitorProxy: stopVisitorProxy}
 }
