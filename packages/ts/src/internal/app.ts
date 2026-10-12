@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import { promisify } from "node:util";
@@ -399,20 +400,21 @@ export async function startRuntime(
   try {
     const { stdout } = await promisify(execFile)(
       binary,
-      ["--no-telemetry", "runtime", "address", "--directory", directory],
+      ["--no-telemetry", "runtime", "endpoint", "--directory", directory],
       { timeout: 30_000, maxBuffer: 64 * 1024, encoding: "utf8" },
     );
     const value: unknown = JSON.parse(stdout);
-    const object = record(value, "local publisher socket");
-    exactKeys(object, ["version", "socket"], "local publisher socket");
+    const object = record(value, "local publisher endpoint path");
+    exactKeys(object, ["version", "path"], "local publisher endpoint path");
     if (
       object.version !== 1 ||
-      typeof object.socket !== "string" ||
-      !path.isAbsolute(object.socket) ||
-      object.socket.includes("\0")
+      typeof object.path !== "string" ||
+      !path.isAbsolute(object.path) ||
+      !object.path.endsWith(".endpoint.json") ||
+      object.path.includes("\0")
     )
       throw new TnlError("sdk.response_invalid");
-    if (!(await runtimeHealthy(object.socket))) {
+    if (!(await runtimeHealthy(object.path))) {
       // the app process owns the local publisher's lifetime. a second service
       // can race this spawn: the runtime's hostname lock elects one owner.
       const process_ = spawn(
@@ -428,25 +430,38 @@ export async function startRuntime(
       });
       process_.unref();
       const deadline = Date.now() + 15_000;
-      while (!(await runtimeHealthy(object.socket))) {
+      while (!(await runtimeHealthy(object.path))) {
         if (Date.now() >= deadline) throw new TnlError("sdk.dev_unavailable");
         await new Promise<void>((resolve) => setTimeout(resolve, 50));
       }
     }
-    return object.socket;
+    return object.path;
   } catch (cause) {
     if (cause instanceof TnlError) throw cause;
     throw new TnlError("sdk.dev_unavailable", { cause });
   }
 }
 
-function runtimeHealthy(socket: string): Promise<boolean> {
+function runtimeHealthy(endpointPath: string): Promise<boolean> {
   return new Promise((resolve) => {
+    let endpoint;
+    try {
+      endpoint = readLocalEndpoint(endpointPath);
+    } catch {
+      resolve(false);
+      return;
+    }
     const request = http.get(
-      { socketPath: socket, path: "/v1/health", timeout: 1_000 },
+      {
+        hostname: "127.0.0.1",
+        port: Number(endpoint.url.port),
+        path: "/v1/status",
+        timeout: 1_000,
+        headers: { Authorization: `Bearer ${endpoint.credential}` },
+      },
       (response) => {
         response.resume();
-        resolve(response.statusCode === 204);
+        resolve(response.statusCode === 200);
       },
     );
     request.on("error", () => resolve(false));
@@ -454,17 +469,54 @@ function runtimeHealthy(socket: string): Promise<boolean> {
   });
 }
 
+function readLocalEndpoint(endpointPath: string): { url: URL; credential: string } {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(endpointPath, "utf8"));
+    const endpoint = record(raw, "local publisher endpoint");
+    exactKeys(endpoint, ["version", "url", "credential"], "local publisher endpoint");
+    if (
+      endpoint.version !== 1 ||
+      typeof endpoint.url !== "string" ||
+      typeof endpoint.credential !== "string" ||
+      !/^[A-Za-z0-9_-]{43}$/.test(endpoint.credential)
+    ) {
+      throw new TnlError("sdk.response_invalid");
+    }
+    const url = new URL(endpoint.url);
+    if (
+      url.protocol !== "http:" ||
+      url.hostname !== "127.0.0.1" ||
+      !url.port ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash ||
+      url.username ||
+      url.password
+    ) {
+      throw new TnlError("sdk.response_invalid");
+    }
+    return { url, credential: endpoint.credential };
+  } catch (cause) {
+    if (cause instanceof TnlError) throw cause;
+    throw new TnlError("sdk.dev_unavailable", { cause });
+  }
+}
+
 export function runtimeRequest(socket: string, operation: string, body: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
+    const endpoint = socket.endsWith(".endpoint.json") ? readLocalEndpoint(socket) : undefined;
     const request = http.request(
       {
-        socketPath: socket,
+        ...(endpoint === undefined
+          ? { socketPath: socket }
+          : { hostname: "127.0.0.1", port: Number(endpoint.url.port) }),
         path: `/v1/${operation}`,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(payload),
+          ...(endpoint === undefined ? {} : { Authorization: `Bearer ${endpoint.credential}` }),
         },
       },
       (response) => {
