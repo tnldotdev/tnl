@@ -255,7 +255,7 @@ func (m Metadata) Validate() error {
 
 func validTCPProtocol(value string) bool {
 	switch value {
-	case "postgres", "mysql", "redis", "ssh", "mongodb":
+	case "postgres", "mysql", "redis", "ssh":
 		return true
 	}
 	return false
