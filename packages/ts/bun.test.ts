@@ -9,6 +9,30 @@ import { installRuntimeFixture } from "./test-helper/framework.js";
 
 const entrypoint = fileURLToPath(new URL("./fixtures/bun/server.ts", import.meta.url));
 
+test("a production Hono entrypoint starts without preparing or registering with tnl", async () => {
+  const bootstrap = await startTestBootstrap();
+  const production = fileURLToPath(new URL("./fixtures/bun/production.ts", import.meta.url));
+  const process_ = startTestProcess("bun", [production], {
+    env: {
+      ...bootstrap.environment,
+      NODE_ENV: "production",
+      DATABASE_URL: "postgres://shop:devpassword@database.internal:5432/shop",
+    },
+  });
+  await process_.ready();
+  let port = 0;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    port = Number(/listening=(\d+)/.exec(process_.output())?.[1] ?? 0);
+    if (port > 0) break;
+    process_.assertRunning();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  expect(port).toBeGreaterThan(0);
+  const response = await fetch(`http://127.0.0.1:${port}/`);
+  expect(await response.json()).toEqual({ databaseHost: "database.internal" });
+  expect(bootstrap.requests).toHaveLength(0);
+});
+
 test(
   "two Bun Hono servers register different ports and read project URLs during import",
   { timeout: 30_000 },

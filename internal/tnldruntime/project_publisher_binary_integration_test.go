@@ -116,6 +116,18 @@ func TestBinaryIntegrationTwoWorktreeComposePostgresVisitors(t *testing.T) {
 		}
 		privateAddress := strings.TrimSpace(binding)
 		publish := startIntegrationBinaryProcess(t, root, fixture.environment, fixture.tnlPath, "publish", "orders", "--output=ndjson")
+		t.Cleanup(func() {
+			if t.Failed() {
+				t.Logf("named %s output:\n%s", name, publish.output.String())
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				status := exec.CommandContext(ctx, fixture.tnlPath, "status", "--output=json")
+				status.Dir, status.Env = root, fixture.environment
+				if output, err := status.CombinedOutput(); err == nil {
+					t.Logf("named %s status: %s", name, output)
+				}
+			}
+		})
 		worktrees = append(worktrees, worktree{root: root, label: label, publicURL: orders.URL, port: *orders.Port,
 			privateAddress: privateAddress, publish: publish, marker: fmt.Sprintf("worktree-%d", index+1)})
 	}
@@ -123,6 +135,26 @@ func TestBinaryIntegrationTwoWorktreeComposePostgresVisitors(t *testing.T) {
 		t.Fatalf("worktrees reused a Compose project, private port, or public port: %+v", worktrees)
 	}
 	for _, selected := range worktrees {
+		runIntegrationBinaryCommand(t, selected.root, fixture.environment, fixture.tnlPath, "wait", "--service", "orders", "--timeout", "55s", "--output=json")
+		waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
+			probe, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(selected.port)))
+			if err != nil {
+				return false, err
+			}
+			defer probe.Close()
+			_ = probe.SetDeadline(time.Now().Add(3 * time.Second))
+			if _, err := probe.Write([]byte{0, 0, 0, 8, 4, 210, 22, 47}); err != nil {
+				return false, err
+			}
+			var answer [1]byte
+			if _, err := probe.Read(answer[:]); err != nil {
+				return false, err
+			}
+			if answer[0] == 'S' {
+				return true, nil
+			}
+			return false, fmt.Errorf("public PostgreSQL TLS negotiation on port %d returned %q", selected.port, answer)
+		})
 		waitForIntegrationCondition(t, 90*time.Second, func(ctx context.Context) (bool, error) {
 			select {
 			case <-selected.publish.done:
@@ -138,7 +170,6 @@ func TestBinaryIntegrationTwoWorktreeComposePostgresVisitors(t *testing.T) {
 			err = connection.QueryRow(ctx, "SELECT 42").Scan(&value)
 			return err == nil && value == 42, err
 		})
-		runIntegrationBinaryCommand(t, selected.root, fixture.environment, fixture.tnlPath, "wait", "--service", "orders", "--timeout", "30s", "--output=json")
 	}
 }
 
