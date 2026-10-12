@@ -1,0 +1,375 @@
+openapi: 3.1.0
+info:
+  title: tnl local publisher API
+  version: 1.0.0
+  license: { name: MIT, identifier: MIT }
+  description: >-
+    Project-scoped API used by the tnl CLI and application integrations to
+    register bound listeners, maintain named publications, and observe local
+    service state. The selected publisher owns this state, whether it runs on
+    the host or in a container. The local owner credential cannot be replaced
+    by a control access token; app credentials are scoped to one service.
+    This API does not carry visitor bytes or expose the publisher's control
+    session to applications.
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers: [{ url: / }]
+security: [{ ownerAuth: [] }]
+paths:
+  /v1/health:
+    get:
+      operationId: getLocalPublisherHealth
+      summary: Check whether the local publisher API is responding
+      security: []
+      responses:
+        "204": { description: Publisher API is running; no service readiness implied }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/prepare:
+    post:
+      operationId: prepareAppService
+      summary: Prepare a configured app registration before it binds
+      security: [{ appAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AppPreparation" }
+      responses:
+        "200":
+          description: Public project metadata and an owned registration ID
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppAssignment" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/registrations/{registration_id}:
+    parameters:
+      - $ref: "#/components/parameters/RegistrationID"
+    put:
+      operationId: registerAppListener
+      summary: Report the app's bound listener; publication proceeds asynchronously
+      security: [{ appAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BoundListener" }
+      responses:
+        "204": { description: Listener registered; public readiness is not implied }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: unregisterAppListener
+      summary: Stop a matching registration without closing the app listener
+      security: [{ appAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RegistrationOwner"
+      responses:
+        "204": { description: Registration stopped }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/registrations/{registration_id}/renew:
+    post:
+      operationId: renewAppRegistration
+      summary: Keep a matching app registration current
+      security: [{ appAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RegistrationID"
+        - $ref: "#/components/parameters/RegistrationOwner"
+      responses:
+        "204": { description: Registration renewed }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publications:
+    post:
+      operationId: startNamedPublication
+      summary: Begin a CLI-owned publication of one configured address target
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublicationRequest" }
+      responses:
+        "200":
+          description: Publication begun; the owner must renew it while the command runs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicationLease" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publications/{publication_id}/renew:
+    post:
+      operationId: renewNamedPublication
+      summary: Keep a CLI-owned publication current
+      parameters:
+        - $ref: "#/components/parameters/PublicationID"
+        - $ref: "#/components/parameters/PublicationOwner"
+      responses:
+        "204": { description: Publication renewed }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publications/{publication_id}:
+    delete:
+      operationId: stopNamedPublication
+      summary: Stop a matching CLI-owned publication
+      parameters:
+        - $ref: "#/components/parameters/PublicationID"
+        - $ref: "#/components/parameters/PublicationOwner"
+      responses:
+        "204": { description: Publication stopped }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/status:
+    get:
+      operationId: getLocalProjectStatus
+      summary: Read one publisher-owned snapshot for the selected project
+      responses:
+        "200":
+          description: Configured and currently publishing services
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectSnapshot" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/events:
+    get:
+      operationId: listLocalProjectEvents
+      summary: Resume bounded project events after a local cursor
+      parameters:
+        - name: after
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+        - name: wait_seconds
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 30, default: 0 }
+      responses:
+        "200":
+          description: Events in cursor order, or an empty page after the wait
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectEventPage" }
+        "410": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+components:
+  securitySchemes:
+    ownerAuth:
+      type: http
+      scheme: bearer
+      description: Credential for the owner of one project publisher.
+    appAuth:
+      type: http
+      scheme: bearer
+      description: Credential authorized to register exactly one configured app service.
+  parameters:
+    RegistrationID:
+      name: registration_id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    RegistrationOwner:
+      name: X-Registration-Owner
+      in: header
+      required: true
+      schema: { type: string, pattern: "^[a-f0-9]{32}$" }
+    PublicationID:
+      name: publication_id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    PublicationOwner:
+      name: X-Publication-Owner
+      in: header
+      required: true
+      schema: { type: string, pattern: "^[a-f0-9]{32}$" }
+  responses:
+    Problem:
+      description: A classified local publisher failure
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: { type: string, minLength: 1, maxLength: 128 }
+        message: { type: string, minLength: 1, maxLength: 2048 }
+    ServiceName:
+      type: string
+      pattern: "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+    AppPreparation:
+      type: object
+      additionalProperties: false
+      required: [service, framework, owner]
+      properties:
+        service: { $ref: "#/components/schemas/ServiceName" }
+        framework: { type: string, enum: [node, bun, vite, next] }
+        owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+    AppAssignment:
+      type: object
+      additionalProperties: false
+      required: [registration_id, service, hostname, public_url, project]
+      properties:
+        registration_id: { type: string, minLength: 1, maxLength: 128 }
+        service: { $ref: "#/components/schemas/ServiceName" }
+        hostname: { type: string, minLength: 1, maxLength: 253 }
+        public_url: { type: string, pattern: "^https://" }
+        project:
+          $ref: "#/components/schemas/ProjectMetadata"
+    ProjectMetadata:
+      type: object
+      additionalProperties: false
+      required: [namespace, services, dev]
+      description: Browser-safe metadata prepared before an app starts.
+      properties:
+        worktree:
+          type: object
+          additionalProperties: false
+          required: [label]
+          properties:
+            label:
+              type: object
+              additionalProperties: false
+              required: [project, id, fullLabel]
+              properties:
+                project: { type: string, minLength: 1, maxLength: 63 }
+                checkout: { type: string, minLength: 1, maxLength: 63 }
+                id: { type: string, minLength: 1, maxLength: 32 }
+                fullLabel: { type: string, minLength: 1, maxLength: 63 }
+        namespace: { type: string, minLength: 1, maxLength: 253 }
+        dev: { type: boolean }
+        services:
+          type: object
+          maxProperties: 32
+          additionalProperties: { $ref: "#/components/schemas/ProjectServiceMetadata" }
+        oauth: { $ref: "#/components/schemas/IntegrationOrigin" }
+        aliases:
+          type: object
+          maxProperties: 32
+          additionalProperties: { $ref: "#/components/schemas/AliasMetadata" }
+        webhooks:
+          type: object
+          maxProperties: 32
+          additionalProperties: { $ref: "#/components/schemas/WebhookMetadata" }
+    ProjectServiceMetadata:
+      oneOf:
+        - $ref: "#/components/schemas/HTTPServiceMetadata"
+        - $ref: "#/components/schemas/TCPServiceMetadata"
+    HTTPServiceMetadata:
+      type: object
+      additionalProperties: false
+      required: [namespace, hostname, url]
+      properties:
+        namespace: { type: string, minLength: 1, maxLength: 253 }
+        hostname: { type: string, minLength: 1, maxLength: 253 }
+        url: { type: string, pattern: "^https://", maxLength: 512 }
+        protocol: { type: string, const: http }
+        paths:
+          type: object
+          maxProperties: 32
+          additionalProperties: { $ref: "#/components/schemas/PathMetadata" }
+    TCPServiceMetadata:
+      type: object
+      additionalProperties: false
+      required: [namespace, hostname, url, protocol, port]
+      properties:
+        namespace: { type: string, minLength: 1, maxLength: 253 }
+        hostname: { type: string, minLength: 1, maxLength: 253 }
+        url: { type: string, minLength: 1, maxLength: 512 }
+        protocol: { type: string, enum: [postgres, mysql, redis, ssh, mongodb] }
+        port: { type: integer, minimum: 1024, maximum: 65535 }
+    PathMetadata:
+      type: object
+      additionalProperties: false
+      required: [service, url, stripPrefix]
+      properties:
+        service: { $ref: "#/components/schemas/ServiceName" }
+        url: { type: string, pattern: "^https://", maxLength: 512 }
+        stripPrefix: { type: boolean }
+    IntegrationOrigin:
+      type: object
+      additionalProperties: false
+      required: [hostname, url]
+      properties:
+        hostname: { type: string, minLength: 1, maxLength: 253 }
+        url: { type: string, pattern: "^https://", maxLength: 512 }
+    AliasMetadata:
+      type: object
+      additionalProperties: false
+      required: [hostname, url, service]
+      properties:
+        hostname: { type: string, minLength: 1, maxLength: 253 }
+        url: { type: string, pattern: "^https://", maxLength: 512 }
+        service: { $ref: "#/components/schemas/ServiceName" }
+    WebhookMetadata:
+      type: object
+      additionalProperties: false
+      required: [hostname, url, service, path, methods]
+      properties:
+        hostname: { type: string, minLength: 1, maxLength: 253 }
+        url: { type: string, pattern: "^https://", maxLength: 512 }
+        service: { $ref: "#/components/schemas/ServiceName" }
+        path: { type: string, pattern: "^/", maxLength: 2048 }
+        methods:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          items: { type: string, enum: [GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE] }
+    BoundListener:
+      type: object
+      additionalProperties: false
+      required: [owner, target]
+      properties:
+        owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+        target: { type: string, minLength: 1, maxLength: 2048 }
+    PublicationRequest:
+      type: object
+      additionalProperties: false
+      required: [service, owner]
+      properties:
+        service: { $ref: "#/components/schemas/ServiceName" }
+        owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+    PublicationLease:
+      type: object
+      additionalProperties: false
+      required: [publication_id, service, cursor]
+      properties:
+        publication_id: { type: string, minLength: 1, maxLength: 128 }
+        service: { $ref: "#/components/schemas/ServiceName" }
+        cursor: { type: string, minLength: 1, maxLength: 128 }
+    ServiceStatus:
+      type: object
+      additionalProperties: false
+      required: [service, protocol, state]
+      properties:
+        service: { $ref: "#/components/schemas/ServiceName" }
+        protocol: { type: string, enum: [http, postgres, mysql, redis, ssh, mongodb] }
+        state: { type: string, enum: [not_started, publishing, routable, ready, draining, failed] }
+        public_url: { type: string, minLength: 1, maxLength: 512 }
+        target: { type: string, minLength: 1, maxLength: 2048 }
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        reason: { type: string, maxLength: 128 }
+    ProjectSnapshot:
+      type: object
+      additionalProperties: false
+      required: [project, cursor, services]
+      properties:
+        project: { type: string, minLength: 1, maxLength: 256 }
+        cursor: { type: string, minLength: 1, maxLength: 128 }
+        services:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/ServiceStatus" }
+    ProjectEvent:
+      type: object
+      additionalProperties: false
+      required: [cursor, type, service]
+      properties:
+        cursor: { type: string, minLength: 1, maxLength: 128 }
+        type: { type: string, minLength: 1, maxLength: 128 }
+        service: { $ref: "#/components/schemas/ServiceName" }
+        status: { $ref: "#/components/schemas/ServiceStatus" }
+    ProjectEventPage:
+      type: object
+      additionalProperties: false
+      required: [cursor, events]
+      properties:
+        cursor: { type: string, minLength: 1, maxLength: 128 }
+        events:
+          type: array
+          maxItems: 2048
+          items: { $ref: "#/components/schemas/ProjectEvent" }
