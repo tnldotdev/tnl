@@ -60,10 +60,12 @@ type Service struct {
 	Paths      map[string]PathMount `json:"-" yaml:"-"`
 }
 
-// ServiceTarget chooses an app-reported listener or an explicit private address.
+// ServiceTarget chooses an app listener, private address, or Compose service.
 type ServiceTarget struct {
-	Type          string  `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address"`
+	Type          string  `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=docker"`
 	Address       *Target `json:"address,omitempty" yaml:"address,omitempty" jsonschema_description:"Private HTTP origin, TCP host:port, or local port reached by the publisher."`
+	Service       *string `json:"service,omitempty" yaml:"service,omitempty" jsonschema_description:"Docker Compose service name for a Docker target."`
+	Port          *int    `json:"port,omitempty" yaml:"port,omitempty" jsonschema:"minimum=1,maximum=65535" jsonschema_description:"Private TCP port published by the Docker Compose service."`
 	TargetTLS     *bool   `json:"target_tls,omitempty" yaml:"target_tls,omitempty"`
 	TargetTLSName *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty"`
 	TargetCAFile  *string `json:"target_ca_file,omitempty" yaml:"target_ca_file,omitempty"`
@@ -186,8 +188,13 @@ func ServicePublish(base *Publish, service Service) *Publish {
 	if service.Target.Type == "app" {
 		result.Target = nil
 		result.TargetTLS, result.TargetTLSName, result.TargetCAFile = nil, nil, nil
-	} else {
+	} else if service.Target.Type == "address" {
 		result.Target = service.Target.Address
+		result.TargetTLS = service.Target.TargetTLS
+		result.TargetTLSName = service.Target.TargetTLSName
+		result.TargetCAFile = service.Target.TargetCAFile
+	} else {
+		result.Target = nil
 		result.TargetTLS = service.Target.TargetTLS
 		result.TargetTLSName = service.Target.TargetTLSName
 		result.TargetCAFile = service.Target.TargetCAFile

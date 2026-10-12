@@ -179,15 +179,23 @@ func ValidateTNL(config TNL) error {
 			}
 			switch service.Target.Type {
 			case "app":
-				if service.Target.Address != nil || service.Target.TargetTLS != nil || service.Target.TargetTLSName != nil || service.Target.TargetCAFile != nil || ServiceProtocol(effectivePublish) != "http" {
+				if service.Target.Address != nil || service.Target.Service != nil || service.Target.Port != nil || service.Target.TargetTLS != nil || service.Target.TargetTLSName != nil || service.Target.TargetCAFile != nil || ServiceProtocol(effectivePublish) != "http" {
 					return fmt.Errorf("services.%s.target: app requires HTTP and no private address or TLS settings", name)
 				}
 			case "address":
 				if service.Target.Address == nil {
 					return fmt.Errorf("services.%s.target: address is required", name)
 				}
+				if service.Target.Service != nil || service.Target.Port != nil {
+					return fmt.Errorf("services.%s.target: address cannot select a Compose service or port", name)
+				}
+			case "docker":
+				if service.Target.Address != nil || service.Target.Service == nil || !naming.ValidServiceName(*service.Target.Service) ||
+					service.Target.Port == nil || *service.Target.Port < 1 || *service.Target.Port > 65535 {
+					return fmt.Errorf("services.%s.target: docker requires a Compose service name and private TCP port from 1 to 65535", name)
+				}
 			default:
-				return fmt.Errorf("services.%s.target: type must be app or address", name)
+				return fmt.Errorf("services.%s.target: type must be app, address, or docker", name)
 			}
 		}
 		if service.HTTP != nil && (service.Readiness != nil || len(service.Paths) != 0) {

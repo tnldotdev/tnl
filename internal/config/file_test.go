@@ -203,8 +203,8 @@ func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
 
 func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 	for filename, source := range map[string]string{
-		"tnl.json": `{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"},"http":{"readiness":{"path":"/health"},"paths":{"/api":"api"}}},"api":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"address","address":"db.internal:5432"},"tunnel":{"visitor_tls":"passthrough"}}}}}`,
-		"tnl.yml":  "version: 1\ntnl:\n  services:\n    web:\n      target: {type: app}\n      http:\n        readiness: {path: /health}\n        paths: {/api: api}\n    api:\n      target: {type: address, address: 3000}\n    orders:\n      protocol: postgres\n      target: {type: address, address: 'db.internal:5432'}\n      tunnel: {visitor_tls: passthrough}\n",
+		"tnl.json": `{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"},"http":{"readiness":{"path":"/health"},"paths":{"/api":"api"}}},"api":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"docker","service":"database","port":5432},"tunnel":{"visitor_tls":"passthrough"}}}}}`,
+		"tnl.yml":  "version: 1\ntnl:\n  services:\n    web:\n      target: {type: app}\n      http:\n        readiness: {path: /health}\n        paths: {/api: api}\n    api:\n      target: {type: address, address: 3000}\n    orders:\n      protocol: postgres\n      target: {type: docker, service: database, port: 5432}\n      tunnel: {visitor_tls: passthrough}\n",
 	} {
 		path := filepath.Join(t.TempDir(), filename)
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
@@ -217,7 +217,7 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 		web, api, orders := document.TNL.Services["web"], document.TNL.Services["api"], document.TNL.Services["orders"]
 		if web.Target.Type != "app" || web.HTTP.Readiness.Path != "/health" || ServicePaths(web)["/api"].Service != "api" ||
 			api.Target.Type != "address" || string(*api.Target.Address) != "3000" ||
-			orders.Protocol == nil || *orders.Protocol != "postgres" || string(*orders.Target.Address) != "db.internal:5432" ||
+			orders.Protocol == nil || *orders.Protocol != "postgres" || orders.Target.Type != "docker" || *orders.Target.Service != "database" || *orders.Target.Port != 5432 ||
 			*orders.Tunnel.VisitorTLS != "passthrough" {
 			t.Fatalf("%s: services = %#v", filename, document.TNL.Services)
 		}
@@ -226,6 +226,11 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 		{`{"services":{"web":{"target":{"type":"app","address":3000}}}}`, "app requires"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"app"}}}}`, "app requires"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address"}}}}`, "address is required"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","service":"database"}}}}`, "docker requires"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","service":"database","port":0}}}}`, "docker requires"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","service":"--database","port":5432}}}}`, "docker requires"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","service":"database","port":5432,"address":"db:5432"}}}}`, "docker requires"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432","port":5432}}}}`, "address cannot"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"http":{"readiness":{"path":"/"}}}}}`, "cannot use HTTP"},
 		{`{"services":{"web":{"target":{"type":"app"},"tunnel":{"visitor_tls":"passthrough"}}}}`, "requires PostgreSQL or MySQL"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432","target_tls":true},"tunnel":{"visitor_tls":"passthrough"}}}}`, "cannot use private target TLS"},

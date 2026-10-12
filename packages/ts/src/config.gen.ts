@@ -101,6 +101,14 @@ export interface TnlConfig {
                 targetCAFile?: string;
                 targetTLS?: boolean;
                 targetTLSName?: string;
+              }
+            | {
+                type: "docker";
+                service: string;
+                port: number;
+                targetCAFile?: string;
+                targetTLS?: boolean;
+                targetTLSName?: string;
               };
           /**
            * PublicURL and tunnel overrides for this service.
