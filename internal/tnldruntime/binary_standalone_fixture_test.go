@@ -11,14 +11,15 @@ import (
 )
 
 type integrationBinaryStandalone struct {
-	repositoryRoot string
-	tnlPath        string
-	databaseURL    string
-	stateDirectory string
-	trustFile      string
-	environment    []string
-	server         *integrationBinaryProcess
-	pebble         integrationPebble
+	repositoryRoot   string
+	tnlPath          string
+	databaseURL      string
+	stateDirectory   string
+	trustFile        string
+	environment      []string
+	server           *integrationBinaryProcess
+	pebble           integrationPebble
+	stopVisitorProxy func()
 }
 
 func startIntegrationBinaryStandalone(t *testing.T, modes ...string) *integrationBinaryStandalone {
@@ -37,12 +38,13 @@ func startIntegrationBinaryStandaloneWithTCP(t *testing.T, tcpVisitor bool, mode
 	}
 	assertIntegrationPort443Available(t)
 	publicListen := "127.0.0.1:443"
-	var stopFront func()
+	var stopFront, stopVisitorProxy func()
 	if tcpVisitor {
 		assertIntegrationTCPAddressAvailable(t, "127.0.0.2:443")
 		assertIntegrationTCPAddressAvailable(t, "127.0.0.1:15432")
 		assertIntegrationTCPAddressAvailable(t, "127.0.0.1:15433")
-		stopFront = startIntegrationPublicProxy(t, "127.0.0.2:443", "127.0.0.1:443", "127.0.0.1:15432", "127.0.0.1:15433")
+		stopFront = startIntegrationPublicProxy(t, "127.0.0.2:443", "127.0.0.1:443")
+		stopVisitorProxy = startIntegrationPublicProxy(t, "127.0.0.2:443", "127.0.0.1:15432", "127.0.0.1:15433")
 		publicListen = "127.0.0.2:443"
 	}
 	testutil.PostgresURL(t)
@@ -111,6 +113,7 @@ func startIntegrationBinaryStandaloneWithTCP(t *testing.T, tcpVisitor bool, mode
 	if stopFront != nil {
 		// close the front's idle visitor connections before tnld drains ingress.
 		t.Cleanup(stopFront)
+		t.Cleanup(stopVisitorProxy)
 	}
 	server := owner.start(t, tnldconfig.RoleStandalone, repositoryRoot, serveEnvironment, tnldPath, "serve")
 	waitForIntegrationBinaryReady(t, server, metricsAddress, databaseURL)
@@ -125,5 +128,6 @@ func startIntegrationBinaryStandaloneWithTCP(t *testing.T, tcpVisitor bool, mode
 	runIntegrationBinaryCommand(t, repositoryRoot, clientEnvironment, tnlPath, "auth", "login", "--login-token")
 	clientEnvironment = removeIntegrationEnvironment(clientEnvironment, "TNL_LOGIN_TOKEN")
 	return &integrationBinaryStandalone{repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL,
-		stateDirectory: stateDirectory, trustFile: trustFile, environment: clientEnvironment, server: server, pebble: pebble}
+		stateDirectory: stateDirectory, trustFile: trustFile, environment: clientEnvironment, server: server, pebble: pebble,
+		stopVisitorProxy: stopVisitorProxy}
 }

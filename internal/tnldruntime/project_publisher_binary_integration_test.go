@@ -37,6 +37,9 @@ volumes:
 
 func TestBinaryIntegrationTwoWorktreeComposePostgresVisitors(t *testing.T) {
 	fixture := startIntegrationBinaryStandaloneTCP(t)
+	// close visitor sockets while both named publishers can still finish their
+	// streams, before their cleanup stops either publisher or database.
+	defer fixture.stopVisitorProxy()
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("standalone output:\n%s", fixture.server.output.String())
