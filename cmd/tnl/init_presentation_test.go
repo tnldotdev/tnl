@@ -9,7 +9,7 @@ import (
 )
 
 func TestInitReportsManualActionForExistingFrameworkConfig(t *testing.T) {
-	for _, test := range []struct{ framework, action string }{{"next", "withTnl"}, {"vite", `tnl({ service: "app" }) to plugins.`}} {
+	for _, test := range []struct{ framework, action string }{{"next", "withTnl"}, {"vite", `tnl({ service: "app" })`}} {
 		t.Run(test.framework, func(t *testing.T) {
 			root := copyInitFixture(t, test.framework)
 			path := filepath.Join(root, test.framework+".config.ts")
@@ -33,6 +33,9 @@ func TestInitReportsManualActionForExistingFrameworkConfig(t *testing.T) {
 					if !strings.Contains(text, fragment) {
 						t.Fatalf("run %d missing %q: %q", run, fragment, stdout.String())
 					}
+				}
+				if test.framework == "vite" && !strings.Contains(stdout.String(), "plugins.") {
+					t.Fatalf("run %d omitted the Vite plugins action: %q", run, stdout.String())
 				}
 				if stderr.Len() != 0 {
 					t.Fatalf("stderr = %q", stderr.String())
