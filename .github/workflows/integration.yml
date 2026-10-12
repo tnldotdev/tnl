@@ -55,6 +55,9 @@ jobs:
 
       - name: Verify TypeScript publisher image
         run: task go:test:integration:publisher-dev-image
+      - name: Verify PostgreSQL TLS targets
+        run: task go:test:integration:postgres-tls
+
       - name: Check MySQL inspector against Vitess
         run: task go:test:integration:mysql-oracle
 

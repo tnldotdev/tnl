@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"net/http"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -35,6 +36,7 @@ type splitPublishFixture struct {
 
 type splitPublishOptions struct {
 	dns                  *integrationRoute53
+	proxyIngress         bool
 	configureControlHTTP func(*http.Client)
 	configureProcess     func(*tnldconfig.Config)
 }
@@ -63,7 +65,13 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	} else {
 		dnsAddress = startIntegrationDNS(t)
 	}
-	pebble := startIntegrationPebble(t, integrationPort(t, ingressAddress), dnsAddress)
+	validationAddress := ingressAddress
+	var stopProxy func()
+	if options.proxyIngress {
+		validationAddress = unusedTCPAddress(t)
+		stopProxy = startIntegrationPublicProxyWithDestination(t, ingressAddress, netip.MustParseAddrPort("127.0.0.1:443"), validationAddress)
+	}
+	pebble := startIntegrationPebble(t, integrationPort(t, validationAddress), dnsAddress)
 	for _, configure := range configureACME {
 		configure(pebble.httpClient)
 	}
@@ -101,6 +109,9 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	}
 	// dependencies outlive every incarnation of control, ingress, and relay.
 	owner := newRuntimeTopology(t)
+	if stopProxy != nil {
+		t.Cleanup(stopProxy)
+	}
 	controlOptions := integrationProcessOptions{acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, owner: owner}
 	control := startIntegrationProcessWithOptions(t, controlConfig, controlOptions)
 	waitForProcessReady(t, control)
@@ -109,6 +120,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	ingressConfig.ClusterSecret = testClusterSecret
 	ingressConfig.IngressID = "ingress-split"
 	ingressConfig.IngressListen = ingressAddress
+	ingressConfig.RequireProxyHeader = options.proxyIngress
 	relayAConfig := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-a", "relay-a-1", relayACertificate)
 	relayBConfig := splitPublishRelayConfig(t, controlHostname, serverDomain, "relay-b", "relay-b-1", relayBCertificate)
 	if options.dns != nil {
