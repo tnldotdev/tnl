@@ -130,13 +130,19 @@ func runtimeHTTP(socket string) *http.Client {
 }
 
 func runtimeAvailable(ctx context.Context, socket string) bool {
-	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/v1/health", nil)
-	response, err := runtimeHTTP(socket).Do(request)
+	endpoint, err := readRuntimeTCPEndpoint(socket)
+	if err != nil {
+		return false
+	}
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.URL+"/v1/status", nil)
+	request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
+	client := &http.Client{Timeout: 2 * time.Second}
+	response, err := client.Do(request)
 	if err != nil {
 		return false
 	}
 	response.Body.Close()
-	return response.StatusCode == http.StatusNoContent
+	return response.StatusCode == http.StatusOK
 }
 
 func runRuntimeAddress(ctx context.Context, options runtimeOptions, output io.Writer) error {

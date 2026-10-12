@@ -62,7 +62,50 @@ func testAppRuntime(t *testing.T) (*appRuntime, string, <-chan uint64) {
 	server := &http.Server{Handler: a.handler()}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
+	tcpServer, _, err := startRuntimeTCP(socket, a.handler())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := stopRuntimeTCP(context.Background(), tcpServer, socket); err != nil {
+			t.Error(err)
+		}
+	})
 	return a, state, started
+}
+
+func TestAppStatusRejectsPublisherWithStaleLocalCredential(t *testing.T) {
+	a, state, started := testAppRuntime(t)
+	id, err := a.manager.Reserve("api", "owner", os.Getpid(), "https://api.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.manager.Register(id, "owner", "http://127.0.0.1:1234", "node"); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	socket, err := runtimeSocket(a.project.Root, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := runtimeTCPEndpointPath(socket)
+	previous, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.WriteFile(path, previous, 0o600) })
+	endpoint, err := readRuntimeTCPEndpoint(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint.Credential = "stale-credential"
+	if err := writeRuntimeTCPEndpoint(path, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := readAppSnapshot(t.Context(), a.project, state)
+	if err != nil || snapshot.Services[0].Registered || snapshot.Services[0].Routable || snapshot.Services[0].Failure != "runtime.manager_unavailable" {
+		t.Fatalf("status trusted a stale endpoint: %+v, %v", snapshot, err)
+	}
 }
 
 func TestRuntimeAddressReturnsSocketWithoutStartingPublisher(t *testing.T) {
