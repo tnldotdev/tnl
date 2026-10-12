@@ -29,7 +29,18 @@ const (
 var (
 	testTier        = flag.String("tnl-test-tier", string(TestTierRoutine), "tnl test tier")
 	testPostgresURL = flag.String("tnl-test-postgres-url", "", "disposable PostgreSQL administration URL")
+	testPostgresCA  = flag.String("tnl-test-postgres-ca", "", "disposable PostgreSQL target TLS certificate")
+	testPostgresKey = flag.String("tnl-test-postgres-key", "", "disposable PostgreSQL target TLS private key")
 )
+
+// PostgresTLSFiles returns the certificate and private key for a disposable TLS-enabled PostgreSQL target.
+func PostgresTLSFiles(t testing.TB) (string, string) {
+	t.Helper()
+	if *testPostgresCA == "" || *testPostgresKey == "" {
+		t.Fatal("TLS-enabled PostgreSQL tests require -tnl-test-postgres-ca and -tnl-test-postgres-key")
+	}
+	return *testPostgresCA, *testPostgresKey
+}
 
 // RequireTestTier skips a test unless its suite is selected.
 func RequireTestTier(t testing.TB, required TestTier) {

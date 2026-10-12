@@ -61,7 +61,7 @@ func run() error {
 		}
 	}
 	if separator != 2 || separator == len(os.Args)-1 {
-		return errors.New("usage: testharness postgres|mysql|redis|ssh -- go test [arguments...], or testharness dns|runtime")
+		return errors.New("usage: testharness postgres|postgres-tls|mysql|redis|ssh -- go test [arguments...], or testharness dns|runtime")
 	}
 	command := os.Args[separator+1:]
 	root, err := repositoryRoot()
@@ -69,7 +69,7 @@ func run() error {
 		return err
 	}
 	switch os.Args[1] {
-	case "postgres":
+	case "postgres", "postgres-tls":
 		container, err := postgres.Run(ctx, postgresImage, postgres.BasicWaitStrategies(), loopbackPort("5432"))
 		if err != nil {
 			return fmt.Errorf("start disposable PostgreSQL: %w", err)
@@ -80,6 +80,16 @@ func run() error {
 			return fmt.Errorf("read disposable PostgreSQL address: %w", err)
 		}
 		command = append(command, "-tnl-test-postgres-url="+address)
+		if os.Args[1] == "postgres-tls" {
+			certificate, key, cleanup, err := preparePostgresTLS(ctx, container)
+			if cleanup != nil {
+				defer cleanup()
+			}
+			if err != nil {
+				return fmt.Errorf("enable disposable PostgreSQL TLS: %w", err)
+			}
+			command = append(command, "-tnl-test-postgres-ca="+certificate, "-tnl-test-postgres-key="+key)
+		}
 	case "mysql":
 		var container *mysql.MySQLContainer
 		for range 3 {
@@ -191,7 +201,7 @@ func run() error {
 		command = append(command, "-tnl-test-ssh-address="+net.JoinHostPort(host, port.Port()),
 			"-tnl-test-ssh-host-key="+hostKey)
 	default:
-		return errors.New("test service must be postgres, mysql, redis, or ssh")
+		return errors.New("test service must be postgres, postgres-tls, mysql, redis, or ssh")
 	}
 	child := exec.CommandContext(ctx, command[0], command[1:]...)
 	child.Dir = root

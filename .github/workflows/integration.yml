@@ -56,6 +56,9 @@ jobs:
       - name: Verify database clients
         run: task go:test:integration:database-clients
 
+      - name: Verify PostgreSQL TLS targets
+        run: task go:test:integration:postgres-tls
+
       - name: Check MySQL inspector against Vitess
         run: task go:test:integration:mysql-oracle
 

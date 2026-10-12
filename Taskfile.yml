@@ -243,6 +243,11 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgres(Login|Inspection)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
       - go -C tools/testharness run . mysql -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientMySQLLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
+  go:test:integration:postgres-tls:
+    desc: Verify split publishing and channel binding with a disposable TLS-enabled PostgreSQL target
+    cmds:
+      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher ./internal/tnldruntime -run='^TestIntegration(DatabaseClientPostgresMatchingCertificate|SplitDatabasePublishAndVisit)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
   go:test:integration:docker-selection:
     desc: Check worktree-isolated Compose target selection with disposable databases
     cmds:

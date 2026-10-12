@@ -16,6 +16,11 @@ import (
 // ingress listener, like a port-preserving external tcp load balancer.
 func startIntegrationPublicProxy(t *testing.T, backend string, addresses ...string) func() {
 	t.Helper()
+	return startIntegrationPublicProxyWithDestination(t, backend, netip.AddrPort{}, addresses...)
+}
+
+func startIntegrationPublicProxyWithDestination(t *testing.T, backend string, originalDestination netip.AddrPort, addresses ...string) func() {
+	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	var listeners []net.Listener
 	var mu sync.Mutex
@@ -83,8 +88,12 @@ func startIntegrationPublicProxy(t *testing.T, backend string, addresses ...stri
 					destination := visitor.LocalAddr().(*net.TCPAddr)
 					sourceIP, _ := netip.AddrFromSlice(source.IP)
 					destinationIP, _ := netip.AddrFromSlice(destination.IP)
+					selectedDestination := netip.AddrPortFrom(destinationIP.Unmap(), uint16(destination.Port))
+					if originalDestination.IsValid() {
+						selectedDestination = originalDestination
+					}
 					header, err := proxyproto.Encode(proxyproto.Header{
-						Source: netip.AddrPortFrom(sourceIP.Unmap(), uint16(source.Port)), Destination: netip.AddrPortFrom(destinationIP.Unmap(), uint16(destination.Port)),
+						Source: netip.AddrPortFrom(sourceIP.Unmap(), uint16(source.Port)), Destination: selectedDestination,
 					})
 					if err != nil {
 						return
