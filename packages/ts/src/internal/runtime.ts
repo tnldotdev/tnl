@@ -16,7 +16,7 @@ export interface ProjectTCPServiceMetadata {
   readonly namespace: string;
   readonly hostname: string;
   readonly url: string;
-  readonly protocol: "postgres" | "mysql" | "redis" | "ssh" | "mongodb";
+  readonly protocol: "postgres" | "mysql" | "redis" | "ssh";
   readonly port: number;
   readonly paths?: never;
 }
@@ -121,11 +121,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     );
     const protocol = service.protocol ?? "http";
     const tcp =
-      protocol === "postgres" ||
-      protocol === "mysql" ||
-      protocol === "redis" ||
-      protocol === "ssh" ||
-      protocol === "mongodb";
+      protocol === "postgres" || protocol === "mysql" || protocol === "redis" || protocol === "ssh";
     if (protocol !== "http" && !tcp) {
       throw new TnlError("sdk.runtime_invalid");
     }
