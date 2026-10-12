@@ -21,12 +21,28 @@ type integrationBinaryStandalone struct {
 }
 
 func startIntegrationBinaryStandalone(t *testing.T, modes ...string) *integrationBinaryStandalone {
+	return startIntegrationBinaryStandaloneWithTCP(t, false, modes...)
+}
+
+func startIntegrationBinaryStandaloneTCP(t *testing.T) *integrationBinaryStandalone {
+	return startIntegrationBinaryStandaloneWithTCP(t, true, "simple")
+}
+
+func startIntegrationBinaryStandaloneWithTCP(t *testing.T, tcpVisitor bool, modes ...string) *integrationBinaryStandalone {
 	t.Helper()
 	testutil.RequireTestTier(t, testutil.TestTierBinary)
 	if runtime.GOOS == "darwin" {
 		t.Fatal("binary integration requires a disposable Linux environment: macOS binaries use the login Keychain and do not use SSL_CERT_FILE for system trust; in-process keyring mocks cannot isolate these subprocesses")
 	}
 	assertIntegrationPort443Available(t)
+	publicListen := "127.0.0.1:443"
+	if tcpVisitor {
+		assertIntegrationTCPAddressAvailable(t, "127.0.0.2:443")
+		assertIntegrationTCPAddressAvailable(t, "127.0.0.1:15432")
+		assertIntegrationTCPAddressAvailable(t, "127.0.0.1:15433")
+		startIntegrationPublicProxy(t, "127.0.0.2:443", "127.0.0.1:443", "127.0.0.1:15432", "127.0.0.1:15433")
+		publicListen = "127.0.0.2:443"
+	}
 	testutil.PostgresURL(t)
 	repositoryRoot := integrationRepositoryRoot(t)
 	binaryDirectory := t.TempDir()
@@ -55,13 +71,13 @@ func startIntegrationBinaryStandalone(t *testing.T, modes ...string) *integratio
 		"TNLD_ACME_DIRECTORY_URL":           pebble.directoryURL,
 		"TNLD_ACME_EMAIL":                   "integration@example.test",
 		"TNLD_ACME_PROFILE":                 "tlsserver",
-		"TNLD_CONTROL_LISTEN":               "127.0.0.1:443",
+		"TNLD_CONTROL_LISTEN":               publicListen,
 		"TNLD_CONTROL_TLS_CERTIFICATE_FILE": serverCertificate.certificateFile,
 		"TNLD_CONTROL_TLS_PRIVATE_KEY_FILE": serverCertificate.privateKeyFile,
 		"TNLD_DATABASE_URL":                 databaseURL,
 		"TNLD_DRAIN_TIMEOUT":                "1s",
 		"TNLD_INGRESS_LEASE_DURATION":       "5s",
-		"TNLD_INGRESS_LISTEN":               "127.0.0.1:443",
+		"TNLD_INGRESS_LISTEN":               publicListen,
 		"TNLD_INTERNAL_RELAY_LISTEN":        "127.0.0.1:1",
 		"TNLD_LEASE_RENEWAL_INTERVAL":       "500ms",
 		"TNLD_LOGIN_TOKEN":                  testLoginToken,
@@ -71,7 +87,7 @@ func startIntegrationBinaryStandalone(t *testing.T, modes ...string) *integratio
 		"TNLD_PRIVATE_CONTROL_LISTEN":       "127.0.0.1:1",
 		"TNLD_REFRESH_TOKEN_LIFETIME":       "1h",
 		"TNLD_RELAY_LEASE_DURATION":         "5s",
-		"TNLD_RELAY_TCP_LISTEN":             "127.0.0.1:443",
+		"TNLD_RELAY_TCP_LISTEN":             publicListen,
 		"TNLD_RELAY_TLS_CERTIFICATE_FILE":   serverCertificate.certificateFile,
 		"TNLD_RELAY_TLS_PRIVATE_KEY_FILE":   serverCertificate.privateKeyFile,
 		"TNLD_RELAY_UDP_LISTEN":             "127.0.0.1:443",
@@ -79,6 +95,9 @@ func startIntegrationBinaryStandalone(t *testing.T, modes ...string) *integratio
 		"TNLD_SERVER_DOMAIN":                "127.0.0.1.nip.io",
 		"TNLD_STORAGE_KEY":                  testStorageKey,
 	})
+	if tcpVisitor {
+		serveEnvironment = append(serveEnvironment, "TNLD_REQUIRE_PROXY_HEADER=true")
+	}
 	if len(modes) != 0 {
 		serveEnvironment = append(serveEnvironment, "TNLD_MANAGED_URL_MODE="+modes[0])
 	}
