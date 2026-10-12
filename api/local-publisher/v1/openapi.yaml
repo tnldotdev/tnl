@@ -117,12 +117,53 @@ paths:
       summary: Read one publisher-owned snapshot for the selected project
       description: app credentials see only their service; ad-hoc credentials see no configured services.
       security: [{ ownerAuth: [] }, { appAuth: [] }, { adHocAuth: [] }]
+      parameters:
+        - name: probe
+          in: query
+          description: fresh private TCP target check; available only with owner authentication.
+          schema: { $ref: "#/components/schemas/ServiceName" }
       responses:
         "200":
           description: Configured and currently publishing services
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ProjectSnapshot" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/scopes/app/{service}:
+    post:
+      operationId: issueLocalAppCredential
+      summary: Issue a credential restricted to one configured app
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ServiceName" }
+        - name: export
+          in: query
+          schema: { type: integer, enum: [1] }
+      responses:
+        "200":
+          description: Scoped endpoint when export is 1
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalEndpoint" }
+        "204": { description: Credential saved for the app without exporting it }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/scopes/ad-hoc:
+    post:
+      operationId: issueLocalAdHocCredential
+      summary: Export the ad-hoc credential for this publisher
+      parameters:
+        - name: export
+          in: query
+          required: true
+          schema: { type: integer, enum: [1] }
+      responses:
+        "200":
+          description: Scoped endpoint for ad-hoc invocations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalEndpoint" }
         default: { $ref: "#/components/responses/Problem" }
   /v1/events:
     get:
@@ -186,6 +227,14 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    LocalEndpoint:
+      type: object
+      additionalProperties: false
+      required: [version, url, credential]
+      properties:
+        version: { type: integer, const: 1 }
+        url: { type: string, minLength: 1, maxLength: 512 }
+        credential: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
     Problem:
       type: object
       additionalProperties: false
@@ -367,11 +416,12 @@ components:
     ProjectEvent:
       type: object
       additionalProperties: false
-      required: [cursor, type, service]
+      required: [cursor, type, service, at]
       properties:
         cursor: { type: string, minLength: 1, maxLength: 128 }
         type: { type: string, minLength: 1, maxLength: 128 }
         service: { $ref: "#/components/schemas/ServiceName" }
+        at: { type: string, format: date-time }
         status: { $ref: "#/components/schemas/ServiceStatus" }
         publication: { $ref: "#/components/schemas/PublicationEvent" }
     PublicationEvent:

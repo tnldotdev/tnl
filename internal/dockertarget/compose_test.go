@@ -58,3 +58,15 @@ func TestComposePortRejectsAmbiguousAndNonlocalBindings(t *testing.T) {
 		t.Fatal("accepted a Compose option as a service")
 	}
 }
+
+func TestComposePublisherPortRequiresLoopbackBinding(t *testing.T) {
+	path := t.TempDir()
+	script := "#!/bin/sh\nprintf '0.0.0.0:49153\\n'\n"
+	if err := os.WriteFile(filepath.Join(path, "docker"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", path+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if _, err := ComposePublisherPort(t.Context(), path, "shop-k7n2p9", "publisher", 8765); err == nil {
+		t.Fatal("accepted an externally exposed plaintext publisher API")
+	}
+}

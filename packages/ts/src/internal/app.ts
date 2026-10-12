@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import * as http from "node:http";
+import * as https from "node:https";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { TnlError } from "../errors.js";
@@ -205,7 +206,7 @@ export async function createPreparedService(
       )
         return;
       try {
-        const replacementSocket = await dependencies.start(directory);
+        const replacementSocket = await dependencies.start(directory, options.service);
         const replacement = parseAssignment(
           await dependencies.request(replacementSocket, "prepare", prepareRequest),
         );
@@ -418,9 +419,10 @@ export async function startRuntime(
     );
     const value: unknown = JSON.parse(stdout);
     const object = record(value, "local publisher endpoint path");
-    exactKeys(object, ["version", "path"], "local publisher endpoint path");
+    exactKeys(object, ["version", "path", "spawn"], "local publisher endpoint path");
     if (
       object.version !== 1 ||
+      typeof object.spawn !== "boolean" ||
       typeof object.path !== "string" ||
       !path.isAbsolute(object.path) ||
       !object.path.endsWith(".endpoint.json") ||
@@ -428,6 +430,7 @@ export async function startRuntime(
     )
       throw new TnlError("sdk.response_invalid");
     if (!(await runtimeHealthy(object.path))) {
+      if (!object.spawn) throw new TnlError("sdk.dev_unavailable");
       // the app process owns the local publisher's lifetime. a second service
       // can race this spawn: the runtime's hostname lock elects one owner.
       const process_ = spawn(
@@ -464,10 +467,11 @@ function runtimeHealthy(endpointPath: string): Promise<boolean> {
       resolve(false);
       return;
     }
-    const request = http.get(
+    const transport = endpoint.url.protocol === "https:" ? https : http;
+    const request = transport.get(
       {
-        hostname: "127.0.0.1",
-        port: Number(endpoint.url.port),
+        hostname: endpoint.url.hostname,
+        port: Number(endpoint.url.port || (endpoint.url.protocol === "https:" ? 443 : 80)),
         path: "/v1/status",
         timeout: 1_000,
         headers: { Authorization: `Bearer ${endpoint.credential}` },
@@ -497,9 +501,11 @@ function readLocalEndpoint(endpointPath: string): { url: URL; credential: string
     }
     const url = new URL(endpoint.url);
     if (
-      url.protocol !== "http:" ||
-      url.hostname !== "127.0.0.1" ||
-      !url.port ||
+      !(
+        url.protocol === "https:" ||
+        (url.protocol === "http:" && url.hostname === "127.0.0.1" && !!url.port)
+      ) ||
+      !url.hostname ||
       url.pathname !== "/" ||
       url.search ||
       url.hash ||
@@ -523,10 +529,11 @@ export function runtimeRequest(
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
     const endpoint = readLocalEndpoint(endpointPath);
-    const request = http.request(
+    const transport = endpoint.url.protocol === "https:" ? https : http;
+    const request = transport.request(
       {
-        hostname: "127.0.0.1",
-        port: Number(endpoint.url.port),
+        hostname: endpoint.url.hostname,
+        port: Number(endpoint.url.port || (endpoint.url.protocol === "https:" ? 443 : 80)),
         path: `/v1/${operation}`,
         method: "POST",
         headers: {

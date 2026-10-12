@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -43,6 +45,7 @@ type runtimeOptions struct {
 	App       bool   `name:"app" help:"Locate the credential for one configured app."`
 	Service   string `name:"service" help:"Configured app service; required when several apps are configured."`
 	AdHoc     bool   `name:"ad-hoc" help:"Locate the credential for an ad-hoc invocation."`
+	Listen    string `name:"listen" help:"Private listen address of an external project publisher API."`
 }
 
 func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfiguration, string, error) {
@@ -68,7 +71,35 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 	if err != nil {
 		return projectConfiguration{}, "", err
 	}
-	project, err := projectconfig.Resolve(ctx, selection, directory, salt)
+	var project projectconfig.Project
+	if os.Getenv("TNL_PUBLISHER_EXTERNAL") == "1" {
+		root := directory
+		if selection.Path != "" {
+			root = filepath.Dir(selection.Path)
+		}
+		file, readErr := os.Open(filepath.Join(root, projectmeta.DirectoryName, projectmeta.JSONName))
+		if readErr != nil {
+			return projectConfiguration{}, "", failure.Wrap("read mounted project metadata", failure.ProjectConfigInvalid,
+				errors.Join(readErr, errors.New("run tnl config generate on the host before starting the external publisher")))
+		}
+		defer file.Close()
+		data, readErr := io.ReadAll(io.LimitReader(file, projectmeta.MaxFileBytes+1))
+		if readErr != nil || len(data) > projectmeta.MaxFileBytes {
+			return projectConfiguration{}, "", failure.Wrap("read mounted project metadata", failure.ProjectConfigInvalid,
+				errors.Join(readErr, errors.New("run tnl config generate on the host before starting the external publisher")))
+		}
+		var metadata projectmeta.Metadata
+		if err := json.Unmarshal(data, &metadata); err != nil || metadata.Worktree == nil {
+			return projectConfiguration{}, "", failure.Wrap("read mounted project metadata", failure.ProjectConfigInvalid,
+				errors.Join(err, errors.New("worktree label is missing from generated metadata")))
+		}
+		if err := metadata.Validate(); err != nil {
+			return projectConfiguration{}, "", failure.Wrap("read mounted project metadata", failure.ProjectConfigInvalid, err)
+		}
+		project, err = projectconfig.ResolveForPublisher(ctx, selection, directory, salt, metadata.Worktree.Label)
+	} else {
+		project, err = projectconfig.Resolve(ctx, selection, directory, salt)
+	}
 	if err != nil {
 		return projectConfiguration{}, "", err
 	}
@@ -153,6 +184,7 @@ func runRuntimeEndpoint(ctx context.Context, options runtimeOptions, output io.W
 		return err
 	}
 	endpointPath := runtimeTCPEndpointPath(key)
+	spawn := true
 	if options.App && options.AdHoc || options.Service != "" && !options.App {
 		return failure.Wrap("select local publisher credential", failure.InvalidCommand, errors.New("select one endpoint scope"))
 	}
@@ -170,17 +202,32 @@ func runRuntimeEndpoint(ctx context.Context, options runtimeOptions, output io.W
 		if !slices.Contains(names, selected) {
 			return failure.Wrap("select app credential", failure.ServiceNotConfigured, errors.New("select one configured app service"))
 		}
+		options.Service = selected
 		endpointPath = runtimeAppEndpointPath(key, selected)
-		if err := ensureAppPublisherEndpoint(ctx, key, selected); err != nil {
+		if project.Config.Publisher == nil || project.Config.Publisher.Type == "local" {
+			err = ensureAppPublisherEndpoint(ctx, key, selected)
+		}
+		if err != nil {
 			return err
 		}
 	} else if options.AdHoc {
 		endpointPath = runtimeAdHocEndpointPath(key)
 	}
+	if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+		spawn = false
+		credential, err := remotePublisherScope(ctx, project, options.App, options.AdHoc, options.Service)
+		if err != nil {
+			return err
+		}
+		if err := writeRuntimeTCPEndpoint(endpointPath, credential); err != nil {
+			return failure.Wrap("save external publisher endpoint", failure.ClientStateUnavailable, err)
+		}
+	}
 	return json.NewEncoder(output).Encode(struct {
 		Version int    `json:"version"`
 		Path    string `json:"path"`
-	}{privateprotocol.Version, endpointPath})
+		Spawn   bool   `json:"spawn"`
+	}{privateprotocol.Version, endpointPath, spawn})
 }
 
 type appPreparation struct {
@@ -273,11 +320,42 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	if err != nil {
 		return err
 	}
-	runtime.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
+	// external clients may live in another PID namespace. their leases, rather
+	// than the publisher's process table, establish continued ownership.
+	if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+		runtime.manager.Alive = func(pid int) bool { return pid > 0 }
+	} else {
+		runtime.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
+	}
 	defer runtime.manager.Close()
 	runtime.adhoc = clientruntime.NewAdHocManager(ctx, runtime.publishAdHoc, runtime.manager.Alive, runtime.manager.BeginPreparation)
 	defer runtime.adhoc.Close()
-	tcpServer, tcpDone, err := startRuntimeTCP(key, runtime.handler(), configuredRuntimeServices(project)...)
+	listen := "127.0.0.1:0"
+	ownerCredential := ""
+	if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+		ownerCredential, err = readPublisherOwnerCredential(project.Root, *selection.OwnerCredentialFile)
+		if err != nil {
+			return err
+		}
+		if selection.Type == "docker" {
+			listen = net.JoinHostPort("0.0.0.0", strconv.Itoa(*selection.Port))
+		} else {
+			if options.Listen == "" {
+				return failure.Wrap("start external publisher", failure.ProjectConfigInvalid, errors.New("url publishers require --listen behind HTTPS"))
+			}
+			host, port, splitErr := net.SplitHostPort(options.Listen)
+			address := net.ParseIP(host)
+			parsedPort, portErr := strconv.Atoi(port)
+			if splitErr != nil || address == nil || !address.IsLoopback() || portErr != nil || parsedPort < 0 || parsedPort > 65535 {
+				return failure.Wrap("start external publisher", failure.ProjectConfigInvalid,
+					errors.New("url publisher --listen must bind a loopback TCP address behind HTTPS"))
+			}
+			listen = options.Listen
+		}
+	} else if options.Listen != "" {
+		return failure.Wrap("start local publisher", failure.InvalidCommand, errors.New("--listen requires a docker or url publisher in project configuration"))
+	}
+	tcpServer, tcpDone, err := startRuntimeTCPWithOptions(key, runtime.handler(), listen, ownerCredential, configuredRuntimeServices(project)...)
 	if err != nil {
 		return err
 	}
@@ -293,10 +371,10 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		case err := <-tcpDone:
 			return fmt.Errorf("serve local publisher TCP API: %w", err)
 		case <-ticker.C:
-			if os.Getppid() != parentPID {
+			if ownerCredential == "" && os.Getppid() != parentPID {
 				return nil
 			}
-			if runtime.manager.Sweep(runtime.manager.Alive) {
+			if runtime.manager.Sweep(runtime.manager.Alive) && ownerCredential == "" {
 				return nil
 			}
 			runtime.adhoc.Sweep()
@@ -490,6 +568,18 @@ func (a *appRuntime) handler() http.Handler {
 	}
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		snapshot := a.manager.Snapshot()
+		if probe := r.URL.Query().Get("probe"); probe != "" {
+			if !naming.ValidServiceName(probe) {
+				runtimeProblem(w, errors.New("only the project owner may check a configured service"))
+				return
+			}
+			for index := range snapshot.Services {
+				service := &snapshot.Services[index]
+				if service.Name == probe && service.Registered && service.Routable && service.ServiceProtocol != "" && service.ServiceProtocol != "http" {
+					service.Ready = probeTCPTarget(r.Context(), service.Target)
+				}
+			}
+		}
 		if scope := localPublisherScopeFrom(r.Context()); scope.kind != localScopeOwner {
 			snapshot.Services = slices.DeleteFunc(snapshot.Services, func(service clientruntime.Service) bool {
 				return scope.kind != localScopeApp || service.Name != scope.service

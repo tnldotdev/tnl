@@ -445,6 +445,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runConfigGenerate(ctx, projectStateRoot, project, stdout, stderr)
 	case "project label":
 		return runProjectLabel(ctx, flags, stdout)
+	case "project publisher credential create":
+		return runProjectPublisherCredentialCreate(ctx, flags, stdout)
 	case "telemetry on":
 		return runTelemetryPreference(ctx, flags.Telemetry.On, "on", stdout)
 	case "telemetry off":

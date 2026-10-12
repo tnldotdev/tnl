@@ -25,6 +25,15 @@ type Project struct {
 // configured service directories. an empty selection still resolves cwd as a
 // project so commands without a configuration file share the same identity.
 func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte) (Project, error) {
+	return resolve(ctx, selection, cwd, salt, nil)
+}
+
+// ResolveForPublisher loads a mounted project using the validated host label.
+func ResolveForPublisher(ctx context.Context, selection Selection, cwd string, salt [32]byte, label WorktreeLabel) (Project, error) {
+	return resolve(ctx, selection, cwd, salt, &label)
+}
+
+func resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte, selectedLabel *WorktreeLabel) (Project, error) {
 	worktree, err := ResolveWorktree(ctx, cwd)
 	if err != nil {
 		return Project{}, fmt.Errorf("resolve project worktree: %w", err)
@@ -36,6 +45,9 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 		ServiceDirectories:         make(map[string]string),
 		RelativeServiceDirectories: make(map[string]string),
 	}
+	if selectedLabel != nil {
+		project.Worktree = WithWorktreeLabel(project.Worktree, *selectedLabel)
+	}
 	if selection.Path == "" {
 		return project, nil
 	}
@@ -46,6 +58,9 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 		return Project{}, fmt.Errorf("resolve project worktree: %w", err)
 	}
 	project.Worktree = ApplyWorktreeHashSalt(project.Worktree, project.Root, salt)
+	if selectedLabel != nil {
+		project.Worktree = WithWorktreeLabel(project.Worktree, *selectedLabel)
+	}
 	if strings.EqualFold(filepath.Ext(selection.Path), ".ts") {
 		project.Config, err = loadTypeScript(ctx, selection.Path, cwd, project.Worktree)
 	} else {

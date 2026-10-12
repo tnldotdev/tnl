@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,13 +51,14 @@ type localPublisherScope struct {
 type localScopeContextKey struct{}
 
 type localPublisherAuthorization struct {
-	mu       sync.RWMutex
-	key      string
-	endpoint localPublisherEndpoint
-	handler  http.Handler
-	scoped   map[string]localPublisherScope
-	apps     map[string]string
-	paths    []string
+	mu              sync.RWMutex
+	key             string
+	endpoint        localPublisherEndpoint
+	handler         http.Handler
+	scoped          map[string]localPublisherScope
+	apps            map[string]string
+	adHocCredential string
+	paths           []string
 }
 
 func localPublisherScopeFrom(ctx context.Context) localPublisherScope {
@@ -75,14 +77,21 @@ func publisherCredential() (string, error) {
 }
 
 func startRuntimeTCP(key string, handler http.Handler, services ...clientruntime.Service) (*http.Server, <-chan error, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	return startRuntimeTCPWithOptions(key, handler, "127.0.0.1:0", "", services...)
+}
+
+func startRuntimeTCPWithOptions(key string, handler http.Handler, listen, ownerCredential string, services ...clientruntime.Service) (*http.Server, <-chan error, error) {
+	listener, err := net.Listen("tcp", listen)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen for local publisher requests: %w", err)
 	}
-	credential, err := publisherCredential()
-	if err != nil {
-		listener.Close()
-		return nil, nil, err
+	credential := ownerCredential
+	if credential == "" {
+		credential, err = publisherCredential()
+		if err != nil {
+			listener.Close()
+			return nil, nil, err
+		}
 	}
 	endpoint := localPublisherEndpoint{Version: privateprotocol.Version, URL: "http://" + listener.Addr().String(), Credential: credential}
 	auth := &localPublisherAuthorization{key: key, endpoint: endpoint, handler: handler,
@@ -102,6 +111,7 @@ func startRuntimeTCP(key string, handler http.Handler, services ...clientruntime
 		return nil, nil, err
 	}
 	auth.scoped[adHocCredential] = localPublisherScope{kind: localScopeAdHoc}
+	auth.adHocCredential = adHocCredential
 	if err = writeRuntimeTCPEndpoint(auth.paths[0], localPublisherEndpoint{Version: privateprotocol.Version, URL: endpoint.URL, Credential: adHocCredential}); err != nil {
 		return nil, nil, err
 	}
@@ -167,7 +177,7 @@ func (a *localPublisherAuthorization) ServeHTTP(w http.ResponseWriter, r *http.R
 		}
 		a.mu.RUnlock()
 	}
-	if !authorized || r.Header.Get("Origin") != "" || scope.kind == localScopeAdHoc &&
+	if !authorized || r.Header.Get("Origin") != "" || scope.kind != localScopeOwner && r.URL.Query().Has("probe") || scope.kind == localScopeAdHoc &&
 		!strings.HasPrefix(r.URL.Path, "/v1/ad-hoc/") && r.URL.Path != "/v1/status" || scope.kind == localScopeApp &&
 		r.URL.Path != "/v1/status" && r.URL.Path != "/v1/prepare" && r.URL.Path != "/v1/register" &&
 		r.URL.Path != "/v1/renew" && r.URL.Path != "/v1/unregister" {
@@ -175,11 +185,23 @@ func (a *localPublisherAuthorization) ServeHTTP(w http.ResponseWriter, r *http.R
 		return
 	}
 	if scope.kind == localScopeOwner && r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/scopes/app/") {
-		if err := a.issueApp(strings.TrimPrefix(r.URL.Path, "/v1/scopes/app/")); err != nil {
+		service := strings.TrimPrefix(r.URL.Path, "/v1/scopes/app/")
+		if err := a.issueApp(service); err != nil {
 			runtimeProblem(w, err)
 			return
 		}
+		if r.URL.Query().Get("export") == "1" {
+			a.mu.RLock()
+			token := a.apps[service]
+			a.mu.RUnlock()
+			privateprotocol.Write(w, http.StatusOK, localPublisherEndpoint{Version: privateprotocol.Version, URL: a.endpoint.URL, Credential: token})
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if scope.kind == localScopeOwner && r.Method == http.MethodPost && r.URL.Path == "/v1/scopes/ad-hoc" && r.URL.Query().Get("export") == "1" {
+		privateprotocol.Write(w, http.StatusOK, localPublisherEndpoint{Version: privateprotocol.Version, URL: a.endpoint.URL, Credential: a.adHocCredential})
 		return
 	}
 	a.handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), localScopeContextKey{}, scope)))
@@ -249,16 +271,23 @@ func readLocalPublisherDescriptor(path string) (localPublisherEndpoint, error) {
 	if err := json.Unmarshal(data, &endpoint); err != nil {
 		return localPublisherEndpoint{}, err
 	}
-	if endpoint.Version != privateprotocol.Version || endpoint.Credential == "" {
+	secret, secretErr := base64.RawURLEncoding.DecodeString(endpoint.Credential)
+	if endpoint.Version != privateprotocol.Version || secretErr != nil || len(secret) != 32 || len(endpoint.Credential) != 43 {
 		return localPublisherEndpoint{}, errors.New("local publisher endpoint descriptor is invalid")
 	}
-	host, ok := strings.CutPrefix(endpoint.URL, "http://")
-	if !ok {
-		return localPublisherEndpoint{}, errors.New("local publisher endpoint is not a loopback TCP address")
+	parsed, err := url.Parse(endpoint.URL)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.String() != endpoint.URL {
+		return localPublisherEndpoint{}, errors.New("local publisher endpoint is not an HTTP origin")
 	}
-	address, err := net.ResolveTCPAddr("tcp", host)
+	if parsed.Scheme == "https" && parsed.Hostname() != "" {
+		return endpoint, nil
+	}
+	if parsed.Scheme != "http" {
+		return localPublisherEndpoint{}, errors.New("local publisher endpoint must use HTTPS or loopback HTTP")
+	}
+	address, err := net.ResolveTCPAddr("tcp", parsed.Host)
 	if err != nil || !address.IP.IsLoopback() || address.Port <= 0 {
-		return localPublisherEndpoint{}, errors.New("local publisher endpoint is not a loopback TCP address")
+		return localPublisherEndpoint{}, errors.New("local publisher HTTP endpoint is not loopback")
 	}
 	return endpoint, nil
 }

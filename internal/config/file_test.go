@@ -245,6 +245,46 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 	}
 }
 
+func TestProjectPublisherSelectsOneOwnerWithoutPuttingCredentialsInConfig(t *testing.T) {
+	for filename, source := range map[string]string{
+		"tnl.json": `{"version":1,"tnl":{"publisher":{"type":"url","url":"https://publisher.example.test:8443","owner_credential_file":".tnl/owner-token"},"services":{"web":{"target":{"type":"app"}}}}}`,
+		"tnl.yml":  "version: 1\ntnl:\n  publisher:\n    type: docker\n    service: publisher\n    port: 8765\n    owner_credential_file: .tnl/owner-token\n  services:\n    orders:\n      protocol: postgres\n      target: {type: docker, service: database, port: 5432}\n",
+	} {
+		path := filepath.Join(t.TempDir(), filename)
+		if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+		value, err := LoadDocument(path)
+		if err != nil || value.TNL.Publisher == nil || value.TNL.Publisher.OwnerCredentialFile == nil || *value.TNL.Publisher.OwnerCredentialFile != ".tnl/owner-token" {
+			t.Fatalf("publisher in %s = %+v, %v", filename, value.TNL, err)
+		}
+	}
+	for _, test := range []struct{ publisher, detail string }{
+		{`{"type":"local","url":"https://publisher.example"}`, "local publisher"},
+		{`{"type":"url","url":"http://publisher.example","owner_credential_file":"owner"}`, "HTTPS origin"},
+		{`{"type":"url","url":"https://publisher.example/path","owner_credential_file":"owner"}`, "HTTPS origin"},
+		{`{"type":"url","url":"https://publisher.example:0","owner_credential_file":"owner"}`, "port must be"},
+		{`{"type":"url","url":"https://publisher.example"}`, "requires an HTTPS origin"},
+		{`{"type":"docker","service":"--other","port":8765,"owner_credential_file":"owner"}`, "docker publisher requires"},
+		{`{"type":"docker","service":"publisher","port":0,"owner_credential_file":"owner"}`, "docker publisher requires"},
+		{`{"type":"docker","service":"publisher","port":8765,"owner_credential_file":"  "}`, "owner_credential_file"},
+	} {
+		path := filepath.Join(t.TempDir(), "tnl.json")
+		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"publisher":`+test.publisher+`}}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadDocument(path); err == nil || !strings.Contains(err.Error(), test.detail) {
+			t.Fatalf("invalid publisher %s: %v; want %q", test.publisher, err, test.detail)
+		}
+	}
+	service, credential := "publisher", "owner-token"
+	port := 8765
+	if err := ValidateTNL(TNL{Publisher: &ProjectPublisher{Type: "docker", Service: &service, Port: &port, OwnerCredentialFile: &credential},
+		Services: Services{"web": {Target: &ServiceTarget{Type: "app"}}}}); err == nil || !strings.Contains(err.Error(), "use the local publisher for a host app") {
+		t.Fatalf("docker publisher accepted a host app: %v", err)
+	}
+}
+
 func TestValidateTNLScopesFixedAddressesToOneService(t *testing.T) {
 	name, publicURL, domain, open := "preview", "https://preview.example.test", "example.test", true
 	for _, tunnel := range []*Tunnel{{Name: &name}, {PublicURL: &publicURL}} {

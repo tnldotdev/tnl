@@ -25,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/api/localpublisherv1"
 )
@@ -187,6 +188,11 @@ func TestLocalPublisherCredentialsRestrictAppAndAdHocOperations(t *testing.T) {
 			t.Fatalf("credential reached %s with status %d", test.path, response.StatusCode)
 		}
 	}
+	probeResponse := call(http.MethodGet, "/v1/status?probe=api", webToken, nil)
+	probeResponse.Body.Close()
+	if probeResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("app credential requested a private target probe: HTTP %d", probeResponse.StatusCode)
+	}
 	owner := "0123456789abcdef0123456789abcdef"
 	id, err := a.manager.Reserve("api", owner, os.Getpid(), "https://api.example")
 	if err != nil {
@@ -332,6 +338,126 @@ func TestRuntimeEndpointWorksWithoutProjectConfiguration(t *testing.T) {
 	}
 	if _, err := os.Stat(endpoint.Path); !os.IsNotExist(err) {
 		t.Fatalf("unconfigured endpoint lookup started the local publisher: %v", err)
+	}
+}
+
+func TestExternalPublisherUsesMountedHostWorktreeLabel(t *testing.T) {
+	t.Setenv("TNL_CONFIG", "")
+	t.Setenv("TNL_PUBLISHER_EXTERNAL", "1")
+	root := t.TempDir()
+	configData := []byte(`{"version":1,"tnl":{"publisher":{"type":"url","url":"https://publisher.example.test","owner_credential_file":"owner-token"},"services":{"web":{"target":{"type":"app"}}}}}`)
+	if err := os.WriteFile(filepath.Join(root, "tnl.json"), configData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	metadata := projectmeta.Metadata{Version: projectmeta.Version, Namespace: "shop.example.test",
+		Services: map[string]projectmeta.Service{}, ServiceDirectories: map[string]string{},
+		Worktree: &projectmeta.Worktree{Label: projectconfig.WorktreeLabel{Project: "shop", ID: "k7n2p9", FullLabel: "shop-k7n2p9"}},
+	}
+	if err := projectmeta.Write(t.Context(), root, metadata); err != nil {
+		t.Fatal(err)
+	}
+	state := t.TempDir()
+	if err := os.Chmod(state, 0700); err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := runtimeProject(t.Context(), runtimeOptions{Directory: root, StateDir: state})
+	if err != nil || project.Worktree.Label.FullLabel != "shop-k7n2p9" || projectconfig.ServiceWorktreeLabel("web", project.Worktree) != "web-shop-k7n2p9" {
+		t.Fatalf("mounted publisher worktree = %+v, %v", project.Worktree.Label, err)
+	}
+}
+
+func TestExternalPublisherServesTheOwnerCredentialFromMountedProject(t *testing.T) {
+	t.Setenv("TNL_CONFIG", "")
+	t.Setenv("TNL_PUBLISHER_EXTERNAL", "1")
+	root := t.TempDir()
+	configData := []byte(`{"version":1,"tnl":{"publisher":{"type":"url","url":"https://publisher.example.test","owner_credential_file":"owner-token"},"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"127.0.0.1:5432"}}}}}`)
+	if err := os.WriteFile(filepath.Join(root, "tnl.json"), configData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := publisherCredential()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "owner-token"), []byte(owner), 0600); err != nil {
+		t.Fatal(err)
+	}
+	metadata := projectmeta.Metadata{Version: projectmeta.Version, Namespace: "shop.example.test",
+		Services: map[string]projectmeta.Service{}, ServiceDirectories: map[string]string{},
+		Worktree: &projectmeta.Worktree{Label: projectconfig.WorktreeLabel{Project: "shop", ID: "k7n2p9", FullLabel: "shop-k7n2p9"}},
+	}
+	if err := projectmeta.Write(t.Context(), root, metadata); err != nil {
+		t.Fatal(err)
+	}
+	state := t.TempDir()
+	if err := os.Chmod(state, 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- runRuntimeServe(ctx, runtimeOptions{Directory: root, StateDir: state, Listen: "127.0.0.1:0"})
+	}()
+	project, canonicalState, err := runtimeProject(t.Context(), runtimeOptions{Directory: root, StateDir: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := runtimeKey(project.Root, canonicalState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var endpoint localPublisherEndpoint
+	for time.Now().Before(deadline) {
+		endpoint, err = readRuntimeTCPEndpoint(key)
+		if err == nil {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if err != nil || endpoint.Credential != owner {
+		t.Fatalf("external publisher owner credential was not installed: %v", err)
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, endpoint.URL+"/v1/status", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+owner)
+	response, err := (&http.Client{Timeout: time.Second}).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("external publisher status = %d", response.StatusCode)
+	}
+	// external publishers have no app parent or local idle owner to keep them
+	// running while the CLI has no active publication.
+	time.Sleep(clientruntime.CleanupGrace + time.Second)
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, endpoint.URL+"/v1/status", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+owner)
+	response, err = (&http.Client{Timeout: time.Second}).Do(request)
+	if err != nil {
+		t.Fatalf("idle external publisher stopped: %v", err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("idle external publisher status = %d", response.StatusCode)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("external publisher did not stop with its owner")
+	}
+	if err := runRuntimeServe(t.Context(), runtimeOptions{Directory: root, StateDir: state, Listen: "0.0.0.0:0"}); err == nil {
+		t.Fatal("url publisher exposed its plaintext API on all interfaces")
 	}
 }
 

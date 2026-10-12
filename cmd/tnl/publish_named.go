@@ -113,6 +113,22 @@ func (c namedPublisherClient) request(ctx context.Context, method, path, owner s
 }
 
 func localPublisherForCLI(ctx context.Context, flags publishCommand) (namedPublisherClient, func(), error) {
+	if selection := flags.project.Config.Publisher; selection != nil && selection.Type != "local" {
+		endpoint, err := selectedPublisherEndpoint(ctx, flags.project)
+		if err != nil {
+			return namedPublisherClient{}, nil, err
+		}
+		client := namedPublisherClient{endpoint: endpoint, http: publisherHTTPClient(10 * time.Second)}
+		var snapshot localpublisherv1.ProjectSnapshot
+		if err := client.request(ctx, http.MethodGet, "/v1/status", "", nil, &snapshot); err != nil {
+			return namedPublisherClient{}, nil, err
+		}
+		if snapshot.Project != flags.projectRoot {
+			return namedPublisherClient{}, nil, failure.Wrap("select project publisher", failure.ProjectConfigInvalid,
+				errors.New("publisher project directory differs; mount the worktree at the same path as the host"))
+		}
+		return client, func() {}, nil
+	}
 	options := runtimeOptions{Directory: flags.projectRoot, StateDir: flags.StateDir}
 	project, root, err := runtimeProject(ctx, options)
 	if err != nil {
