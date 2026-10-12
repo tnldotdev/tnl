@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -112,7 +113,7 @@ func TestRuntimeEndpointReturnsPathWithoutStartingPublisher(t *testing.T) {
 	}
 	state := filepath.Join(t.TempDir(), "state")
 	var output bytes.Buffer
-	if err := runRuntimeEndpoint(t.Context(), runtimeOptions{Directory: project, StateDir: state}, &output); err != nil {
+	if err := run(t.Context(), []string{"--no-telemetry", "runtime", "endpoint", "--directory", project, "--state-dir", state}, &output, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	selected, root, err := runtimeProject(t.Context(), runtimeOptions{Directory: project, StateDir: state})
