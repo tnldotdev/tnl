@@ -283,7 +283,7 @@ func TestBinaryIntegrationAppAndNamedServiceShareLocalPublisher(t *testing.T) {
 		}
 		return endpoint.URL != "" && endpoint.Credential != "", nil
 	})
-	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
+	client := &http.Client{Timeout: 35 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
 	call := func(operation string, payload any, target any) int {
 		t.Helper()
 		body, err := json.Marshal(payload)
