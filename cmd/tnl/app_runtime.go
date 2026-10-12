@@ -128,7 +128,8 @@ func runtimeAvailable(ctx context.Context, key string) bool {
 	}
 	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.URL+"/v1/status", nil)
 	request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
-	client := &http.Client{Timeout: 2 * time.Second}
+	request.Close = true
+	client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{DisableKeepAlives: true, Proxy: nil}}
 	response, err := client.Do(request)
 	if err != nil {
 		return false
