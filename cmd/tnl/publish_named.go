@@ -99,6 +99,9 @@ func (c namedPublisherClient) request(ctx context.Context, method, path, owner s
 		if response.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("%w: %s", errNamedPublisherUnauthenticated, problem.Message)
 		}
+		if problem.Code == "runtime.registration_stale" && strings.HasPrefix(path, "/v1/publications/") {
+			return fmt.Errorf("%w: %s", errNamedPublisherLost, problem.Message)
+		}
 		if problem.Code == string(failure.AuthMethodUnavailable) {
 			return failure.Wrap("select publisher login method", failure.AuthMethodUnavailable, errors.New(problem.Message))
 		}
