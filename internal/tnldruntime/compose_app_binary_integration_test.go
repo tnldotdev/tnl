@@ -221,4 +221,76 @@ volumes:
 		err = connection.QueryRow(ctx, "SELECT 42").Scan(&answer)
 		return err == nil && answer == 42, err
 	})
+	oldDescriptor, err := os.ReadFile(filepath.Join(root, ".tnl", "publisher-web.endpoint.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oldScope struct {
+		Credential string `json:"credential"`
+	}
+	if err := json.Unmarshal(oldDescriptor, &oldScope); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := runCompose(30*time.Second, "restart", "publisher"); err != nil {
+		t.Fatalf("restart Compose publisher: %v (%s)", err, output)
+	}
+	waitForIntegrationCondition(t, 20*time.Second, func(ctx context.Context) (bool, error) {
+		command := exec.CommandContext(ctx, fixture.tnlPath, "project", "publisher", "credential", "export", "--service", "web")
+		command.Dir, command.Env = root, composeEnvironment
+		output, err := command.CombinedOutput()
+		if err != nil {
+			return false, fmt.Errorf("reissue app credential after owner restart: %w (%s)", err, output)
+		}
+		return true, nil
+	})
+	currentDescriptor, err := os.ReadFile(filepath.Join(root, ".tnl", "publisher-web.endpoint.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var currentScope struct {
+		Credential string `json:"credential"`
+	}
+	if err := json.Unmarshal(currentDescriptor, &currentScope); err != nil || currentScope.Credential == oldScope.Credential {
+		t.Fatalf("restarted publisher retained a stale app credential: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, "ready.json")); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := runCompose(90*time.Second, "up", "-d", "--force-recreate", "web"); err != nil {
+		t.Fatalf("restart Compose app with reissued credential: %v (%s)", err, output)
+	}
+	waitForIntegrationCondition(t, 35*time.Second, func(_ context.Context) (bool, error) {
+		data, err := os.ReadFile(filepath.Join(root, "ready.json"))
+		if err != nil {
+			return false, err
+		}
+		if err := json.Unmarshal(data, &app); err != nil {
+			return false, err
+		}
+		return app.Port > 0 && app.URL == webURL, fmt.Errorf("app did not keep its saved public URL after owner restart")
+	})
+	runIntegrationBinaryCommand(t, root, composeEnvironment, fixture.tnlPath, "wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
+	waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
+		response, body, err := visitor.requestURLContext(ctx, http.MethodGet, webURL+"/", nil)
+		if err != nil || response.StatusCode != http.StatusOK {
+			return false, err
+		}
+		var result struct {
+			DatabaseURL string `json:"databaseURL"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return false, err
+		}
+		return result.DatabaseURL == databaseURL, fmt.Errorf("app URL did not recover after publisher restart")
+	})
+	waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
+		connection, err := connectPublicPostgres(ctx, fixture, databaseURL)
+		if err != nil {
+			return false, err
+		}
+		defer connection.Close(context.Background())
+		var answer int
+		err = connection.QueryRow(ctx, "SELECT 42").Scan(&answer)
+		return err == nil && answer == 42, err
+	})
 }
