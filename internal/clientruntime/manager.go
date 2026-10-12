@@ -14,7 +14,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
-	"github.com/tnldotdev/tnl/internal/mongosrv"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
 )
 
@@ -350,12 +349,8 @@ func validateRegistrationTarget(service Service, target string, named bool) erro
 		}
 		return nil
 	}
-	if service.ServiceProtocol == "mongodb" && strings.HasPrefix(target, mongosrv.Prefix) {
-		_, err := mongosrv.Parse(target)
-		return err
-	}
 	switch service.ServiceProtocol {
-	case "postgres", "mysql", "redis", "ssh", "mongodb":
+	case "postgres", "mysql", "redis", "ssh":
 		canonical, err := tcptarget.Normalize(target)
 		if err != nil || canonical != target {
 			return errors.Join(err, errors.New("target must be a canonical private TCP host and port"))
