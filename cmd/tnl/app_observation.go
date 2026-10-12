@@ -58,6 +58,23 @@ func readAppSnapshot(ctx context.Context, project projectConfiguration, state st
 		}
 	}
 	snapshot.Services = configured
+	for index := range snapshot.Services {
+		service := &snapshot.Services[index]
+		selected := project.Config.Services[service.Name].Target
+		if selected == nil || selected.Type != "docker" {
+			continue
+		}
+		resolver := newDockerPublishResolver(ctx, project.Root, dockerPublishTarget{
+			selection: selected.DockerSelection, projectLabel: project.Worktree.Label.FullLabel,
+		}, service.ServiceProtocol == "" || service.ServiceProtocol == "http")
+		service.Target = resolver.target()
+		if service.Target == "" {
+			service.Ready = false
+			if service.Registered {
+				service.Failure = "runtime.target_unavailable"
+			}
+		}
+	}
 	snapshot.ObservedAt = time.Now().UTC()
 	key, err := runtimeKey(project.Root, state)
 	if err != nil {
@@ -216,7 +233,7 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 			service := &snapshot.Services[index]
 			matched := false
 			for _, now := range current.Services {
-				if now.Name == service.Name && now.Registered && now.Routable && now.RegistrationID == service.RegistrationID && now.TunnelID == service.TunnelID && now.PublishRunNumber == service.PublishRunNumber {
+				if now.Name == service.Name && now.Registered && now.Routable && now.RegistrationID == service.RegistrationID && now.TunnelID == service.TunnelID && now.PublishRunNumber == service.PublishRunNumber && now.Target == service.Target {
 					matched = true
 					break
 				}
