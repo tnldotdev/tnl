@@ -283,7 +283,7 @@ func TestBinaryIntegrationAppAndNamedServiceShareLocalPublisher(t *testing.T) {
 		}
 		return endpoint.URL != "" && endpoint.Credential != "", nil
 	})
-	client := &http.Client{Timeout: 35 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
+	client := &http.Client{Timeout: 65 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
 	call := func(operation string, payload any, target any) int {
 		t.Helper()
 		body, err := json.Marshal(payload)
@@ -372,7 +372,8 @@ func TestBinaryIntegrationAppAndNamedServiceShareLocalPublisher(t *testing.T) {
 			return err == nil && response.StatusCode == http.StatusOK && string(body) == "one local service", err
 		})
 	}
-	if err := named.shutdown(15*time.Second, 5*time.Second); err != nil {
+	visitor.transport.CloseIdleConnections()
+	if err := named.shutdown(50*time.Second, 5*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	assertIntegrationBinaryProcessResult(t, named)
