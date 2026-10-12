@@ -116,7 +116,7 @@ func startRuntimeTCP(key string, handler http.Handler, services ...clientruntime
 	if err = writeRuntimeTCPEndpoint(runtimeTCPEndpointPath(key), endpoint); err != nil {
 		return nil, nil, err
 	}
-	server := &http.Server{Handler: auth, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
+	server := &http.Server{Handler: auth, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: 64 << 10}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	return server, done, nil

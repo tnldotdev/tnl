@@ -156,6 +156,8 @@ the owner descriptor and scoped descriptors are separate mode-0600 files in a
 user-owned directory; the runtime issues a scoped file when a new app service
 is added while it is running. an app credential cannot start a named
 publication, read another service's status, or register its listener.
+processes running as the same OS user can still read the owner's private file;
+give a container only the scoped file if it must not hold owner authority.
 an accepted registration reports a bound listener; public readiness remains a
 separate observation. the API returns browser-safe project metadata but does
 not carry visitor bytes or expose the control session to an app. the host
