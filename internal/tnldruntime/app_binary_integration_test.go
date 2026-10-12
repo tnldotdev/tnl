@@ -343,7 +343,12 @@ func TestBinaryIntegrationAppAndNamedServiceShareLocalPublisher(t *testing.T) {
 			}
 		}
 	}()
-	t.Cleanup(func() { close(stopRenewal); <-renewed })
+	var stopRenewalOnce sync.Once
+	stopAppRenewal := func() {
+		stopRenewalOnce.Do(func() { close(stopRenewal) })
+		<-renewed
+	}
+	t.Cleanup(stopAppRenewal)
 	named := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "publish", "orders", "--output=ndjson")
 	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "")
 	waitForIntegrationCondition(t, 75*time.Second, func(ctx context.Context) (bool, error) {
@@ -374,5 +379,13 @@ func TestBinaryIntegrationAppAndNamedServiceShareLocalPublisher(t *testing.T) {
 	waitForIntegrationCondition(t, 15*time.Second, func(ctx context.Context) (bool, error) {
 		snapshot, err := clientruntime.ReadSnapshot(project, fixture.stateDirectory)
 		return err == nil && len(snapshot.Services) == 2 && snapshot.Services[0].Registered == false && snapshot.Services[1].Registered, err
+	})
+	stopAppRenewal()
+	if status := call("unregister", registration, nil); status != http.StatusNoContent {
+		t.Fatalf("app unregister returned %d", status)
+	}
+	waitForIntegrationCondition(t, 15*time.Second, func(ctx context.Context) (bool, error) {
+		snapshot, err := clientruntime.ReadSnapshot(project, fixture.stateDirectory)
+		return err == nil && len(snapshot.Services) == 2 && !snapshot.Services[0].Registered && !snapshot.Services[1].Registered, err
 	})
 }
