@@ -37,11 +37,12 @@ func startIntegrationBinaryStandaloneWithTCP(t *testing.T, tcpVisitor bool, mode
 	}
 	assertIntegrationPort443Available(t)
 	publicListen := "127.0.0.1:443"
+	var stopFront func()
 	if tcpVisitor {
 		assertIntegrationTCPAddressAvailable(t, "127.0.0.2:443")
 		assertIntegrationTCPAddressAvailable(t, "127.0.0.1:15432")
 		assertIntegrationTCPAddressAvailable(t, "127.0.0.1:15433")
-		startIntegrationPublicProxy(t, "127.0.0.2:443", "127.0.0.1:443", "127.0.0.1:15432", "127.0.0.1:15433")
+		stopFront = startIntegrationPublicProxy(t, "127.0.0.2:443", "127.0.0.1:443", "127.0.0.1:15432", "127.0.0.1:15433")
 		publicListen = "127.0.0.2:443"
 	}
 	testutil.PostgresURL(t)
@@ -103,6 +104,10 @@ func startIntegrationBinaryStandaloneWithTCP(t *testing.T, tcpVisitor bool, mode
 		serveEnvironment = append(serveEnvironment, "TNLD_MANAGED_URL_MODE="+modes[0])
 	}
 	owner := newBinaryTopology(t)
+	if stopFront != nil {
+		// close the front's idle visitor connections before tnld drains ingress.
+		t.Cleanup(stopFront)
+	}
 	server := owner.start(t, tnldconfig.RoleStandalone, repositoryRoot, serveEnvironment, tnldPath, "serve")
 	waitForIntegrationBinaryReady(t, server, metricsAddress, databaseURL)
 	stateDirectory := filepath.Join(t.TempDir(), "state")
