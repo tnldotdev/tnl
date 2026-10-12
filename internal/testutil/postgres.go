@@ -36,6 +36,9 @@ var (
 // PostgresTLSFiles returns the certificate and private key for a disposable TLS-enabled PostgreSQL target.
 func PostgresTLSFiles(t testing.TB) (string, string) {
 	t.Helper()
+	if *testPostgresCA == "" && *testPostgresKey == "" {
+		t.Skip("requires the disposable PostgreSQL TLS target")
+	}
 	if *testPostgresCA == "" || *testPostgresKey == "" {
 		t.Fatal("TLS-enabled PostgreSQL tests require -tnl-test-postgres-ca and -tnl-test-postgres-key")
 	}
