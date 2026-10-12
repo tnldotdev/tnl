@@ -3,7 +3,12 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
-import { createPreparedService, prepareService, runtimeRequest, startRuntime } from "./dist/internal/app.js";
+import {
+  createPreparedService,
+  prepareService,
+  runtimeRequest,
+  startRuntime,
+} from "./dist/internal/app.js";
 import { TnlError } from "./dist/errors.js";
 import { startTestBootstrap } from "./test-helper/bootstrap.js";
 import { testPublicProject } from "./test-helper/project.js";
