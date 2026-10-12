@@ -61,7 +61,6 @@ func (e HTTPServiceMetadataProtocol) Valid() bool {
 // Defines values for ServiceStatusProtocol.
 const (
 	ServiceStatusProtocolHttp     ServiceStatusProtocol = "http"
-	ServiceStatusProtocolMongodb  ServiceStatusProtocol = "mongodb"
 	ServiceStatusProtocolMysql    ServiceStatusProtocol = "mysql"
 	ServiceStatusProtocolPostgres ServiceStatusProtocol = "postgres"
 	ServiceStatusProtocolRedis    ServiceStatusProtocol = "redis"
@@ -72,8 +71,6 @@ const (
 func (e ServiceStatusProtocol) Valid() bool {
 	switch e {
 	case ServiceStatusProtocolHttp:
-		return true
-	case ServiceStatusProtocolMongodb:
 		return true
 	case ServiceStatusProtocolMysql:
 		return true
@@ -120,7 +117,6 @@ func (e ServiceStatusState) Valid() bool {
 
 // Defines values for TCPServiceMetadataProtocol.
 const (
-	TCPServiceMetadataProtocolMongodb  TCPServiceMetadataProtocol = "mongodb"
 	TCPServiceMetadataProtocolMysql    TCPServiceMetadataProtocol = "mysql"
 	TCPServiceMetadataProtocolPostgres TCPServiceMetadataProtocol = "postgres"
 	TCPServiceMetadataProtocolRedis    TCPServiceMetadataProtocol = "redis"
@@ -130,8 +126,6 @@ const (
 // Valid indicates whether the value is a known member of the TCPServiceMetadataProtocol enum.
 func (e TCPServiceMetadataProtocol) Valid() bool {
 	switch e {
-	case TCPServiceMetadataProtocolMongodb:
-		return true
 	case TCPServiceMetadataProtocolMysql:
 		return true
 	case TCPServiceMetadataProtocolPostgres:
