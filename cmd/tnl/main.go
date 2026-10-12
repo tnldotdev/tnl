@@ -379,6 +379,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	switch parsedCommand {
 	case "runtime address":
 		return runRuntimeAddress(ctx, flags.Runtime.Address, stdout)
+	case "runtime endpoint":
+		return runRuntimeEndpoint(ctx, flags.Runtime.Endpoint, stdout)
 	case "runtime serve":
 		return runRuntimeServe(ctx, flags.Runtime.Serve)
 	case "wait", "watch":

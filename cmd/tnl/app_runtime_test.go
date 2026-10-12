@@ -132,6 +132,21 @@ func TestRuntimeAddressReturnsSocketWithoutStartingPublisher(t *testing.T) {
 	if runtimeAvailable(t.Context(), address.Socket) {
 		t.Fatal("address lookup started the local publisher")
 	}
+	output.Reset()
+	if err := runRuntimeEndpoint(t.Context(), runtimeOptions{Directory: project, StateDir: state}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var endpoint struct {
+		Version int    `json:"version"`
+		Path    string `json:"path"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &endpoint); err != nil || endpoint.Version != 1 ||
+		endpoint.Path != runtimeTCPEndpointPath(address.Socket) {
+		t.Fatalf("runtime endpoint = %s, %v", output.String(), err)
+	}
+	if _, err := os.Stat(endpoint.Path); !os.IsNotExist(err) {
+		t.Fatalf("endpoint lookup started the local publisher: %v", err)
+	}
 }
 
 func TestRuntimeAddressWorksWithoutProjectConfiguration(t *testing.T) {

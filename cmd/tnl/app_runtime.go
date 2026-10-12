@@ -34,8 +34,9 @@ import (
 )
 
 type runtimeCommand struct {
-	Address runtimeOptions `cmd:"" hidden:""`
-	Serve   runtimeOptions `cmd:"" hidden:""`
+	Address  runtimeOptions `cmd:"" hidden:""`
+	Endpoint runtimeOptions `cmd:"" hidden:""`
+	Serve    runtimeOptions `cmd:"" hidden:""`
 }
 type runtimeOptions struct {
 	Directory string `name:"directory" required:"" type:"path"`
@@ -159,6 +160,21 @@ func runRuntimeAddress(ctx context.Context, options runtimeOptions, output io.Wr
 		Version int    `json:"version"`
 		Socket  string `json:"socket"`
 	}{privateprotocol.Version, socket})
+}
+
+func runRuntimeEndpoint(ctx context.Context, options runtimeOptions, output io.Writer) error {
+	project, state, err := runtimeProject(ctx, options)
+	if err != nil {
+		return err
+	}
+	socket, err := runtimeSocket(project.Root, state)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(struct {
+		Version int    `json:"version"`
+		Path    string `json:"path"`
+	}{privateprotocol.Version, runtimeTCPEndpointPath(socket)})
 }
 
 type appPreparation struct {
