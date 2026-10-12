@@ -180,6 +180,9 @@ func ValidateTNL(config TNL) error {
 		if config.Publisher != nil && config.Publisher.Type == "docker" && (service.Target == nil || service.Target.Type == "app") {
 			return fmt.Errorf("services.%s: a docker publisher requires an address or docker target; use the local publisher for a host app", name)
 		}
+		if config.Publisher != nil && config.Publisher.Type == "url" && service.Target != nil && service.Target.Type == "docker" {
+			return fmt.Errorf("services.%s: a url publisher cannot use a host Docker mapping; select an address it can reach", name)
+		}
 		effectivePublish := ServicePublish(config.Publish, service)
 		if service.Target != nil {
 			if service.Publish != nil {
@@ -187,20 +190,22 @@ func ValidateTNL(config TNL) error {
 			}
 			switch service.Target.Type {
 			case "app":
-				if service.Target.Address != nil || service.Target.Service != nil || service.Target.Port != nil || service.Target.TargetTLS != nil || service.Target.TargetTLSName != nil || service.Target.TargetCAFile != nil || ServiceProtocol(effectivePublish) != "http" {
+				if service.Target.Address != nil || !emptyDockerSelection(service.Target.DockerSelection) || service.Target.TargetTLS != nil || service.Target.TargetTLSName != nil || service.Target.TargetCAFile != nil || ServiceProtocol(effectivePublish) != "http" {
 					return fmt.Errorf("services.%s.target: app requires HTTP and no private address or TLS settings", name)
 				}
 			case "address":
 				if service.Target.Address == nil {
 					return fmt.Errorf("services.%s.target: address is required", name)
 				}
-				if service.Target.Service != nil || service.Target.Port != nil {
+				if !emptyDockerSelection(service.Target.DockerSelection) {
 					return fmt.Errorf("services.%s.target: address cannot select a Compose service or port", name)
 				}
 			case "docker":
-				if service.Target.Address != nil || service.Target.Service == nil || !naming.ValidServiceName(*service.Target.Service) ||
-					service.Target.Port == nil || *service.Target.Port < 1 || *service.Target.Port > 65535 {
-					return fmt.Errorf("services.%s.target: docker requires a Compose service name and private TCP port from 1 to 65535", name)
+				if service.Target.Address != nil {
+					return fmt.Errorf("services.%s.target: docker cannot use address", name)
+				}
+				if err := validateDockerSelection(service.Target.DockerSelection); err != nil {
+					return fmt.Errorf("services.%s.target: %w", name, err)
 				}
 			default:
 				return fmt.Errorf("services.%s.target: type must be app, address, or docker", name)
@@ -319,12 +324,12 @@ func validateProjectPublisher(publisher *ProjectPublisher) error {
 	}
 	switch publisher.Type {
 	case "local":
-		if publisher.URL != nil || publisher.Service != nil || publisher.Port != nil || publisher.OwnerCredentialFile != nil {
-			return errors.New("local publisher takes no URL, Compose service, port, or credential file")
+		if publisher.URL != nil || !emptyDockerSelection(publisher.DockerSelection) || publisher.OwnerCredentialFile != nil {
+			return errors.New("local publisher takes no URL, Docker selection, or credential file")
 		}
 	case "url":
-		if publisher.URL == nil || publisher.Service != nil || publisher.Port != nil || publisher.OwnerCredentialFile == nil {
-			return errors.New("url publisher requires an HTTPS origin and owner_credential_file")
+		if publisher.URL == nil || !emptyDockerSelection(publisher.DockerSelection) {
+			return errors.New("url publisher requires an HTTPS origin")
 		}
 		origin, err := url.Parse(*publisher.URL)
 		if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || origin.Opaque != "" || origin.Host != strings.ToLower(origin.Host) {
@@ -344,14 +349,86 @@ func validateProjectPublisher(publisher *ProjectPublisher) error {
 			}
 		}
 	case "docker":
-		if publisher.URL != nil || publisher.Service == nil || !naming.ValidServiceName(*publisher.Service) ||
-			publisher.Port == nil || *publisher.Port < 1 || *publisher.Port > 65535 || publisher.OwnerCredentialFile == nil {
-			return errors.New("docker publisher requires a Compose service, TCP port, and owner_credential_file")
+		if publisher.URL != nil {
+			return errors.New("docker publisher requires a Docker selection")
+		}
+		if err := validateDockerSelection(publisher.DockerSelection); err != nil {
+			return fmt.Errorf("docker publisher: %w", err)
 		}
 	default:
 		return errors.New("type must be local, docker, or url")
 	}
 	return nil
+}
+
+func emptyDockerSelection(selection DockerSelection) bool {
+	return selection.Container == nil && len(selection.Labels) == 0 && selection.Compose == nil && selection.ContainerPort == nil
+}
+
+func validateDockerSelection(selection DockerSelection) error {
+	if selection.ContainerPort == nil || *selection.ContainerPort < 1 || *selection.ContainerPort > 65535 {
+		return errors.New("docker requires container_port from 1 to 65535")
+	}
+	count := 0
+	if selection.Container != nil {
+		count++
+		if !validDockerContainer(*selection.Container) {
+			return errors.New("docker container must be an explicit container name or ID")
+		}
+	}
+	if len(selection.Labels) != 0 {
+		count++
+		if len(selection.Labels) > 8 {
+			return errors.New("docker accepts at most eight exact labels")
+		}
+		for key, value := range selection.Labels {
+			if key == "" || value == "" || len(key) > 128 || len(value) > 256 || strings.TrimSpace(key) != key || strings.TrimSpace(value) != value ||
+				strings.ContainsAny(key+value, "\x00\n\r") {
+				return errors.New("docker labels must be nonempty exact key/value pairs")
+			}
+		}
+	}
+	if selection.Compose != nil {
+		count++
+		value := selection.Compose
+		if !validComposeFile(value.File) || !validComposeProject(value.Project) || !naming.ValidServiceName(value.Service) {
+			return errors.New("docker compose requires a relative file, worktree project label, and service name")
+		}
+	}
+	if count != 1 {
+		return errors.New("docker requires exactly one container, labels, or compose selector")
+	}
+	return nil
+}
+
+func validDockerContainer(value string) bool {
+	if len(value) < 1 || len(value) > 128 || (value[0] < 'a' || value[0] > 'z') && (value[0] < 'A' || value[0] > 'Z') && (value[0] < '0' || value[0] > '9') {
+		return false
+	}
+	for _, character := range value[1:] {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validComposeFile(value string) bool {
+	if value == "" || len(value) > 512 || strings.TrimSpace(value) != value || strings.ContainsRune(value, 0) || filepath.IsAbs(value) {
+		return false
+	}
+	clean := filepath.Clean(value)
+	return clean == value && clean != "." && clean != ".." && !strings.HasPrefix(clean, ".."+string(filepath.Separator)) &&
+		(filepath.Ext(clean) == ".yaml" || filepath.Ext(clean) == ".yml")
+}
+
+func validComposeProject(value string) bool {
+	if value == "" || len(value) > 63 || strings.Contains(value, ".") {
+		return false
+	}
+	canonical, err := naming.CanonicalizeHostname(value)
+	return err == nil && canonical == value
 }
 
 func validateReadiness(value *Readiness) error {

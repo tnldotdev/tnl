@@ -76,10 +76,17 @@ func (a *appRuntime) startNamed(ctx context.Context, request localpublisherv1.Pu
 	protocol := config.ServiceProtocol(effective.Publish)
 	if definition.Target.Type == "docker" {
 		if project.Config.Publisher != nil && project.Config.Publisher.Type == "docker" {
-			target = dockerTargetInsidePublisher(*definition.Target.Service, *definition.Target.Port, protocol == "http")
+			chosen := definition.Target.Compose
+			owner := project.Config.Publisher.Compose
+			if chosen == nil || owner == nil || chosen.Project != project.Worktree.Label.FullLabel ||
+				owner.Project != chosen.Project || owner.File != chosen.File {
+				return localpublisherv1.PublicationLease{}, failure.Wrap("resolve named service target", failure.ProjectConfigInvalid,
+					errors.New("docker publisher requires a target in its own Compose file and project; use an address for another network"))
+			}
+			target = dockerTargetInsidePublisher(chosen.Service, *definition.Target.ContainerPort, protocol == "http")
 		} else {
 			resolver := newDockerPublishResolver(ctx, project.Root, dockerPublishTarget{
-				service: *definition.Target.Service, port: *definition.Target.Port,
+				selection:    definition.Target.DockerSelection,
 				projectLabel: project.Worktree.Label.FullLabel,
 			}, protocol == "http")
 			target, err = resolver.initial()

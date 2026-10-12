@@ -115,7 +115,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	}
 	if usingConfiguredTarget && service != "" {
 		if selected := c.Config.Services[service].Target; selected != nil && selected.Type == "docker" {
-			flags.dockerTarget = &dockerPublishTarget{service: *selected.Service, port: *selected.Port, projectLabel: c.Worktree.Label.FullLabel}
+			flags.dockerTarget = &dockerPublishTarget{selection: selected.DockerSelection, projectLabel: c.Worktree.Label.FullLabel}
 		}
 	}
 	if usingConfiguredTarget && flags.TargetCAFile == "" && effective.Publish != nil && effective.Publish.TargetCAFile != nil {

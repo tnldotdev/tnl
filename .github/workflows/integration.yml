@@ -47,6 +47,9 @@ jobs:
       - name: Run integration tests
         run: task go:test:integration
 
+      - name: Verify worktree Compose selection
+        run: task go:test:integration:docker-selection
+
       - name: Verify database clients
         run: task go:test:integration:database-clients
 

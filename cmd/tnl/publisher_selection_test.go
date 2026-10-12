@@ -24,6 +24,11 @@ import (
 
 func TestPublisherOwnerCredentialMustBePrivateAndIsNeverInErrors(t *testing.T) {
 	root := t.TempDir()
+	if _, err := readPublisherOwnerCredential(root, ".tnl/publisher-owner"); err == nil {
+		t.Fatal("missing publisher owner credential was accepted")
+	} else if reason, _, ok := failure.Describe(err); !ok || reason != failure.PublisherOwnerCredentialMissing {
+		t.Fatalf("missing credential did not suggest the creation command: %v", err)
+	}
 	secret, err := publisherCredential()
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +203,7 @@ func TestDockerPublisherAttachmentUsesWorktreeComposeBinding(t *testing.T) {
 	}
 	port := address.Port()
 	commands := t.TempDir()
-	script := "#!/bin/sh\nprintf '127.0.0.1:" + port + "\\n'\n"
+	script := "#!/bin/sh\nif [ \"$1\" = inspect ]; then printf '%s\\n' '[{\"Name\":\"/publisher\",\"State\":{\"Running\":true},\"Config\":{\"Labels\":{\"tnl.worktree\":\"shop-perf-k7n2p9\"}},\"NetworkSettings\":{\"Ports\":{\"8765/tcp\":[{\"HostIp\":\"127.0.0.1\",\"HostPort\":\"" + port + "\"}]},\"Networks\":{\"bridge\":{}}}}]'; fi\n"
 	if err := os.WriteFile(filepath.Join(commands, "docker"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +212,7 @@ func TestDockerPublisherAttachmentUsesWorktreeComposeBinding(t *testing.T) {
 	privatePort := 8765
 	project := projectConfiguration{Project: projectconfig.Project{Root: root,
 		Worktree: projectconfig.Worktree{Label: projectconfig.WorktreeLabel{FullLabel: "shop-perf-k7n2p9"}},
-		Config:   config.TNL{Publisher: &config.ProjectPublisher{Type: "docker", Service: &service, Port: &privatePort, OwnerCredentialFile: &file}},
+		Config:   config.TNL{Publisher: &config.ProjectPublisher{Type: "docker", DockerSelection: config.DockerSelection{Container: &service, ContainerPort: &privatePort}, OwnerCredentialFile: &file}},
 	}}
 	client, stop, err := localPublisherForCLI(t.Context(), publishCommand{projectRoot: root, project: project})
 	if err != nil || client.endpoint.URL != server.URL {

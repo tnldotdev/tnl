@@ -408,6 +408,13 @@
       "action": "run tnl init or select a config file with --config"
     },
     {
+      "code": "TNL_CLIENT_PUBLISHER_CREDENTIAL_MISSING",
+      "slug": "publisher-credential-missing",
+      "class": "unavailable",
+      "message": "the project publisher owner credential file is missing",
+      "action": "run tnl project publisher credential create, then start the publisher again"
+    },
+    {
       "code": "TNL_CLIENT_PUBLISH_CREDENTIAL_MISMATCH",
       "slug": "publish-credential-mismatch",
       "class": "invalid",

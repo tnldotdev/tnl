@@ -19,6 +19,7 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/dockertarget"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/localpublisherv1"
 )
@@ -114,6 +115,11 @@ func (c namedPublisherClient) request(ctx context.Context, method, path, owner s
 
 func localPublisherForCLI(ctx context.Context, flags publishCommand) (namedPublisherClient, func(), error) {
 	if selection := flags.project.Config.Publisher; selection != nil && selection.Type != "local" {
+		if selection.Type == "docker" {
+			if err := validateDockerPublisherTarget(ctx, flags.project, flags.Service); err != nil {
+				return namedPublisherClient{}, nil, err
+			}
+		}
 		endpoint, err := selectedPublisherEndpoint(ctx, flags.project)
 		if err != nil {
 			return namedPublisherClient{}, nil, err
@@ -162,6 +168,37 @@ func localPublisherForCLI(ctx context.Context, flags publishCommand) (namedPubli
 	}
 	return namedPublisherClient{endpoint: endpoint, http: &http.Client{Timeout: 10 * time.Second,
 		Transport: &http.Transport{DisableKeepAlives: true, Proxy: nil}}}, stop, nil
+}
+
+func validateDockerPublisherTarget(ctx context.Context, project projectConfiguration, name string) error {
+	if name == "" {
+		return nil
+	}
+	service := project.Config.Services[name]
+	if service.Target == nil || service.Target.Type != "docker" {
+		return nil
+	}
+	owner := project.Config.Publisher
+	if owner == nil || owner.Type != "docker" || service.Target.Compose == nil || owner.Compose == nil ||
+		owner.Compose.File != service.Target.Compose.File || owner.Compose.Project != service.Target.Compose.Project {
+		return failure.Wrap("select Docker publisher target", failure.ProjectConfigInvalid,
+			errors.New("the target and publisher must be services in the same Compose file and worktree"))
+	}
+	publisher, err := dockertarget.SelectContainer(ctx, project.Root, project.Worktree.Label.FullLabel, owner.DockerSelection)
+	if err != nil {
+		return failure.Wrap("select Docker publisher", failure.ClientStateUnavailable, err)
+	}
+	target, err := dockertarget.SelectContainer(ctx, project.Root, project.Worktree.Label.FullLabel, service.Target.DockerSelection)
+	if err != nil {
+		return failure.Wrap("select Docker target", failure.ClientStateUnavailable, err)
+	}
+	for _, network := range target.Networks {
+		if slices.Contains(publisher.Networks, network) {
+			return nil
+		}
+	}
+	return failure.Wrap("select Docker publisher target", failure.ProjectConfigInvalid,
+		errors.New("the target and publisher containers have no shared Compose network"))
 }
 
 func runNamedPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer) (result error) {

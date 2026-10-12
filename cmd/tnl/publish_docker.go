@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/dockertarget"
 )
@@ -19,11 +20,17 @@ type dockerPublishResolver struct {
 	checked  time.Time
 	current  string
 	lastErr  error
-	lookup   func(context.Context, string, string, string, int) (string, error)
+	lookup   func(context.Context, string, string, config.DockerSelection) (string, error)
 }
 
 func newDockerPublishResolver(ctx context.Context, root string, selected dockerPublishTarget, http bool) *dockerPublishResolver {
-	return &dockerPublishResolver{ctx: ctx, root: root, selected: selected, http: http, lookup: dockertarget.ComposePort}
+	return &dockerPublishResolver{ctx: ctx, root: root, selected: selected, http: http, lookup: func(ctx context.Context, root, label string, selection config.DockerSelection) (string, error) {
+		container, err := dockertarget.SelectContainer(ctx, root, label, selection)
+		if err != nil {
+			return "", err
+		}
+		return dockertarget.HostPort(container, *selection.ContainerPort, false)
+	}}
 }
 
 func (r *dockerPublishResolver) initial() (string, error) {
@@ -32,7 +39,7 @@ func (r *dockerPublishResolver) initial() (string, error) {
 		return target, nil
 	}
 	return "", diagnostic.WrapMessage(diagnostic.TargetUnavailable,
-		fmt.Sprintf("Docker Compose service %q has no reachable published port; run docker compose -p %s up -d %s and publish private port %d", r.selected.service, r.selected.projectLabel, r.selected.service, r.selected.port), r.lastErr)
+		fmt.Sprintf("selected Docker container has no reachable published port for worktree %s; start it and publish private port %d", r.selected.projectLabel, *r.selected.selection.ContainerPort), r.lastErr)
 }
 
 func (r *dockerPublishResolver) target() string {
@@ -42,7 +49,7 @@ func (r *dockerPublishResolver) target() string {
 		return r.current
 	}
 	r.checked = time.Now()
-	address, err := r.lookup(r.ctx, r.root, r.selected.projectLabel, r.selected.service, r.selected.port)
+	address, err := r.lookup(r.ctx, r.root, r.selected.projectLabel, r.selected.selection)
 	r.lastErr = err
 	if err != nil {
 		r.current = ""
