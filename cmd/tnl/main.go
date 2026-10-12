@@ -341,6 +341,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	}
 	parsedCommand := canonicalParsedCommand(parsed.Command())
 	applyTunnelCLIUnits(parsed, &flags)
+	if parsedCommand == "publish <service-or-target>" {
+		flags.Publish.namedOverrides = namedPublishOverrides(parsed)
+	}
 	command = clioutput.CommandTitle("tnl", parsedCommand)
 	if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
 		if err := prepareDemoPublish(&flags.Publish, flags.ConfigPath, term.IsTerminal(int(os.Stdin.Fd()))); err != nil {

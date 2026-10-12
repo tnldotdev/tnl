@@ -91,7 +91,7 @@ func New(ctx context.Context, project, state string, services []Service, run Run
 	return m, m.writeErr
 }
 
-func (m *Manager) emitLocked(kind string, service *Service) {
+func (m *Manager) emitLocked(kind string, service *Service, publication ...*PublicationEvent) {
 	sequence, _ := ParseCursor(m.snapshot.Cursor)
 	m.snapshot.Cursor = strconv.FormatUint(sequence+1, 10)
 	m.snapshot.ObservedAt = time.Now().UTC()
@@ -101,6 +101,9 @@ func (m *Manager) emitLocked(kind string, service *Service) {
 		copy = &value
 	}
 	event := Event{Cursor: m.snapshot.Cursor, Type: kind, At: m.snapshot.ObservedAt, Service: copy}
+	if len(publication) != 0 {
+		event.Publication = publication[0]
+	}
 	if copy == nil {
 		snapshot := m.snapshot
 		snapshot.Services = slices.Clone(snapshot.Services)
@@ -309,7 +312,7 @@ func (m *Manager) register(id, owner, target, framework string, named bool) erro
 	}
 	service.Registered, service.Routable, service.Ready = true, false, false
 	service.Target, service.Framework, service.Failure = target, framework, ""
-	service.PublishRunNumber, service.Observation = 0, nil
+	service.PublishRunNumber, service.Observation, service.TunnelID = 0, nil, ""
 	service.ProvisioningStage = ""
 	reg.expires = time.Now().Add(LeaseDuration)
 	ctx, cancel := context.WithCancel(m.ctx)
@@ -337,6 +340,41 @@ func (m *Manager) register(id, owner, target, framework string, named bool) erro
 		}
 	}()
 	return nil
+}
+
+// Started records the tunnel ID only for the current named publication.
+func (m *Manager) Started(id, tunnelID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || tunnelID == "" {
+		return ErrRegistrationStale
+	}
+	for index := range m.snapshot.Services {
+		service := &m.snapshot.Services[index]
+		if service.RegistrationID != id || !service.Registered || service.ServiceProtocol == "" {
+			continue
+		}
+		service.TunnelID = tunnelID
+		m.emitLocked("service.starting", service)
+		return m.writeErr
+	}
+	return ErrRegistrationStale
+}
+
+func (m *Manager) RecordPublication(id string, event PublicationEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrRegistrationStale
+	}
+	for index := range m.snapshot.Services {
+		service := &m.snapshot.Services[index]
+		if service.RegistrationID == id && service.Registered && service.ServiceProtocol != "" {
+			m.emitLocked("publication."+event.Type, service, &event)
+			return m.writeErr
+		}
+	}
+	return ErrRegistrationStale
 }
 
 func validateRegistrationTarget(service Service, target string, named bool) error {
@@ -494,7 +532,7 @@ func (m *Manager) unregister(id, owner string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.registrations, service.Name)
-	service.RegistrationID, service.Target = "", ""
+	service.RegistrationID, service.Target, service.TunnelID = "", "", ""
 	if len(m.registrations) == 0 {
 		m.idleSince = time.Now()
 	}

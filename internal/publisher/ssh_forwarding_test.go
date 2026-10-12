@@ -3,6 +3,7 @@ package publisher
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"flag"
 	"io"
 	"net"
@@ -85,6 +86,36 @@ func TestSSHForwardingRequiresInstalledCertificate(t *testing.T) {
 	}
 	if received := awaitPublisherTest(t, backendResult); received != "SSH-2.0-client\r\n" {
 		t.Fatalf("SSH target received %q", received)
+	}
+}
+
+func TestSSHForwardingRejectsStaleNamedPublicationBeforeDialingTarget(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "shell.example", ServiceProtocol: controlv1.Ssh, PublicPort: 2222,
+		Target: listener.Addr().String(), Certificate: publicURLTestCertificate(t, "shell.example"),
+		AdmitConnection: func() error { return errors.New("stale named publication") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+	visitor := openDatabaseVisitor(t, route, 2222)
+	if _, err := visitor.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("stale visitor = %v, want EOF", err)
+	}
+	if err := listener.(*net.TCPListener).SetDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if backend, err := listener.Accept(); err == nil {
+		backend.Close()
+		t.Fatal("stale publication dialed the private service")
+	} else if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
+		t.Fatalf("private service accept = %v, want timeout", err)
 	}
 }
 
