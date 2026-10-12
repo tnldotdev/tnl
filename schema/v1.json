@@ -210,7 +210,7 @@
               },
               "protocol": {
                 "type": "string",
-                "enum": ["http", "postgres", "mysql", "redis", "ssh", "mongodb"],
+                "enum": ["http", "postgres", "mysql", "redis", "ssh"],
                 "description": "Local service protocol; defaults to http."
               },
               "target": {

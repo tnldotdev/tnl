@@ -96,7 +96,7 @@ export interface TnlConfig {
           /**
            * Local service protocol; defaults to http.
            */
-          protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh" | "mongodb";
+          protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh";
           target?:
             | {
                 type: "app";
