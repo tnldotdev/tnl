@@ -22,7 +22,7 @@ import (
 
 const projectPostgresCompose = `services:
   db:
-    image: public.ecr.aws/docker/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    image: mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
     environment:
       POSTGRES_USER: shop
       POSTGRES_PASSWORD: devpassword
