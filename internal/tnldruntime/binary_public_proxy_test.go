@@ -14,25 +14,29 @@ import (
 
 // the fixture's public address carries the original destination port to one
 // ingress listener, like a port-preserving external tcp load balancer.
-func startIntegrationPublicProxy(t *testing.T, backend string, addresses ...string) {
+func startIntegrationPublicProxy(t *testing.T, backend string, addresses ...string) func() {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	var listeners []net.Listener
 	var mu sync.Mutex
 	connections := map[net.Conn]struct{}{}
 	var workers sync.WaitGroup
-	t.Cleanup(func() {
-		cancel()
-		for _, listener := range listeners {
-			_ = listener.Close()
-		}
-		mu.Lock()
-		for connection := range connections {
-			_ = connection.Close()
-		}
-		mu.Unlock()
-		workers.Wait()
-	})
+	var stopOnce sync.Once
+	stop := func() {
+		stopOnce.Do(func() {
+			cancel()
+			for _, listener := range listeners {
+				_ = listener.Close()
+			}
+			mu.Lock()
+			for connection := range connections {
+				_ = connection.Close()
+			}
+			mu.Unlock()
+			workers.Wait()
+		})
+	}
+	t.Cleanup(stop)
 	track := func(connection net.Conn) func() {
 		mu.Lock()
 		connections[connection] = struct{}{}
@@ -98,4 +102,5 @@ func startIntegrationPublicProxy(t *testing.T, backend string, addresses ...stri
 			}
 		}()
 	}
+	return stop
 }
