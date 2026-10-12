@@ -127,6 +127,20 @@ func TestNamedPublisherCLIStreamsExistingPublishEventsAndReleasesOwner(t *testin
 	}
 }
 
+func TestNamedPublicationReattachesAfterItsPublisherRestarts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		privateprotocol.Write(w, http.StatusConflict, localpublisherv1.Problem{
+			Code: "runtime.registration_stale", Message: "publication belonged to an earlier publisher owner",
+		})
+	}))
+	defer server.Close()
+	client := namedPublisherClient{endpoint: localPublisherEndpoint{URL: server.URL, Credential: "owner"}, http: &http.Client{Timeout: time.Second}}
+	err := client.request(t.Context(), http.MethodPost, "/v1/publications/old/renew", "0123456789abcdef0123456789abcdef", nil, nil)
+	if !errors.Is(err, errNamedPublisherLost) || !namedPublisherConnectionLost(err) {
+		t.Fatalf("stale owner publication was not retried: %v", err)
+	}
+}
+
 func TestNamedPublisherRejectsOptionsThatWouldNotReachItsOwner(t *testing.T) {
 	for _, test := range []struct {
 		args []string
