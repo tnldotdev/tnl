@@ -43,11 +43,22 @@ type Service struct {
 }
 
 type Event struct {
-	Cursor   string    `json:"cursor"`
-	Type     string    `json:"type"`
-	At       time.Time `json:"at"`
-	Service  *Service  `json:"service,omitempty"`
-	Snapshot *Snapshot `json:"snapshot,omitempty"`
+	Cursor      string            `json:"cursor"`
+	Type        string            `json:"type"`
+	At          time.Time         `json:"at"`
+	Service     *Service          `json:"service,omitempty"`
+	Snapshot    *Snapshot         `json:"snapshot,omitempty"`
+	Publication *PublicationEvent `json:"publication,omitempty"`
+}
+
+type PublicationEvent struct {
+	Type             string `json:"type"`
+	PublicURLID      string `json:"public_url_id,omitempty"`
+	Hostname         string `json:"hostname,omitempty"`
+	PublicURL        string `json:"public_url,omitempty"`
+	PublishRunNumber uint64 `json:"publish_run_number,omitempty"`
+	Transport        string `json:"transport,omitempty"`
+	PolicyDenials    uint64 `json:"policy_denials,omitempty"`
 }
 
 type Snapshot struct {

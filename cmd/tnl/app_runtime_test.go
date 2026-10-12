@@ -25,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/pkg/api/localpublisherv1"
 )
 
 func testAppRuntime(t *testing.T) (*appRuntime, string, <-chan uint64) {
@@ -231,6 +232,96 @@ func TestAdHocTCPRegistrationWaitsForTheSameReadyRun(t *testing.T) {
 		t.Fatalf("unregister = %v, %v", response, err)
 	}
 	response.Body.Close()
+}
+
+func TestNamedPublicationLocalAPIReportsCurrentLeaseAndEvents(t *testing.T) {
+	a, state, started := testAppRuntime(t)
+	protocol := "postgres"
+	target := config.Target("127.0.0.1:5432")
+	a.project.Config.Services["orders"] = config.Service{Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}}
+	a.project.RelativeServiceDirectories["orders"] = "."
+	if err := a.manager.Configure(configuredRuntimeServices(a.project)); err != nil {
+		t.Fatal(err)
+	}
+	before := a.manager.Snapshot().Cursor
+	owner := "0123456789abcdef0123456789abcdef"
+	id, err := a.manager.Reserve("orders", owner, os.Getpid(), "orders.example:15432")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.manager.RegisterNamed(id, owner, string(target)); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := a.manager.Started(id, "tun_named"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.manager.RecordPublication(id, clientruntime.PublicationEvent{Type: "ready", PublicURL: "orders.example:15432", PublishRunNumber: 1}); err != nil {
+		t.Fatal(err)
+	}
+	key, err := runtimeKey(a.project.Root, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := readRuntimeTCPEndpoint(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: time.Second, Transport: &http.Transport{DisableKeepAlives: true, Proxy: nil}}
+	call := func(method, path, identity string) *http.Response {
+		t.Helper()
+		request, err := http.NewRequestWithContext(t.Context(), method, endpoint.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
+		if identity != "" {
+			request.Header.Set("X-Publication-Owner", identity)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	response := call(http.MethodGet, "/v1/status", "")
+	var snapshot localpublisherv1.ProjectSnapshot
+	if err := json.NewDecoder(response.Body).Decode(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if len(snapshot.Services) != 3 || snapshot.Services[1].Service != "orders" || snapshot.Services[1].TunnelId == nil || *snapshot.Services[1].TunnelId != "tun_named" || snapshot.Services[1].State != localpublisherv1.Routable {
+		t.Fatalf("named status = %+v", snapshot)
+	}
+	response = call(http.MethodGet, "/v1/events?after="+before, "")
+	var page localpublisherv1.ProjectEventPage
+	if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if len(page.Events) < 2 {
+		t.Fatalf("named events = %+v, HTTP %d", page, response.StatusCode)
+	}
+	last := page.Events[len(page.Events)-1]
+	if response.StatusCode != http.StatusOK || page.Cursor != snapshot.Cursor || last.Publication == nil ||
+		last.Publication.PublicUrl == nil || *last.Publication.PublicUrl != "orders.example:15432" || last.Status.TunnelId == nil {
+		t.Fatalf("named events = %+v, HTTP %d", page, response.StatusCode)
+	}
+	response = call(http.MethodPost, "/v1/publications/"+id+"/renew", "ffffffffffffffffffffffffffffffff")
+	response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("unowned renewal status = %d", response.StatusCode)
+	}
+	response = call(http.MethodPost, "/v1/publications/"+id+"/renew", owner)
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("owned renewal status = %d", response.StatusCode)
+	}
+	response = call(http.MethodDelete, "/v1/publications/"+id, owner)
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent || a.manager.Current("orders", id, string(target), 1) {
+		t.Fatalf("owned stop status = %d", response.StatusCode)
+	}
 }
 
 func TestDatabaseServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {

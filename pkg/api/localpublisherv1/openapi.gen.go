@@ -58,6 +58,24 @@ func (e HTTPServiceMetadataProtocol) Valid() bool {
 	}
 }
 
+// Defines values for PublicationEventTransport.
+const (
+	Quic   PublicationEventTransport = "quic"
+	TlsTcp PublicationEventTransport = "tls-tcp"
+)
+
+// Valid indicates whether the value is a known member of the PublicationEventTransport enum.
+func (e PublicationEventTransport) Valid() bool {
+	switch e {
+	case Quic:
+		return true
+	case TlsTcp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ServiceStatusProtocol.
 const (
 	ServiceStatusProtocolHttp     ServiceStatusProtocol = "http"
@@ -239,10 +257,11 @@ type Problem struct {
 
 // ProjectEvent defines model for ProjectEvent.
 type ProjectEvent struct {
-	Cursor  string         `json:"cursor"`
-	Service ServiceName    `json:"service"`
-	Status  *ServiceStatus `json:"status,omitempty"`
-	Type    string         `json:"type"`
+	Cursor      string            `json:"cursor"`
+	Publication *PublicationEvent `json:"publication,omitempty"`
+	Service     ServiceName       `json:"service"`
+	Status      *ServiceStatus    `json:"status,omitempty"`
+	Type        string            `json:"type"`
 }
 
 // ProjectEventPage defines model for ProjectEventPage.
@@ -281,8 +300,23 @@ type ProjectSnapshot struct {
 	Services []ServiceStatus `json:"services"`
 }
 
+// PublicationEvent defines model for PublicationEvent.
+type PublicationEvent struct {
+	Hostname         *string                    `json:"hostname,omitempty"`
+	PolicyDenials    *int64                     `json:"policy_denials,omitempty"`
+	PublicUrl        *string                    `json:"public_url,omitempty"`
+	PublicUrlId      *string                    `json:"public_url_id,omitempty"`
+	PublishRunNumber *int64                     `json:"publish_run_number,omitempty"`
+	Transport        *PublicationEventTransport `json:"transport,omitempty"`
+	Type             string                     `json:"type"`
+}
+
+// PublicationEventTransport defines model for PublicationEvent.Transport.
+type PublicationEventTransport string
+
 // PublicationLease defines model for PublicationLease.
 type PublicationLease struct {
+	CurrentIp     *string     `json:"current_ip,omitempty"`
 	Cursor        string      `json:"cursor"`
 	PublicationId string      `json:"publication_id"`
 	Service       ServiceName `json:"service"`
@@ -291,6 +325,7 @@ type PublicationLease struct {
 // PublicationRequest defines model for PublicationRequest.
 type PublicationRequest struct {
 	Owner   string      `json:"owner"`
+	Pid     int         `json:"pid"`
 	Service ServiceName `json:"service"`
 }
 
@@ -301,11 +336,13 @@ type ServiceName = string
 type ServiceStatus struct {
 	Protocol         ServiceStatusProtocol `json:"protocol"`
 	PublicUrl        *string               `json:"public_url,omitempty"`
+	PublicationId    *string               `json:"publication_id,omitempty"`
 	PublishRunNumber *int64                `json:"publish_run_number,omitempty"`
 	Reason           *string               `json:"reason,omitempty"`
 	Service          ServiceName           `json:"service"`
 	State            ServiceStatusState    `json:"state"`
 	Target           *string               `json:"target,omitempty"`
+	TunnelId         *string               `json:"tunnel_id,omitempty"`
 }
 
 // ServiceStatusProtocol defines model for ServiceStatus.Protocol.

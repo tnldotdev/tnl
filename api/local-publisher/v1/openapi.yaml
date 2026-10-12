@@ -319,10 +319,11 @@ components:
     PublicationRequest:
       type: object
       additionalProperties: false
-      required: [service, owner]
+      required: [service, owner, pid]
       properties:
         service: { $ref: "#/components/schemas/ServiceName" }
         owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+        pid: { type: integer, minimum: 1 }
     PublicationLease:
       type: object
       additionalProperties: false
@@ -331,6 +332,7 @@ components:
         publication_id: { type: string, minLength: 1, maxLength: 128 }
         service: { $ref: "#/components/schemas/ServiceName" }
         cursor: { type: string, minLength: 1, maxLength: 128 }
+        current_ip: { type: string, minLength: 1, maxLength: 64 }
     ServiceStatus:
       type: object
       additionalProperties: false
@@ -340,6 +342,8 @@ components:
         protocol: { type: string, enum: [http, postgres, mysql, redis, ssh] }
         state: { type: string, enum: [not_started, publishing, routable, ready, draining, failed] }
         public_url: { type: string, minLength: 1, maxLength: 512 }
+        publication_id: { type: string, minLength: 1, maxLength: 128 }
+        tunnel_id: { type: string, minLength: 1, maxLength: 128 }
         target: { type: string, minLength: 1, maxLength: 2048 }
         publish_run_number: { type: integer, format: int64, minimum: 1 }
         reason: { type: string, maxLength: 128 }
@@ -363,6 +367,19 @@ components:
         type: { type: string, minLength: 1, maxLength: 128 }
         service: { $ref: "#/components/schemas/ServiceName" }
         status: { $ref: "#/components/schemas/ServiceStatus" }
+        publication: { $ref: "#/components/schemas/PublicationEvent" }
+    PublicationEvent:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type: { type: string, minLength: 1, maxLength: 128 }
+        public_url_id: { type: string, maxLength: 128 }
+        hostname: { type: string, maxLength: 253 }
+        public_url: { type: string, maxLength: 512 }
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        transport: { type: string, enum: [quic, tls-tcp] }
+        policy_denials: { type: integer, format: int64, minimum: 0 }
     ProjectEventPage:
       type: object
       additionalProperties: false

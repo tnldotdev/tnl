@@ -150,17 +150,20 @@ change without changing public URL DNS.
 The [local publisher API](../../api/local-publisher/v1/openapi.yaml) describes
 the project-scoped requests that an SDK and the CLI send to the publisher:
 app registration, named publication ownership, status, and resumable events.
-The owner and app-registration credentials have different scopes. An accepted
-registration reports a bound listener; public readiness remains a separate
-observation. The API returns browser-safe project metadata but does not carry
-visitor bytes or expose the control session to an app. The host publisher now
-also binds an OS-assigned loopback TCP port with a private, bearer-protected
-endpoint descriptor. The Node, Bun, and Python app integrations and the CLI
-now use the authenticated loopback endpoint for registration and observation.
-The Go ad-hoc SDK owns its own publisher instead of using the app runtime.
-The native integration fixture also uses the authenticated endpoint. Registration
-wire shapes still use the private protocol and will move to the local publisher
-contract as the new ownership model is implemented.
+the contract reserves separate owner and app-registration credential scopes;
+the current host endpoint still uses one private bearer credential for both.
+an accepted registration reports a bound listener; public readiness remains a
+separate observation. The API returns browser-safe project metadata but does
+not carry visitor bytes or expose the control session to an app. the host
+publisher binds an OS-assigned loopback TCP port and saves its credential in a
+private endpoint descriptor. Node, Bun, and Python app integrations and the
+CLI use that endpoint. a configured `tnl publish NAME` now renews a named
+publication through the same project publisher as app registrations. the
+manager fences its registration, private target, and publish run before
+forwarding new visitors; its journal carries resumable publication events.
+an unconfigured `tnl publish TARGET` and the Go ad-hoc SDK still own their own
+publishers. app registration wire shapes still use the private protocol while
+the local publisher API contract is adopted.
 
 ## resolve project configuration
 

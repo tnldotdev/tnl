@@ -81,7 +81,18 @@ func readProjectServicesSnapshot(ctx context.Context, project projectConfigurati
 	if err != nil {
 		return snapshot, err
 	}
-	if len(project.Config.Services) == len(configuredRuntimeServices(project)) {
+	hasTCPService := false
+	for name := range project.Config.Services {
+		effective, err := project.EffectiveService(name)
+		if err != nil {
+			return snapshot, err
+		}
+		if config.ServiceProtocol(effective.Publish) != "http" {
+			hasTCPService = true
+			break
+		}
+	}
+	if !hasTCPService {
 		return snapshot, nil
 	}
 	database, err := clientstate.Open(ctx, state)
@@ -125,7 +136,20 @@ func mergeTCPServices(snapshot clientruntime.Snapshot, project projectConfigurat
 			service.PublicURL, service.Target = selected.PublicURL, selected.Target
 			service.PublishRunNumber = selected.PublishRunNumber
 		}
-		snapshot.Services = append(snapshot.Services, service)
+		found := false
+		for index := range snapshot.Services {
+			if snapshot.Services[index].Name != name {
+				continue
+			}
+			found = true
+			if !snapshot.Services[index].Registered && selected != nil {
+				snapshot.Services[index] = service
+			}
+			break
+		}
+		if !found {
+			snapshot.Services = append(snapshot.Services, service)
+		}
 	}
 	slices.SortFunc(snapshot.Services, func(a, b clientruntime.Service) int { return cmp.Compare(a.Name, b.Name) })
 	return snapshot

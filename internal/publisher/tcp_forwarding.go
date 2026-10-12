@@ -35,6 +35,7 @@ type tcpForwarding struct {
 	backendTLS          *tls.Config
 	passthrough         bool
 	onTargetFailure     func()
+	admitConnection     func() error
 	onCancelUnsupported func()
 	observeDatabase     func(DatabaseObservation)
 	inspectionMode      projectconfig.InspectionMode
@@ -69,6 +70,7 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 		backendTLS:          backendTLS,
 		passthrough:         config.VisitorTLSPassthrough,
 		onTargetFailure:     config.OnTargetFailure,
+		admitConnection:     config.AdmitConnection,
 		onCancelUnsupported: config.OnCancelUnsupported,
 		observeDatabase:     config.ObserveDatabase,
 		inspectionMode:      config.InspectionMode,

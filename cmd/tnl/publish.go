@@ -43,6 +43,7 @@ type publishCommand struct {
 	project          projectConfiguration
 	dockerTarget     *dockerPublishTarget
 	resolveTarget    func() string
+	namedOverrides   []string
 }
 
 type dockerPublishTarget struct {
@@ -52,6 +53,11 @@ type dockerPublishTarget struct {
 }
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
+	if flags.Service != "" && flags.PublishCredential == "" {
+		if target := flags.project.Config.Services[flags.Service].Target; target != nil && target.Type != "app" {
+			return runNamedPublish(ctx, flags, stdout, stderr)
+		}
+	}
 	if selected := flags.dockerTarget; selected != nil {
 		resolver := newDockerPublishResolver(ctx, flags.projectRoot, *selected, flags.Protocol == "" || flags.Protocol == "http")
 		target, err := resolver.initial()
