@@ -29,11 +29,15 @@ func startIntegrationPublicProxy(t *testing.T, backend string, addresses ...stri
 				_ = listener.Close()
 			}
 			mu.Lock()
+			active := len(connections)
 			for connection := range connections {
 				_ = connection.Close()
 			}
 			mu.Unlock()
 			workers.Wait()
+			if active != 0 {
+				t.Logf("public proxy closed %d active TCP connections", active)
+			}
 		})
 	}
 	t.Cleanup(stop)
