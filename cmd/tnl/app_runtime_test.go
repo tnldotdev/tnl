@@ -179,7 +179,7 @@ func TestAdHocTCPRegistrationWaitsForTheSameReadyRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true, Proxy: nil}}
 	token, _, _, err := credentials.NewEphemeralCredential()
 	if err != nil {
 		t.Fatal(err)
