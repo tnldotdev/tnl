@@ -414,6 +414,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Domain.Release.remoteFlags, true)
 	case "url list":
 		apply(&flags.URL.List.remoteFlags, true)
+	case "url show <service-or-public-url-id>":
+		apply(&flags.URL.Show.remoteFlags, true)
 	case "url update <public-url-id>":
 		apply(&flags.URL.Update.remoteFlags, true)
 	case "url delete <public-url-id>":

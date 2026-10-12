@@ -194,6 +194,17 @@ Create another Git worktree. The project configuration comes with it:
 git worktree add -b perf ../perf
 ```
 
+For a Compose service in each checkout, use the same worktree label that tnl
+uses in default public URL names as the Compose project name:
+
+```sh
+docker compose -p "$(tnl project label --output raw)" up -d db
+```
+
+Run that command from either checkout to keep its containers and named volumes
+separate. `tnl url show orders --output raw` prints a configured service's saved
+public address when you need one value in a script.
+
 Then start the two services:
 
 ```bash

@@ -38,6 +38,7 @@ type cli struct {
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
 	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
+	Project     projectCommand   `cmd:"" help:"Inspect the current project and worktree." group:"manage"`
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
@@ -435,6 +436,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runConfigCheck(project, stdout)
 	case "config generate":
 		return runConfigGenerate(ctx, projectStateRoot, project, stdout, stderr)
+	case "project label":
+		return runProjectLabel(ctx, flags, stdout)
 	case "telemetry on":
 		return runTelemetryPreference(ctx, flags.Telemetry.On, "on", stdout)
 	case "telemetry off":
@@ -527,6 +530,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runDomainRelease(ctx, flags.Domain.Release, stdout, stderr)
 	case "url list":
 		return runURLList(ctx, flags.URL.List, stdout, stderr)
+	case "url show <service-or-public-url-id>":
+		return runURLShow(ctx, flags.URL.Show, project, stdout, stderr)
 	case "url update <public-url-id>":
 		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
 	case "url delete <public-url-id>":

@@ -2,22 +2,103 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type publicURLCommand struct {
 	List       publicURLListCommand       `cmd:"" help:"List public URLs for the selected team."`
+	Show       publicURLShowCommand       `cmd:"" help:"Show one saved public URL for a configured service or ID."`
 	Update     publicURLUpdateCommand     `cmd:"" help:"Change a saved public URL target or visitor policy."`
 	Delete     publicURLDeleteCommand     `cmd:"" help:"Delete a public URL by ID; use tnl url list to find it."`
 	Credential publicURLCredentialCommand `cmd:"" help:"Manage credentials scoped to publishing one public URL."`
+}
+
+type publicURLShowCommand struct {
+	scopedTeamFlags `embed:""`
+	Selector        string           `arg:"" name:"service-or-public-url-id" required:""`
+	Output          scalarOutputMode `name:"output" enum:"human,raw,json" default:"human" help:"Output format: ${enum}."`
+}
+
+func runURLShow(ctx context.Context, command publicURLShowCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	session, err := openTeamSession(ctx, command.selection(), "tnl url show", diagnostics)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	current, err := session.currentWithDomains(ctx)
+	if err != nil {
+		return err
+	}
+	var saved controlv1.PublicURL
+	var expectedProtocol controlv1.PublicURLServiceProtocol
+	if opaqueid.Valid(command.Selector, opaqueid.PublicURLPrefix) {
+		saved, err = session.authenticated.Control.GetPublicURL(ctx, command.Selector)
+	} else {
+		if !project.Found() {
+			return failure.Wrap("select project service", failure.ServiceNotConfigured, errors.New("a configured service is required"))
+		}
+		effective, resolveErr := project.EffectiveService(command.Selector)
+		if resolveErr != nil {
+			return failure.Wrap("select project service", failure.ServiceNotConfigured, resolveErr)
+		}
+		expectedProtocol = controlv1.PublicURLServiceProtocol(config.ServiceProtocol(effective.Publish))
+		service, resolveErr := configuredProjectService(command.Selector, project.Worktree, effective, current)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		saved, err = session.authenticated.Control.GetPublicURLByHostname(ctx, current.team.Id, service.Hostname)
+	}
+	if err != nil {
+		return err
+	}
+	if saved.TeamId != current.team.Id {
+		return controlclient.ErrNotFound
+	}
+	if expectedProtocol != "" && saved.ServiceProtocol != expectedProtocol {
+		return failure.Wrap("select project public URL", failure.ServerConflict,
+			fmt.Errorf("saved public URL protocol %s does not match configured service %q (%s)", saved.ServiceProtocol, command.Selector, expectedProtocol))
+	}
+	address, err := savedPublicAddress(saved)
+	if err != nil {
+		return err
+	}
+	return writeURLShow(command.Output, saved, address, output)
+}
+
+func writeURLShow(mode scalarOutputMode, saved controlv1.PublicURL, address string, output io.Writer) error {
+	switch mode {
+	case scalarOutputRaw:
+		_, err := fmt.Fprintln(output, address)
+		return err
+	case scalarOutputJSON:
+		return json.NewEncoder(output).Encode(struct {
+			SchemaVersion int                                `json:"schema_version"`
+			PublicURLID   string                             `json:"public_url_id"`
+			PublicURL     string                             `json:"public_url"`
+			Protocol      controlv1.PublicURLServiceProtocol `json:"protocol"`
+			State         controlv1.PublicURLLifecycleState  `json:"state"`
+		}{1, saved.Id, address, saved.ServiceProtocol, saved.LifecycleState})
+	default:
+		return writeHumanFrame(output, "tnl url show", string(saved.LifecycleState), "tnl status shows local publication readiness",
+			clioutput.Fields(
+				clioutput.Field{Label: "public URL", Value: address},
+				clioutput.Field{Label: "protocol", Value: string(saved.ServiceProtocol)},
+				clioutput.Field{Label: "public URL ID", Value: saved.Id},
+				clioutput.Field{Label: "scope", Value: string(saved.PublicUrlScope)},
+			))
+	}
 }
 
 type publicURLUpdateCommand struct {
