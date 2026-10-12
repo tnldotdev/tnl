@@ -604,3 +604,20 @@ func TestPublishExplainsAppOwnedService(t *testing.T) {
 		t.Fatalf("publish app service = %v", err)
 	}
 }
+
+func TestPublishUsesDockerServiceAndPrivatePortFromSelectedWorktree(t *testing.T) {
+	protocol, dockerService, privateTLSName := "postgres", "database", "db.internal"
+	privatePort, targetTLS := 5432, true
+	project := projectConfiguration{Project: projectconfig.Project{
+		Root: t.TempDir(), Worktree: projectconfig.Worktree{Label: projectconfig.WorktreeLabel{FullLabel: "shop-perf-k7n2p9"}},
+		Config: config.TNL{Services: config.Services{"orders": {Protocol: &protocol, Target: &config.ServiceTarget{
+			Type: "docker", Service: &dockerService, Port: &privatePort, TargetTLS: &targetTLS, TargetTLSName: &privateTLSName,
+		}}}},
+	}}
+	flags := publishCommand{Target: "orders"}
+	if err := project.applyPublish(&flags); err != nil || flags.Target != "" || flags.Service != "orders" || flags.Protocol != protocol ||
+		flags.dockerTarget == nil || *flags.dockerTarget != (dockerPublishTarget{dockerService, privatePort, "shop-perf-k7n2p9"}) ||
+		!flags.TargetTLS || flags.TargetTLSName != privateTLSName {
+		t.Fatalf("Docker publish configuration = %+v, %v", flags, err)
+	}
+}

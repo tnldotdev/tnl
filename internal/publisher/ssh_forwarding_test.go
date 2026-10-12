@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -84,6 +85,64 @@ func TestSSHForwardingRequiresInstalledCertificate(t *testing.T) {
 	}
 	if received := awaitPublisherTest(t, backendResult); received != "SSH-2.0-client\r\n" {
 		t.Fatalf("SSH target received %q", received)
+	}
+}
+
+func TestSSHForwardingFollowsReplacedDockerTarget(t *testing.T) {
+	first, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	var selected atomic.Value
+	selected.Store(first.Addr().String())
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "shell.example", ServiceProtocol: controlv1.Ssh, PublicPort: 2222,
+		Target: first.Addr().String(), ResolveTarget: func() string { return selected.Load().(string) },
+		Certificate: publicURLTestCertificate(t, "shell.example"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+	for _, entry := range []struct {
+		listener net.Listener
+		banner   string
+	}{
+		{first, "SSH-2.0-first\r\n"},
+		{second, "SSH-2.0-second\r\n"},
+	} {
+		selected.Store(entry.listener.Addr().String())
+		done := make(chan error, 1)
+		go func() {
+			backend, err := entry.listener.Accept()
+			if err != nil {
+				done <- err
+				return
+			}
+			defer backend.Close()
+			_, err = io.WriteString(backend, entry.banner)
+			done <- err
+		}()
+		visitor := openDatabaseVisitor(t, route, 2222)
+		banner := make([]byte, len(entry.banner))
+		if _, err := io.ReadFull(visitor, banner); err != nil || string(banner) != entry.banner {
+			t.Fatalf("rebound SSH banner = %q, %v; want %q", banner, err, entry.banner)
+		}
+		visitor.Close()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	selected.Store("")
+	visitor := openDatabaseVisitor(t, route, 2222)
+	if _, err := visitor.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("missing Docker service should not use the stale TCP target: %v", err)
 	}
 }
 

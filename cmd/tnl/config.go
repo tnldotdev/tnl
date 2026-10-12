@@ -113,6 +113,11 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if usingConfiguredTarget && effective.Publish != nil && effective.Publish.Target != nil {
 		flags.Target = string(*effective.Publish.Target)
 	}
+	if usingConfiguredTarget && service != "" {
+		if selected := c.Config.Services[service].Target; selected != nil && selected.Type == "docker" {
+			flags.dockerTarget = &dockerPublishTarget{service: *selected.Service, port: *selected.Port, projectLabel: c.Worktree.Label.FullLabel}
+		}
+	}
 	if usingConfiguredTarget && flags.TargetCAFile == "" && effective.Publish != nil && effective.Publish.TargetCAFile != nil {
 		flags.TargetCAFile = *effective.Publish.TargetCAFile
 	}
@@ -136,7 +141,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if flags.PublishCredential == "" {
 		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	}
-	if flags.Target == "" && flags.PublishCredential == "" {
+	if flags.Target == "" && flags.PublishCredential == "" && flags.dockerTarget == nil {
 		if service != "" {
 			if selected := c.Config.Services[service].Target; selected != nil && selected.Type == "app" {
 				return failure.Wrap("select app service", failure.MissingTarget,

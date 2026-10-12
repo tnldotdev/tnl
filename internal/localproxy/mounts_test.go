@@ -57,6 +57,39 @@ func TestMountedProxySelectsCompleteLongestPrefixAndPreservesPathsByDefault(t *t
 	}
 }
 
+func TestPublisherProxyFollowsReplacedDockerTargetWithoutChangingHostname(t *testing.T) {
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "first") }))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "second") }))
+	defer second.Close()
+	selected := first.URL
+	handler, err := NewWithMountsHooksOptionsAdmittedResolved(first.URL, "web.example.test", 0, nil,
+		func() string { return selected }, ResponseHooks{}, TargetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		target string
+		status int
+		body   string
+	}{
+		{first.URL, http.StatusOK, "first"},
+		{second.URL, http.StatusOK, "second"},
+		{"", http.StatusBadGateway, ""},
+		{first.URL, http.StatusOK, "first"},
+	} {
+		selected = test.target
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Host = "web.example.test"
+		request.TLS = &tls.ConnectionState{ServerName: request.Host}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != test.status || test.body != "" && response.Body.String() != test.body {
+			t.Fatalf("target %q: response = %d %q, want %d %q", selected, response.Code, response.Body.String(), test.status, test.body)
+		}
+	}
+}
+
 func TestMountedProxySharesPublicURLRequestLimitDuringStreams(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	mounted := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
