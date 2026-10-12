@@ -85,7 +85,7 @@ func (a *appRuntime) startNamed(ctx context.Context, request localpublisherv1.Pu
 			}
 			target = dockerTargetInsidePublisher(chosen.Service, *definition.Target.ContainerPort, protocol == "http")
 		} else {
-			resolver := newDockerPublishResolver(ctx, project.Root, dockerPublishTarget{
+			resolver := newDockerPublishResolver(a.manager.Context(), project.Root, dockerPublishTarget{
 				selection:    definition.Target.DockerSelection,
 				projectLabel: project.Worktree.Label.FullLabel,
 			}, protocol == "http")

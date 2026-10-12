@@ -46,6 +46,9 @@ type Manager struct {
 	writeErr      error
 }
 
+// Context lasts for the publisher owner, beyond any one registration request.
+func (m *Manager) Context() context.Context { return m.ctx }
+
 func New(ctx context.Context, project, state string, services []Service, run Run) (*Manager, error) {
 	db, err := clientstate.Open(ctx, state)
 	if err != nil {
