@@ -2,6 +2,8 @@ package dockertarget
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,5 +76,54 @@ volumes:
 	}
 	if started[0].address == started[1].address || slices.Equal(started[0].container.Networks, started[1].container.Networks) {
 		t.Fatalf("identical Compose files shared host port or Docker network: %+v", started)
+	}
+	first := started[0]
+	compose := func(ctx context.Context, action ...string) error {
+		args := append([]string{"compose", "--project-directory", first.root, "--file", filepath.Join(first.root, "compose.yaml"), "--project-name", first.label}, action...)
+		command := exec.CommandContext(ctx, "docker", args...)
+		command.Dir = first.root
+		if output, err := command.CombinedOutput(); err != nil {
+			return fmt.Errorf("replace selected Compose service: %w (%s)", err, output)
+		}
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+	if err := compose(ctx, "stop", "db"); err != nil {
+		t.Fatal(err)
+	}
+	var reserved net.Listener
+	var err error
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		reserved, err = net.Listen("tcp", first.address)
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reserved.Close()
+	if err := compose(ctx, "up", "-d", "--force-recreate", "db"); err != nil {
+		t.Fatal(err)
+	}
+	selection := config.DockerSelection{Compose: &config.ComposeSelection{File: "compose.yaml", Project: first.label, Service: "db"}, ContainerPort: &port}
+	replaced, err := SelectContainer(t.Context(), first.root, first.label, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newAddress, err := HostPort(replaced, port, false)
+	if err != nil || newAddress == first.address {
+		t.Fatalf("replaced Docker binding remained stale: old=%s new=%s, %v", first.address, newAddress, err)
+	}
+	second := started[1]
+	selection.Compose.Project = second.label
+	stillRunning, err := SelectContainer(t.Context(), second.root, second.label, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if address, err := HostPort(stillRunning, port, false); err != nil || address != second.address {
+		t.Fatalf("replacing one worktree moved the other database: %s, %v", address, err)
 	}
 }
