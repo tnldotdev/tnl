@@ -13,8 +13,8 @@ func TestInitConnectsRecognizedAPIServerEntrypoints(t *testing.T) {
 	for _, test := range []struct {
 		name, dependency, script, moduleType, source, result string
 	}{
-		{"hono_node", "hono", "tsx watch src/index.ts", "module", "import { serve } from '@hono/node-server'\nimport { Hono } from 'hono'\nconst app = new Hono()\napp.get('/', (c) => c.text('ok'))\nserve(app)\n", "const server = serve({ fetch: app.fetch, port: 3000 })"},
-		{"hono_bun", "hono", "bun --hot src/index.ts", "", "import { Hono } from 'hono'\nconst app = new Hono()\napp.get('/', (c) => c.text('ok'))\nexport default app\n", "const server = Bun.serve({ fetch: app.fetch, port: 3000 })"},
+		{"hono_node", "hono", "tsx watch src/index.ts", "module", "import { serve } from '@hono/node-server'\nimport { Hono } from 'hono'\nconst app = new Hono()\napp.get('/', (c) => c.text('ok'))\nserve(app)\n", "const server = serve({ fetch: app.fetch })"},
+		{"hono_bun", "hono", "bun --hot src/index.ts", "", "import { Hono } from 'hono'\nconst app = new Hono()\napp.get('/', (c) => c.text('ok'))\nexport default app\n", "const server = Bun.serve({ fetch: app.fetch })"},
 		{"express", "express", "tsx watch src/index.ts", "module", "import express from 'express'\nconst app = express()\napp.get('/', (_req, res) => res.send('ok'))\napp.listen(3000)\n", "const server = app.listen(3000)"},
 		{"fastify", "fastify", "tsx watch src/index.ts", "module", "import fastify from 'fastify'\nconst app = fastify()\napp.get('/', () => 'ok')\napp.listen({ port: 3000 })\n", "await app.listen({ port: 3000 })"},
 	} {

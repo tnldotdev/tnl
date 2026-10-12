@@ -150,7 +150,7 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 		if err != nil {
 			return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 		}
-		if paths := r.project.Config.Services[name].Paths; len(paths) > 0 {
+		if paths := config.ServicePaths(r.project.Config.Services[name]); len(paths) > 0 {
 			serviceMetadata.Paths = make(map[string]projectmeta.Path, len(paths))
 			for prefix, mount := range paths {
 				serviceMetadata.Paths[prefix] = projectmeta.Path{

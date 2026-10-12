@@ -60,6 +60,35 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	}
 }
 
+func TestResolveTypedServiceTargetAndHTTPOptions(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "tnl.config.ts")
+	source := `export default {
+  services: {
+    web: {target: {type: "app"}, http: {readiness: {path: "/health"}, paths: {"/api": "api"}}},
+    api: {target: {type: "address", address: 3000}},
+    orders: {protocol: "postgres", target: {type: "address", address: "db.internal:5432"}, tunnel: {visitorTLS: "passthrough"}},
+  },
+};`
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	project, err := Resolve(t.Context(), Selection{Path: path}, root, [32]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	web, err := project.EffectiveService("web")
+	if err != nil || web.Readiness == nil || web.Readiness.Path != "/health" ||
+		config.ServicePaths(project.Config.Services["web"])["/api"].Service != "api" ||
+		project.Config.Services["orders"].Tunnel.VisitorTLS == nil || *project.Config.Services["orders"].Tunnel.VisitorTLS != "passthrough" {
+		t.Fatalf("typed TypeScript service settings = %+v, %+v, %v", web, project.Config.Services, err)
+	}
+	orders, err := project.EffectiveService("orders")
+	if err != nil || orders.Publish == nil || config.ServiceProtocol(orders.Publish) != "postgres" || orders.Publish.Target == nil || string(*orders.Publish.Target) != "db.internal:5432" {
+		t.Fatalf("database target = %+v, %v", orders, err)
+	}
+}
+
 func TestResolveNormalizesTypeScriptExactPublicURL(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "tnl.config.ts")

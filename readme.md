@@ -64,7 +64,7 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 export default defineConfig({
   services: {
     app: {
-      directory: ".",
+      target: { type: "app" },
     },
   },
 });
@@ -97,8 +97,8 @@ allowed on the declared webhook path and method.
 
 ## give your services their own urls
 
-If your project has several services, give each its own directory in
-`tnl.config.ts`:
+If your project has several apps, name each app in `tnl.config.ts` and pass
+the same name to its framework integration or `tnl.prepare` call:
 
 ```ts
 // tnl.config.ts
@@ -107,14 +107,17 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 export default defineConfig({
   services: {
     web: {
-      directory: "apps/web",
+      target: { type: "app" },
     },
     api: {
-      directory: "apps/api",
+      target: { type: "app" },
     },
   },
 });
 ```
+
+For example, use `withTnl({}, { service: "web" })` in Next.js or
+`tnl({ service: "api" })` in Vite. Each app reports the port it actually binds.
 
 Start each service with its normal development command:
 

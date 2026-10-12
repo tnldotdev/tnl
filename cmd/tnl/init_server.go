@@ -119,13 +119,13 @@ func recognizedAPIServerSource(source []byte, kind, script string) ([]byte, bool
 		}
 		if strings.Contains(text, "from "+quote+"@hono/node-server"+quote) {
 			before = "serve(app)" + semicolon
-			after = "const server = serve({ fetch: app.fetch, port: 3000 })" + semicolon + "\nawait publication?.register(server)" + semicolon
+			after = "const server = serve({ fetch: app.fetch })" + semicolon + "\nawait publication?.register(server)" + semicolon
 		} else {
 			if !strings.HasPrefix(script, "bun ") {
 				return nil, false
 			}
 			before = "export default app" + semicolon
-			after = "const server = Bun.serve({ fetch: app.fetch, port: 3000 })" + semicolon + "\nawait publication?.register(server)" + semicolon
+			after = "const server = Bun.serve({ fetch: app.fetch })" + semicolon + "\nawait publication?.register(server)" + semicolon
 		}
 	case "express":
 		if !strings.Contains(text, "from "+quote+"express"+quote) || !strings.Contains(text, "const app = express(") {

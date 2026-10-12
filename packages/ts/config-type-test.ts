@@ -30,6 +30,40 @@ const staticConfig = {
   readiness: { path: "/health" },
 } satisfies TnlConfigInput;
 
+const namedTargets = defineConfig({
+  services: {
+    web: {
+      target: { type: "app" },
+      http: { readiness: { path: "/health" }, paths: { "/api": "api" } },
+    },
+    api: { target: { type: "address", address: 3000 } },
+    orders: {
+      protocol: "postgres",
+      target: { type: "address", address: "db.internal:5432" },
+      tunnel: { visitorTLS: "passthrough" },
+    },
+  },
+});
+namedTargets.services.web.target.type satisfies "app";
+namedTargets.services.orders.protocol satisfies "postgres";
+({
+  services: {
+    web: {
+      target: {
+        type: "app",
+        // @ts-expect-error the app reports its own bound address.
+        address: 3000,
+      },
+    },
+  },
+}) satisfies TnlConfig;
+// @ts-expect-error an explicit target requires an address.
+defineConfig({ services: { orders: { protocol: "postgres", target: { type: "address" } } } });
+defineConfig({
+  // @ts-expect-error nested HTTP path mounts name a configured service.
+  services: { web: { target: { type: "app" }, http: { paths: { "/api": "missing" } } }, api: {} },
+});
+
 ({
   services: {
     web: { directory: "apps/web" },
@@ -250,6 +284,7 @@ defineConfig({ version: 1 });
 defineConfig({ tnld: { role: "relay" } });
 
 export {
+  namedTargets,
   aliasConfig,
   aliasFactory,
   dynamicConfig,
