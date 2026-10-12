@@ -14,6 +14,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/mongosrv"
+	"github.com/tnldotdev/tnl/internal/tcptarget"
 )
 
 const LeaseDuration = 20 * time.Second
@@ -270,9 +272,15 @@ func (m *Manager) Renew(id, owner string) error {
 // register acknowledges ownership and a bound target. provisioning happens in
 // the worker after this method returns and has its own observations.
 func (m *Manager) Register(id, owner, target, framework string) error {
-	if _, err := localproxy.ParseCanonicalTarget(target); err != nil {
-		return errors.Join(err, errors.New("target must be a canonical HTTP or HTTPS origin"))
-	}
+	return m.register(id, owner, target, framework, false)
+}
+
+// RegisterNamed accepts a CLI-owned target without claiming an app listener.
+func (m *Manager) RegisterNamed(id, owner, target string) error {
+	return m.register(id, owner, target, "", true)
+}
+
+func (m *Manager) register(id, owner, target, framework string, named bool) error {
 	m.op.Lock()
 	defer m.op.Unlock()
 	m.mu.Lock()
@@ -280,6 +288,10 @@ func (m *Manager) Register(id, owner, target, framework string) error {
 	if reg == nil {
 		m.mu.Unlock()
 		return ErrRegistrationStale
+	}
+	if err := validateRegistrationTarget(*service, target, named); err != nil {
+		m.mu.Unlock()
+		return err
 	}
 	if service.Registered && service.Target == target && reg.cancel != nil {
 		reg.expires = time.Now().Add(LeaseDuration)
@@ -326,6 +338,32 @@ func (m *Manager) Register(id, owner, target, framework string) error {
 		}
 	}()
 	return nil
+}
+
+func validateRegistrationTarget(service Service, target string, named bool) error {
+	if named && service.ServiceProtocol == "" || !named && service.ServiceProtocol != "" {
+		return errors.New("registration does not match the configured service target")
+	}
+	if service.ServiceProtocol == "" || service.ServiceProtocol == "http" {
+		if _, err := localproxy.ParseCanonicalTarget(target); err != nil {
+			return errors.Join(err, errors.New("target must be a canonical HTTP or HTTPS origin"))
+		}
+		return nil
+	}
+	if service.ServiceProtocol == "mongodb" && strings.HasPrefix(target, mongosrv.Prefix) {
+		_, err := mongosrv.Parse(target)
+		return err
+	}
+	switch service.ServiceProtocol {
+	case "postgres", "mysql", "redis", "ssh", "mongodb":
+		canonical, err := tcptarget.Normalize(target)
+		if err != nil || canonical != target {
+			return errors.Join(err, errors.New("target must be a canonical private TCP host and port"))
+		}
+		return nil
+	default:
+		return errors.New("unsupported configured service protocol")
+	}
 }
 
 func (m *Manager) Published(id string, run uint64, routable bool) error {
