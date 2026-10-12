@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -57,7 +58,11 @@ func TestLocalPublisherTCPRequiresCredentialOnPrivateOperations(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		response.Body.Close()
+		_, readErr := io.Copy(io.Discard, response.Body)
+		closeErr := response.Body.Close()
+		if readErr != nil || closeErr != nil {
+			t.Fatalf("read local publisher response: %v, close: %v", readErr, closeErr)
+		}
 		if response.StatusCode != test.status {
 			t.Fatalf("GET %s with credential=%t and origin=%t: status %d, want %d", test.path, test.token != "", test.origin != "", response.StatusCode, test.status)
 		}
