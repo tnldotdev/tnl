@@ -56,7 +56,7 @@ interface Dependencies {
 
 const defaultDependencies: Dependencies = {
   start: (directory, service) =>
-    startRuntime(directory, resolveNativeBinary(), service === undefined ? {} : { service }),
+    startRuntime(directory, undefined, service === undefined ? {} : { service }),
   request: runtimeRequest,
 };
 
@@ -448,7 +448,7 @@ function parseAssignment(value: unknown): Assignment {
 
 export async function startRuntime(
   directory: string,
-  binary: string = resolveNativeBinary(),
+  binary?: string,
   scope: { readonly service?: string; readonly adHoc?: boolean } = {},
 ): Promise<string> {
   try {
@@ -463,6 +463,7 @@ export async function startRuntime(
       if (!(await runtimeHealthy(selected))) throw new TnlError("sdk.dev_unavailable");
       return selected;
     }
+    binary ??= resolveNativeBinary();
     const { stdout } = await promisify(execFile)(
       binary,
       [
