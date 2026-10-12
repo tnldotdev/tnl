@@ -99,7 +99,7 @@ process.on("SIGTERM", () => server.close());
     ports:
       - "127.0.0.1::3781"
   web:
-    image: public.ecr.aws/docker/library/node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+    image: mirror.gcr.io/library/node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
     user: "${TNL_UID}:${TNL_GID}"
     working_dir: /project
     command: ["node", "/project/app.mjs"]
@@ -190,7 +190,7 @@ process.on("SIGTERM", () => server.close());
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	probe := exec.CommandContext(ctx, "docker", "run", "--rm", "--network", label.FullLabel+"_default", "--entrypoint", "node",
-		"public.ecr.aws/docker/library/node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9",
+		"mirror.gcr.io/library/node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9",
 		"-e", fmt.Sprintf(`fetch('http://web:%d').then(async r => { if (!r.ok || await r.text() !== 'app from Compose') process.exit(1) }).catch(() => process.exit(1))`, ready.Port))
 	probeOutput, err := probe.CombinedOutput()
 	if err != nil {

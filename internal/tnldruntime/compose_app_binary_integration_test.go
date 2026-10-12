@@ -110,7 +110,7 @@ writeFileSync("/app/ready.json", JSON.stringify({port:server.address().port,url:
     depends_on:
       publisher-state-init: {condition: service_completed_successfully}
   web:
-    image: public.ecr.aws/docker/library/node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+    image: mirror.gcr.io/library/node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
     user: "${TNL_UID}:${TNL_GID}"
     working_dir: /app
     command: ["node", "/app/app.mjs"]
@@ -122,7 +122,7 @@ writeFileSync("/app/ready.json", JSON.stringify({port:server.address().port,url:
       - ${PROJECT_ROOT}/.tnl/publisher-web.endpoint.json:/run/secrets/tnl-web.endpoint.json:ro
     depends_on: [publisher]
   db:
-    image: public.ecr.aws/docker/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    image: mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
     environment:
       POSTGRES_USER: shop
       POSTGRES_PASSWORD: devpassword
