@@ -64,7 +64,7 @@ for (const manager of ["npm", "pnpm"] as const) {
     await run(manager, args, consumer);
     const { stdout } = await run(
       path.join(consumer, "node_modules", ".bin", "tnl"),
-      ["version"],
+      ["version", "--output", "raw"],
       consumer,
     );
     assert.equal(stdout.trim(), `tnl ${metadata.version} (${metadata.commit})`);
