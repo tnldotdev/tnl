@@ -44,8 +44,9 @@ class NativeRuntime:
             result: object = json.loads(stdout)
             if (
                 not isinstance(result, dict)
-                or set(result) != {"version", "path"}
+                or set(result) != {"version", "path", "spawn"}
                 or result["version"] != 1
+                or not isinstance(result["spawn"], bool)
                 or not isinstance(result["path"], str)
                 or not Path(result["path"]).is_absolute()
                 or not result["path"].endswith(".endpoint.json")
@@ -54,6 +55,8 @@ class NativeRuntime:
                 raise InvalidResponse()
             endpoint_path = cast(str, result["path"])
             if not await self.healthy(endpoint_path):
+                if not result["spawn"]:
+                    raise NativeUnavailable()
                 await asyncio.create_subprocess_exec(
                     str(binary),
                     "runtime",
@@ -103,10 +106,19 @@ class NativeRuntime:
         except ValueError:
             raise InvalidResponse() from None
         if (
-            parsed.scheme != "http"
-            or parsed.hostname != "127.0.0.1"
-            or port is None
-            or parsed.netloc != f"127.0.0.1:{port}"
+            (parsed.scheme != "https" and parsed.scheme != "http")
+            or parsed.scheme == "http"
+            and (
+                parsed.hostname != "127.0.0.1"
+                or port is None
+                or parsed.netloc != f"127.0.0.1:{port}"
+            )
+            or parsed.scheme == "https"
+            and (
+                parsed.hostname is None
+                or parsed.username is not None
+                or parsed.password is not None
+            )
             or parsed.path != ""
             or parsed.query != ""
             or parsed.fragment != ""

@@ -75,12 +75,16 @@ func (a *appRuntime) startNamed(ctx context.Context, request localpublisherv1.Pu
 	var resolveTarget func() string
 	protocol := config.ServiceProtocol(effective.Publish)
 	if definition.Target.Type == "docker" {
-		resolver := newDockerPublishResolver(ctx, project.Root, dockerPublishTarget{
-			service: *definition.Target.Service, port: *definition.Target.Port,
-			projectLabel: project.Worktree.Label.FullLabel,
-		}, protocol == "http")
-		target, err = resolver.initial()
-		resolveTarget = resolver.target
+		if project.Config.Publisher != nil && project.Config.Publisher.Type == "docker" {
+			target = dockerTargetInsidePublisher(*definition.Target.Service, *definition.Target.Port, protocol == "http")
+		} else {
+			resolver := newDockerPublishResolver(ctx, project.Root, dockerPublishTarget{
+				service: *definition.Target.Service, port: *definition.Target.Port,
+				projectLabel: project.Worktree.Label.FullLabel,
+			}, protocol == "http")
+			target, err = resolver.initial()
+			resolveTarget = resolver.target
+		}
 	} else if effective.Publish != nil && effective.Publish.Target != nil {
 		target, err = normalizePublishTarget(string(*effective.Publish.Target), controlv1.PublicURLServiceProtocol(protocol))
 	}
@@ -215,7 +219,7 @@ func (a *appRuntime) namedHandler(mux *http.ServeMux) {
 					}
 					status := namedServiceStatus(*event.Service)
 					page.Events = append(page.Events, localpublisherv1.ProjectEvent{
-						Cursor: event.Cursor, Type: event.Type, Service: event.Service.Name, Status: &status,
+						Cursor: event.Cursor, Type: event.Type, Service: event.Service.Name, At: event.At, Status: &status,
 						Publication: namedPublicationEvent(event.Publication),
 					})
 					if len(page.Events) >= 32 {

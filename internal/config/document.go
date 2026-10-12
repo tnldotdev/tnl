@@ -39,6 +39,7 @@ type TNL struct {
 	Inspection *Inspection        `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP and supported TCP services."`
 	Tunnel     *Tunnel            `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
 	Publish    *Publish           `json:"-" yaml:"-"`
+	Publisher  *ProjectPublisher  `json:"publisher,omitempty" yaml:"publisher,omitempty" jsonschema_description:"Publisher selected for this project; omitted uses the local host publisher."`
 	Readiness  *Readiness         `json:"-" yaml:"-"`
 	Services   Services           `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with a private target, public URL settings, and optional HTTP settings."`
 	Webhooks   map[string]Webhook `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
@@ -46,6 +47,15 @@ type TNL struct {
 }
 
 type Services map[string]Service
+
+// ProjectPublisher selects the project publisher's local or external API.
+type ProjectPublisher struct {
+	Type                string  `json:"type" yaml:"type" jsonschema:"required,enum=local,enum=docker,enum=url"`
+	URL                 *string `json:"url,omitempty" yaml:"url,omitempty" jsonschema_description:"HTTPS origin of an external publisher API."`
+	Service             *string `json:"service,omitempty" yaml:"service,omitempty" jsonschema_description:"Compose service running the publisher API."`
+	Port                *int    `json:"port,omitempty" yaml:"port,omitempty" jsonschema:"minimum=1,maximum=65535" jsonschema_description:"Private TCP port of the Compose publisher API."`
+	OwnerCredentialFile *string `json:"owner_credential_file,omitempty" yaml:"owner_credential_file,omitempty" jsonschema_description:"Private file containing the project publisher owner credential; never browser metadata."`
+}
 
 // Service contains project-local overrides for one named local service.
 type Service struct {

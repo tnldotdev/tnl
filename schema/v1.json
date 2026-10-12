@@ -144,6 +144,62 @@
           "type": "object",
           "description": "Default public URL and tunnel settings."
         },
+        "publisher": {
+          "oneOf": [
+            {
+              "properties": {
+                "type": {
+                  "const": "local"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": ["type"]
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "url"
+                },
+                "url": {
+                  "type": "string",
+                  "pattern": "^https://[^/?#]+$"
+                },
+                "owner_credential_file": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": ["type", "url", "owner_credential_file"]
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "docker"
+                },
+                "service": {
+                  "type": "string",
+                  "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                },
+                "port": {
+                  "type": "integer",
+                  "maximum": 65535,
+                  "minimum": 1
+                },
+                "owner_credential_file": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": ["type", "service", "port", "owner_credential_file"]
+            }
+          ],
+          "description": "Publisher selected for this project; omitted uses the local host publisher."
+        },
         "services": {
           "additionalProperties": {
             "properties": {

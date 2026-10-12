@@ -21,6 +21,16 @@ var composeName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 // ComposePort finds the current host binding for one Compose service's private
 // TCP port. a caller must resolve it again after a container replacement.
 func ComposePort(ctx context.Context, projectRoot, projectLabel, service string, privatePort int) (string, error) {
+	return composePort(ctx, projectRoot, projectLabel, service, privatePort, false)
+}
+
+// ComposePublisherPort requires the API's host binding to be loopback. a
+// wildcard binding would expose its plaintext owner-authenticated listener.
+func ComposePublisherPort(ctx context.Context, projectRoot, projectLabel, service string, privatePort int) (string, error) {
+	return composePort(ctx, projectRoot, projectLabel, service, privatePort, true)
+}
+
+func composePort(ctx context.Context, projectRoot, projectLabel, service string, privatePort int, loopbackOnly bool) (string, error) {
 	if !filepath.IsAbs(projectRoot) || !composeName.MatchString(projectLabel) || !composeName.MatchString(service) ||
 		privatePort < 1 || privatePort > 65535 {
 		return "", errors.New("docker target requires an absolute project directory, a Compose project and service name, and a TCP port from 1 to 65535")
@@ -45,6 +55,12 @@ func ComposePort(ctx context.Context, projectRoot, projectLabel, service string,
 	address, err := parsePort(output.String())
 	if err != nil {
 		return "", fmt.Errorf("inspect Compose service %q: %w", service, err)
+	}
+	if loopbackOnly {
+		host, _, _ := net.SplitHostPort(strings.TrimSpace(output.String()))
+		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+			return "", fmt.Errorf("inspect Compose service %q: publisher API port must bind loopback", service)
+		}
 	}
 	return address, nil
 }

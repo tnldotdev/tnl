@@ -84,6 +84,8 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		return tunnelSchema()
 	case reflect.TypeOf(config.Services{}):
 		return servicesSchema()
+	case reflect.TypeOf(config.ProjectPublisher{}):
+		return projectPublisherSchema()
 	case reflect.TypeOf(config.Webhook{}):
 		return webhookSchema()
 	case reflect.TypeOf(config.Alias{}):
@@ -102,6 +104,25 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 	default:
 		return nil
 	}
+}
+
+func projectPublisherSchema() *jsonschema.Schema {
+	local := jsonschema.NewProperties()
+	local.Set("type", &jsonschema.Schema{Const: "local"})
+	url := jsonschema.NewProperties()
+	url.Set("type", &jsonschema.Schema{Const: "url"})
+	url.Set("url", &jsonschema.Schema{Type: "string", Pattern: `^https://[^/?#]+$`})
+	url.Set("owner_credential_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
+	docker := jsonschema.NewProperties()
+	docker.Set("type", &jsonschema.Schema{Const: "docker"})
+	docker.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`})
+	docker.Set("port", &jsonschema.Schema{Type: "integer", Minimum: "1", Maximum: "65535"})
+	docker.Set("owner_credential_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
+	return &jsonschema.Schema{OneOf: []*jsonschema.Schema{
+		{Type: "object", Required: []string{"type"}, Properties: local, AdditionalProperties: jsonschema.FalseSchema},
+		{Type: "object", Required: []string{"type", "url", "owner_credential_file"}, Properties: url, AdditionalProperties: jsonschema.FalseSchema},
+		{Type: "object", Required: []string{"type", "service", "port", "owner_credential_file"}, Properties: docker, AdditionalProperties: jsonschema.FalseSchema},
+	}}
 }
 
 func servicesSchema() *jsonschema.Schema {

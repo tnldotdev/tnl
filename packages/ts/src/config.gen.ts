@@ -81,6 +81,24 @@ export interface TnlConfig {
     visitorTLS?: "terminate" | "passthrough";
   };
   /**
+   * Publisher selected for this project; omitted uses the local host publisher.
+   */
+  publisher?:
+    | {
+        type: "local";
+      }
+    | {
+        type: "url";
+        url: string;
+        ownerCredentialFile: string;
+      }
+    | {
+        type: "docker";
+        service: string;
+        port: number;
+        ownerCredentialFile: string;
+      };
+  /**
    * Named local services with a private target, public URL settings, and optional HTTP settings.
    */
   services?: {

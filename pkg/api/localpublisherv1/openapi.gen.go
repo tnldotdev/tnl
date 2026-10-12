@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
 )
@@ -52,6 +53,21 @@ const (
 func (e HTTPServiceMetadataProtocol) Valid() bool {
 	switch e {
 	case HTTPServiceMetadataProtocolHttp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LocalEndpointVersion.
+const (
+	LocalEndpointVersionN1 LocalEndpointVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the LocalEndpointVersion enum.
+func (e LocalEndpointVersion) Valid() bool {
+	switch e {
+	case LocalEndpointVersionN1:
 		return true
 	default:
 		return false
@@ -190,6 +206,36 @@ func (e WebhookMetadataMethods) Valid() bool {
 	}
 }
 
+// Defines values for IssueLocalAdHocCredentialParamsExport.
+const (
+	IssueLocalAdHocCredentialParamsExportN1 IssueLocalAdHocCredentialParamsExport = 1
+)
+
+// Valid indicates whether the value is a known member of the IssueLocalAdHocCredentialParamsExport enum.
+func (e IssueLocalAdHocCredentialParamsExport) Valid() bool {
+	switch e {
+	case IssueLocalAdHocCredentialParamsExportN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IssueLocalAppCredentialParamsExport.
+const (
+	IssueLocalAppCredentialParamsExportN1 IssueLocalAppCredentialParamsExport = 1
+)
+
+// Valid indicates whether the value is a known member of the IssueLocalAppCredentialParamsExport enum.
+func (e IssueLocalAppCredentialParamsExport) Valid() bool {
+	switch e {
+	case IssueLocalAppCredentialParamsExportN1:
+		return true
+	default:
+		return false
+	}
+}
+
 // AliasMetadata defines model for AliasMetadata.
 type AliasMetadata struct {
 	Hostname string      `json:"hostname"`
@@ -242,6 +288,16 @@ type IntegrationOrigin struct {
 	Url      string `json:"url"`
 }
 
+// LocalEndpoint defines model for LocalEndpoint.
+type LocalEndpoint struct {
+	Credential string               `json:"credential"`
+	Url        string               `json:"url"`
+	Version    LocalEndpointVersion `json:"version"`
+}
+
+// LocalEndpointVersion defines model for LocalEndpoint.Version.
+type LocalEndpointVersion int
+
 // PathMetadata defines model for PathMetadata.
 type PathMetadata struct {
 	Service     ServiceName `json:"service"`
@@ -257,6 +313,7 @@ type Problem struct {
 
 // ProjectEvent defines model for ProjectEvent.
 type ProjectEvent struct {
+	At          time.Time         `json:"at"`
 	Cursor      string            `json:"cursor"`
 	Publication *PublicationEvent `json:"publication,omitempty"`
 	Service     ServiceName       `json:"service"`
@@ -411,6 +468,28 @@ type UnregisterAppListenerParams struct {
 // RenewAppRegistrationParams defines parameters for RenewAppRegistration.
 type RenewAppRegistrationParams struct {
 	XRegistrationOwner RegistrationOwner `json:"X-Registration-Owner"`
+}
+
+// IssueLocalAdHocCredentialParams defines parameters for IssueLocalAdHocCredential.
+type IssueLocalAdHocCredentialParams struct {
+	Export IssueLocalAdHocCredentialParamsExport `form:"export" json:"export"`
+}
+
+// IssueLocalAdHocCredentialParamsExport defines parameters for IssueLocalAdHocCredential.
+type IssueLocalAdHocCredentialParamsExport int
+
+// IssueLocalAppCredentialParams defines parameters for IssueLocalAppCredential.
+type IssueLocalAppCredentialParams struct {
+	Export *IssueLocalAppCredentialParamsExport `form:"export,omitempty" json:"export,omitempty"`
+}
+
+// IssueLocalAppCredentialParamsExport defines parameters for IssueLocalAppCredential.
+type IssueLocalAppCredentialParamsExport int
+
+// GetLocalProjectStatusParams defines parameters for GetLocalProjectStatus.
+type GetLocalProjectStatusParams struct {
+	// Probe fresh private TCP target check; available only with owner authentication.
+	Probe *ServiceName `form:"probe,omitempty" json:"probe,omitempty"`
 }
 
 // PrepareAppServiceJSONRequestBody defines body for PrepareAppService for application/json ContentType.
@@ -630,12 +709,22 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/registrations/{registration_id}/renew (the `RenewAppRegistration` operationId).
 	RenewAppRegistration(ctx context.Context, registrationId RegistrationID, params *RenewAppRegistrationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// IssueLocalAdHocCredential Export the ad-hoc credential for this publisher
+	//
+	// Corresponds with POST /v1/scopes/ad-hoc (the `IssueLocalAdHocCredential` operationId).
+	IssueLocalAdHocCredential(ctx context.Context, params *IssueLocalAdHocCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IssueLocalAppCredential Issue a credential restricted to one configured app
+	//
+	// Corresponds with POST /v1/scopes/app/{service} (the `IssueLocalAppCredential` operationId).
+	IssueLocalAppCredential(ctx context.Context, service ServiceName, params *IssueLocalAppCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetLocalProjectStatus Read one publisher-owned snapshot for the selected project
 	//
 	// app credentials see only their service; ad-hoc credentials see no configured services.
 	//
 	// Corresponds with GET /v1/status (the `GetLocalProjectStatus` operationId).
-	GetLocalProjectStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetLocalProjectStatus(ctx context.Context, params *GetLocalProjectStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListLocalProjectEvents Resume bounded project events after a local cursor
@@ -830,13 +919,43 @@ func (c *Client) RenewAppRegistration(ctx context.Context, registrationId Regist
 	return c.Client.Do(req)
 }
 
+// IssueLocalAdHocCredential Export the ad-hoc credential for this publisher
+//
+// Corresponds with POST /v1/scopes/ad-hoc (the `IssueLocalAdHocCredential` operationId).
+func (c *Client) IssueLocalAdHocCredential(ctx context.Context, params *IssueLocalAdHocCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueLocalAdHocCredentialRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IssueLocalAppCredential Issue a credential restricted to one configured app
+//
+// Corresponds with POST /v1/scopes/app/{service} (the `IssueLocalAppCredential` operationId).
+func (c *Client) IssueLocalAppCredential(ctx context.Context, service ServiceName, params *IssueLocalAppCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueLocalAppCredentialRequest(c.Server, service, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetLocalProjectStatus Read one publisher-owned snapshot for the selected project
 //
 // app credentials see only their service; ad-hoc credentials see no configured services.
 //
 // Corresponds with GET /v1/status (the `GetLocalProjectStatus` operationId).
-func (c *Client) GetLocalProjectStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetLocalProjectStatusRequest(c.Server)
+func (c *Client) GetLocalProjectStatus(ctx context.Context, params *GetLocalProjectStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetLocalProjectStatusRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1251,8 +1370,119 @@ func NewRenewAppRegistrationRequest(server string, registrationId RegistrationID
 	return req, nil
 }
 
+// NewIssueLocalAdHocCredentialRequest constructs an http.Request for the IssueLocalAdHocCredential method
+func NewIssueLocalAdHocCredentialRequest(server string, params *IssueLocalAdHocCredentialParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/scopes/ad-hoc")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "export", params.Export, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewIssueLocalAppCredentialRequest constructs an http.Request for the IssueLocalAppCredential method
+func NewIssueLocalAppCredentialRequest(server string, service ServiceName, params *IssueLocalAppCredentialParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service", service, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/scopes/app/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Export != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "export", *params.Export, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetLocalProjectStatusRequest constructs an http.Request for the GetLocalProjectStatus method
-func NewGetLocalProjectStatusRequest(server string) (*http.Request, error) {
+func NewGetLocalProjectStatusRequest(server string, params *GetLocalProjectStatusParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -1268,6 +1498,33 @@ func NewGetLocalProjectStatusRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Probe != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "probe", *params.Probe, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -1406,6 +1663,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/registrations/{registration_id}/renew (the `RenewAppRegistration` operationId).
 	RenewAppRegistrationWithResponse(ctx context.Context, registrationId RegistrationID, params *RenewAppRegistrationParams, reqEditors ...RequestEditorFn) (*RenewAppRegistrationResponse, error)
 
+	// IssueLocalAdHocCredentialWithResponse Export the ad-hoc credential for this publisher
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/scopes/ad-hoc (the `IssueLocalAdHocCredential` operationId).
+	IssueLocalAdHocCredentialWithResponse(ctx context.Context, params *IssueLocalAdHocCredentialParams, reqEditors ...RequestEditorFn) (*IssueLocalAdHocCredentialResponse, error)
+
+	// IssueLocalAppCredentialWithResponse Issue a credential restricted to one configured app
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/scopes/app/{service} (the `IssueLocalAppCredential` operationId).
+	IssueLocalAppCredentialWithResponse(ctx context.Context, service ServiceName, params *IssueLocalAppCredentialParams, reqEditors ...RequestEditorFn) (*IssueLocalAppCredentialResponse, error)
+
 	// GetLocalProjectStatusWithResponse Read one publisher-owned snapshot for the selected project
 	//
 	// app credentials see only their service; ad-hoc credentials see no configured services.
@@ -1413,7 +1684,7 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/status (the `GetLocalProjectStatus` operationId).
-	GetLocalProjectStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetLocalProjectStatusResponse, error)
+	GetLocalProjectStatusWithResponse(ctx context.Context, params *GetLocalProjectStatusParams, reqEditors ...RequestEditorFn) (*GetLocalProjectStatusResponse, error)
 }
 
 type ListLocalProjectEventsResponse struct {
@@ -1813,6 +2084,102 @@ func (r RenewAppRegistrationResponse) ContentType() string {
 	return ""
 }
 
+type IssueLocalAdHocCredentialResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *LocalEndpoint
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r IssueLocalAdHocCredentialResponse) GetJSON200() *LocalEndpoint {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r IssueLocalAdHocCredentialResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r IssueLocalAdHocCredentialResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IssueLocalAdHocCredentialResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IssueLocalAdHocCredentialResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IssueLocalAdHocCredentialResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type IssueLocalAppCredentialResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *LocalEndpoint
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r IssueLocalAppCredentialResponse) GetJSON200() *LocalEndpoint {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r IssueLocalAppCredentialResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r IssueLocalAppCredentialResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IssueLocalAppCredentialResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IssueLocalAppCredentialResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IssueLocalAppCredentialResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetLocalProjectStatusResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2017,6 +2384,32 @@ func (c *ClientWithResponses) RenewAppRegistrationWithResponse(ctx context.Conte
 	return ParseRenewAppRegistrationResponse(rsp)
 }
 
+// IssueLocalAdHocCredentialWithResponse Export the ad-hoc credential for this publisher
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/scopes/ad-hoc (the `IssueLocalAdHocCredential` operationId).
+func (c *ClientWithResponses) IssueLocalAdHocCredentialWithResponse(ctx context.Context, params *IssueLocalAdHocCredentialParams, reqEditors ...RequestEditorFn) (*IssueLocalAdHocCredentialResponse, error) {
+	rsp, err := c.IssueLocalAdHocCredential(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueLocalAdHocCredentialResponse(rsp)
+}
+
+// IssueLocalAppCredentialWithResponse Issue a credential restricted to one configured app
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/scopes/app/{service} (the `IssueLocalAppCredential` operationId).
+func (c *ClientWithResponses) IssueLocalAppCredentialWithResponse(ctx context.Context, service ServiceName, params *IssueLocalAppCredentialParams, reqEditors ...RequestEditorFn) (*IssueLocalAppCredentialResponse, error) {
+	rsp, err := c.IssueLocalAppCredential(ctx, service, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueLocalAppCredentialResponse(rsp)
+}
+
 // GetLocalProjectStatusWithResponse Read one publisher-owned snapshot for the selected project
 //
 // app credentials see only their service; ad-hoc credentials see no configured services.
@@ -2024,8 +2417,8 @@ func (c *ClientWithResponses) RenewAppRegistrationWithResponse(ctx context.Conte
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/status (the `GetLocalProjectStatus` operationId).
-func (c *ClientWithResponses) GetLocalProjectStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetLocalProjectStatusResponse, error) {
-	rsp, err := c.GetLocalProjectStatus(ctx, reqEditors...)
+func (c *ClientWithResponses) GetLocalProjectStatusWithResponse(ctx context.Context, params *GetLocalProjectStatusParams, reqEditors ...RequestEditorFn) (*GetLocalProjectStatusResponse, error) {
+	rsp, err := c.GetLocalProjectStatus(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -2312,6 +2705,75 @@ func ParseRenewAppRegistrationResponse(rsp *http.Response) (*RenewAppRegistratio
 	return response, nil
 }
 
+// ParseIssueLocalAdHocCredentialResponse parses an HTTP response from a IssueLocalAdHocCredentialWithResponse call
+func ParseIssueLocalAdHocCredentialResponse(rsp *http.Response) (*IssueLocalAdHocCredentialResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IssueLocalAdHocCredentialResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LocalEndpoint
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIssueLocalAppCredentialResponse parses an HTTP response from a IssueLocalAppCredentialWithResponse call
+func ParseIssueLocalAppCredentialResponse(rsp *http.Response) (*IssueLocalAppCredentialResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IssueLocalAppCredentialResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LocalEndpoint
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetLocalProjectStatusResponse parses an HTTP response from a GetLocalProjectStatusWithResponse call
 func ParseGetLocalProjectStatusResponse(rsp *http.Response) (*GetLocalProjectStatusResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2374,9 +2836,15 @@ type ServerInterface interface {
 	// RenewAppRegistration Keep a matching app registration current
 	// (POST /v1/registrations/{registration_id}/renew)
 	RenewAppRegistration(w http.ResponseWriter, r *http.Request, registrationId RegistrationID, params RenewAppRegistrationParams)
+	// IssueLocalAdHocCredential Export the ad-hoc credential for this publisher
+	// (POST /v1/scopes/ad-hoc)
+	IssueLocalAdHocCredential(w http.ResponseWriter, r *http.Request, params IssueLocalAdHocCredentialParams)
+	// IssueLocalAppCredential Issue a credential restricted to one configured app
+	// (POST /v1/scopes/app/{service})
+	IssueLocalAppCredential(w http.ResponseWriter, r *http.Request, service ServiceName, params IssueLocalAppCredentialParams)
 	// GetLocalProjectStatus Read one publisher-owned snapshot for the selected project
 	// (GET /v1/status)
-	GetLocalProjectStatus(w http.ResponseWriter, r *http.Request)
+	GetLocalProjectStatus(w http.ResponseWriter, r *http.Request, params GetLocalProjectStatusParams)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -2718,11 +3186,105 @@ func (siw *ServerInterfaceWrapper) RenewAppRegistration(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// IssueLocalAdHocCredential operation middleware
+func (siw *ServerInterfaceWrapper) IssueLocalAdHocCredential(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params IssueLocalAdHocCredentialParams
+
+	// ------------- Required query parameter "export" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "export", r.URL.Query(), &params.Export, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "export"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "export", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.IssueLocalAdHocCredential(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// IssueLocalAppCredential operation middleware
+func (siw *ServerInterfaceWrapper) IssueLocalAppCredential(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service" -------------
+	var service ServiceName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service", r.PathValue("service"), &service, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params IssueLocalAppCredentialParams
+
+	// ------------- Optional query parameter "export" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "export", r.URL.Query(), &params.Export, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "export"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "export", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.IssueLocalAppCredential(w, r, service, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetLocalProjectStatus operation middleware
 func (siw *ServerInterfaceWrapper) GetLocalProjectStatus(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetLocalProjectStatusParams
+
+	// ------------- Optional query parameter "probe" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "probe", r.URL.Query(), &params.Probe, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "probe"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "probe", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetLocalProjectStatus(w, r)
+		siw.Handler.GetLocalProjectStatus(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2861,6 +3423,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publications/{publication_id}/renew", wrapper.RenewNamedPublication)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publications/{publication_id}", wrapper.StopNamedPublication)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/status", wrapper.GetLocalProjectStatus)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/scopes/app/{service}", wrapper.IssueLocalAppCredential)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/scopes/ad-hoc", wrapper.IssueLocalAdHocCredential)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/events", wrapper.ListLocalProjectEvents)
 
 	return m

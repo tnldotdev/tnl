@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -137,6 +139,9 @@ func ValidateDocument(document Document) error {
 }
 
 func ValidateTNL(config TNL) error {
+	if err := validateProjectPublisher(config.Publisher); err != nil {
+		return fmt.Errorf("publisher: %w", err)
+	}
 	if err := validateReadiness(config.Readiness); err != nil {
 		return err
 	}
@@ -173,6 +178,9 @@ func ValidateTNL(config TNL) error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := config.Services[name]
+		if config.Publisher != nil && config.Publisher.Type == "docker" && (service.Target == nil || service.Target.Type == "app") {
+			return fmt.Errorf("services.%s: a docker publisher requires an address or docker target; use the local publisher for a host app", name)
+		}
 		effectivePublish := ServicePublish(config.Publish, service)
 		if service.Target != nil {
 			if service.Publish != nil {
@@ -298,6 +306,53 @@ func ValidateTNL(config TNL) error {
 				return fmt.Errorf("services.%s.paths[%q]: service %q must name another configured service", name, prefix, mount.Service)
 			}
 		}
+	}
+	return nil
+}
+
+func validateProjectPublisher(publisher *ProjectPublisher) error {
+	if publisher == nil {
+		return nil
+	}
+	if publisher.OwnerCredentialFile != nil {
+		file := *publisher.OwnerCredentialFile
+		if file == "" || len(file) > 4096 || strings.TrimSpace(file) != file || strings.ContainsRune(file, 0) {
+			return errors.New("owner_credential_file must be a nonempty path without surrounding whitespace")
+		}
+	}
+	switch publisher.Type {
+	case "local":
+		if publisher.URL != nil || publisher.Service != nil || publisher.Port != nil || publisher.OwnerCredentialFile != nil {
+			return errors.New("local publisher takes no URL, Compose service, port, or credential file")
+		}
+	case "url":
+		if publisher.URL == nil || publisher.Service != nil || publisher.Port != nil || publisher.OwnerCredentialFile == nil {
+			return errors.New("url publisher requires an HTTPS origin and owner_credential_file")
+		}
+		origin, err := url.Parse(*publisher.URL)
+		if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || origin.Opaque != "" || origin.Host != strings.ToLower(origin.Host) {
+			return errors.New("url publisher must use an exact HTTPS origin")
+		}
+		hostname, err := naming.CanonicalizeHostname(origin.Hostname())
+		if err != nil || hostname != origin.Hostname() {
+			return errors.New("url publisher requires a canonical DNS hostname")
+		}
+		if origin.Host != hostname && origin.Port() == "" {
+			return errors.New("url publisher port must be from 1 to 65535")
+		}
+		if origin.Port() != "" {
+			port, err := strconv.Atoi(origin.Port())
+			if err != nil || port < 1 || port > 65535 {
+				return errors.New("url publisher port must be from 1 to 65535")
+			}
+		}
+	case "docker":
+		if publisher.URL != nil || publisher.Service == nil || !naming.ValidServiceName(*publisher.Service) ||
+			publisher.Port == nil || *publisher.Port < 1 || *publisher.Port > 65535 || publisher.OwnerCredentialFile == nil {
+			return errors.New("docker publisher requires a Compose service, TCP port, and owner_credential_file")
+		}
+	default:
+		return errors.New("type must be local, docker, or url")
 	}
 	return nil
 }

@@ -26,7 +26,7 @@ const directory = process.argv[process.argv.indexOf("--directory") + 1];
 const path = join(directory, "manager.endpoint.json");
 if (process.argv.includes("endpoint")) {
   writeFileSync(join(directory, "endpoint-args"), process.argv.join(" "));
-  process.stdout.write(JSON.stringify({ version: 1, path }) + "\\n");
+  process.stdout.write(JSON.stringify({ version: 1, path, spawn: true }) + "\\n");
 }
 else if (process.argv.includes("serve")) {
   const credential = "a".repeat(43);
@@ -51,6 +51,35 @@ else if (process.argv.includes("serve")) {
     expect(workerPID).toBeGreaterThan(0);
   } finally {
     if (workerPID !== undefined) process.kill(workerPID, "SIGTERM");
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("does not spawn a host publisher when an external publisher is selected", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tnl-sdk-remote-"));
+  const binary = join(directory, "fake-tnl.mjs");
+  const endpointPath = join(directory, "publisher.endpoint.json");
+  try {
+    await writeFile(
+      binary,
+      `#!${process.execPath}
+import { writeFileSync } from "node:fs";
+if (process.argv.includes("endpoint")) process.stdout.write(JSON.stringify({ version: 1, path: ${JSON.stringify(endpointPath)}, spawn: false }) + "\\n");
+if (process.argv.includes("serve")) writeFileSync(${JSON.stringify(join(directory, "unexpected-spawn"))}, "started");
+`,
+    );
+    await chmod(binary, 0o700);
+    await writeFile(
+      endpointPath,
+      JSON.stringify({ version: 1, url: "https://127.0.0.1:1", credential: "a".repeat(43) }),
+    );
+    await expect(startRuntime(directory, binary, { service: "api" })).rejects.toMatchObject({
+      code: "sdk.dev_unavailable",
+    });
+    await expect(readFile(join(directory, "unexpected-spawn"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -150,7 +179,7 @@ test("a surviving app reconnects and re-registers after the manager crashes", as
     return undefined;
   });
   const start = vi.fn(async () => "/isolated/manager.sock");
-  const handle = await createPreparedService({}, "node", { start, request });
+  const handle = await createPreparedService({ service: "api" }, "node", { start, request });
   const listener = {
     listening: true,
     address: () => ({ address: "127.0.0.1", port: 1234 }),
@@ -161,6 +190,7 @@ test("a surviving app reconnects and re-registers after the manager crashes", as
   await handle.register(listener);
   await vi.advanceTimersByTimeAsync(5_000);
   expect(start).toHaveBeenCalledTimes(2);
+  expect(start).toHaveBeenNthCalledWith(2, expect.any(String), "api");
   const registrations = request.mock.calls.filter(([, operation]) => operation === "register");
   expect(registrations).toHaveLength(2);
   expect(handle.publicURL).toBe("https://api.member.example");

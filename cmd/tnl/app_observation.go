@@ -34,6 +34,9 @@ type watchCommand struct {
 }
 
 func readAppSnapshot(ctx context.Context, project projectConfiguration, state string) (clientruntime.Snapshot, error) {
+	if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+		return readRemoteAppSnapshot(ctx, project)
+	}
 	snapshot, err := clientruntime.ReadSnapshot(project.Root, state)
 	if err != nil {
 		return snapshot, err
@@ -190,7 +193,11 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 			go func() {
 				defer workers.Done()
 				if service.ServiceProtocol != "" && service.ServiceProtocol != "http" {
-					service.Ready = probeTCPTarget(ctx, service.Target)
+					if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+						service.Ready = probeRemoteTarget(ctx, project, service.Name)
+					} else {
+						service.Ready = probeTCPTarget(ctx, service.Target)
+					}
 					return
 				}
 				observation := probe(ctx, *service)
@@ -224,7 +231,12 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 				if err != nil {
 					return err
 				}
-				endpoint, err := readRuntimeTCPEndpoint(key)
+				var endpoint localPublisherEndpoint
+				if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+					endpoint, err = selectedPublisherEndpoint(ctx, project)
+				} else {
+					endpoint, err = readRuntimeTCPEndpoint(key)
+				}
 				if err != nil {
 					service.Ready = false
 				} else {
@@ -234,7 +246,7 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 					}
 					request.Header.Set("Content-Type", "application/json")
 					request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
-					response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
+					response, err := publisherHTTPClient(10 * time.Second).Do(request)
 					if err == nil {
 						response.Body.Close()
 						if response.StatusCode != http.StatusNoContent {
@@ -292,6 +304,9 @@ func writeAppWait(output io.Writer, mode string, snapshot clientruntime.Snapshot
 }
 
 func runAppWatch(ctx context.Context, project projectConfiguration, state string, flags watchCommand, output io.Writer) error {
+	if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
+		return runRemoteAppWatch(ctx, project, flags, output)
+	}
 	cursor := flags.After
 	if cursor == "" {
 		snapshot, err := readAppSnapshot(ctx, project, state)

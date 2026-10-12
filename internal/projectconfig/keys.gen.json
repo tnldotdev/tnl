@@ -2,6 +2,7 @@
   "allow_all_ips": "allowAllIPs",
   "allow_ip": "allowIP",
   "max_bytes": "maxBytes",
+  "owner_credential_file": "ownerCredentialFile",
   "public_url": "publicURL",
   "source_ips": "sourceIPs",
   "strip_prefix": "stripPrefix",
