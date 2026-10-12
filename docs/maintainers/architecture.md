@@ -172,6 +172,15 @@ may require further shortening. the primary checkout omits the checkout piece.
 generated project declarations preserve exact label literals, and browser
 metadata exposes those pieces without filesystem roots.
 
+a configured `target.type: docker` selects a Compose service and its private
+TCP port. the host publisher resolves its current published host port with the
+worktree label as the Compose project name. the discovery result must be one
+loopback or wildcard binding; missing or ambiguous bindings stop forwarding to
+the old target. a cached lookup expires after one second, and the next visitor
+can use a replacement binding without changing the saved public URL or publish
+run. a private TCP target with verified TLS needs `target_tls_name` when its
+certificate names the Compose service rather than the mapped loopback address.
+
 project alias declarations name one configured entry service. relative alias
 names can contain several DNS labels; ordinary tunnel names remain one label.
 configuration validation does not consult server policy or publish a URL.

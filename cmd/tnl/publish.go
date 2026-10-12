@@ -41,9 +41,25 @@ type publishCommand struct {
 	demoNameFromCLI  bool
 	Service          string `kong:"-"`
 	project          projectConfiguration
+	dockerTarget     *dockerPublishTarget
+	resolveTarget    func() string
+}
+
+type dockerPublishTarget struct {
+	service      string
+	port         int
+	projectLabel string
 }
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
+	if selected := flags.dockerTarget; selected != nil {
+		resolver := newDockerPublishResolver(ctx, flags.projectRoot, *selected, flags.Protocol == "" || flags.Protocol == "http")
+		target, err := resolver.initial()
+		if err != nil {
+			return err
+		}
+		flags.Target, flags.resolveTarget = target, resolver.target
+	}
 	telemetry := optionalTelemetryReporter(reporters)
 	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
 	if err != nil {
@@ -212,6 +228,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.limits())
+	publisherConfig.ResolveTarget = flags.resolveTarget
 	publisherConfig.ServiceProtocol = protocol
 	publisherConfig.TargetTLSName = flags.TargetTLSName
 	publisherConfig.TargetTLS = flags.TargetTLS

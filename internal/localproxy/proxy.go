@@ -152,6 +152,40 @@ func NewWithMountsHooksOptionsAdmitted(target, hostname string, requestLimit int
 	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, false, onTargetFailure)
 }
 
+// NewWithMountsHooksOptionsAdmittedResolved switches the private target after
+// a local service replacement without changing the public URL's publish run.
+func NewWithMountsHooksOptionsAdmittedResolved(target, hostname string, requestLimit int, mounts []Mount, resolveTarget func() string, hooks ResponseHooks, options TargetOptions, onTargetFailure ...func()) (http.Handler, error) {
+	if resolveTarget == nil {
+		return NewWithMountsHooksOptionsAdmitted(target, hostname, requestLimit, mounts, hooks, options, onTargetFailure...)
+	}
+	base, err := newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, false, onTargetFailure)
+	if err != nil {
+		return nil, err
+	}
+	var mu sync.Mutex
+	current := target
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		selected := resolveTarget()
+		if selected == "" {
+			diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+			return
+		}
+		mu.Lock()
+		if selected != current {
+			base, err = newWithMountsHooksOptions(selected, hostname, requestLimit, mounts, hooks, options, false, onTargetFailure)
+			if err != nil {
+				mu.Unlock()
+				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+				return
+			}
+			current = selected
+		}
+		upstream := base
+		mu.Unlock()
+		upstream.ServeHTTP(w, r)
+	}), nil
+}
+
 func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, admit bool, onTargetFailure []func()) (http.Handler, error) {
 	if requestLimit < 0 {
 		return nil, errors.New("localproxy: request limit cannot be negative")

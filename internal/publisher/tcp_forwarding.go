@@ -30,6 +30,7 @@ type tcpForwarding struct {
 	admission           *applicationAdmission
 	publicPort          uint16
 	target              string
+	resolveTarget       func() string
 	backendTLS          *tls.Config
 	passthrough         bool
 	onTargetFailure     func()
@@ -63,6 +64,7 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 	}
 	return &tcpForwarding{
 		protocol: config.ServiceProtocol, publicPort: config.PublicPort, target: config.Target,
+		resolveTarget:       config.ResolveTarget,
 		backendTLS:          backendTLS,
 		passthrough:         config.VisitorTLSPassthrough,
 		onTargetFailure:     config.OnTargetFailure,
@@ -102,7 +104,15 @@ func validateTCPForwarding(config PublicURLServerConfig) (string, error) {
 func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config, hostname string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	backend, err := (&net.Dialer{}).DialContext(ctx, "tcp", d.target)
+	target := d.target
+	if d.resolveTarget != nil {
+		target = d.resolveTarget()
+	}
+	if normalized, checkErr := tcptarget.Normalize(target); target == "" || checkErr != nil || normalized != target {
+		d.targetFailed()
+		return
+	}
+	backend, err := (&net.Dialer{}).DialContext(ctx, "tcp", target)
 	if err != nil {
 		d.targetFailed()
 		return

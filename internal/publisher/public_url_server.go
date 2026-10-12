@@ -38,6 +38,7 @@ type PublicURLServerConfig struct {
 	PublicURLID           string
 	PublishRunNumber      uint64
 	Target                string
+	ResolveTarget         func() string
 	ServiceProtocol       controlv1.PublicURLServiceProtocol
 	PublicPort            uint16
 	TargetTLSName         string
@@ -170,7 +171,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	} else if config.Handler != nil {
 		handler = config.Handler
 	} else {
-		handler, err = localproxy.NewWithMountsHooksOptionsAdmitted(config.Target, hostname, config.Limits.Concurrency, config.Mounts,
+		handler, err = localproxy.NewWithMountsHooksOptionsAdmittedResolved(config.Target, hostname, config.Limits.Concurrency, config.Mounts, config.ResolveTarget,
 			localproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
 				if request != nil {
 					if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {

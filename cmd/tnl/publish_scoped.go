@@ -171,7 +171,7 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		ControlURL: serverURL, State: profile,
 		TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membershipID,
 		PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: publicURLScope, Purpose: controlv1.App,
-		Hostname: route.CanonicalHostname, Target: target, AllowedIPPrefixes: allowed,
+		Hostname: route.CanonicalHostname, Target: target, ResolveTarget: flags.resolveTarget, AllowedIPPrefixes: allowed,
 		ServiceProtocol: protocol, TargetTLSName: flags.TargetTLSName, TargetTLS: flags.TargetTLS, VisitorTLSPassthrough: flags.VisitorTLSPassthrough,
 		PreserveSavedURLTarget: route.Target == "",
 		TargetOptions:          targetOptions,
