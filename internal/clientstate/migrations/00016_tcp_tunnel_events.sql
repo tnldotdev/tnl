@@ -9,7 +9,7 @@ CREATE TABLE local_tunnel_events (
     sequence INTEGER NOT NULL CHECK (sequence > 0),
     tunnel_id TEXT NOT NULL,
     service TEXT NOT NULL,
-    service_protocol TEXT NOT NULL CHECK (service_protocol IN ('postgres', 'mysql', 'redis', 'ssh', 'mongodb')),
+    service_protocol TEXT NOT NULL CHECK (service_protocol IN ('postgres', 'mysql', 'redis', 'ssh')),
     state TEXT NOT NULL,
     target TEXT NOT NULL,
     hostname TEXT NOT NULL,

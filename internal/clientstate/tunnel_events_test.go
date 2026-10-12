@@ -62,7 +62,7 @@ func TestDatabaseTunnelEventsResumeAcrossStateOpens(t *testing.T) {
 }
 
 func TestPrivateTCPServiceEventsIncludeEverySupportedProtocol(t *testing.T) {
-	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Redis, controlv1.Ssh, controlv1.Mongodb} {
+	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Redis, controlv1.Ssh} {
 		t.Run(string(protocol), func(t *testing.T) {
 			database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 			if err != nil {
