@@ -276,6 +276,7 @@ tasks:
       - sh: test "$(uname -s)" = Linux
         msg: Binary integration tests require Linux
     cmds:
+      - docker build --file Dockerfile.publisher-dev --tag tnl:publisher-dev-integration .
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestBinaryIntegration' -count=1 -timeout=15m -args -tnl-test-tier=binary
 
   go:test:integration:dns:
