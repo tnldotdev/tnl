@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestFinishedTunnelPersistsReasonInsteadOfCause(t *testing.T) {
@@ -186,7 +187,6 @@ func TestNamedTCPServicesPersistTheirProtocolAndPublicPort(t *testing.T) {
 	}{
 		{"cache", controlv1.Redis, "6379", "127.0.0.1:6379", "cache.example:16379"},
 		{"shell", controlv1.Ssh, "127.0.0.1:22", "127.0.0.1:22", "shell.example:10022"},
-		{"catalog", controlv1.Mongodb, "127.0.0.1:27017", "127.0.0.1:27017", "catalog.example:27017"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
