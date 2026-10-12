@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -393,6 +394,61 @@ func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 	output.Reset()
 	if err := runStatus(t.Context(), statusCommand{StateDir: stateDir, Project: project.Root, Output: "human"}, &output); err != nil || !strings.Contains(output.String(), "orders routable") || !strings.Contains(output.String(), "orders.example:15432") {
 		t.Fatalf("TCP status = %s, %v", output.String(), err)
+	}
+}
+
+func TestNamedHTTPServiceChecksConfiguredHTTPReadiness(t *testing.T) {
+	a, state, started := testAppRuntime(t)
+	service := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/health" {
+			response.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer service.Close()
+	address := config.Target(service.URL)
+	a.project.Config.Services["orders"] = config.Service{
+		Target: &config.ServiceTarget{Type: "address", Address: &address},
+		HTTP:   &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}},
+	}
+	a.project.RelativeServiceDirectories["orders"] = "."
+	if err := a.manager.Configure(configuredRuntimeServices(a.project)); err != nil {
+		t.Fatal(err)
+	}
+	id, err := a.manager.Reserve("orders", "cli-owner", os.Getpid(), "https://orders.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.manager.RegisterNamed(id, "cli-owner", service.URL); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := a.manager.Started(id, "tun_named_http"); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	var calls int
+	probe := func(ctx context.Context, current clientruntime.Service) clientruntime.Observation {
+		calls++
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, service.URL+current.Readiness.Path, nil)
+		if err != nil {
+			t.Error(err)
+			return clientruntime.Observation{}
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Error(err)
+			return clientruntime.Observation{}
+		}
+		response.Body.Close()
+		return clientruntime.Observation{RegistrationID: current.RegistrationID, PublishRunNumber: current.PublishRunNumber,
+			CheckedAt: time.Now(), Readiness: current.Readiness, Ready: response.StatusCode == http.StatusOK}
+	}
+	if err := runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Service: []string{"orders"}, Timeout: 2 * time.Second, Output: "json"}, &output, probe); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot clientruntime.Snapshot
+	if err := json.Unmarshal(output.Bytes(), &snapshot); err != nil || calls == 0 || len(snapshot.Services) != 1 || !snapshot.Services[0].Ready || snapshot.Services[0].Observation == nil || snapshot.Services[0].Observation.Readiness.Path != "/health" {
+		t.Fatalf("HTTP readiness = %+v, %v", snapshot, err)
 	}
 }
 

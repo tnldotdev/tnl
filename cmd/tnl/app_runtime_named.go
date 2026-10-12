@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
@@ -85,6 +86,19 @@ func (a *appRuntime) startNamed(ctx context.Context, request localpublisherv1.Pu
 	}
 	if err != nil || target == "" {
 		return localpublisherv1.PublicationLease{}, failure.Wrap("resolve named service target", failure.MissingTarget, errors.Join(err, errors.New("a reachable configured target is required")))
+	}
+	if protocol == "http" {
+		caFile := ""
+		if effective.Publish != nil && effective.Publish.TargetCAFile != nil {
+			caFile = *effective.Publish.TargetCAFile
+		}
+		options, err := targetOptionsForCA(caFile, project.Root)
+		if err != nil {
+			return localpublisherv1.PublicationLease{}, err
+		}
+		if err := localproxy.PreflightWithOptions(ctx, target, options); err != nil {
+			return localpublisherv1.PublicationLease{}, err
+		}
 	}
 	if err := projectmeta.Write(ctx, a.project.Root, metadata); err != nil {
 		return localpublisherv1.PublicationLease{}, err

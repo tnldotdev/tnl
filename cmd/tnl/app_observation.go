@@ -271,7 +271,7 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
-				if service.ServiceProtocol != "" {
+				if service.ServiceProtocol != "" && service.ServiceProtocol != "http" {
 					service.Ready = probeTCPTarget(ctx, service.Target)
 					return
 				}
@@ -297,7 +297,7 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 				}
 			}
 			service.Ready = service.Ready && matched
-			if matched && service.ServiceProtocol == "" && service.Observation != nil {
+			if matched && (service.ServiceProtocol == "" || service.ServiceProtocol == "http") && service.Observation != nil {
 				data, err := json.Marshal(service.Observation)
 				if err != nil {
 					return err
