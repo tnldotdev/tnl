@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 )
 
@@ -59,6 +61,7 @@ func TestBinaryIntegrationTwoWorktreeComposePostgresVisitors(t *testing.T) {
 		root, label, publicURL, privateAddress, marker string
 		port                                           int
 		publish                                        *integrationBinaryProcess
+		compose                                        func(...string) (string, error)
 	}
 	var worktrees []worktree
 	for index := 0; index < 2; index++ {
@@ -132,7 +135,7 @@ func TestBinaryIntegrationTwoWorktreeComposePostgresVisitors(t *testing.T) {
 			}
 		})
 		worktrees = append(worktrees, worktree{root: root, label: label, publicURL: orders.URL, port: *orders.Port,
-			privateAddress: privateAddress, publish: publish, marker: fmt.Sprintf("worktree-%d", index+1)})
+			privateAddress: privateAddress, publish: publish, compose: compose, marker: fmt.Sprintf("worktree-%d", index+1)})
 	}
 	if worktrees[0].label == worktrees[1].label || worktrees[0].privateAddress == worktrees[1].privateAddress || worktrees[0].port == worktrees[1].port {
 		t.Fatalf("worktrees reused a Compose project, private port, or public port: %+v", worktrees)
@@ -169,15 +172,7 @@ func TestBinaryIntegrationTwoWorktreeComposePostgresVisitors(t *testing.T) {
 		connection.Close(ctx)
 	}
 	first := worktrees[0]
-	compose := func(arguments ...string) (string, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		defer cancel()
-		args := append([]string{"compose", "--project-directory", first.root, "--file", filepath.Join(first.root, "compose.yaml"), "--project-name", first.label}, arguments...)
-		command := exec.CommandContext(ctx, "docker", args...)
-		command.Dir = first.root
-		output, err := command.CombinedOutput()
-		return string(output), err
-	}
+	compose := first.compose
 	if output, err := compose("stop", "db"); err != nil {
 		t.Fatalf("stop first private database: %v (%s)", err, output)
 	}
@@ -224,6 +219,9 @@ func TestBinaryIntegrationTwoWorktreeComposePostgresVisitors(t *testing.T) {
 	if err := other.QueryRow(ctx, "SELECT marker FROM tnl_worktree_check LIMIT 1").Scan(&untouched); err != nil || untouched != second.marker {
 		t.Fatalf("other worktree database changed after private target replacement: marker=%q, %v", untouched, err)
 	}
+	if err := other.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(filepath.Join(first.root, ".tnl", "project.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -232,6 +230,55 @@ func TestBinaryIntegrationTwoWorktreeComposePostgresVisitors(t *testing.T) {
 	if err := json.Unmarshal(data, &stable); err != nil || stable.Services["orders"].URL != first.publicURL {
 		t.Fatalf("private Docker replacement changed the saved public address: %v, %s", err, data)
 	}
+	// finish database streams while both publishers are still connected, before
+	// asking standalone to drain its remaining visitors.
+	for _, selected := range worktrees {
+		if output, err := selected.compose("stop", "db"); err != nil {
+			t.Fatalf("stop worktree database %s: %v (%s)", selected.label, err, output)
+		}
+	}
+	fixture.stopVisitorProxy()
+	client := &http.Client{Timeout: 2 * time.Second}
+	waitForIntegrationCondition(t, 15*time.Second, func(ctx context.Context) (bool, error) {
+		response, err := integrationGET(ctx, client, "http://"+fixture.metricsAddress+"/metrics")
+		if err != nil {
+			return false, err
+		}
+		families, parseErr := observability.ParseMetrics(response.Body)
+		closeErr := response.Body.Close()
+		if parseErr != nil || closeErr != nil || response.StatusCode != http.StatusOK {
+			return false, fmt.Errorf("ingress metrics: status=%d parse=%v close=%v", response.StatusCode, parseErr, closeErr)
+		}
+		var streams, public, inspecting float64
+		found := false
+		for _, family := range families {
+			switch family.GetName() {
+			case "tnl_ingress_backend_streams":
+				streams = family.Metric[0].GetGauge().GetValue()
+				found = true
+			case "tnl_ingress_connections":
+				for _, metric := range family.Metric {
+					for _, label := range metric.Label {
+						if label.GetName() == "class" {
+							switch label.GetValue() {
+							case "public":
+								public = metric.GetGauge().GetValue()
+							case "client_hello":
+								inspecting = metric.GetGauge().GetValue()
+							}
+						}
+					}
+				}
+			}
+		}
+		if !found {
+			return false, fmt.Errorf("ingress backend-stream metric missing")
+		}
+		if streams != 0 || public != 0 || inspecting != 0 {
+			return false, fmt.Errorf("ingress still has %g backend streams, %g visitors, and %g inspections", streams, public, inspecting)
+		}
+		return true, nil
+	})
 }
 
 func connectPublicPostgres(ctx context.Context, fixture *integrationBinaryStandalone, address string) (*pgx.Conn, error) {
