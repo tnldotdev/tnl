@@ -251,10 +251,10 @@ tasks:
       - go test -race -v ./internal/dockertarget -run='^TestIntegrationIdenticalComposeFilesSeparateWorktreeDatabasePorts$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:publisher-dev-image:
-    desc: Verify the development publisher image loads TypeScript project configuration
+    desc: Verify the development publisher image loads TypeScript config and serves scoped Compose apps
     cmds:
       - docker build --file Dockerfile.publisher-dev --tag tnl:publisher-dev-integration .
-      - go test -v ./cmd/tnl -run='^TestIntegrationPublisherDevImageLoadsTypeScript$' -count=1 -timeout=2m -args -tnl-test-tier=integration
+      - go test -race -v ./cmd/tnl -run='^TestIntegration(PublisherDevImageLoadsTypeScript|ComposePublisherAppScopedNetwork)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:mysql-oracle:
     desc: Check bounded MySQL result observations against the test-only Vitess decoder
