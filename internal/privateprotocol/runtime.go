@@ -62,7 +62,7 @@ type Registration struct {
 }
 
 // AdHocRegister binds one invocation to an already-listening local target.
-// the credential is sent only across the private socket and never enters status.
+// the credential is sent only across the authenticated local API and never enters status.
 type AdHocRegister struct {
 	Version        int          `json:"version"`
 	RegistrationID string       `json:"registration_id"`

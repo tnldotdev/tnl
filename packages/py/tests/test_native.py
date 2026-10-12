@@ -16,7 +16,7 @@ from tnl._protocol import InvalidResponse, parse_status
 def test_native_request_uses_the_authenticated_local_endpoint() -> None:
     async def scenario() -> None:
         with tempfile.TemporaryDirectory(prefix="tnl-python-", dir="/tmp") as directory:
-            endpoint = Path(directory) / "runtime.sock.endpoint.json"
+            endpoint = Path(directory) / "runtime.endpoint.json"
             credential = "a" * 43
             received: list[object] = []
 
@@ -89,7 +89,7 @@ def test_native_request_uses_the_authenticated_local_endpoint() -> None:
 def test_native_request_rejects_oversized_tcp_response() -> None:
     async def scenario() -> None:
         with tempfile.TemporaryDirectory(prefix="tnl-python-", dir="/tmp") as directory:
-            endpoint = Path(directory) / "runtime.sock.endpoint.json"
+            endpoint = Path(directory) / "runtime.endpoint.json"
 
             async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
                 await reader.readuntil(b"\r\n\r\n")
@@ -124,7 +124,7 @@ def test_native_request_rejects_oversized_tcp_response() -> None:
 def test_native_request_rejects_a_nonlocal_publisher_descriptor() -> None:
     async def scenario() -> None:
         with tempfile.TemporaryDirectory(prefix="tnl-python-", dir="/tmp") as directory:
-            endpoint = Path(directory) / "runtime.sock.endpoint.json"
+            endpoint = Path(directory) / "runtime.endpoint.json"
             endpoint.write_text(
                 json.dumps(
                     {
@@ -143,7 +143,7 @@ def test_native_request_rejects_a_nonlocal_publisher_descriptor() -> None:
 def test_native_request_does_not_keep_a_malformed_endpoint_secret_in_its_error() -> None:
     async def scenario() -> None:
         with tempfile.TemporaryDirectory(prefix="tnl-python-", dir="/tmp") as directory:
-            endpoint = Path(directory) / "runtime.sock.endpoint.json"
+            endpoint = Path(directory) / "runtime.endpoint.json"
             endpoint.write_text('{"credential":"private-test-value","url":')
             with pytest.raises(InvalidResponse) as failure:
                 await NativeRuntime().request(str(endpoint), "status", {"version": 1})

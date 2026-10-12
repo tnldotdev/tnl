@@ -74,11 +74,11 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			return err
 		}
 		for _, project := range projects {
-			socket, err := runtimeSocket(project.Project, root)
+			key, err := runtimeKey(project.Project, root)
 			if err != nil {
 				return err
 			}
-			available := runtimeAvailable(ctx, socket)
+			available := runtimeAvailable(ctx, key)
 			for _, service := range project.Services {
 				service.Project = project.Project
 				if !available {

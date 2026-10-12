@@ -23,7 +23,7 @@ import http from "node:http";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 const directory = process.argv[process.argv.indexOf("--directory") + 1];
-const path = join(directory, "manager.sock.endpoint.json");
+const path = join(directory, "manager.endpoint.json");
 if (process.argv.includes("endpoint")) process.stdout.write(JSON.stringify({ version: 1, path }) + "\\n");
 else if (process.argv.includes("serve")) {
   const credential = "a".repeat(43);
@@ -40,7 +40,7 @@ else if (process.argv.includes("serve")) {
     );
     await chmod(binary, 0o700);
     const endpointPath = await startRuntime(directory, binary);
-    expect(endpointPath).toBe(join(directory, "manager.sock.endpoint.json"));
+    expect(endpointPath).toBe(join(directory, "manager.endpoint.json"));
     workerPID = Number(await readFile(join(directory, "pid"), "utf8"));
     expect(workerPID).toBeGreaterThan(0);
   } finally {
@@ -62,7 +62,7 @@ test("sends authenticated local publisher requests over loopback TCP", async () 
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("missing bound address");
-    const endpointPath = join(directory, "manager.sock.endpoint.json");
+    const endpointPath = join(directory, "manager.endpoint.json");
     await writeFile(
       endpointPath,
       JSON.stringify({ version: 1, url: `http://127.0.0.1:${address.port}`, credential }),
@@ -106,7 +106,7 @@ function assignment(registration = "a") {
 
 test("preparation exposes only public metadata and registers an actual port-0 Node listener", async () => {
   const bootstrap = await startTestBootstrap();
-  const start = vi.fn(async () => bootstrap.socket);
+  const start = vi.fn(async () => bootstrap.endpointPath);
   const handle = await createPreparedService({ service: "api" }, "node", {
     start,
     request: runtimeRequest,
@@ -207,7 +207,7 @@ test("malformed metadata and duplicate live ownership are classified without pro
       message: "secret provider detail",
     }),
   });
-  await expect(runtimeRequest(bootstrap.socket, "prepare", {})).rejects.toMatchObject({
+  await expect(runtimeRequest(bootstrap.endpointPath, "prepare", {})).rejects.toMatchObject({
     code: "sdk.owner_conflict",
     message: expect.not.stringContaining("secret"),
   });

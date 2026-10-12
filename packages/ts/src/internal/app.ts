@@ -426,7 +426,7 @@ export async function startRuntime(
         },
       );
       process_.once("error", () => {
-        // an available sibling runtime may still win the socket election.
+        // an available sibling runtime may still win the publisher lock.
       });
       process_.unref();
       const deadline = Date.now() + 15_000;
@@ -502,21 +502,24 @@ function readLocalEndpoint(endpointPath: string): { url: URL; credential: string
   }
 }
 
-export function runtimeRequest(socket: string, operation: string, body: unknown): Promise<unknown> {
+export function runtimeRequest(
+  endpointPath: string,
+  operation: string,
+  body: unknown,
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
-    const endpoint = socket.endsWith(".endpoint.json") ? readLocalEndpoint(socket) : undefined;
+    const endpoint = readLocalEndpoint(endpointPath);
     const request = http.request(
       {
-        ...(endpoint === undefined
-          ? { socketPath: socket }
-          : { hostname: "127.0.0.1", port: Number(endpoint.url.port) }),
+        hostname: "127.0.0.1",
+        port: Number(endpoint.url.port),
         path: `/v1/${operation}`,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(payload),
-          ...(endpoint === undefined ? {} : { Authorization: `Bearer ${endpoint.credential}` }),
+          Authorization: `Bearer ${endpoint.credential}`,
         },
       },
       (response) => {

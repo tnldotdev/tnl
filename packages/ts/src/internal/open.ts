@@ -64,7 +64,7 @@ type Status = {
   failureCode?: string;
 };
 
-// all local bindings share the same native socket and the same wire contract.
+// all local bindings share the native publisher endpoint and wire contract.
 export async function openServer(
   server: LocalHTTPServer,
   options: OpenOptions = {},

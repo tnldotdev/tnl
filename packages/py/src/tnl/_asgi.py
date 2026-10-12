@@ -1,4 +1,4 @@
-"""run ASGI lifespan and one ad-hoc publication on the shared native socket."""
+"""run ASGI lifespan and one ad-hoc publication on the local publisher."""
 
 from __future__ import annotations
 

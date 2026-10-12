@@ -51,23 +51,16 @@ func testAppRuntime(t *testing.T) (*appRuntime, string, <-chan uint64) {
 	}
 	a.manager = manager
 	t.Cleanup(manager.Close)
-	socket, err := runtimeSocket(project, state)
+	key, err := runtimeKey(project, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.Listen("unix", socket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &http.Server{Handler: a.handler()}
-	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { _ = server.Close() })
-	tcpServer, _, err := startRuntimeTCP(socket, a.handler())
+	tcpServer, _, err := startRuntimeTCP(key, a.handler())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := stopRuntimeTCP(context.Background(), tcpServer, socket); err != nil {
+		if err := stopRuntimeTCP(context.Background(), tcpServer, key); err != nil {
 			t.Error(err)
 		}
 	})
@@ -84,17 +77,17 @@ func TestAppStatusRejectsPublisherWithStaleLocalCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-started
-	socket, err := runtimeSocket(a.project.Root, state)
+	key, err := runtimeKey(a.project.Root, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := runtimeTCPEndpointPath(socket)
+	path := runtimeTCPEndpointPath(key)
 	previous, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.WriteFile(path, previous, 0o600) })
-	endpoint, err := readRuntimeTCPEndpoint(socket)
+	endpoint, err := readRuntimeTCPEndpoint(key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +101,7 @@ func TestAppStatusRejectsPublisherWithStaleLocalCredential(t *testing.T) {
 	}
 }
 
-func TestRuntimeAddressReturnsSocketWithoutStartingPublisher(t *testing.T) {
+func TestRuntimeEndpointReturnsPathWithoutStartingPublisher(t *testing.T) {
 	t.Setenv("TNL_CONFIG", "")
 	project, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -119,21 +112,15 @@ func TestRuntimeAddressReturnsSocketWithoutStartingPublisher(t *testing.T) {
 	}
 	state := filepath.Join(t.TempDir(), "state")
 	var output bytes.Buffer
-	if err := runRuntimeAddress(t.Context(), runtimeOptions{Directory: project, StateDir: state}, &output); err != nil {
+	if err := runRuntimeEndpoint(t.Context(), runtimeOptions{Directory: project, StateDir: state}, &output); err != nil {
 		t.Fatal(err)
 	}
-	var address struct {
-		Version int    `json:"version"`
-		Socket  string `json:"socket"`
+	selected, root, err := runtimeProject(t.Context(), runtimeOptions{Directory: project, StateDir: state})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := json.Unmarshal(output.Bytes(), &address); err != nil || address.Version != 1 || address.Socket == "" {
-		t.Fatalf("runtime address = %s, error %v", output.String(), err)
-	}
-	if runtimeAvailable(t.Context(), address.Socket) {
-		t.Fatal("address lookup started the local publisher")
-	}
-	output.Reset()
-	if err := runRuntimeEndpoint(t.Context(), runtimeOptions{Directory: project, StateDir: state}, &output); err != nil {
+	key, err := runtimeKey(selected.Root, root)
+	if err != nil {
 		t.Fatal(err)
 	}
 	var endpoint struct {
@@ -141,32 +128,38 @@ func TestRuntimeAddressReturnsSocketWithoutStartingPublisher(t *testing.T) {
 		Path    string `json:"path"`
 	}
 	if err := json.Unmarshal(output.Bytes(), &endpoint); err != nil || endpoint.Version != 1 ||
-		endpoint.Path != runtimeTCPEndpointPath(address.Socket) {
+		endpoint.Path != runtimeTCPEndpointPath(key) {
 		t.Fatalf("runtime endpoint = %s, %v", output.String(), err)
+	}
+	if runtimeAvailable(t.Context(), key) {
+		t.Fatal("endpoint lookup started the local publisher")
 	}
 	if _, err := os.Stat(endpoint.Path); !os.IsNotExist(err) {
 		t.Fatalf("endpoint lookup started the local publisher: %v", err)
 	}
 }
 
-func TestRuntimeAddressWorksWithoutProjectConfiguration(t *testing.T) {
+func TestRuntimeEndpointWorksWithoutProjectConfiguration(t *testing.T) {
 	t.Setenv("TNL_CONFIG", "")
 	directory := t.TempDir()
 	state := filepath.Join(t.TempDir(), "state")
 	var output bytes.Buffer
-	if err := runRuntimeAddress(t.Context(), runtimeOptions{Directory: directory, StateDir: state}, &output); err != nil {
+	if err := runRuntimeEndpoint(t.Context(), runtimeOptions{Directory: directory, StateDir: state}, &output); err != nil {
 		t.Fatal(err)
 	}
-	var address struct {
+	var endpoint struct {
 		Version int    `json:"version"`
-		Socket  string `json:"socket"`
+		Path    string `json:"path"`
 	}
-	if err := json.Unmarshal(output.Bytes(), &address); err != nil || address.Version != 1 || address.Socket == "" || runtimeAvailable(t.Context(), address.Socket) {
-		t.Fatalf("unconfigured runtime address = %#v, %v", address, err)
+	if err := json.Unmarshal(output.Bytes(), &endpoint); err != nil || endpoint.Version != 1 || endpoint.Path == "" {
+		t.Fatalf("unconfigured runtime endpoint = %#v, %v", endpoint, err)
+	}
+	if _, err := os.Stat(endpoint.Path); !os.IsNotExist(err) {
+		t.Fatalf("unconfigured endpoint lookup started the local publisher: %v", err)
 	}
 }
 
-func TestAdHocSocketRegistrationWaitsForTheSameReadyRun(t *testing.T) {
+func TestAdHocTCPRegistrationWaitsForTheSameReadyRun(t *testing.T) {
 	a, state, _ := testAppRuntime(t)
 	started := make(chan struct{})
 	a.adhoc = clientruntime.NewAdHocManager(t.Context(), func(ctx context.Context, request privateprotocol.AdHocRegister, update func(privateprotocol.AdHocStatus)) error {
@@ -177,11 +170,15 @@ func TestAdHocSocketRegistrationWaitsForTheSameReadyRun(t *testing.T) {
 		return ctx.Err()
 	}, func(int) bool { return true }, a.manager.BeginPreparation)
 	t.Cleanup(a.adhoc.Close)
-	socket, err := runtimeSocket(a.project.Root, state)
+	key, err := runtimeKey(a.project.Root, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := runtimeHTTP(socket)
+	endpoint, err := readRuntimeTCPEndpoint(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
 	token, _, _, err := credentials.NewEphemeralCredential()
 	if err != nil {
 		t.Fatal(err)
@@ -196,11 +193,12 @@ func TestAdHocSocketRegistrationWaitsForTheSameReadyRun(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost/v1/ad-hoc/"+operation, bytes.NewReader(body))
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint.URL+"/v1/ad-hoc/"+operation, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
 		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
 		return client.Do(request)
 	}
 	response, err := call("register", privateprotocol.AdHocRegister{Version: 1, RegistrationID: id, Owner: owner,
