@@ -27,9 +27,14 @@ func TestCredentialCreationOutputKeepsSecretOutsideTheDiagram(t *testing.T) {
 	if err := writeCredentialCreateResult(credentialOutputHuman, result, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	if stdout.String() != secret.String()+"\n" || strings.Contains(stderr.String(), secret.String()) ||
+	if stdout.String() != "credential: "+secret.String()+"\n" || strings.Contains(stderr.String(), secret.String()) ||
 		!strings.Contains(stderr.String(), result.PublicURL) || !strings.Contains(stderr.String(), result.CredentialID) {
 		t.Fatalf("human output leaked or lost a value: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if err := writeCredentialCreateResult(credentialOutputRaw, result, &stdout, &stderr); err != nil || stdout.String() != secret.String()+"\n" || stderr.Len() != 0 {
+		t.Fatalf("raw output = %q, %q, %v", stdout.String(), stderr.String(), err)
 	}
 	stdout.Reset()
 	stderr.Reset()
@@ -44,8 +49,40 @@ func TestCredentialCreationOutputKeepsSecretOutsideTheDiagram(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	if err := writeCredentialCreateResult(credentialOutputHuman, result, &stdout, &stderr); err != nil ||
-		strings.Contains(stderr.String(), "target") || stdout.String() != secret.String()+"\n" {
+		strings.Contains(stderr.String(), "target") || stdout.String() != "credential: "+secret.String()+"\n" {
 		t.Fatalf("targetless credential output = %q, %q, %v", stdout.String(), stderr.String(), err)
+	}
+}
+
+func TestEphemeralCredentialCreationOutputKeepsSecretOutsideTheDiagram(t *testing.T) {
+	secret, _, _, err := credentials.NewEphemeralCredential()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := ephemeralCredentialCreateResult{
+		SchemaVersion: 1, Kind: "ephemeral", TeamID: "team_test", DomainID: "domain_test",
+		Namespace: "alice.example.test", CredentialID: "epc_test", Credential: secret.String(),
+		ExpiresAt: time.Date(2027, 1, 7, 12, 0, 0, 0, time.UTC),
+	}
+	var stdout, stderr bytes.Buffer
+	if err := writeEphemeralCredentialCreateResult(credentialOutputHuman, result, &stdout, &stderr); err != nil ||
+		stdout.String() != "credential: "+secret.String()+"\n" || strings.Contains(stderr.String(), secret.String()) ||
+		!strings.Contains(stderr.String(), result.Namespace) {
+		t.Fatalf("human output = %q, %q, %v", stdout.String(), stderr.String(), err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if err := writeEphemeralCredentialCreateResult(credentialOutputRaw, result, &stdout, &stderr); err != nil ||
+		stdout.String() != secret.String()+"\n" || stderr.Len() != 0 {
+		t.Fatalf("raw output = %q, %q, %v", stdout.String(), stderr.String(), err)
+	}
+	stdout.Reset()
+	if err := writeEphemeralCredentialCreateResult(credentialOutputJSON, result, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	var encoded ephemeralCredentialCreateResult
+	if err := json.Unmarshal(stdout.Bytes(), &encoded); err != nil || encoded != result || stderr.Len() != 0 {
+		t.Fatalf("JSON output = %#v, %q, %v", encoded, stderr.String(), err)
 	}
 }
 

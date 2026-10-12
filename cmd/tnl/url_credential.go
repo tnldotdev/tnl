@@ -23,6 +23,7 @@ type credentialOutputMode string
 
 const (
 	credentialOutputHuman credentialOutputMode = "human"
+	credentialOutputRaw   credentialOutputMode = "raw"
 	credentialOutputJSON  credentialOutputMode = "json"
 )
 
@@ -44,7 +45,7 @@ type publicURLCredentialCreateCommand struct {
 	ExpiresIn       string               `name:"expires-in" default:"90d" help:"Lifetime from issue time, greater than zero and at most 90d."`
 	AllowIP         []string             `name:"allow-ip" help:"Visitor IP address or prefix; repeat for more visitors."`
 	AllowAllIPs     bool                 `name:"allow-all-ips" help:"Allow visitors from every IP."`
-	Output          credentialOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+	Output          credentialOutputMode `name:"output" enum:"human,raw,json" default:"human" help:"Output format: ${enum}."`
 }
 
 type publicURLCredentialListCommand struct {
@@ -231,8 +232,16 @@ func runEphemeralCredentialCreate(ctx context.Context, flags publicURLCredential
 	result := ephemeralCredentialCreateResult{SchemaVersion: 1, Kind: string(issued.Kind), TeamID: issued.TeamId,
 		DomainID: issued.DomainId, Namespace: issued.Namespace, CredentialID: issued.Id,
 		Credential: *issued.Credential, ExpiresAt: issued.ExpiresAt}
-	if flags.Output == credentialOutputJSON {
+	return writeEphemeralCredentialCreateResult(flags.Output, result, output, diagnostics)
+}
+
+func writeEphemeralCredentialCreateResult(mode credentialOutputMode, result ephemeralCredentialCreateResult, output, diagnostics io.Writer) error {
+	if mode == credentialOutputJSON {
 		return json.NewEncoder(output).Encode(result)
+	}
+	if mode == credentialOutputRaw {
+		_, err := fmt.Fprintln(output, result.Credential)
+		return err
 	}
 	if err := writeHumanFrame(diagnostics, "tnl url credential create", "created", "save the credential; it will not be shown again",
 		clioutput.Fields(clioutput.Field{Label: "kind", Value: result.Kind},
@@ -241,7 +250,7 @@ func runEphemeralCredentialCreate(ctx context.Context, flags publicURLCredential
 			clioutput.Field{Label: "expires", Value: result.ExpiresAt.UTC().Format(time.RFC3339)})); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(output, result.Credential)
+	_, err := fmt.Fprintln(output, "credential: "+result.Credential)
 	return err
 }
 
@@ -269,6 +278,10 @@ func writeCredentialCreateResult(mode credentialOutputMode, result publicURLCred
 	if mode == credentialOutputJSON {
 		return json.NewEncoder(output).Encode(result)
 	}
+	if mode == credentialOutputRaw {
+		_, err := fmt.Fprintln(output, result.Credential)
+		return err
+	}
 	fields := []clioutput.Field{{Label: "public URL", Value: result.PublicURL}}
 	if result.Target != "" {
 		fields = append(fields, clioutput.Field{Label: "target", Value: result.Target})
@@ -281,8 +294,8 @@ func writeCredentialCreateResult(mode credentialOutputMode, result publicURLCred
 		clioutput.Fields(fields...)); err != nil {
 		return err
 	}
-	// one-time credentials remain exact raw values on stdout.
-	_, err := fmt.Fprintln(output, result.Credential)
+	// print the secret outside the diagram and label it for human output.
+	_, err := fmt.Fprintln(output, "credential: "+result.Credential)
 	return err
 }
 
