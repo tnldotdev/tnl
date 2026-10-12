@@ -50,6 +50,9 @@ jobs:
       - name: Verify worktree Compose selection
         run: task go:test:integration:docker-selection
 
+      - name: Verify TypeScript publisher image
+        run: task go:test:integration:publisher-dev-image
+
       - name: Verify database clients
         run: task go:test:integration:database-clients
 

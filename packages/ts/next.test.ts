@@ -65,6 +65,19 @@ describe("withTnl", () => {
       },
     );
   });
+  test("reports the wildcard bind needed by a publisher in another Compose container", async () => {
+    const bootstrap = await startTestBootstrap();
+    await withProcessEnvironment(
+      { ...bootstrap.environment, __NEXT_PRIVATE_ORIGIN: "http://0.0.0.0:3200" },
+      async () => {
+        await withTnl({}, { service: "api" })(developmentPhase, context);
+      },
+    );
+    expect(bootstrap.requests.find(({ path }) => path === "/v1/register")?.body).toMatchObject({
+      target: "http://127.0.0.1:3200",
+      bound_host: "0.0.0.0",
+    });
+  });
   test("rejects non-string development origins before requesting an assignment", async () => {
     const bootstrap = await startTestBootstrap();
     await withProcessEnvironment(

@@ -39,11 +39,15 @@ export function withTnl(
     ) {
       throw new TnlError("sdk.configuration_invalid");
     }
-    const target = nextTarget(process.env);
+    const { target, boundHost } = nextTarget(process.env);
+    const reachableTarget =
+      options.targetHostname === undefined
+        ? target
+        : canonicalLoopbackTarget(options.targetHostname, parseListenerPort(new URL(target).port));
     const assignment = await prepareService(options, "next");
     // supported Next versions set this origin from their bound HTTP listener
     // before loading configuration. PORT alone is never a registration.
-    await reportFrameworkTarget(assignment, target);
+    await reportFrameworkTarget(assignment, reachableTarget, boundHost);
 
     return injectRuntime(
       {
@@ -72,7 +76,10 @@ function injectRuntime(config: NextConfig, payload: string): NextConfig {
   };
 }
 
-function nextTarget(environment: NodeJS.ProcessEnv): `http://${string}` {
+function nextTarget(environment: NodeJS.ProcessEnv): {
+  target: `http://${string}`;
+  boundHost: string;
+} {
   // Next 16.3.4 binds and sets this origin before loading next.config, so it is authoritative.
   const value = environment.__NEXT_PRIVATE_ORIGIN;
   if (value === undefined) {
@@ -100,7 +107,7 @@ function nextTarget(environment: NodeJS.ProcessEnv): `http://${string}` {
   if (reportedPort !== undefined && parseListenerPort(reportedPort) !== port) {
     throw new TnlError("sdk.target_invalid");
   }
-  return canonicalLoopbackTarget(origin.hostname, port);
+  return { target: canonicalLoopbackTarget(origin.hostname, port), boundHost: origin.hostname };
 }
 
 function unique(values: readonly string[]): string[] {

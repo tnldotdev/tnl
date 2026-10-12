@@ -59,6 +59,7 @@ type Registration struct {
 	RegistrationID string `json:"registration_id"`
 	Owner          string `json:"owner"`
 	Target         string `json:"target,omitempty"`
+	BoundHost      string `json:"bound_host,omitempty"`
 }
 
 // AdHocRegister binds one invocation to an already-listening local target.
