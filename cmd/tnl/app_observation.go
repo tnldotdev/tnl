@@ -282,19 +282,25 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 				if err != nil {
 					return err
 				}
-				request, err := http.NewRequestWithContext(ctx, "POST", "http://localhost/v1/observe", bytes.NewReader(data))
+				endpoint, err := readRuntimeTCPEndpoint(socket)
 				if err != nil {
-					return err
-				}
-				request.Header.Set("Content-Type", "application/json")
-				response, err := runtimeHTTP(socket).Do(request)
-				if err == nil {
-					response.Body.Close()
-					if response.StatusCode != http.StatusNoContent {
+					service.Ready = false
+				} else {
+					request, err := http.NewRequestWithContext(ctx, "POST", endpoint.URL+"/v1/observe", bytes.NewReader(data))
+					if err != nil {
+						return err
+					}
+					request.Header.Set("Content-Type", "application/json")
+					request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
+					response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
+					if err == nil {
+						response.Body.Close()
+						if response.StatusCode != http.StatusNoContent {
+							service.Ready = false
+						}
+					} else {
 						service.Ready = false
 					}
-				} else {
-					service.Ready = false
 				}
 			}
 			ready = ready && service.Ready
