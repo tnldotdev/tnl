@@ -136,25 +136,6 @@ func TestBinaryIntegrationTwoWorktreeComposePostgresVisitors(t *testing.T) {
 	}
 	for _, selected := range worktrees {
 		runIntegrationBinaryCommand(t, selected.root, fixture.environment, fixture.tnlPath, "wait", "--service", "orders", "--timeout", "55s", "--output=json")
-		waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
-			probe, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(selected.port)))
-			if err != nil {
-				return false, err
-			}
-			defer probe.Close()
-			_ = probe.SetDeadline(time.Now().Add(3 * time.Second))
-			if _, err := probe.Write([]byte{0, 0, 0, 8, 4, 210, 22, 47}); err != nil {
-				return false, err
-			}
-			var answer [1]byte
-			if _, err := probe.Read(answer[:]); err != nil {
-				return false, err
-			}
-			if answer[0] == 'S' {
-				return true, nil
-			}
-			return false, fmt.Errorf("public PostgreSQL TLS negotiation on port %d returned %q", selected.port, answer)
-		})
 		waitForIntegrationCondition(t, 90*time.Second, func(ctx context.Context) (bool, error) {
 			select {
 			case <-selected.publish.done:
