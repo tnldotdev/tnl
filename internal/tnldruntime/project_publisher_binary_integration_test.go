@@ -170,6 +170,83 @@ func TestBinaryIntegrationTwoWorktreeComposePostgresVisitors(t *testing.T) {
 			err = connection.QueryRow(ctx, "SELECT 42").Scan(&value)
 			return err == nil && value == 42, err
 		})
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+		defer cancel()
+		connection, err := connectPublicPostgres(ctx, fixture, selected.publicURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := connection.Exec(ctx, "CREATE TABLE IF NOT EXISTS tnl_worktree_check (marker text NOT NULL)"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := connection.Exec(ctx, "INSERT INTO tnl_worktree_check (marker) VALUES ($1)", selected.marker); err != nil {
+			t.Fatal(err)
+		}
+		connection.Close(ctx)
+	}
+	first := worktrees[0]
+	compose := func(arguments ...string) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		args := append([]string{"compose", "--project-directory", first.root, "--file", filepath.Join(first.root, "compose.yaml"), "--project-name", first.label}, arguments...)
+		command := exec.CommandContext(ctx, "docker", args...)
+		command.Dir = first.root
+		output, err := command.CombinedOutput()
+		return string(output), err
+	}
+	if output, err := compose("stop", "db"); err != nil {
+		t.Fatalf("stop first private database: %v (%s)", err, output)
+	}
+	var reserved net.Listener
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		reserved, _ = net.Listen("tcp", first.privateAddress)
+		if reserved != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if reserved == nil {
+		t.Fatal("old Docker host port did not become available")
+	}
+	defer reserved.Close()
+	if output, err := compose("up", "-d", "--force-recreate", "db"); err != nil {
+		t.Fatalf("replace first private database: %v (%s)", err, output)
+	}
+	newMapping, err := compose("port", "db", "5432")
+	if err != nil || strings.TrimSpace(newMapping) == first.privateAddress {
+		t.Fatalf("private Docker host port did not change: old=%s new=%s (%v)", first.privateAddress, newMapping, err)
+	}
+	reserved.Close()
+	runIntegrationBinaryCommand(t, first.root, fixture.environment, fixture.tnlPath, "wait", "--service", "orders", "--timeout", "55s", "--output=json")
+	waitForIntegrationCondition(t, 40*time.Second, func(ctx context.Context) (bool, error) {
+		connection, err := connectPublicPostgres(ctx, fixture, first.publicURL)
+		if err != nil {
+			return false, err
+		}
+		defer connection.Close(context.Background())
+		var marker string
+		err = connection.QueryRow(ctx, "SELECT marker FROM tnl_worktree_check LIMIT 1").Scan(&marker)
+		return err == nil && marker == first.marker, err
+	})
+	second := worktrees[1]
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	other, err := connectPublicPostgres(ctx, fixture, second.publicURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close(context.Background())
+	var untouched string
+	if err := other.QueryRow(ctx, "SELECT marker FROM tnl_worktree_check LIMIT 1").Scan(&untouched); err != nil || untouched != second.marker {
+		t.Fatalf("other worktree database changed after private target replacement: marker=%q, %v", untouched, err)
+	}
+	data, err := os.ReadFile(filepath.Join(first.root, ".tnl", "project.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stable projectmeta.Metadata
+	if err := json.Unmarshal(data, &stable); err != nil || stable.Services["orders"].URL != first.publicURL {
+		t.Fatalf("private Docker replacement changed the saved public address: %v, %s", err, data)
 	}
 }
 

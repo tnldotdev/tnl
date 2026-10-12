@@ -196,4 +196,56 @@ process.on("SIGTERM", () => server.close());
 	if err != nil {
 		t.Fatalf("publisher network could not reach app's dynamic listener port: %v (%s)", err, probeOutput)
 	}
+	endpointPath := filepath.Join(root, ".tnl", "publisher-web.endpoint.json")
+	oldDescriptor, err := os.ReadFile(endpointPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old localPublisherEndpoint
+	if err := json.Unmarshal(oldDescriptor, &old); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := command(30*time.Second, "restart", "publisher"); err != nil {
+		t.Fatalf("restart Compose publisher: %v (%s)", err, output)
+	}
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		output.Reset()
+		diagnostics.Reset()
+		err = run(t.Context(), []string{"project", "publisher", "credential", "export", "--service", "web", "--state-dir", state, "--output", "raw"}, &output, &diagnostics)
+		if err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("reissue scoped credential after publisher restart: %v (%s)", err, diagnostics.String())
+	}
+	newDescriptor, err := os.ReadFile(endpointPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current localPublisherEndpoint
+	if err := json.Unmarshal(newDescriptor, &current); err != nil || current.Credential == old.Credential {
+		t.Fatalf("publisher restart reused an old scoped app credential: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, "ready.json")); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := command(90*time.Second, "up", "-d", "--force-recreate", "web"); err != nil {
+		t.Fatalf("restart app with current scoped credential: %v (%s)", err, output)
+	}
+	deadline = time.Now().Add(15 * time.Second)
+	var restarted bool
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(filepath.Join(root, "ready.json"))
+		if err == nil && json.Unmarshal(data, &ready) == nil && ready.Port > 0 {
+			restarted = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !restarted {
+		t.Fatal("app could not attach to restarted Compose publisher")
+	}
 }
