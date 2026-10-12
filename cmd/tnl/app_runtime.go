@@ -253,6 +253,11 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	defer runtime.manager.Close()
 	runtime.adhoc = clientruntime.NewAdHocManager(ctx, runtime.publishAdHoc, runtime.manager.Alive, runtime.manager.BeginPreparation)
 	defer runtime.adhoc.Close()
+	tcpServer, tcpDone, err := startRuntimeTCP(socket, runtime.handler())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stopRuntimeTCP(context.Background(), tcpServer, socket) }()
 	server := &http.Server{Handler: runtime.handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
@@ -273,6 +278,8 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 				return nil
 			}
 			return err
+		case err := <-tcpDone:
+			return fmt.Errorf("serve local publisher TCP API: %w", err)
 		case <-ticker.C:
 			if os.Getppid() != parentPID {
 				return nil
