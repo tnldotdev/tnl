@@ -97,7 +97,7 @@ class Tunnel:
         self._serve_task = serve_task
         self._listener = listener
         self._directory = directory
-        self._socket = ""
+        self._endpoint_path = ""
         self._id = "ivk_" + "".join(secrets.choice(_alphabet) for _ in range(22))
         self._owner = secrets.token_hex(16)
         self._registration: dict[str, object] = {
@@ -140,15 +140,15 @@ class Tunnel:
         return self._url
 
     async def start(self) -> None:
-        self._socket = await self._native.start(self._directory)
+        self._endpoint_path = await self._native.start(self._directory)
         try:
             status = parse_status(
-                await self._native.request(self._socket, "register", self._payload), self._id
+                await self._native.request(self._endpoint_path, "register", self._payload), self._id
             )
         except BaseException:
             # a lost acknowledgement may still have registered the invocation.
             try:
-                await self._native.request(self._socket, "unregister", self._registration)
+                await self._native.request(self._endpoint_path, "unregister", self._registration)
             except TnlError:
                 pass
             raise
@@ -199,7 +199,7 @@ class Tunnel:
                     if self._registered:
                         try:
                             await self._native.request(
-                                self._socket, "unregister", self._registration
+                                self._endpoint_path, "unregister", self._registration
                             )
                         except TnlError:
                             # close retries cleanup if the native publisher is unavailable.
@@ -215,10 +215,11 @@ class Tunnel:
                     return
                 await asyncio.sleep(0.25)
                 if asyncio.get_running_loop().time() - last_renew >= 5:
-                    await self._native.request(self._socket, "renew", self._registration)
+                    await self._native.request(self._endpoint_path, "renew", self._registration)
                     last_renew = asyncio.get_running_loop().time()
                 status = parse_status(
-                    await self._native.request(self._socket, "status", self._registration), self._id
+                    await self._native.request(self._endpoint_path, "status", self._registration),
+                    self._id,
                 )
             except asyncio.CancelledError:
                 return
@@ -227,9 +228,9 @@ class Tunnel:
                     self._fail(RegistrationLost())
                     return
                 try:
-                    self._socket = await self._native.start(self._directory)
+                    self._endpoint_path = await self._native.start(self._directory)
                     status = parse_status(
-                        await self._native.request(self._socket, "register", self._payload),
+                        await self._native.request(self._endpoint_path, "register", self._payload),
                         self._id,
                     )
                 except TnlError as restart_error:
@@ -262,7 +263,9 @@ class Tunnel:
             cleanup: list[Exception] = []
             if self._registered:
                 try:
-                    await self._native.request(self._socket, "unregister", self._registration)
+                    await self._native.request(
+                        self._endpoint_path, "unregister", self._registration
+                    )
                 except TnlError as cause:
                     if not isinstance(cause, RegistrationLost):
                         cleanup.append(cause)

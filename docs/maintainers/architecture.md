@@ -155,14 +155,14 @@ registration reports a bound listener; public readiness remains a separate
 observation. The API returns browser-safe project metadata but does not carry
 visitor bytes or expose the control session to an app. The host publisher now
 also binds an OS-assigned loopback TCP port with a private, bearer-protected
-endpoint descriptor. the Node and Bun app integrations and the CLI now use the
-authenticated loopback endpoint for registration and observation. Go and Python
-ad-hoc clients still use the Unix socket while their transports are migrated.
+endpoint descriptor. the Node, Bun, and Python app integrations and the CLI
+now use the authenticated loopback endpoint for registration and observation.
+the Go ad-hoc SDK owns its own publisher instead of using the app runtime.
 the host lock and TCP credential descriptor live in the verified private `run/`
 directory under canonical client state. the temporary Unix socket stays under
-`/tmp` to fit macOS socket path limits until the Unix transport is retired.
-the registration wire shapes will move to the local publisher contract after
-all clients can attach through the same endpoint.
+`/tmp` to fit macOS socket path limits until its remaining native integration
+fixtures move off it; registration wire shapes can then move to the local
+publisher contract.
 
 ## resolve project configuration
 
