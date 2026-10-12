@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -612,13 +613,32 @@ func TestClassifyCommandErrorMapsCommonServerFailures(t *testing.T) {
 	}
 }
 
-func TestVersionOutputRemainsRaw(t *testing.T) {
+func TestVersionOutputDefaultsToHumanAndSupportsRawAndJSON(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if err := run(t.Context(), []string{"version"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(stdout.String(), "[ tnl version ]") || !strings.Contains(stdout.String(), "version") || !strings.Contains(stdout.String(), buildinfo.Version) {
+		t.Fatalf("human version = %q", stdout.String())
+	}
+	stdout.Reset()
+	if err := run(t.Context(), []string{"version", "--output", "raw"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
 	if want := buildinfo.Line("tnl") + "\n"; stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+	stdout.Reset()
+	if err := run(t.Context(), []string{"version", "--output", "json"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		SchemaVersion int    `json:"schema_version"`
+		Version       string `json:"version"`
+		Commit        string `json:"commit"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result.SchemaVersion != 1 || result.Version != buildinfo.Version || result.Commit != buildinfo.Commit {
+		t.Fatalf("JSON version = %q: %+v, %v", stdout.String(), result, err)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q", stderr.String())
