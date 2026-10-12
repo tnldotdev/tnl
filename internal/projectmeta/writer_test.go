@@ -83,6 +83,26 @@ func TestRenderWorktreeLabelLiteralComponents(t *testing.T) {
 	}
 }
 
+func TestRenderTCPPublicAddressAndLiteralType(t *testing.T) {
+	port := 15432
+	metadata := Metadata{
+		Version: Version, Namespace: "member.example", ServiceDirectories: map[string]string{"orders": "."},
+		Services: map[string]Service{"orders": {
+			Namespace: "member.example", Hostname: "orders.member.example", URL: "orders.member.example:15432",
+			Protocol: "postgres", Port: &port,
+		}},
+	}
+	jsonData, declarations, err := Render(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(jsonData, []byte(`"url": "orders.member.example:15432"`)) ||
+		!bytes.Contains(declarations, []byte(`readonly port: 15432;`)) ||
+		!bytes.Contains(declarations, []byte(`readonly protocol: "postgres";`)) {
+		t.Fatalf("TCP public metadata = %s\n%s", jsonData, declarations)
+	}
+}
+
 func TestTypeScriptPropertyNameQuotesHyphenatedServices(t *testing.T) {
 	if got := typeScriptPropertyName("worker-ui"); got != `"worker-ui"` {
 		t.Fatalf("hyphenated property name = %q", got)

@@ -320,6 +320,12 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 	return route, err == nil, classifyPublicURLConflict(err)
 }
 
+// ReservePublicURL saves a configured public URL without starting a publish run.
+func ReservePublicURL(ctx context.Context, config Config) (controlv1.PublicURL, error) {
+	publicURL, _, err := createOrLoadPublicURL(ctx, config)
+	return publicURL, err
+}
+
 func validateRouteIdentity(route controlv1.PublicURL, config Config) error {
 	if route.CanonicalHostname != config.Hostname || route.TeamId != config.TeamID || route.DomainId != config.DomainID || route.PublicUrlScope != config.PublicURLScope || route.Purpose != config.Purpose ||
 		route.Ephemeral != config.Ephemeral {

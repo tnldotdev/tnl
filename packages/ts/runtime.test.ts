@@ -90,6 +90,32 @@ describe("root runtime", () => {
     }
   });
 
+  test("keeps a saved TCP public URL distinct from its private target", () => {
+    const orders = {
+      namespace: "member.example",
+      hostname: "orders.member.example",
+      url: "orders.member.example:15432",
+      protocol: "postgres",
+      port: 15432,
+    };
+    const payload = { ...project, services: { ...project.services, orders }, dev: true };
+    const runtime = parseRuntimePayload(JSON.stringify(payload));
+    expect(runtime?.services.orders).toEqual(orders);
+    expect(Object.isFrozen(runtime?.services.orders)).toBe(true);
+    for (const invalid of [
+      { ...orders, url: "orders.member.example:5432" },
+      { ...orders, url: "https://orders.member.example:15432" },
+      { ...orders, port: 0 },
+      { ...orders, paths: { "/api": { service: "api" } } },
+    ]) {
+      expect(() =>
+        parseRuntimePayload(
+          JSON.stringify({ ...payload, services: { ...payload.services, orders: invalid } }),
+        ),
+      ).toThrow();
+    }
+  });
+
   test("does not expose inherited properties as project services", () => {
     const runtime = parseRuntimePayload(JSON.stringify({ ...project, dev: true }));
     expect(Object.getPrototypeOf(runtime?.services)).toBeNull();
