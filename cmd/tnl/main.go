@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -47,7 +48,11 @@ type cli struct {
 	Webhook     webhookCommand   `cmd:"" help:"Choose a receiver for a selected webhook." group:"manage"`
 	Alias       aliasCommand     `cmd:"" help:"Choose which worktree serves a project alias." group:"manage"`
 	Admin       adminCommand     `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
-	Version     struct{}         `cmd:"" help:"Print release version information." group:"operate"`
+	Version     versionCommand   `cmd:"" help:"Print release version information." group:"operate"`
+}
+
+type versionCommand struct {
+	Output scalarOutputMode `name:"output" enum:"human,raw,json" default:"human" help:"Output format: ${enum}."`
 }
 
 type openOptions struct {
@@ -458,8 +463,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "auth logout":
 		return runLogout(ctx, flags.Auth.Logout, stdout, stderr)
 	case "version":
-		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
-		return err
+		switch flags.Version.Output {
+		case scalarOutputRaw:
+			_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
+			return err
+		case scalarOutputJSON:
+			return json.NewEncoder(stdout).Encode(struct {
+				SchemaVersion int    `json:"schema_version"`
+				Version       string `json:"version"`
+				Commit        string `json:"commit,omitempty"`
+			}{1, buildinfo.Version, buildinfo.Commit})
+		default:
+			fields := []clioutput.Field{{Label: "version", Value: buildinfo.Version}}
+			if buildinfo.Commit != "" {
+				fields = append(fields, clioutput.Field{Label: "commit", Value: buildinfo.Commit})
+			}
+			return clioutput.Write(stdout, clioutput.Frame{Command: "tnl version", State: "installed", Blocks: []clioutput.Block{clioutput.Fields(fields...)}})
+		}
 	case "publish <service-or-target>":
 		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
 	case "status":
