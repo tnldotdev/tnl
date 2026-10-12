@@ -3,6 +3,7 @@ package clientruntime
 import (
 	"context"
 	"errors"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -76,6 +77,99 @@ func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T
 	manager.mu.Unlock()
 	if !manager.Sweep(func(int) bool { return true }) {
 		t.Fatal("manager did not exit after cleanup grace")
+	}
+}
+
+func TestNamedPublicationSharesTheProjectLeaseAndFencesReplacedTargets(t *testing.T) {
+	var runs atomic.Uint64
+	started := make(chan Service, 2)
+	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{
+		{Name: "web", Directory: "."}, {Name: "orders", Directory: ".", ServiceProtocol: "postgres"},
+	}, func(ctx context.Context, service Service, observe func(uint64, bool) error) error {
+		if err := observe(runs.Add(1), true); err != nil {
+			return err
+		}
+		started <- service
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	id, err := manager.Reserve("orders", "cli-owner", os.Getpid(), "orders.example:15432")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Register(id, "cli-owner", "http://127.0.0.1:5432", "node"); err == nil {
+		t.Fatal("app registration claimed the named TCP service")
+	}
+	for _, target := range []string{"http://127.0.0.1:5432", "5432", "db:0"} {
+		if err := manager.RegisterNamed(id, "cli-owner", target); err == nil {
+			t.Fatalf("accepted noncanonical private TCP target %q", target)
+		}
+	}
+	if manager.Snapshot().Services[0].Registered {
+		t.Fatal("invalid target claimed a named publication")
+	}
+	if err := manager.RegisterNamed(id, "cli-owner", "127.0.0.1:5432"); err != nil {
+		t.Fatal(err)
+	}
+	first := <-started
+	if first.Framework != "" || first.ServiceProtocol != "postgres" || !manager.Current("orders", id, first.Target, 1) {
+		t.Fatalf("named publication = %+v", first)
+	}
+	if _, err := manager.Reserve("orders", "other", os.Getpid(), "orders.example:15432"); !errors.Is(err, ErrOwnerConflict) {
+		t.Fatalf("second owner claimed active publication: %v", err)
+	}
+	if err := manager.RegisterNamed(id, "cli-owner", "127.0.0.1:5433"); err != nil {
+		t.Fatal(err)
+	}
+	second := <-started
+	if second.Target != "127.0.0.1:5433" || manager.Current("orders", id, first.Target, 1) || !manager.Current("orders", id, second.Target, 2) {
+		t.Fatalf("target replacement did not fence the first run: %+v", second)
+	}
+	appID, err := manager.Reserve("web", "app-owner", os.Getpid(), "https://web.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Register(appID, "app-owner", "http://127.0.0.1:3000", "node"); err != nil {
+		t.Fatal(err)
+	}
+	app := <-started
+	if app.Name != "web" || !manager.Current("web", appID, app.Target, 3) {
+		t.Fatalf("app registration did not share the manager with a named publication: %+v", app)
+	}
+	if err := manager.Unregister(id, "cli-owner"); err != nil || manager.Current("orders", id, second.Target, 2) {
+		t.Fatalf("stopping named publication = %v", err)
+	}
+	if !manager.Current("web", appID, app.Target, 3) {
+		t.Fatal("stopping a named publication stopped the app")
+	}
+}
+
+func TestNamedHTTPPublicationRequiresABoundOrigin(t *testing.T) {
+	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "api", ServiceProtocol: "http"}},
+		func(ctx context.Context, _ Service, _ func(uint64, bool) error) error { <-ctx.Done(); return ctx.Err() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	id, err := manager.Reserve("api", "cli-owner", os.Getpid(), "https://api.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RegisterNamed(id, "cli-owner", "127.0.0.1:3000"); err == nil {
+		t.Fatal("accepted a TCP address for an HTTP publication")
+	}
+	if err := manager.Register(id, "cli-owner", "http://127.0.0.1:3000", "node"); err == nil {
+		t.Fatal("app registration claimed a named HTTP service")
+	}
+	if err := manager.RegisterNamed(id, "cli-owner", "http://127.0.0.1:3000"); err != nil {
+		t.Fatal(err)
+	}
+	if got := manager.Snapshot().Services[0]; !got.Registered || got.Framework != "" || got.ServiceProtocol != "http" {
+		t.Fatalf("named HTTP registration = %+v", got)
 	}
 }
 
