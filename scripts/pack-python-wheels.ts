@@ -194,7 +194,11 @@ try {
     const name = `${distribution}-py3-none-${target.tag}.whl`;
     await execFileAsync("zip", ["-X", "-q", path.join(output, name), ...files], { cwd: stage });
     if (process.platform === target.goos && process.arch === target.nodeArch) {
-      const { stdout } = await execFileAsync(path.join(moduleDir, "bin", "tnl"), ["version"]);
+      const { stdout } = await execFileAsync(path.join(moduleDir, "bin", "tnl"), [
+        "version",
+        "--output",
+        "raw",
+      ]);
       assert.equal(stdout.trim(), `tnl ${metadata.version} (${metadata.commit})`);
     }
     wheels.push({

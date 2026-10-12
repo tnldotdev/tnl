@@ -89,7 +89,7 @@ version, release, commit = sys.argv[1:]
 assert importlib.metadata.version("tnldotdev-tnl") == version
 binary = pathlib.Path(tnl.__file__).parent / "bin" / "tnl"
 assert os.access(binary, os.X_OK)
-assert subprocess.check_output([str(binary), "version"], text=True).strip() == f"tnl {release} ({commit})"`,
+assert subprocess.check_output([str(binary), "version", "--output", "raw"], text=True).strip() == f"tnl {release} ({commit})"`,
       manifest.version,
       manifest.releaseVersion,
       manifest.commit,
