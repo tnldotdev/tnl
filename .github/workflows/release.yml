@@ -340,6 +340,32 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: gh release edit "$TAG" --draft=false
 
+  deploy-production:
+    name: Advance production to published release
+    needs: [publish, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: write
+    steps:
+      - name: Fast-forward and deploy release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          TAG: ${{ github.ref_name }}
+          IMAGE: ghcr.io/tnldotdev/tnl@${{ needs.image.outputs.digest }}
+        run: |
+          production_sha="$(gh api "repos/$REPOSITORY/git/ref/heads/production" --jq '.object.sha')"
+          comparison="$(gh api "repos/$REPOSITORY/compare/$production_sha...$SHA" --jq '.status')"
+          test "$comparison" = ahead -o "$comparison" = identical
+          gh api --method PATCH "repos/$REPOSITORY/git/refs/heads/production" \
+            --field sha="$SHA" --field force=false
+          gh api --method POST "repos/$REPOSITORY/actions/workflows/deploy-production.yml/dispatches" \
+            --field ref=production --field "inputs[tag]=$TAG" --field "inputs[sha]=$SHA" \
+            --field "inputs[image]=$IMAGE"
+
   homebrew:
     name: Publish Homebrew formula
     if: ${{ !contains(github.ref_name, '-') }}

@@ -49,10 +49,13 @@ The workflow then:
 The Homebrew formula template is `deploy/tnl.rb.template`. The workflow fills it
 with archive checksums and updates the tap using `scripts/update-homebrew.ts`.
 
-CI publishes artifacts and images. It does not deploy production.
+After publishing the signed image, CI advances `production` to the release
+commit and deploys that image to the production Fly apps. This includes RCs.
+Every checked merge to `main` deploys staging independently; see
+[server deployment](../../deploy/server/readme.md).
 
-Use [deployed release checks](release-checks.md) after publication: require
-staging to pass before promotion and check production after deployment.
+Use [deployed release checks](release-checks.md) on staging before publishing
+and on production after deployment.
 
 ## bootstrap npm once
 

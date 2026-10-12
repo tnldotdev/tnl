@@ -1,0 +1,4 @@
+{
+  "staging": { "control": 2, "ingress": 2, "relay-a": 2, "relay-b": 2 },
+  "production": { "control": 2, "ingress": 2, "relay-a": 2, "relay-b": 2 }
+}

@@ -1,0 +1,92 @@
+name: Deploy staging
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy main to staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: deploy-staging
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    steps:
+      - name: Wait for checks and integration on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          test "$SHA" = "$(gh api "repos/$REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          for attempt in $(seq 1 60); do
+            passed=0
+            for workflow in checks.yml integration.yml; do
+              count="$(gh api --method GET "repos/$REPOSITORY/actions/workflows/$workflow/runs" \
+                -f branch=main -f event=push -f head_sha="$SHA" -f status=success -f per_page=1 --jq '.total_count')"
+              if [ "$count" -ge 1 ]; then passed=$((passed+1)); fi
+            done
+            if [ "$passed" -eq 2 ]; then exit 0; fi
+            sleep 30
+          done
+          exit 1
+
+      - name: Check out tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push main image
+        id: image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/tnldotdev/tnl:sha-${{ github.sha }}
+          build-args: |
+            VERSION=main-${{ github.sha }}
+            COMMIT=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=tnl-server-staging
+          cache-to: type=gha,mode=max,scope=tnl-server-staging
+
+      - name: Set up Fly tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.0
+          install_args: flyctl task node
+          cache: false
+
+      - name: Deploy current main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          TNLD_DATABASE_DIRECT_URL: ${{ secrets.TNLD_DATABASE_DIRECT_URL }}
+        run: |
+          test "$SHA" = "$(gh api "repos/$REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          task server:deploy:staging IMAGE="ghcr.io/tnldotdev/tnl@$DIGEST" VERSION="main-$SHA" COMMIT="$SHA"

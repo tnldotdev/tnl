@@ -1,0 +1,40 @@
+app = "tnl-ingress-production"
+primary_region = "sjc"
+kill_signal = "SIGTERM"
+kill_timeout = 45
+
+[env]
+TNLD_ROLE = "ingress"
+TNLD_INGRESS_ID = "ingress-1"
+TNLD_CONTROL_HOSTNAME = "control.tnl.dev"
+TNLD_PRIVATE_CONTROL_ADDRESS = "tnl-control-production.internal:9443"
+TNLD_CLUSTER_SECRET_PREVIOUS = ""
+TNLD_INGRESS_LISTEN = "0.0.0.0:8443"
+TNLD_METRICS_LISTEN = "[::]:9090"
+TNLD_REQUIRE_PROXY_HEADER = "true"
+
+[[metrics]]
+port = 9090
+path = "/metrics"
+
+[[services]]
+protocol = "tcp"
+internal_port = 8443
+auto_stop_machines = "off"
+auto_start_machines = true
+min_machines_running = 2
+
+[[services.ports]]
+handlers = ["proxy_proto"]
+port = 443
+proxy_proto_options = { version = "v2" }
+
+[[services.tcp_checks]]
+grace_period = "30s"
+interval = "15s"
+timeout = "2s"
+
+[[vm]]
+cpu_kind = "shared"
+cpus = 1
+memory = "512mb"

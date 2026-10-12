@@ -1,6 +1,20 @@
 version: "3"
 
 tasks:
+  server:deploy:staging:
+    desc: Migrate and deploy the main commit to the existing staging Fly Machines
+    requires:
+      vars: [IMAGE, VERSION, COMMIT]
+    cmds:
+      - node scripts/deploy-server.ts staging "{{.IMAGE}}" "{{.VERSION}}" "{{.COMMIT}}"
+
+  server:deploy:production:
+    desc: Migrate and deploy a published release to the existing production Fly Machines
+    requires:
+      vars: [IMAGE, VERSION, COMMIT]
+    cmds:
+      - node scripts/deploy-server.ts production "{{.IMAGE}}" "{{.VERSION}}" "{{.COMMIT}}"
+
   dev:
     desc: Run the local development stack
     deps: [local:certificates]

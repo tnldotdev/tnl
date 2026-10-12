@@ -352,5 +352,5 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/err
 - Never execute a deployed benchmark without explicit approval for its server and workload. Planning is read-only, but execution requires an explicit control URL, `BENCH_SUITE`, and `BENCH_APPROVED=1` and creates public URLs on the selected server. Explicit continuing approval covers retries of the same plan during one debugging session; ask again if the server, suite, or workload overrides change.
 - For release/version/tag work, load and follow `.agents/skills/tnl-release/SKILL.md`; do not duplicate or improvise its approval gates.
 - Keep GitHub Actions SHA-pinned with explicit permissions, timeouts, and `persist-credentials: false`; retain `actionlint` and `zizmor` checks.
-- CI publishes release artifacts and images but does not deploy production. Production Compose images must remain digest-pinned.
+- CI deploys the published release image to production after publishing, including RCs. Production Compose images must remain digest-pinned.
 - Release archives, native npm packages, and platform Python wheels must retain all required dependency license and legal files; see [contributing.md](contributing.md).
