@@ -27,8 +27,10 @@ func TestInitReportsManualActionForExistingFrameworkConfig(t *testing.T) {
 				if err := runInit(t.Context(), initCommand{NoInstall: true}, &stdout, &stderr); err != nil {
 					t.Fatal(err)
 				}
+				// assertions about instructions must allow the diagram to wrap them.
+				text := strings.Join(strings.Fields(strings.ReplaceAll(stdout.String(), "|", " ")), " ")
 				for _, fragment := range []string{"needs action", test.action, "complete the actions above, then start your app normally"} {
-					if !strings.Contains(stdout.String(), fragment) {
+					if !strings.Contains(text, fragment) {
 						t.Fatalf("run %d missing %q: %q", run, fragment, stdout.String())
 					}
 				}
