@@ -24,7 +24,10 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 const directory = process.argv[process.argv.indexOf("--directory") + 1];
 const path = join(directory, "manager.endpoint.json");
-if (process.argv.includes("endpoint")) process.stdout.write(JSON.stringify({ version: 1, path }) + "\\n");
+if (process.argv.includes("endpoint")) {
+  writeFileSync(join(directory, "endpoint-args"), process.argv.join(" "));
+  process.stdout.write(JSON.stringify({ version: 1, path }) + "\\n");
+}
 else if (process.argv.includes("serve")) {
   const credential = "a".repeat(43);
   const server = http.createServer((request, response) => {
@@ -39,8 +42,11 @@ else if (process.argv.includes("serve")) {
 `,
     );
     await chmod(binary, 0o700);
-    const endpointPath = await startRuntime(directory, binary);
+    const endpointPath = await startRuntime(directory, binary, { service: "api" });
     expect(endpointPath).toBe(join(directory, "manager.endpoint.json"));
+    expect(await readFile(join(directory, "endpoint-args"), "utf8")).toContain(
+      "--app --service api",
+    );
     workerPID = Number(await readFile(join(directory, "pid"), "utf8"));
     expect(workerPID).toBeGreaterThan(0);
   } finally {
@@ -111,6 +117,7 @@ test("preparation exposes only public metadata and registers an actual port-0 No
     start,
     request: runtimeRequest,
   });
+  expect(start).toHaveBeenCalledWith(expect.any(String), "api");
   onTestFinished(() => handle.close());
   expect(bootstrap.requests).toHaveLength(1);
   expect(bootstrap.requests[0]?.path).toBe("/v1/prepare");

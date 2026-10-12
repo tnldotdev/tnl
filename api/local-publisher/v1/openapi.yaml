@@ -115,6 +115,8 @@ paths:
     get:
       operationId: getLocalProjectStatus
       summary: Read one publisher-owned snapshot for the selected project
+      description: app credentials see only their service; ad-hoc credentials see no configured services.
+      security: [{ ownerAuth: [] }, { appAuth: [] }, { adHocAuth: [] }]
       responses:
         "200":
           description: Configured and currently publishing services
@@ -152,6 +154,10 @@ components:
       type: http
       scheme: bearer
       description: Credential authorized to register exactly one configured app service.
+    adHocAuth:
+      type: http
+      scheme: bearer
+      description: Credential for app-owned ad-hoc invocations; no configured service operations.
   parameters:
     RegistrationID:
       name: registration_id

@@ -43,11 +43,15 @@ interface Assignment {
 }
 
 interface Dependencies {
-  start(directory: string): Promise<string>;
+  start(directory: string, service?: string): Promise<string>;
   request(socket: string, operation: string, body: unknown): Promise<unknown>;
 }
 
-const defaultDependencies: Dependencies = { start: startRuntime, request: runtimeRequest };
+const defaultDependencies: Dependencies = {
+  start: (directory, service) =>
+    startRuntime(directory, resolveNativeBinary(), service === undefined ? {} : { service }),
+  request: runtimeRequest,
+};
 
 // one handle survives framework config reloads in the same process. listener
 // replacements share ownership while the native manager rejects requests and
@@ -104,7 +108,7 @@ export async function createPreparedService(
   validateOptions(options);
   const directory = path.resolve(options.directory ?? process.cwd());
   const owner = randomBytes(16).toString("hex");
-  let socket = await dependencies.start(directory);
+  let socket = await dependencies.start(directory, options.service);
   const prepareRequest = {
     version: 1,
     directory,
@@ -132,7 +136,7 @@ export async function createPreparedService(
     ...(target === undefined ? {} : { target }),
   });
   const reconnect = async () => {
-    socket = await dependencies.start(directory);
+    socket = await dependencies.start(directory, options.service);
     const replacement = parseAssignment(
       await dependencies.request(socket, "prepare", prepareRequest),
     );
@@ -396,11 +400,20 @@ function parseAssignment(value: unknown): Assignment {
 export async function startRuntime(
   directory: string,
   binary: string = resolveNativeBinary(),
+  scope: { readonly service?: string; readonly adHoc?: boolean } = {},
 ): Promise<string> {
   try {
     const { stdout } = await promisify(execFile)(
       binary,
-      ["runtime", "endpoint", "--directory", directory],
+      [
+        "--no-telemetry",
+        "runtime",
+        "endpoint",
+        "--directory",
+        directory,
+        ...(scope.adHoc ? ["--ad-hoc"] : ["--app"]),
+        ...(scope.service === undefined ? [] : ["--service", scope.service]),
+      ],
       { timeout: 30_000, maxBuffer: 64 * 1024, encoding: "utf8" },
     );
     const value: unknown = JSON.parse(stdout);
@@ -563,7 +576,10 @@ export function runtimeRequest(
         });
       },
     );
-    const deadline = setTimeout(() => request.destroy(new TnlError("sdk.dev_unavailable")), 30_000);
+    const deadline = setTimeout(
+      () => request.destroy(new TnlError("sdk.dev_unavailable")),
+      operation.endsWith("unregister") ? 45_000 : 30_000,
+    );
     deadline.unref();
     request.once("close", () => clearTimeout(deadline));
     request.on("error", (cause) => reject(new TnlError("sdk.dev_unavailable", { cause })));

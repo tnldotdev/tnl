@@ -58,7 +58,8 @@ func testAppRuntime(t *testing.T) (*appRuntime, string, <-chan uint64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tcpServer, _, err := startRuntimeTCP(key, a.handler())
+	services := configuredRuntimeServices(a.project)
+	tcpServer, _, err := startRuntimeTCP(key, a.handler(), services...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +105,158 @@ func TestAppStatusRejectsPublisherWithStaleLocalCredential(t *testing.T) {
 	}
 }
 
+func TestLocalPublisherCredentialsRestrictAppAndAdHocOperations(t *testing.T) {
+	a, state, started := testAppRuntime(t)
+	key, err := runtimeKey(a.project.Root, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := readRuntimeTCPEndpoint(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var scoped localPublisherEndpoint
+		if err := json.Unmarshal(data, &scoped); err != nil || scoped.Credential == "" || scoped.Credential == endpoint.Credential || scoped.URL != endpoint.URL {
+			t.Fatalf("scoped endpoint = %+v, %v", scoped, err)
+		}
+		return scoped.Credential
+	}
+	apiToken := credential(runtimeAppEndpointPath(key, "api"))
+	webToken := credential(runtimeAppEndpointPath(key, "web"))
+	adHocToken := credential(runtimeAdHocEndpointPath(key))
+	if apiToken == webToken || apiToken == adHocToken || webToken == adHocToken {
+		t.Fatal("service-scoped credentials were reused")
+	}
+	client := &http.Client{Timeout: time.Second, Transport: &http.Transport{DisableKeepAlives: true, Proxy: nil}}
+	call := func(method, path, token string, value any) *http.Response {
+		t.Helper()
+		var body io.Reader
+		if value != nil {
+			data, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body = bytes.NewReader(data)
+		}
+		request, err := http.NewRequestWithContext(t.Context(), method, endpoint.URL+path, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		if value != nil {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	for _, test := range []struct {
+		token, service string
+	}{
+		{apiToken, "api"}, {webToken, "web"}, {adHocToken, ""},
+	} {
+		response := call(http.MethodGet, "/v1/status", test.token, nil)
+		var snapshot localpublisherv1.ProjectSnapshot
+		if err := json.NewDecoder(response.Body).Decode(&snapshot); err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK || test.service == "" && len(snapshot.Services) != 0 ||
+			test.service != "" && (len(snapshot.Services) != 1 || snapshot.Services[0].Service != test.service) {
+			t.Fatalf("credential %q could inspect %+v", test.service, snapshot.Services)
+		}
+	}
+	for _, test := range []struct{ token, path string }{
+		{webToken, "/v1/publications"},
+		{webToken, "/v1/scopes/app/api"},
+		{webToken, "/v1/ad-hoc/register"},
+		{adHocToken, "/v1/prepare"},
+		{adHocToken, "/v1/publications"},
+	} {
+		response := call(http.MethodPost, test.path, test.token, nil)
+		response.Body.Close()
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("credential reached %s with status %d", test.path, response.StatusCode)
+		}
+	}
+	owner := "0123456789abcdef0123456789abcdef"
+	id, err := a.manager.Reserve("api", owner, os.Getpid(), "https://api.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	a.prepared[id] = appPreparation{assignment: privateprotocol.Assignment{Service: "api"}}
+	a.mu.Unlock()
+	registration := privateprotocol.Registration{Version: 1, RegistrationID: id, Owner: owner, Target: "http://127.0.0.1:3000"}
+	response := call(http.MethodPost, "/v1/register", webToken, registration)
+	response.Body.Close()
+	if response.StatusCode != http.StatusConflict || a.manager.Current("api", id, registration.Target, 0) {
+		t.Fatal("web credential claimed the api listener")
+	}
+	response = call(http.MethodPost, "/v1/register", apiToken, registration)
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("api registration = %d", response.StatusCode)
+	}
+	<-started
+}
+
+func TestRunningPublisherIssuesCredentialForNewConfiguredApp(t *testing.T) {
+	t.Setenv("TNL_CONFIG", "")
+	a, state, _ := testAppRuntime(t)
+	configData := []byte(`{"version":1,"tnl":{"services":{"api":{"target":{"type":"app"}},"web":{"target":{"type":"app"}},"new":{"target":{"type":"app"}}}}}`)
+	if err := os.WriteFile(filepath.Join(a.project.Root, "tnl.json"), configData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runRuntimeEndpoint(t.Context(), runtimeOptions{Directory: a.project.Root, StateDir: state, App: true, Service: "new"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var located struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &located); err != nil || located.Path == "" {
+		t.Fatalf("new app endpoint = %q, %v", output.String(), err)
+	}
+	info, err := os.Stat(located.Path)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("new app credential file = %v, %v", info, err)
+	}
+	newEndpoint, err := readLocalPublisherDescriptor(located.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := runtimeKey(a.project.Root, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := readRuntimeTCPEndpoint(key)
+	if err != nil || newEndpoint.Credential == owner.Credential {
+		t.Fatalf("app credential was not scoped to the new service: %v", err)
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, newEndpoint.URL+"/v1/status", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+newEndpoint.Credential)
+	response, err := (&http.Client{Timeout: time.Second}).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("new app credential status = %d", response.StatusCode)
+	}
+}
+
 func TestRuntimeEndpointReturnsPathWithoutStartingPublisher(t *testing.T) {
 	t.Setenv("TNL_CONFIG", "")
 	project, err := filepath.EvalSymlinks(t.TempDir())
@@ -139,6 +292,26 @@ func TestRuntimeEndpointReturnsPathWithoutStartingPublisher(t *testing.T) {
 	}
 	if _, err := os.Stat(endpoint.Path); !os.IsNotExist(err) {
 		t.Fatalf("endpoint lookup started the local publisher: %v", err)
+	}
+	for _, test := range []struct {
+		args []string
+		path string
+	}{
+		{[]string{"--app", "--service", "web"}, runtimeAppEndpointPath(key, "web")},
+		{[]string{"--app"}, runtimeAppEndpointPath(key, "web")},
+		{[]string{"--ad-hoc"}, runtimeAdHocEndpointPath(key)},
+	} {
+		output.Reset()
+		args := append([]string{"--no-telemetry", "runtime", "endpoint", "--directory", project, "--state-dir", state}, test.args...)
+		if err := run(t.Context(), args, &output, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		var selected struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(output.Bytes(), &selected); err != nil || selected.Path != test.path {
+			t.Fatalf("scoped publisher endpoint = %s, want %s: %v", output.String(), test.path, err)
+		}
 	}
 }
 

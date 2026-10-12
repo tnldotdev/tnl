@@ -28,6 +28,7 @@ class NativeRuntime:
                 "endpoint",
                 "--directory",
                 directory,
+                "--ad-hoc",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
                 limit=64 << 10,
@@ -144,7 +145,9 @@ class NativeRuntime:
         try:
             url, credential = self._endpoint(endpoint_path)
             async with httpx.AsyncClient(
-                timeout=10, follow_redirects=False, trust_env=False
+                timeout=45 if operation == "unregister" else 10,
+                follow_redirects=False,
+                trust_env=False,
             ) as client:
                 async with client.stream(
                     "POST",

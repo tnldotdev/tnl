@@ -283,6 +283,31 @@ func TestBinaryIntegrationAppAndNamedServiceShareLocalPublisher(t *testing.T) {
 		}
 		return endpoint.URL != "" && endpoint.Credential != "", nil
 	})
+	appEndpointCommand := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath,
+		"runtime", "endpoint", "--directory", project, "--app", "--service", "web")
+	if err := waitForDoneWithin(appEndpointCommand.done, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	assertIntegrationBinaryProcessResult(t, appEndpointCommand)
+	var appLocation struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(appEndpointCommand.output.String()), &appLocation); err != nil || appLocation.Path == "" {
+		t.Fatalf("app endpoint = %q, %v", appEndpointCommand.output.String(), err)
+	}
+	appDescriptor, err := os.ReadFile(appLocation.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var appEndpoint struct {
+		URL        string `json:"url"`
+		Credential string `json:"credential"`
+	}
+	if err := json.Unmarshal(appDescriptor, &appEndpoint); err != nil || appEndpoint.URL != endpoint.URL ||
+		appEndpoint.Credential == "" || appEndpoint.Credential == endpoint.Credential {
+		t.Fatalf("app credential did not use the scoped publisher endpoint: %v", err)
+	}
+	endpoint.Credential = appEndpoint.Credential
 	client := &http.Client{Timeout: 65 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
 	call := func(operation string, payload any, target any) int {
 		t.Helper()
