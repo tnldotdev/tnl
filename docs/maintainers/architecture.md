@@ -153,9 +153,10 @@ app registration, named publication ownership, status, and resumable events.
 The owner and app-registration credentials have different scopes. An accepted
 registration reports a bound listener; public readiness remains a separate
 observation. The API returns browser-safe project metadata but does not carry
-visitor bytes or expose the control session to an app. The app runtime still
-uses its existing private Unix socket until the following transport change
-adopts this contract.
+visitor bytes or expose the control session to an app. The host publisher now
+also binds an OS-assigned loopback TCP port with a private, bearer-protected
+endpoint descriptor. Existing SDK calls still use the Unix socket while their
+registration and ad-hoc clients move to the local publisher API.
 
 ## resolve project configuration
 
