@@ -29,10 +29,12 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 		t.Fatalf("services schema = %#v", services)
 	}
 	serviceSchema := services.AdditionalProperties
-	if _, found := serviceSchema.Properties.Get("directory"); !found {
-		t.Fatal("service directory property is missing")
+	if _, found := serviceSchema.Properties.Get("directory"); found {
+		t.Fatal("retired service directory property is still present")
 	}
-	if paths, found := serviceSchema.Properties.Get("paths"); !found || paths.AdditionalProperties == nil || len(paths.AdditionalProperties.OneOf) != 2 {
+	if http, found := serviceSchema.Properties.Get("http"); !found || http.Properties == nil {
+		t.Fatalf("service HTTP schema = %#v", http)
+	} else if paths, found := http.Properties.Get("paths"); !found || paths.AdditionalProperties == nil || len(paths.AdditionalProperties.OneOf) != 2 {
 		t.Fatalf("service path mount schema = %#v", paths)
 	}
 	for _, property := range []string{"server", "team"} {

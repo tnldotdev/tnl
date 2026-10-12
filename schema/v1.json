@@ -20,53 +20,6 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "Publish": {
-      "properties": {
-        "protocol": {
-          "type": "string",
-          "enum": ["http", "postgres", "mysql", "redis", "ssh"],
-          "description": "Local service protocol: http (default), postgres, mysql, redis, or ssh."
-        },
-        "target": {
-          "oneOf": [
-            {
-              "type": "string",
-              "minLength": 1
-            },
-            {
-              "type": "integer",
-              "maximum": 65535,
-              "minimum": 1
-            }
-          ],
-          "description": "HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher."
-        },
-        "target_tls_name": {
-          "type": "string",
-          "description": "Hostname expected in the private target TLS certificate; defaults to the target host."
-        },
-        "target_tls": {
-          "type": "boolean",
-          "description": "Use verified TLS for the private TCP target."
-        },
-        "target_ca_file": {
-          "type": "string",
-          "description": "Additional PEM certificate authorities for the target; relative paths are resolved from the project root."
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "Readiness": {
-      "properties": {
-        "path": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": ["path"]
-    },
     "TNL": {
       "properties": {
         "server": {
@@ -191,26 +144,15 @@
           "type": "object",
           "description": "Default public URL and tunnel settings."
         },
-        "publish": {
-          "$ref": "#/$defs/Publish"
-        },
-        "readiness": {
-          "$ref": "#/$defs/Readiness"
-        },
         "services": {
           "additionalProperties": {
             "properties": {
-              "directory": {
-                "type": "string",
-                "minLength": 1,
-                "description": "Service directory relative to the project configuration."
-              },
               "inspection": {
                 "$ref": "#/$defs/Inspection"
               },
               "protocol": {
                 "type": "string",
-                "enum": ["http", "postgres", "mysql", "redis", "ssh"],
+                "enum": ["http", "postgres", "mysql", "redis", "ssh", "mongodb"],
                 "description": "Local service protocol; defaults to http."
               },
               "target": {
@@ -361,43 +303,17 @@
                 "type": "object",
                 "description": "PublicURL and tunnel overrides for this service."
               },
-              "publish": {
-                "$ref": "#/$defs/Publish"
-              },
-              "readiness": {
-                "$ref": "#/$defs/Readiness"
-              },
-              "paths": {
-                "additionalProperties": {
-                  "oneOf": [
-                    {
-                      "type": "string",
-                      "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
-                    },
-                    {
-                      "properties": {
-                        "service": {
-                          "type": "string",
-                          "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
-                        },
-                        "strip_prefix": {
-                          "type": "boolean"
-                        }
-                      },
-                      "additionalProperties": false,
-                      "type": "object",
-                      "required": ["service"]
-                    }
-                  ]
-                },
-                "type": "object",
-                "maxProperties": 32,
-                "description": "Mount another configured service at a path on this service's public URL."
-              },
               "http": {
                 "properties": {
                   "readiness": {
-                    "$ref": "#/$defs/Readiness"
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["path"]
                   },
                   "paths": {
                     "additionalProperties": {
@@ -439,7 +355,7 @@
           },
           "type": "object",
           "maxProperties": 32,
-          "description": "Named local services with optional tunnel, publish, readiness overrides, and path mounts."
+          "description": "Named local services with a private target, public URL settings, and optional HTTP settings."
         },
         "webhooks": {
           "additionalProperties": {

@@ -34,20 +34,23 @@ func TestLoadDocumentNormalizesBareExactPublicURLs(t *testing.T) {
 func TestLoadDocumentRequiresVersionAndStrictFields(t *testing.T) {
 	directory := t.TempDir()
 	for name, test := range map[string]struct{ contents, category string }{
-		"missing.yml":        {"tnl: {}\n", "version is required"},
-		"missing.json":       {`{"tnl":{}}`, "version is required"},
-		"future.yml":         {"version: 2\n", "unsupported configuration version 2"},
-		"future.json":        {`{"version":2}`, "unsupported configuration version 2"},
-		"unknown.yml":        {"version: 1\ntnl:\n  unexpected_key: true\n", "field unexpected_key not found"},
-		"unknown.json":       {`{"version":1,"tnl":{"unexpected_key":true}}`, `unknown object member name "unexpected_key"`},
-		"service-oauth.json": {`{"version":1,"tnl":{"services":{"api":{"oauth":true}}}}`, `unknown object member name "oauth"`},
-		"retired-ca.yml":     {"version: 1\ntnl:\n  publish:\n    ca_file: ca.pem\n", "field ca_file not found"},
-		"retired-ca.json":    {`{"version":1,"tnl":{"publish":{"ca_file":"ca.pem"}}}`, `unknown object member name "ca_file"`},
-		"duplicate.yml":      {"version: 1\nversion: 1\n", "already defined"},
-		"duplicate.json":     {`{"version":1,"version":1}`, "duplicate object member name"},
-		"tagged.yml":         {"version: 1\ntnl: !include config.yml\n", "custom YAML tag"},
-		"trailing.json":      {"{\"version\":1} {}", "after top-level value"},
-		"trailing.yml":       {"version: 1\n---\nversion: 1\n", "more than one YAML document"},
+		"missing.yml":                  {"tnl: {}\n", "version is required"},
+		"missing.json":                 {`{"tnl":{}}`, "version is required"},
+		"future.yml":                   {"version: 2\n", "unsupported configuration version 2"},
+		"future.json":                  {`{"version":2}`, "unsupported configuration version 2"},
+		"unknown.yml":                  {"version: 1\ntnl:\n  unexpected_key: true\n", "field unexpected_key not found"},
+		"unknown.json":                 {`{"version":1,"tnl":{"unexpected_key":true}}`, `unknown object member name "unexpected_key"`},
+		"service-oauth.json":           {`{"version":1,"tnl":{"services":{"api":{"oauth":true}}}}`, `unknown object member name "oauth"`},
+		"retired-publish.yml":          {"version: 1\ntnl:\n  publish:\n    target: 3000\n", "field publish not found"},
+		"retired-publish.json":         {`{"version":1,"tnl":{"publish":{"target":3000}}}`, `unknown object member name "publish"`},
+		"retired-service.yml":          {"version: 1\ntnl:\n  services:\n    web:\n      directory: apps/web\n", "field directory not found"},
+		"retired-service.json":         {`{"version":1,"tnl":{"services":{"web":{"paths":{"/api":"api"}}}}}`, `unknown object member name "paths"`},
+		"retired-service-publish.json": {`{"version":1,"tnl":{"services":{"api":{"publish":{"target":3000}}}}}`, `unknown object member name "publish"`},
+		"duplicate.yml":                {"version: 1\nversion: 1\n", "already defined"},
+		"duplicate.json":               {`{"version":1,"version":1}`, "duplicate object member name"},
+		"tagged.yml":                   {"version: 1\ntnl: !include config.yml\n", "custom YAML tag"},
+		"trailing.json":                {"{\"version\":1} {}", "after top-level value"},
+		"trailing.yml":                 {"version: 1\n---\nversion: 1\n", "more than one YAML document"},
 	} {
 		path := filepath.Join(directory, name)
 		if err := os.WriteFile(path, []byte(test.contents), 0o600); err != nil {
@@ -80,10 +83,11 @@ tnl:
       requests: 20
       rate: {requests: 5, per: 1m}
       concurrency: 750
-  publish:
-    target: 3000
-  readiness:
-    path: /health
+  services:
+    app:
+      target: {type: address, address: 3000}
+      http:
+        readiness: {path: /health}
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -94,8 +98,8 @@ tnl:
 	}
 	if document.TNL == nil || document.TNL.Server == nil || *document.TNL.Server != "https://control.example.com" ||
 		document.TNL.Feedback == nil || !*document.TNL.Feedback || !document.TNL.OAuth ||
-		document.TNL.Publish == nil || document.TNL.Publish.Target == nil || string(*document.TNL.Publish.Target) != "3000" ||
-		document.TNL.Readiness == nil || document.TNL.Readiness.Path != "/health" ||
+		document.TNL.Services["app"].Target == nil || string(*document.TNL.Services["app"].Target.Address) != "3000" ||
+		document.TNL.Services["app"].HTTP == nil || document.TNL.Services["app"].HTTP.Readiness.Path != "/health" ||
 		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs ||
 		document.TNL.Tunnel.Limits == nil || document.TNL.Tunnel.Limits.Concurrency == nil || *document.TNL.Tunnel.Limits.Concurrency != 750 ||
 		document.TNL.Tunnel.Limits.Requests == nil || *document.TNL.Tunnel.Limits.Requests != 20 ||
@@ -166,8 +170,8 @@ func TestValidateTNLRejectsInvalidServiceNames(t *testing.T) {
 
 func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
 	for name, contents := range map[string]string{
-		"json": `{"version":1,"tnl":{"services":{"web":{"paths":{"/api":"api","/v1":{"service":"api","strip_prefix":true}}},"api":{}}}}`,
-		"yml":  "version: 1\ntnl:\n  services:\n    web:\n      paths:\n        /api: api\n        /v1:\n          service: api\n          strip_prefix: true\n    api: {}\n",
+		"json": `{"version":1,"tnl":{"services":{"web":{"http":{"paths":{"/api":"api","/v1":{"service":"api","strip_prefix":true}}}},"api":{}}}}`,
+		"yml":  "version: 1\ntnl:\n  services:\n    web:\n      http:\n        paths:\n          /api: api\n          /v1:\n            service: api\n            strip_prefix: true\n    api: {}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			filename := "tnl." + name
@@ -179,8 +183,8 @@ func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
 				t.Fatal(err)
 			}
 			parsed, err := LoadDocument(path)
-			if err != nil || parsed.TNL.Services["web"].Paths["/api"].Service != "api" ||
-				parsed.TNL.Services["web"].Paths["/v1"].Service != "api" || !parsed.TNL.Services["web"].Paths["/v1"].StripPrefix {
+			if err != nil || ServicePaths(parsed.TNL.Services["web"])["/api"].Service != "api" ||
+				ServicePaths(parsed.TNL.Services["web"])["/v1"].Service != "api" || !ServicePaths(parsed.TNL.Services["web"])["/v1"].StripPrefix {
 				t.Fatalf("paths = %+v, %v", parsed.TNL, err)
 			}
 		})
@@ -380,8 +384,8 @@ func TestDetailedInspectionRejectsOpaqueServiceProtocols(t *testing.T) {
 
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"inspection":{"mode":"detailed","retention":"168h","max_bytes":"64MiB"},"services":{"web":{"inspection":{"mode":"summary"}}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"readiness":{"path":"/health"}}}`,
-		"yml":  "version: 1\ntnl:\n  inspection: {mode: detailed, retention: 168h, max_bytes: 64MiB}\n  services:\n    web:\n      inspection: {mode: summary}\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  readiness:\n    path: /health\n",
+		"json": `{"version":1,"tnl":{"inspection":{"mode":"detailed","retention":"168h","max_bytes":"64MiB"},"services":{"web":{"inspection":{"mode":"summary"},"target":{"type":"address","address":3000},"http":{"readiness":{"path":"/health"}}}},"tunnel":{"allow_ip":["192.0.2.1"]}}}`,
+		"yml":  "version: 1\ntnl:\n  inspection: {mode: detailed, retention: 168h, max_bytes: 64MiB}\n  services:\n    web:\n      inspection: {mode: summary}\n      target: {type: address, address: 3000}\n      http:\n        readiness: {path: /health}\n  tunnel:\n    allow_ip: [192.0.2.1]\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -410,7 +414,7 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"service team":               {`{"version":1,"tnl":{"services":{"web":{"team":"studio"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      team: studio\n", "team"},
 		"service feedback":           {`{"version":1,"tnl":{"services":{"web":{"feedback":true}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      feedback: true\n", "feedback"},
 		"obsolete subdomain":         {`{"version":1,"tnl":{"tunnel":{"subdomain":"api"}}}`, "version: 1\ntnl:\n  tunnel:\n    subdomain: api\n", "subdomain"},
-		"target":                     {`{"version":1,"tnl":{"publish":{"target":"https://example.com/path"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com/path\n", "publish.target:"},
+		"target":                     {`{"version":1,"tnl":{"services":{"web":{"target":{"type":"address","address":"https://example.com/path"}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      target: {type: address, address: https://example.com/path}\n", "publish.target:"},
 		"ip":                         {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
 		"duplicate":                  {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},
 		"obsolete provider grant":    {`{"version":1,"tnl":{"tunnel":{"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [stripe]\n", "allow_providers"},

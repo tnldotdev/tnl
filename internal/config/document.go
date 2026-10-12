@@ -38,9 +38,9 @@ type TNL struct {
 	OAuth      bool               `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
 	Inspection *Inspection        `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP and database services."`
 	Tunnel     *Tunnel            `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
-	Publish    *Publish           `json:"publish,omitempty" yaml:"publish,omitempty"`
-	Readiness  *Readiness         `json:"readiness,omitempty" yaml:"readiness,omitempty"`
-	Services   Services           `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional tunnel, publish, readiness overrides, and path mounts."`
+	Publish    *Publish           `json:"-" yaml:"-"`
+	Readiness  *Readiness         `json:"-" yaml:"-"`
+	Services   Services           `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with a private target, public URL settings, and optional HTTP settings."`
 	Webhooks   map[string]Webhook `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
 	Aliases    map[string]Alias   `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
 }
@@ -50,14 +50,14 @@ type Services map[string]Service
 // Service contains project-local overrides for one named local service.
 type Service struct {
 	Inspection *Inspection          `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
-	Directory  *string              `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
+	Directory  *string              `json:"-" yaml:"-"`
 	Protocol   *string              `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh" jsonschema_description:"Local service protocol; defaults to http."`
 	Target     *ServiceTarget       `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"How the publisher finds this service."`
 	HTTP       *HTTPService         `json:"http,omitempty" yaml:"http,omitempty" jsonschema_description:"HTTP readiness and path mounts."`
 	Tunnel     *Tunnel              `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
-	Publish    *Publish             `json:"publish,omitempty" yaml:"publish,omitempty"`
-	Readiness  *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty"`
-	Paths      map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Mount other configured local services at paths on this service's public URL."`
+	Publish    *Publish             `json:"-" yaml:"-"`
+	Readiness  *Readiness           `json:"-" yaml:"-"`
+	Paths      map[string]PathMount `json:"-" yaml:"-"`
 }
 
 // ServiceTarget chooses an app-reported listener or an explicit private address.

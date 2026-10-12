@@ -80,23 +80,17 @@ export interface TnlConfig {
      */
     visitorTLS?: "terminate" | "passthrough";
   };
-  publish?: Publish;
-  readiness?: Readiness;
   /**
-   * Named local services with optional tunnel, publish, readiness overrides, and path mounts.
+   * Named local services with a private target, public URL settings, and optional HTTP settings.
    */
   services?: {
     [k: string]:
       | {
-          /**
-           * Service directory relative to the project configuration.
-           */
-          directory?: string;
           inspection?: Inspection1;
           /**
            * Local service protocol; defaults to http.
            */
-          protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh";
+          protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh" | "mongodb";
           target?:
             | {
                 type: "app";
@@ -159,22 +153,10 @@ export interface TnlConfig {
              */
             visitorTLS?: "terminate" | "passthrough";
           };
-          publish?: Publish;
-          readiness?: Readiness;
-          /**
-           * Mount another configured service at a path on this service's public URL.
-           */
-          paths?: {
-            [k: string]:
-              | string
-              | {
-                  service: string;
-                  stripPrefix?: boolean;
-                }
-              | undefined;
-          };
           http?: {
-            readiness?: Readiness;
+            readiness?: {
+              path: string;
+            };
             /**
              * Mount another configured service at a path on this service's public URL.
              */
@@ -279,31 +261,6 @@ export interface Inspection {
   mode?: "summary" | "detailed";
   retention?: string;
   maxBytes?: string;
-}
-export interface Publish {
-  /**
-   * Local service protocol: http (default), postgres, mysql, redis, or ssh.
-   */
-  protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh";
-  /**
-   * HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher.
-   */
-  target?: string | number;
-  /**
-   * Additional PEM certificate authorities for the target; relative paths are resolved from the project root.
-   */
-  targetCAFile?: string;
-  /**
-   * Use verified TLS for the private TCP target.
-   */
-  targetTLS?: boolean;
-  /**
-   * Hostname expected in the private target TLS certificate; defaults to the target host.
-   */
-  targetTLSName?: string;
-}
-export interface Readiness {
-  path: string;
 }
 export interface Inspection1 {
   mode?: "summary" | "detailed";
