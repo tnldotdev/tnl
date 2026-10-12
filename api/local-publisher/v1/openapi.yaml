@@ -269,7 +269,7 @@ components:
         namespace: { type: string, minLength: 1, maxLength: 253 }
         hostname: { type: string, minLength: 1, maxLength: 253 }
         url: { type: string, minLength: 1, maxLength: 512 }
-        protocol: { type: string, enum: [postgres, mysql, redis, ssh, mongodb] }
+        protocol: { type: string, enum: [postgres, mysql, redis, ssh] }
         port: { type: integer, minimum: 1024, maximum: 65535 }
     PathMetadata:
       type: object
@@ -337,7 +337,7 @@ components:
       required: [service, protocol, state]
       properties:
         service: { $ref: "#/components/schemas/ServiceName" }
-        protocol: { type: string, enum: [http, postgres, mysql, redis, ssh, mongodb] }
+        protocol: { type: string, enum: [http, postgres, mysql, redis, ssh] }
         state: { type: string, enum: [not_started, publishing, routable, ready, draining, failed] }
         public_url: { type: string, minLength: 1, maxLength: 512 }
         target: { type: string, minLength: 1, maxLength: 2048 }
