@@ -108,7 +108,7 @@ func servicesSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
 	properties.Set("directory", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), Description: "Service directory relative to the project configuration."})
 	properties.Set("inspection", &jsonschema.Schema{Ref: "#/$defs/Inspection"})
-	properties.Set("protocol", &jsonschema.Schema{Type: "string", Enum: []any{"http", "postgres", "mysql", "redis", "ssh", "mongodb"}, Description: "Local service protocol; defaults to http."})
+	properties.Set("protocol", &jsonschema.Schema{Type: "string", Enum: []any{"http", "postgres", "mysql", "redis", "ssh"}, Description: "Local service protocol; defaults to http."})
 	appTargetProperties := jsonschema.NewProperties()
 	appTargetProperties.Set("type", &jsonschema.Schema{Const: "app"})
 	addressTargetProperties := jsonschema.NewProperties()
