@@ -96,29 +96,11 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 }
 
 func runtimeKey(project, state string) (string, error) {
-	// a stable private directory keeps one identity across app environments.
-	directory, err := privateRuntimeDirectoryAt("/tmp")
+	directory, err := clientstate.RuntimeDir(state)
 	if err != nil {
-		return "", err
+		return "", failure.Wrap("open local publisher runtime directory", failure.ClientStateUnavailable, err)
 	}
-	return filepath.Join(directory, "app-"+clientruntime.Identity(project, state)), nil
-}
-
-func privateRuntimeDirectoryAt(base string) (string, error) {
-	directory := filepath.Join(base, fmt.Sprintf("tnl-%d", os.Getuid()))
-	if err := os.Mkdir(directory, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return "", failure.Wrap("create local publisher runtime directory", failure.ClientStateUnavailable, err)
-	}
-	info, err := os.Lstat(directory)
-	if err != nil {
-		return "", failure.Wrap("inspect local publisher runtime directory", failure.ClientStateUnavailable, err)
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.IsDir() || info.Mode().Perm() != 0o700 || stat.Uid != uint32(os.Getuid()) {
-		return "", failure.Wrap("validate local publisher runtime directory", failure.ClientStateUnavailable,
-			errors.New("local publisher runtime directory must be user-owned with mode 0700"))
-	}
-	return directory, nil
+	return filepath.Join(directory, "app-"+clientruntime.Identity(project, filepath.Dir(directory))), nil
 }
 
 func runtimeAvailable(ctx context.Context, key string) bool {
