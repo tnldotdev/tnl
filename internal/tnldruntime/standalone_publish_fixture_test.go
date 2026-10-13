@@ -53,7 +53,7 @@ func standalonePublishConfig(t *testing.T, databaseURL, publicAddress, relayUDPA
 	const serverDomain = "integration.test"
 	// standalone uses one public listener and creates its internal listeners on
 	// :0 itself. these required but unused split-role addresses need no probes.
-	return tnldconfig.Config{
+	cfg := tnldconfig.Config{
 		Role: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: unusedTCPAddress(t),
 		ControlListen: "127.0.0.1:1", PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDPAddress, InternalRelayListen: "127.0.0.1:1",
@@ -69,6 +69,8 @@ func standalonePublishConfig(t *testing.T, databaseURL, publicAddress, relayUDPA
 		RelayLeaseDuration:   5 * time.Second, LeaseRenewalInterval: time.Second,
 		ControlRetryInterval: 10 * time.Millisecond, RoutingTableWait: time.Second, DrainTimeout: 3 * time.Second,
 	}
+	setTestTrafficDefaults(&cfg)
+	return cfg
 }
 
 func (f *standalonePublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {
