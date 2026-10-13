@@ -20,6 +20,8 @@ import (
 	tnlsqlite "github.com/tnldotdev/tnl/internal/sqlite"
 )
 
+const databaseFormatVersion = 2
+
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 

@@ -3,7 +3,6 @@ package clientstate
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -22,7 +21,7 @@ func TestClientV1SchemaRejectsIncompleteState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if filepath.Base(DatabasePath(root)) != fmt.Sprintf("client-v%d.db", databaseFormatVersion) {
+	if filepath.Base(DatabasePath(root)) != "client-v2.db" {
 		t.Fatalf("client database path = %q", DatabasePath(root))
 	}
 	for _, table := range []string{"server_profiles", "client_setting", "control_sessions", "certificate_materials", "local_tunnels"} {

@@ -12,11 +12,7 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-const (
-	keychainService = "dev.tnl.client-state"
-	// the interactive macOS database retains its existing keychain-backed format.
-	databaseFormatVersion = 2
-)
+const keychainService = "dev.tnl.client-state"
 
 type keyringClient interface {
 	Get(string, string) (string, error)
