@@ -296,11 +296,17 @@ workers and drains publishers, then exits after the last registration's cleanup
 grace. it never launches or terminates application processes.
 
 registered, routable, and ready are separate facts. routable means the existing
-publisher has reported control readiness. ready additionally requires a fresh
-public GET: by default `/` accepts any 2xx app response. tnl diagnostic
+publisher has reported control readiness. for HTTP, ready additionally requires
+a fresh public GET: by default `/` accepts any 2xx app response. tnl diagnostic
 responses always fail. service readiness can select a path. checks use normal
 DNS/TLS, send no app credentials, follow no redirects, and read headers only
-with a five-second deadline. retries start at
+with a five-second deadline. TCP readiness probes the public hostname and port,
+not the private target: PostgreSQL negotiates visitor TLS and verifies the
+public certificate when tnl terminates it, MySQL checks a bounded greeting,
+Redis verifies visitor TLS, and SSH checks a bounded server banner. PostgreSQL
+passthrough only confirms that TLS negotiation starts; the visitor must verify
+the target's certificate. none of these checks attempts database or SSH login.
+retries start at
 500 milliseconds and double to two seconds for up to two minutes. each new run
 gets an automatic check; `tnl wait` checks again. a failed check leaves the
 publication running. `tnl status` only reads observations.
