@@ -1,14 +1,31 @@
 # tnldotdev-tnl
 
-Use a Python ASGI app to publish a temporary public URL through tnl. Install
+Start a configured Python ASGI app with a saved public URL. Install
 the wheel for your macOS or Linux arm64 or x64 machine:
 
 ```console
 uv add tnldotdev-tnl
 ```
 
-Run `tnl url credential create --ephemeral` after signing in, then set
-`TNL_CREDENTIAL` in your app environment. `async with tnl.open(app)` starts
+Add a `dev.py` alongside the app and use the same file in every worktree:
+
+```python
+from tnl.uvicorn import run
+
+run("app:app", service="web", host="127.0.0.1", port=0, reload=True)
+```
+
+```console
+uv run python dev.py
+```
+
+Define `web` as an app service in your project configuration. Uvicorn owns the
+listener; the serving worker registers its actual bound port after startup and
+unregisters before shutdown. The reloader does not publish from its parent.
+
+For a temporary public URL outside configured services, use the separate
+ad-hoc API. Run `tnl url credential create --ephemeral` after signing in, then
+set `TNL_CREDENTIAL` in your app environment. `async with tnl.open(app)` starts
 ASGI lifespan before publishing, waits for the URL to become routable, and
 removes it when the context exits.
 
