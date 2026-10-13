@@ -20,9 +20,6 @@ import (
 	tnlsqlite "github.com/tnldotdev/tnl/internal/sqlite"
 )
 
-// bump this only when the local SQLite schema intentionally starts fresh.
-const databaseFormatVersion = 2
-
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
@@ -115,12 +112,17 @@ func Open(ctx context.Context, root string) (result *Database, retErr error) {
 		return nil, err
 	}
 	defer migrationLock.Close()
+	databaseExists := false
 	if info, statErr := os.Lstat(path); statErr == nil {
+		databaseExists = true
 		if err := validatePrivateFile(info, false); err != nil {
 			return nil, fmt.Errorf("clientstate: database: %w", err)
 		}
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("clientstate: inspect database: %w", statErr)
+	}
+	if err := prepareSecretProtection(ctx, root, databaseExists); err != nil {
+		return nil, err
 	}
 	migrations, err := fs.Sub(migrationFiles, "migrations")
 	if err != nil {
@@ -165,6 +167,7 @@ func (d *Database) Server(ctx context.Context, serverOrigin string) (*Store, err
 		database: d, controlEndpoint: serverOrigin, locksDir: locksDir,
 		secrets: newSecretProtector(
 			hex.EncodeToString(profileDigest[:]), filepath.Join(locksDir, "keychain-initialization.lock"),
+			d.root,
 		),
 	}, nil
 }

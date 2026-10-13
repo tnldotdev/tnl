@@ -1,10 +1,7 @@
 package clientstate
 
 import (
-	"bytes"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -17,10 +14,9 @@ import (
 
 const (
 	keychainService = "dev.tnl.client-state"
-	wrappingKeySize = 32
+	// the interactive macOS database retains its existing keychain-backed format.
+	databaseFormatVersion = 2
 )
-
-var sealedValuePrefix = []byte("tnl-sealed-v1\x00")
 
 type keyringClient interface {
 	Get(string, string) (string, error)
@@ -46,27 +42,18 @@ type keychainSecretProtector struct {
 	key []byte
 }
 
-func newSecretProtector(account, lockPath string) secretProtector {
+func newSecretProtector(account, lockPath, _ string) secretProtector {
 	return &keychainSecretProtector{account: account, lockPath: lockPath, keyring: systemKeyring{}}
 }
+
+func prepareSecretProtection(context.Context, string, bool) error { return nil }
 
 func (p *keychainSecretProtector) Seal(ctx context.Context, secretContext string, plaintext []byte) ([]byte, error) {
 	key, err := p.wrappingKey(ctx, true)
 	if err != nil {
 		return nil, err
 	}
-	aead, err := newAEAD(key)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("clientstate: generate private state nonce: %w", err)
-	}
-	sealed := make([]byte, len(sealedValuePrefix)+len(nonce))
-	copy(sealed, sealedValuePrefix)
-	copy(sealed[len(sealedValuePrefix):], nonce)
-	return aead.Seal(sealed, nonce, plaintext, p.additionalData(secretContext)), nil
+	return sealPrivateState(key, secretAdditionalData(p.account, secretContext), plaintext)
 }
 
 func (p *keychainSecretProtector) Open(ctx context.Context, secretContext string, sealed []byte) ([]byte, error) {
@@ -74,32 +61,7 @@ func (p *keychainSecretProtector) Open(ctx context.Context, secretContext string
 	if err != nil {
 		return nil, err
 	}
-	aead, err := newAEAD(key)
-	if err != nil {
-		return nil, err
-	}
-	headerSize := len(sealedValuePrefix) + aead.NonceSize()
-	if len(sealed) < headerSize+aead.Overhead() || !bytes.Equal(sealed[:len(sealedValuePrefix)], sealedValuePrefix) {
-		return nil, errors.New("clientstate: invalid encrypted private state")
-	}
-	nonce := sealed[len(sealedValuePrefix):headerSize]
-	plaintext, err := aead.Open(nil, nonce, sealed[headerSize:], p.additionalData(secretContext))
-	if err != nil {
-		return nil, errors.New("clientstate: decrypt private state")
-	}
-	return plaintext, nil
-}
-
-func newAEAD(key []byte) (cipher.AEAD, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("clientstate: initialize private state encryption: %w", err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("clientstate: initialize private state authentication: %w", err)
-	}
-	return aead, nil
+	return openPrivateState(key, secretAdditionalData(p.account, secretContext), sealed)
 }
 
 func (p *keychainSecretProtector) wrappingKey(ctx context.Context, create bool) ([]byte, error) {
@@ -175,8 +137,4 @@ func parseWrappingKey(value string) ([]byte, error) {
 		return nil, errors.New("clientstate: invalid Keychain wrapping key")
 	}
 	return key, nil
-}
-
-func (p *keychainSecretProtector) additionalData(context string) []byte {
-	return []byte("tnl client state v1\x00" + p.account + "\x00" + context)
 }
