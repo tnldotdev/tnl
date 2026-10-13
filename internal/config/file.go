@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -192,7 +193,7 @@ func ValidateTNL(config TNL) error {
 			if service.Readiness != nil || config.Readiness != nil || len(service.Paths) != 0 ||
 				service.Tunnel != nil && service.Tunnel.Open != nil && *service.Tunnel.Open ||
 				config.Tunnel != nil && config.Tunnel.Open != nil && *config.Tunnel.Open {
-				return fmt.Errorf("services.%s: database services cannot use HTTP readiness, path mounts, or browser opening", name)
+				return fmt.Errorf("services.%s: TCP services cannot use HTTP readiness, path mounts, or browser opening", name)
 			}
 			selected := MergeInspection(config.Inspection, service.Inspection)
 			if selected != nil && selected.Mode != nil && *selected.Mode == InspectionDetailed &&
@@ -201,18 +202,18 @@ func ValidateTNL(config TNL) error {
 			}
 			for _, definition := range config.Webhooks {
 				if definition.Service == name {
-					return fmt.Errorf("services.%s: database services cannot receive HTTP webhooks", name)
+					return fmt.Errorf("services.%s: TCP services cannot receive HTTP webhooks", name)
 				}
 			}
 			for _, definition := range config.Aliases {
 				if definition.Service == name {
-					return fmt.Errorf("services.%s: database services cannot serve HTTP aliases", name)
+					return fmt.Errorf("services.%s: TCP services cannot serve HTTP aliases", name)
 				}
 			}
 			for _, sibling := range config.Services {
 				for _, mount := range sibling.Paths {
 					if mount.Service == name {
-						return fmt.Errorf("services.%s: database services cannot be used as HTTP path mounts", name)
+						return fmt.Errorf("services.%s: TCP services cannot be used as HTTP path mounts", name)
 					}
 				}
 			}
@@ -313,11 +314,11 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	}
 	if publish != nil {
 		protocol := ServiceProtocol(publish)
-		if protocol != "http" && protocol != "postgres" && protocol != "mysql" && protocol != "redis" && protocol != "ssh" {
-			return errors.New("publish.protocol must be http, postgres, mysql, redis, or ssh")
+		if !controlv1.PublicURLServiceProtocol(protocol).Valid() {
+			return errors.New("publish.protocol must be a supported service protocol")
 		}
 		if publish.TargetTLS != nil && protocol == "http" {
-			return errors.New("publish.target_tls requires a private TCP protocol")
+			return errors.New("publish.target_tls requires a TCP service protocol")
 		}
 		if publish.Target != nil {
 			target := string(*publish.Target)
@@ -331,12 +332,12 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 		}
 		if publish.TargetTLSName != nil {
 			if protocol == "http" || *publish.TargetTLSName == "" || strings.TrimSpace(*publish.TargetTLSName) != *publish.TargetTLSName {
-				return errors.New("publish.target_tls_name requires a private TCP protocol and a hostname")
+				return errors.New("publish.target_tls_name requires a TCP service protocol and a hostname")
 			}
 		}
 		if protocol != "http" && (publish.TargetTLSName != nil || publish.TargetCAFile != nil) &&
 			(publish.TargetTLS == nil || !*publish.TargetTLS) {
-			return errors.New("publish.target_tls must be true when private target TLS settings are supplied")
+			return errors.New("publish.target_tls must be true when target TLS settings are supplied")
 		}
 		if publish.TargetCAFile != nil && (strings.TrimSpace(*publish.TargetCAFile) != *publish.TargetCAFile || *publish.TargetCAFile == "") {
 			return errors.New("publish.target_ca_file must be a nonempty path without surrounding whitespace")
