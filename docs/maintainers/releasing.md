@@ -32,8 +32,8 @@ git push origin v0.1.0
 The tag must be signed, annotated, verified by GitHub, and point directly to a
 commit on `main`. Never move or reuse a release tag.
 
-The release workflow also checks that Checks and Integration passed for that
-commit before publishing.
+The release workflow also checks that the combined Checks workflow passed for
+that commit before publishing.
 
 The workflow then:
 
@@ -50,8 +50,8 @@ The Homebrew formula template is `deploy/tnl.rb.template`. The workflow fills it
 with archive checksums and updates the tap using `scripts/update-homebrew.ts`.
 
 After publishing the signed image, CI advances `production` to the release
-commit and deploys that image to the production Fly apps. This includes RCs.
-Every checked merge to `main` deploys staging independently; see
+commit and deploys that image to the production tnl server. This includes RCs.
+Every checked merge to `main` deploys staging; see
 [server deployment](../../deploy/server/readme.md).
 
 Use [deployed release checks](release-checks.md) on staging before publishing

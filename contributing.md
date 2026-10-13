@@ -55,9 +55,9 @@ mise exec -- task go:test:integration RUN='^TestIntegrationPublicURLRecovery$'
 ```
 
 Binary integration changes subprocess trust and binds privileged ports. Run it
-only on Linux; the [integration workflow](.github/workflows/integration.yml)
-shows its setup. For database and runtime load tests, see the
-[local workloads](docs/benchmarks/local-workloads.md). Large runs are opt-in.
+only on Linux; [Checks](.github/workflows/checks.yml) shows its setup. For
+database and runtime load tests, see the [local workloads](docs/benchmarks/local-workloads.md).
+Large runs are opt-in.
 
 The DNS e2e job in Checks uses one fresh name under `test.tnl.wtf`, a disposable
 Let's Encrypt staging account, and at most one order per `main` push. It

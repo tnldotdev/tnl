@@ -52,20 +52,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for workflow in checks.yml integration.yml; do
-            count="$(gh api --method GET \
-              "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs" \
-              -f branch=main \
-              -f event=push \
-              -f head_sha="$GITHUB_SHA" \
-              -f status=success \
-              -f per_page=1 \
-              --jq '.total_count')"
-            if [ "$count" -lt 1 ]; then
-              printf 'no successful %s run found for %s\n' "$workflow" "$GITHUB_SHA" >&2
-              exit 1
-            fi
-          done
+          count="$(gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/checks.yml/runs" \
+            -f branch=main \
+            -f event=push \
+            -f head_sha="$GITHUB_SHA" \
+            -f status=success \
+            -f per_page=1 \
+            --jq '.total_count')"
+          if [ "$count" -lt 1 ]; then
+            printf 'no successful Checks run found for %s\n' "$GITHUB_SHA" >&2
+            exit 1
+          fi
 
   archives:
     name: Publish release archives

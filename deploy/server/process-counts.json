@@ -1,4 +1,15 @@
 {
-  "staging": { "control": 2, "ingress": 2, "relay-a": 2, "relay-b": 2 },
-  "production": { "control": 2, "ingress": 2, "relay-a": 2, "relay-b": 2 }
+  "organization": "tnl",
+  "staging": {
+    "control": 2,
+    "ingress": 2,
+    "relay-a": { "app": 1, "udp": 1 },
+    "relay-b": { "app": 1, "udp": 1 }
+  },
+  "production": {
+    "control": 2,
+    "ingress": 2,
+    "relay-a": { "app": 1, "udp": 1 },
+    "relay-b": { "app": 1, "udp": 1 }
+  }
 }

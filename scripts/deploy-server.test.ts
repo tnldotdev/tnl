@@ -22,7 +22,7 @@ test("deployment rejects an unpinned image without exposing the database URL", (
   expect(result.stdout).toBe("");
 });
 
-test("staging rejects a production migrator before starting Docker", () => {
+test("staging rejects a production Environment branch before starting Fly", () => {
   const commit = "a".repeat(40);
   const result = spawnSync(
     process.execPath,
@@ -37,14 +37,12 @@ test("staging rejects a production migrator before starting Docker", () => {
       encoding: "utf8",
       env: {
         ...process.env,
-        TNLD_DATABASE_DIRECT_URL:
-          "postgres://user.dsolzc3km9wq:private-test-secret@db.pg.psdb.cloud/tnl",
+        TNLD_DATABASE_BRANCH: "production",
+        TNLD_DATABASE_DIRECT_URL: "postgres://migrator:private-test-secret@db.pg.psdb.cloud/tnl",
       },
     },
   );
   expect(result.status).toBe(1);
-  expect(result.stderr).toBe(
-    "server deployment: direct control database URL does not belong to staging\n",
-  );
+  expect(result.stderr).toBe("server deployment: database branch does not match staging\n");
   expect(result.stdout).toBe("");
 });
