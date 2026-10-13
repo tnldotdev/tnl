@@ -63,7 +63,7 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 	switch kind {
 	case visitorConnection:
 		limit, resource = s.config.MaxConnections, "public_connections"
-		if s.byPublicURL[key] >= max(1, s.config.MaxConnections/2) {
+		if s.byPublicURL[key] >= min(s.config.Traffic.Default.Connections, max(1, s.config.MaxConnections/2)) {
 			return nil, "public_url_connections"
 		}
 	case deniedConnection:

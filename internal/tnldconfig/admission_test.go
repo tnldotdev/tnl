@@ -68,3 +68,27 @@ func TestAutomaticAndExplicitConnectionCapacities(t *testing.T) {
 		t.Fatalf("flag override = %d, err = %v", fromFlag.PublisherConnectionLimit, err)
 	}
 }
+
+func TestTrafficDefaultsAndOperatorCeilings(t *testing.T) {
+	base := []string{"--role", "ingress", "--control-hostname", "control.example.test",
+		"--cluster-secret", testClusterSecret, "--ingress-id", "ingress-1"}
+	cfg, err := Parse(base)
+	if err != nil || cfg.TrafficDefaultConnections != 32 || cfg.TrafficMaxConnections != 128 ||
+		cfg.TrafficDefaultRate != 20 || cfg.TrafficDefaultBurst != 40 ||
+		cfg.TrafficDefaultUploadBytes != 8<<20 || cfg.TrafficDefaultDownloadBytes != 16<<20 {
+		t.Fatalf("default traffic = %+v, %v", cfg, err)
+	}
+	for _, setting := range []string{
+		"--traffic-default-connections=0", "--traffic-default-rate=0",
+		"--traffic-default-upload-bytes=1", "--traffic-source-rate=0",
+		"--traffic-max-rate=10", "--traffic-max-download-bytes=1",
+	} {
+		if _, err := Parse(append(append([]string{}, base...), setting)); err == nil {
+			t.Fatalf("invalid traffic setting %s was accepted", setting)
+		}
+	}
+	cfg, err = Parse(append(append([]string{}, base...), "--traffic-default-rate=30", "--traffic-max-rate=31"))
+	if err != nil || cfg.TrafficDefaultRate != 30 || cfg.TrafficMaxRate != 31 {
+		t.Fatalf("explicit traffic rate = %+v, %v", cfg, err)
+	}
+}

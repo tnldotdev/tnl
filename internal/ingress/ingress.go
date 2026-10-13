@@ -85,6 +85,7 @@ type Config struct {
 	MaxHostnameChallengeConnections int
 	MaxControlConnections           int
 	MaxRelayConnections             int
+	Traffic                         TrafficConfig
 	OpenTimeout                     time.Duration
 	Metrics                         Metrics
 	Observer                        OperationObserver
@@ -113,6 +114,7 @@ type Server struct {
 	done        chan struct{}
 	active      sync.WaitGroup
 	nextBackend atomic.Uint64
+	traffic     *trafficAdmission
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
@@ -123,6 +125,14 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		return nil, errors.New("ingress: connection limits must be positive")
 	}
 	if err := admissionDefaults(&config); err != nil {
+		return nil, err
+	}
+	if err := config.Traffic.resolve(); err != nil {
+		return nil, err
+	}
+	traffic, err := newTrafficAdmission(config.Traffic.Default, config.Traffic.SourceRate, config.Traffic.SourceBurst,
+		config.Traffic.ProcessRate, config.Traffic.ProcessBurst, config.Traffic.ProcessUpload, config.Traffic.ProcessDownload)
+	if err != nil {
 		return nil, err
 	}
 	if config.ServerHostname == "" != (config.HandleControl == nil) {
@@ -146,6 +156,7 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		config:      config,
 		openContext: openContext,
 		cancelOpens: cancelOpens,
+		traffic:     traffic,
 		connections: make(map[net.Conn]struct{}),
 		backends:    make(map[net.Conn]struct{}),
 		byPublicURL: make(map[string]int),
@@ -240,6 +251,12 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 			s.config.Metrics.IncInspectionFailure("metadata")
 		}
 		return nil
+	}
+	if s.traffic != nil {
+		if allowed, reason := s.traffic.allowSource(source.Addr()); !allowed {
+			s.rejectCapacity(reason)
+			return nil
+		}
 	}
 	_ = public.SetReadDeadline(time.Time{})
 	// fly sends the visitor's original destination in the trusted outer header.

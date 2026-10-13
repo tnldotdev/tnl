@@ -6,9 +6,11 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/routebackend"
@@ -17,6 +19,23 @@ import (
 type rawVisitorBackend struct {
 	connection net.Conn
 	opens      atomic.Int32
+}
+
+type rateOpenBackend struct {
+	entered chan struct{}
+	release <-chan struct{}
+	opens   atomic.Int32
+}
+
+func (b *rateOpenBackend) Open(ctx context.Context, _ string) (net.Conn, error) {
+	b.opens.Add(1)
+	b.entered <- struct{}{}
+	select {
+	case <-b.release:
+		return nil, errors.New("relay unavailable")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func testPublicPort(port uint16) *uint16 { return &port }
@@ -220,4 +239,53 @@ func TestIngressDatabasePortRejectsDeniedAndMismatchedRoutes(t *testing.T) {
 	if backend.opens.Load() != 0 {
 		t.Fatal("mismatched public port opened a backend")
 	}
+}
+
+func TestIngressTCPRateRejectsBeforeOpeningPublisherStream(t *testing.T) {
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(unblock)
+	backend := &rateOpenBackend{entered: make(chan struct{}, 2), release: release}
+	_, address := startIngress(t, Config{RequireProxyHeader: true,
+		Traffic: TrafficConfig{Default: TrafficLimits{Connections: 4, Rate: 1, Burst: 1, UploadBytes: 64 << 10, DownloadBytes: 64 << 10}},
+		LookupPort: func(port uint16) (PublicURL, LookupReason) {
+			if port != 15432 {
+				return PublicURL{}, LookupMissing
+			}
+			return PublicURL{ID: "public_url_db", PublishRunNumber: 1, PublicPort: testPublicPort(port),
+				AllowAll: true, Backends: []routebackend.Backend{backend}}, LookupCurrent
+		},
+	})
+	connect := func() net.Conn {
+		t.Helper()
+		visitor, err := net.Dial("tcp", address)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ownIngressConn(t, visitor)
+		header, err := proxyproto.Encode(proxyproto.Header{
+			Source: netip.MustParseAddrPort("198.51.100.3:40001"), Destination: netip.MustParseAddrPort("203.0.113.10:15432")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := visitor.Write(header); err != nil {
+			t.Fatal(err)
+		}
+		return visitor
+	}
+	first := connect()
+	ingressAwait(t, backend.entered)
+	second := connect()
+	if err := second.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var buffer [1]byte
+	if count, err := second.Read(buffer[:]); count != 0 || !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("rate-limited TCP visitor = %d bytes, %v", count, err)
+	}
+	if backend.opens.Load() != 1 {
+		t.Fatalf("rate-limited visitor opened %d relay streams", backend.opens.Load())
+	}
+	_ = first.Close()
+	unblock()
 }
