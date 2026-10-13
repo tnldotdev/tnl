@@ -16,11 +16,6 @@ import (
 
 var selectDockerPublisher = dockerPublisherClient
 
-func selectedPublisherEndpoint(ctx context.Context, project projectConfiguration) (localPublisherEndpoint, error) {
-	client, err := selectDockerPublisher(ctx, project, 10*time.Second)
-	return client.endpoint, err
-}
-
 func selectedPublisherClient(ctx context.Context, project projectConfiguration, timeout time.Duration) (namedPublisherClient, error) {
 	return selectDockerPublisher(ctx, project, timeout)
 }

@@ -94,12 +94,13 @@ func TestNamedPublisherCLIStreamsExistingPublishEventsAndReleasesOwner(t *testin
 		t.Fatal(err)
 	}
 	invocation.SetPublishMode(telemetryPublishApp)
+	invocation.SetEntryMode(telemetryNamed)
 	err = followNamedPublication(ctx, publishCommand{Service: "orders"}, client, owner, output, invocation, telemetryHosted)
 	if !errors.Is(err, context.Canceled) || !released {
 		t.Fatalf("named publication termination = %v, released=%t", err, released)
 	}
 	if len(reports) != 1 || reports[0].Event != telemetryPublishRunStarted ||
-		reports[0].PublishMode != telemetryPublishApp || reports[0].ServerKind != telemetryHosted || reports[0].Framework != "" {
+		reports[0].PublishMode != telemetryPublishApp || reports[0].EntryMode != telemetryNamed || reports[0].ServerKind != telemetryHosted || reports[0].Framework != "" {
 		t.Fatalf("named publication ready telemetry = %+v", reports)
 	}
 	if err := output.finish(ctx, err); !errors.Is(err, context.Canceled) {
