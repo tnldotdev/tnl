@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import socket
+import sys
 from pathlib import Path
 
 import uvicorn as _uvicorn
@@ -175,6 +176,10 @@ def run(
     log_level: str = "info",
 ) -> None:
     """serve a configured app from any worktree with a bound-port registration."""
+    # spawn re-executes dev.py as __mp_main__; only its original process starts
+    # the reload supervisor. the Uvicorn worker continues through Server.run.
+    if reload and sys._getframe(1).f_globals.get("__name__") == "__mp_main__":
+        return
     if (
         not isinstance(app, str)
         or not app
@@ -198,6 +203,7 @@ def run(
         reload_dirs=reload_dirs,
         workers=1,
         log_level=log_level,
+        ws="websockets-sansio",
     )
     server = Server(config, service, root)
     if config.should_reload:

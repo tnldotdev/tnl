@@ -53,17 +53,11 @@ jobs:
       - name: Verify TypeScript publisher image
         run: task go:test:integration:publisher-dev-image
 
-      - name: Verify database clients
-        run: task go:test:integration:database-clients
+      - name: Verify TCP clients
+        run: task go:test:integration:tcp-clients
 
       - name: Check MySQL inspector against Vitess
         run: task go:test:integration:mysql-oracle
-
-      - name: Verify Redis publishing
-        run: task go:test:integration:redis
-
-      - name: Verify SSH publishing
-        run: task go:test:integration:ssh
 
   binary:
     name: Binary integration
