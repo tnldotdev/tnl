@@ -62,9 +62,6 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		flags.Ephemeral || flags.AllowAllIPs || len(flags.AllowIP) != 0 {
 		return failure.Wrap("validate scoped publish options", failure.InvalidTunnelFlags, errors.New("a scoped publish credential cannot change saved URL settings"))
 	}
-	if flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0 {
-		return failure.Wrap("validate scoped publish project", failure.InvalidTunnelFlags, errors.New("project integration URLs require a signed-in tnl session"))
-	}
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return err
@@ -108,6 +105,9 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	if !protocol.Valid() {
 		return failure.Wrap("read scoped publish protocol", failure.ServerResponseInvalid,
 			errors.New("control returned an invalid service protocol"))
+	}
+	if protocol == controlv1.Http && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
+		return failure.Wrap("validate scoped publish project", failure.InvalidTunnelFlags, errors.New("project integration URLs require a signed-in tnl session"))
 	}
 	if err := validateDatabasePublishOptions(flags, protocol); err != nil {
 		return err

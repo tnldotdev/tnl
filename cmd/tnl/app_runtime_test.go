@@ -173,6 +173,22 @@ func TestAdHocSocketRegistrationWaitsForTheSameReadyRun(t *testing.T) {
 	response.Body.Close()
 }
 
+func TestDatabaseServicesDoNotBecomeAppRegistrationsOrHTTPReadinessProbes(t *testing.T) {
+	protocol := "postgres"
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
+		"web": {}, "orders": {Publish: &config.Publish{Protocol: &protocol}},
+	}}}}
+	services := configuredRuntimeServices(project)
+	if len(services) != 1 || services[0].Name != "web" {
+		t.Fatalf("app registrations = %#v", services)
+	}
+	var output bytes.Buffer
+	err := runAppWaitWithProbe(t.Context(), project, "", waitCommand{Service: []string{"orders"}, Timeout: time.Second}, &output, nil)
+	if reason, _, ok := failure.Describe(err); !ok || reason != failure.InvalidCommand || !strings.Contains(err.Error(), "tnl status") {
+		t.Fatalf("database HTTP readiness = %v", err)
+	}
+}
+
 func TestWaitAlwaysChecksFreshResponsesAndKeepsFailingPublicationsRunning(t *testing.T) {
 	a, state, started := testAppRuntime(t)
 	id, err := a.manager.Reserve("api", "owner", 1, "https://api.example")

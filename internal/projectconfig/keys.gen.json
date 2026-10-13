@@ -4,5 +4,7 @@
   "public_url": "publicURL",
   "request_inspection": "requestInspection",
   "source_ips": "sourceIPs",
-  "strip_prefix": "stripPrefix"
+  "strip_prefix": "stripPrefix",
+  "target_ca_file": "targetCAFile",
+  "target_tls_name": "targetTLSName"
 }

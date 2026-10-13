@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
+	"github.com/tnldotdev/tnl/internal/databasetarget"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"go.yaml.in/yaml/v3"
@@ -171,6 +172,7 @@ func ValidateTNL(config TNL) error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := config.Services[name]
+		effectivePublish := MergePublish(config.Publish, service.Publish)
 		if err := validateReadiness(service.Readiness); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
@@ -183,8 +185,36 @@ func ValidateTNL(config TNL) error {
 		if err := validateServiceDirectory(service.Directory); err != nil {
 			return fmt.Errorf("services.%s.directory: %w", name, err)
 		}
-		if err := validateServiceValues(service.Tunnel, service.Publish); err != nil {
+		if err := validateServiceValues(service.Tunnel, effectivePublish); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
+		}
+		if ServiceProtocol(effectivePublish) != "http" {
+			if service.Readiness != nil || config.Readiness != nil || len(service.Paths) != 0 ||
+				service.Tunnel != nil && service.Tunnel.Open != nil && *service.Tunnel.Open ||
+				config.Tunnel != nil && config.Tunnel.Open != nil && *config.Tunnel.Open {
+				return fmt.Errorf("services.%s: database services cannot use HTTP readiness, path mounts, or browser opening", name)
+			}
+			if service.RequestInspection != nil && *service.RequestInspection == RequestInspectionDetailed ||
+				service.RequestInspection == nil && config.RequestInspection != nil && *config.RequestInspection == RequestInspectionDetailed {
+				return fmt.Errorf("services.%s: database services cannot inspect HTTP requests", name)
+			}
+			for _, definition := range config.Webhooks {
+				if definition.Service == name {
+					return fmt.Errorf("services.%s: database services cannot receive HTTP webhooks", name)
+				}
+			}
+			for _, definition := range config.Aliases {
+				if definition.Service == name {
+					return fmt.Errorf("services.%s: database services cannot serve HTTP aliases", name)
+				}
+			}
+			for _, sibling := range config.Services {
+				for _, mount := range sibling.Paths {
+					if mount.Service == name {
+						return fmt.Errorf("services.%s: database services cannot be used as HTTP path mounts", name)
+					}
+				}
+			}
 		}
 		if err := validateRatePair(service.Tunnel, config.Tunnel); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
@@ -287,13 +317,29 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 			seen[canonical[0]] = struct{}{}
 		}
 	}
-	if publish != nil && publish.Target != nil {
-		if _, err := localproxy.NormalizeTarget(string(*publish.Target)); err != nil {
-			return fmt.Errorf("publish.target: %w", err)
+	if publish != nil {
+		protocol := ServiceProtocol(publish)
+		if protocol != "http" && protocol != "postgres" && protocol != "mysql" {
+			return errors.New("publish.protocol must be http, postgres, or mysql")
 		}
-	}
-	if publish != nil && publish.CAFile != nil && (strings.TrimSpace(*publish.CAFile) != *publish.CAFile || *publish.CAFile == "") {
-		return errors.New("publish.ca_file must be a nonempty path without surrounding whitespace")
+		if publish.Target != nil {
+			target := string(*publish.Target)
+			if protocol == "http" {
+				if _, err := localproxy.NormalizeTarget(target); err != nil {
+					return fmt.Errorf("publish.target: %w", err)
+				}
+			} else if _, err := databasetarget.Host(target); err != nil {
+				return fmt.Errorf("publish.target: %w", err)
+			}
+		}
+		if publish.TargetTLSName != nil {
+			if protocol == "http" || *publish.TargetTLSName == "" || strings.TrimSpace(*publish.TargetTLSName) != *publish.TargetTLSName {
+				return errors.New("publish.target_tls_name requires a database protocol and a hostname")
+			}
+		}
+		if publish.TargetCAFile != nil && (strings.TrimSpace(*publish.TargetCAFile) != *publish.TargetCAFile || *publish.TargetCAFile == "") {
+			return errors.New("publish.target_ca_file must be a nonempty path without surrounding whitespace")
+		}
 	}
 	return nil
 }

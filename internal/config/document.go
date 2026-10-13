@@ -138,8 +138,46 @@ type Rate struct {
 }
 
 type Publish struct {
-	Target *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin reachable by the publisher, or a local port."`
-	CAFile *string `json:"ca_file,omitempty" yaml:"ca_file,omitempty" jsonschema_description:"Additional PEM certificate authorities for HTTPS targets; relative paths are resolved from the project root."`
+	Protocol      *string `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql" jsonschema_description:"Service protocol for the public URL; defaults to http."`
+	Target        *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin, local port, or database host:port reached by the publisher."`
+	TargetTLSName *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty" jsonschema_description:"Hostname expected in the target's TLS certificate; defaults to the target host."`
+	TargetCAFile  *string `json:"target_ca_file,omitempty" yaml:"target_ca_file,omitempty" jsonschema_description:"Additional PEM certificate authorities for the target; relative paths are resolved from the project root."`
+}
+
+// ServiceProtocol selects the public URL's service protocol, defaulting to http.
+func ServiceProtocol(publish *Publish) string {
+	if publish != nil && publish.Protocol != nil {
+		return *publish.Protocol
+	}
+	return "http"
+}
+
+// MergePublish applies one service's publish settings over the project defaults.
+func MergePublish(base, override *Publish) *Publish {
+	if base == nil && override == nil {
+		return nil
+	}
+	result := &Publish{}
+	if base != nil {
+		*result = *base
+	}
+	if override == nil {
+		return result
+	}
+	if override.Protocol != nil {
+		result.Protocol = override.Protocol
+	}
+	if override.Target != nil {
+		result.Target = override.Target
+		result.TargetTLSName, result.TargetCAFile = nil, nil
+	}
+	if override.TargetTLSName != nil {
+		result.TargetTLSName = override.TargetTLSName
+	}
+	if override.TargetCAFile != nil {
+		result.TargetCAFile = override.TargetCAFile
+	}
+	return result
 }
 
 // readiness selects the public GET used to check one app publication.

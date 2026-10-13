@@ -29,6 +29,26 @@ const staticConfig = {
   readiness: { path: "/health" },
 } satisfies TnlConfigInput;
 
+({
+  services: {
+    web: { directory: "apps/web" },
+    orders: {
+      publish: {
+        protocol: "postgres",
+        target: "db.internal:5432",
+        targetTLSName: "db.internal",
+        targetCAFile: "./ca.pem",
+      },
+    },
+  },
+}) satisfies TnlConfig;
+({
+  publish: {
+    // @ts-expect-error the retired static key is not accepted in TypeScript.
+    ca_file: "./ca.pem",
+  },
+}) satisfies TnlConfig;
+
 "1m" satisfies TnlRatePeriod;
 "1h30m" satisfies TnlRatePeriod;
 "1h2m3s4ms" satisfies TnlRatePeriod;

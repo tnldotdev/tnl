@@ -106,11 +106,17 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		}
 	}
 	usingConfiguredTarget := flags.Target == ""
+	if flags.Protocol == "" && effective.Publish != nil && effective.Publish.Protocol != nil {
+		flags.Protocol = *effective.Publish.Protocol
+	}
 	if usingConfiguredTarget && effective.Publish != nil && effective.Publish.Target != nil {
 		flags.Target = string(*effective.Publish.Target)
 	}
-	if usingConfiguredTarget && flags.TargetCAFile == "" && effective.Publish != nil && effective.Publish.CAFile != nil {
-		flags.TargetCAFile = *effective.Publish.CAFile
+	if usingConfiguredTarget && flags.TargetCAFile == "" && effective.Publish != nil && effective.Publish.TargetCAFile != nil {
+		flags.TargetCAFile = *effective.Publish.TargetCAFile
+	}
+	if usingConfiguredTarget && flags.TargetTLSName == "" && effective.Publish != nil && effective.Publish.TargetTLSName != nil {
+		flags.TargetTLSName = *effective.Publish.TargetTLSName
 	}
 	if flags.PublishCredential == "" {
 		applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)

@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -185,6 +186,9 @@ func configuredRuntimeServices(project projectConfiguration) []clientruntime.Ser
 	services := make([]clientruntime.Service, 0, len(project.Config.Services))
 	for name := range project.Config.Services {
 		effective, _ := project.EffectiveService(name)
+		if config.ServiceProtocol(effective.Publish) != "http" {
+			continue
+		}
 		readiness := clientruntime.Readiness{Path: "/"}
 		if effective.Readiness != nil {
 			readiness.Path = effective.Readiness.Path
@@ -567,8 +571,8 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	if err != nil {
 		return err
 	}
-	if effective.Publish != nil && effective.Publish.CAFile != nil {
-		configuration.TargetOptions, err = targetOptionsForCA(*effective.Publish.CAFile, project.Root)
+	if effective.Publish != nil && effective.Publish.TargetCAFile != nil {
+		configuration.TargetOptions, err = targetOptionsForCA(*effective.Publish.TargetCAFile, project.Root)
 		if err != nil {
 			return err
 		}
@@ -614,8 +618,8 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		if err != nil {
 			return err
 		}
-		if mounted.Publish != nil && mounted.Publish.CAFile != nil {
-			options, err = targetOptionsForCA(*mounted.Publish.CAFile, project.Root)
+		if mounted.Publish != nil && mounted.Publish.TargetCAFile != nil {
+			options, err = targetOptionsForCA(*mounted.Publish.TargetCAFile, project.Root)
 			if err != nil {
 				return err
 			}

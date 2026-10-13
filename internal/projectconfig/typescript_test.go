@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/config"
 )
 
 func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
@@ -381,5 +383,27 @@ func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 	}
 	if _, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{"dev":{"startup_timeout":"30s"}}}}`)); err == nil {
 		t.Fatal("static service field name was accepted in TypeScript")
+	}
+}
+
+func TestTypeScriptDatabasePublishUsesTargetTLSNames(t *testing.T) {
+	value, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{"publish":{"target":3000}},"orders":{"publish":{"protocol":"postgres","target":"db.internal:5432","targetTLSName":"db.internal","targetCAFile":"./ca.pem"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.ValidateTNL(value); err != nil {
+		t.Fatal(err)
+	}
+	options := value.Services["orders"].Publish
+	if options == nil || options.Protocol == nil || *options.Protocol != "postgres" ||
+		options.Target == nil || string(*options.Target) != "db.internal:5432" ||
+		options.TargetTLSName == nil || *options.TargetTLSName != "db.internal" ||
+		options.TargetCAFile == nil || *options.TargetCAFile != "./ca.pem" {
+		t.Fatalf("database publication = %#v", options)
+	}
+	for _, field := range []string{"ca_file", "target_ca_file"} {
+		if _, err := unmarshalTypeScriptTNL([]byte(`{"publish":{"` + field + `":"ca.pem"}}`)); err == nil {
+			t.Fatalf("TypeScript accepted retired field %q", field)
+		}
 	}
 }
