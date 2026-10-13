@@ -72,7 +72,7 @@ type publishOutput struct {
 	command               string
 	target                string
 	current               string
-	inspection            config.RequestInspectionMode
+	inspection            config.InspectionMode
 	demo                  bool
 	guestDemo             bool
 	openURL               func(string) error
@@ -223,7 +223,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			if o.guestDemo {
 				fields = append(fields, clioutput.Field{Label: "guest trial", Value: "15 min / about 5 MiB across runs"})
 			}
-			if o.inspection == config.RequestInspectionDetailed {
+			if o.inspection == config.InspectionDetailed {
 				fields = append(fields, clioutput.Field{Label: "request capture", Value: "detailed; headers and bodies saved locally"})
 			}
 			if o.current != "" {
@@ -295,7 +295,7 @@ func (o *publishOutput) currentIP(ip string) error {
 	return o.emit(publishEvent{Type: publishEventCurrentIP, IP: ip})
 }
 
-func (o *publishOutput) setRequestInspection(mode config.RequestInspectionMode) {
+func (o *publishOutput) setInspectionMode(mode config.InspectionMode) {
 	o.mu.Lock()
 	o.inspection = mode
 	o.mu.Unlock()

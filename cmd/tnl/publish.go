@@ -48,7 +48,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	output.setRequestInspection(flags.RequestInspection)
+	output.setInspectionMode(flags.InspectionMode)
 	defer func() { result = output.finish(ctx, result) }()
 	if flags.PublishCredential != "" {
 		if flags.Demo {
@@ -220,7 +220,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	defer recorder.Close()
 	publisherConfig.ObserveRequest = requestObservation(recorder)
-	publisherConfig.RequestInspection = flags.RequestInspection
+	publisherConfig.InspectionMode = flags.InspectionMode
 	if oauthHostname != "" {
 		publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauthHostname, integrationGroup, tunnel.ID())
 	}

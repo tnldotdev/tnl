@@ -28,6 +28,7 @@ export interface TnlConfig {
    * Publish one shared OAuth callback URL while project tunnels run.
    */
   oauth?: boolean;
+  inspection?: Inspection;
   /**
    * Default public URL and tunnel settings.
    */
@@ -87,6 +88,7 @@ export interface TnlConfig {
            * Service directory relative to the project configuration.
            */
           directory?: string;
+          inspection?: Inspection1;
           /**
            * PublicURL and tunnel overrides for this service.
            */
@@ -148,10 +150,6 @@ export interface TnlConfig {
                 }
               | undefined;
           };
-          /**
-           * Local HTTP request capture for this service.
-           */
-          requestInspection?: "summary" | "detailed";
         }
       | undefined;
   };
@@ -235,10 +233,12 @@ export interface TnlConfig {
         }
       | undefined;
   };
-  /**
-   * Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies.
-   */
-  requestInspection?: "summary" | "detailed";
+}
+/**
+ * Local inspection capture and retention for HTTP and supported TCP services.
+ */
+export interface Inspection {
+  mode?: "summary" | "detailed";
 }
 export interface Publish {
   /**
@@ -264,6 +264,9 @@ export interface Publish {
 }
 export interface Readiness {
   path: string;
+}
+export interface Inspection1 {
+  mode?: "summary" | "detailed";
 }
 
 /** The Git worktree or project directory that contains tnl.config.ts. */

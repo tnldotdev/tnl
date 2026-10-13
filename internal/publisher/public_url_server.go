@@ -55,7 +55,7 @@ type PublicURLServerConfig struct {
 	Limits                ApplicationLimits
 	OnTargetFailure       func()
 	ObserveRequest        func(RequestObservation)
-	RequestInspection     projectconfig.RequestInspectionMode
+	InspectionMode        projectconfig.InspectionMode
 	Certificate           tls.Certificate
 	CertificatePlan       controlv1.CertificatePlan
 }
@@ -126,7 +126,7 @@ type RequestObservation struct {
 	Status      int
 	Duration    time.Duration
 	Origin      string
-	CaptureMode projectconfig.RequestInspectionMode
+	CaptureMode projectconfig.InspectionMode
 	Detail      *RequestDetail
 }
 
@@ -136,7 +136,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if err != nil || hostname != config.Hostname {
 		return nil, errors.New("publisher: public URL hostname must be canonical")
 	}
-	if config.RequestInspection != "" && !config.RequestInspection.Valid() {
+	if config.InspectionMode != "" && !config.InspectionMode.Valid() {
 		return nil, errors.New("publisher: request inspection mode must be summary or detailed")
 	}
 	if config.RequestLimit < 0 {
@@ -207,7 +207,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					tracked := &observedResponseWriter{ResponseWriter: response}
 					var detail *RequestDetail
 					var incoming, outgoing *bodyCapture
-					if config.RequestInspection == projectconfig.RequestInspectionDetailed {
+					if config.InspectionMode == projectconfig.InspectionDetailed {
 						detail = &RequestDetail{}
 						detail.Query, detail.QueryTruncated = boundedRequestText(request.URL.RawQuery, 8<<10)
 						detail.RequestHeaders, detail.RequestHeadersTruncated = boundedRequestHeaders(request.Header, 16<<10)
@@ -231,9 +231,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						if status == 0 {
 							status = http.StatusOK
 						}
-						mode := projectconfig.RequestInspectionSummary
+						mode := projectconfig.InspectionSummary
 						if detail != nil {
-							mode = projectconfig.RequestInspectionDetailed
+							mode = projectconfig.InspectionDetailed
 							detail.RequestBody, detail.ResponseBody = incoming.snapshot(), outgoing.snapshot()
 							if request.ContentLength > incoming.total {
 								detail.RequestBody.Incomplete = true

@@ -20,6 +20,7 @@ import type { OpenOptions } from "@tnldotdev/tnl";
 }) satisfies OpenOptions;
 
 const staticConfig = {
+  inspection: { mode: "summary" },
   tunnel: {
     allowIP: ["192.0.2.0/24"],
     domain: "example.test",
@@ -33,6 +34,7 @@ const staticConfig = {
   services: {
     web: { directory: "apps/web" },
     orders: {
+      inspection: { mode: "detailed" },
       publish: {
         protocol: "postgres",
         target: "db.internal:5432",

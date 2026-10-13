@@ -127,7 +127,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		// a saved URL supplies hostname and visitor policy; local admission is still configurable.
 		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
 	}
-	applyRequestInspection(&flags.tunnelFlags, effective)
+	applyInspection(&flags.tunnelFlags, effective)
 	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
 	if flags.PublishCredential == "" {
 		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
@@ -225,16 +225,21 @@ func applyTunnelLimits(flags *tunnelFlags, limits *config.Limits) {
 	}
 }
 
-func applyRequestInspection(flags *tunnelFlags, effective config.TNL) {
-	if flags.requestInspectionFromCLI {
-		return
+func applyInspection(flags *tunnelFlags, effective config.TNL) {
+	if effective.Inspection != nil {
+		if !flags.inspectionModeFromCLI && effective.Inspection.Mode != nil {
+			flags.InspectionMode = *effective.Inspection.Mode
+		}
 	}
-	if effective.RequestInspection != nil {
-		flags.RequestInspection = *effective.RequestInspection
+	if flags.InspectionMode == "" {
+		flags.InspectionMode = config.InspectionSummary
 	}
 }
 
 func validateTunnelFlags(flags tunnelFlags) error {
+	if !flags.InspectionMode.Valid() {
+		return errors.New("--inspection-mode must be summary or detailed")
+	}
 	if flags.Requests != nil && *flags.Requests <= 0 || flags.Concurrency != nil && *flags.Concurrency <= 0 {
 		return errors.New("--requests and --concurrency must be greater than zero")
 	}

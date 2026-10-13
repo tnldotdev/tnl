@@ -64,7 +64,7 @@ func validateTCPPublishOptions(flags publishCommand, protocol controlv1.PublicUR
 		}
 		return nil
 	}
-	if flags.Open || flags.RequestInspection == config.RequestInspectionDetailed {
+	if flags.Open || flags.InspectionMode == config.InspectionDetailed {
 		return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags,
 			errors.New("TCP publications do not support --open or HTTP request capture"))
 	}

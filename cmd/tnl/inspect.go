@@ -60,7 +60,7 @@ type inspectionHTTP struct {
 	Detail json.RawMessage `json:"detail,omitempty"`
 }
 
-const inspectionDetailHint = "use --request-inspection=detailed on the next run"
+const inspectionDetailHint = "use --inspection-mode=detailed on the next run"
 
 func httpInspection(item clientstate.RequestRecord) inspectionRecord {
 	return inspectionRecord{

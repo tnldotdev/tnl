@@ -80,7 +80,7 @@ func TestDetailedRequestObservationRetainsBoundedRawData(t *testing.T) {
 	defer upstream.Close()
 	var captured RequestObservation
 	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "app.example", Target: upstream.URL,
-		RequestInspection: "detailed", ObserveRequest: func(event RequestObservation) { captured = event }})
+		InspectionMode: "detailed", ObserveRequest: func(event RequestObservation) { captured = event }})
 	if err != nil {
 		t.Fatal(err)
 	}
