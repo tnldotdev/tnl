@@ -12,9 +12,6 @@ import (
 	"path/filepath"
 )
 
-// old non-macOS client state stored secrets in plaintext; start a fresh database.
-const databaseFormatVersion = 3
-
 // the key lives next to the database; the file is required to open that state.
 type fileSecretProtector struct {
 	account, keyPath string
