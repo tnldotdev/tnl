@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func TestDatabasePublishAndCredentialFlags(t *testing.T) {
+func TestTCPPublishAndCredentialFlags(t *testing.T) {
 	for _, test := range []struct {
 		args []string
 		want string
@@ -29,10 +29,10 @@ func TestDatabasePublishAndCredentialFlags(t *testing.T) {
 		if test.want == "postgres" {
 			if flags.Publish.Target != "db.internal:5432" || flags.Publish.Protocol != test.want ||
 				flags.Publish.Name != "orders" || !flags.Publish.TargetTLS || flags.Publish.TargetTLSName != "db.internal" {
-				t.Fatalf("database publish flags = %+v", flags.Publish)
+				t.Fatalf("TCP publish flags = %+v", flags.Publish)
 			}
 		} else if flags.URL.Credential.Create.Protocol != test.want || flags.URL.Credential.Create.Name != "orders" {
-			t.Fatalf("database credential flags = %+v", flags.URL.Credential.Create)
+			t.Fatalf("TCP credential flags = %+v", flags.URL.Credential.Create)
 		}
 	}
 }
@@ -163,16 +163,16 @@ func TestDatabasePublishTargetAndScopedProtocol(t *testing.T) {
 	}
 }
 
-func TestDatabasePublicAddressAndFlags(t *testing.T) {
+func TestTCPPublicAddressAndFlags(t *testing.T) {
 	port := 15432
 	address, err := savedPublicAddress(controlv1.PublicURL{
 		CanonicalHostname: "orders.example", ServiceProtocol: controlv1.Postgres, PublicPort: &port,
 	})
 	if err != nil || address != "orders.example:15432" {
-		t.Fatalf("database address = %q, %v", address, err)
+		t.Fatalf("TCP address = %q, %v", address, err)
 	}
 	if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Mysql}); err == nil {
-		t.Fatal("database URL without a public port was accepted")
+		t.Fatal("TCP public URL without a public port was accepted")
 	}
 	for _, invalid := range []int{1023, 65536} {
 		if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Postgres, PublicPort: &invalid}); err == nil {
@@ -183,18 +183,18 @@ func TestDatabasePublicAddressAndFlags(t *testing.T) {
 		t.Fatal("unknown public URL protocol was accepted")
 	}
 	if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Http, PublicPort: &port}); err == nil {
-		t.Fatal("HTTP public URL advertised a database port")
+		t.Fatal("HTTP public URL advertised a TCP port")
 	}
 	if got, err := savedPublicAddress(controlv1.PublicURL{CanonicalHostname: "api.example", ServiceProtocol: controlv1.Http}); err != nil || got != "https://api.example" {
 		t.Fatalf("HTTP address = %q, %v", got, err)
 	}
 	if err := validateTCPPublishOptions(publishCommand{TargetTLSName: "db.internal"}, controlv1.Http); err == nil {
-		t.Fatal("HTTP accepted database TLS settings")
+		t.Fatal("HTTP accepted TCP target TLS settings")
 	}
 	if err := validateTCPPublishOptions(publishCommand{TargetTLSName: "db.internal"}, controlv1.Postgres); err == nil {
-		t.Fatal("database accepted target TLS name without target TLS")
+		t.Fatal("TCP accepted target TLS name without target TLS")
 	}
 	if err := validateTCPPublishOptions(publishCommand{openOptions: openOptions{Open: true}}, controlv1.Mysql); err == nil {
-		t.Fatal("database --open was silently ignored")
+		t.Fatal("TCP --open was silently ignored")
 	}
 }

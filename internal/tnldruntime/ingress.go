@@ -204,7 +204,7 @@ func (d *daemon) startIngressRuntime(
 			}
 			route, err := forwarder.PublicURL(entry)
 			if err != nil {
-				logOperationalError("read ingress database public URL", failure.ServerIngressFailed, err)
+				logOperationalError("read ingress TCP public URL", failure.ServerIngressFailed, err)
 				return ingress.PublicURL{}, ingress.LookupInvalidProjection
 			}
 			return route, ingress.LookupCurrent

@@ -75,13 +75,13 @@ visitor may use a separate, bounded forwarding budget to reach the publisher
 for an HTTPS 403, but never reaches the target. The publisher removes
 untrusted forwarding headers before proxying an allowed HTTP request.
 
-For a database public URL, ingress uses the original destination port in the
+For a TCP public URL, ingress uses the original destination port in the
 trusted outer PROXY v2 header instead of inspecting a ClientHello. A routing
 entry binds that port to a saved public URL within one ingress pool; missing or
 conflicting entries fail closed. Ingress applies the same IP policy, admission,
-and retry boundary before forwarding database startup bytes unchanged. It closes
-a denied database connection without opening a publisher stream. Database TLS
-negotiation belongs to the publisher, not ingress.
+and retry boundary before forwarding visitor bytes unchanged. It closes a denied
+TCP connection without opening a publisher stream. Ingress does not terminate
+visitor TLS for TCP public URLs; the publisher handles it when the protocol uses TLS.
 `internal/tcpport` checks allocated public ports (1024–65535) separately from
 ordinary TCP ports (1–65535). `internal/tcptarget` checks the private
 host:port target before the publisher dials it.
