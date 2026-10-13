@@ -66,6 +66,12 @@ visitors on fewer public URLs. `PUBLISHER_RATE` and `PUBLISHER_BURST` override
 those test settings; ordinary publishers keep their smaller defaults. Record
 the selected values in `admission-limits.json` alongside process capacities.
 
+The same fixture sets ingress to 100 new connections per second per public URL
+and per visitor source, each with a 200-connection burst. This lets the relay
+fallback workload test publication recovery rather than the smaller server
+defaults. Override them with `TRAFFIC_DEFAULT_RATE`, `TRAFFIC_DEFAULT_BURST`,
+`TRAFFIC_SOURCE_RATE`, and `TRAFFIC_SOURCE_BURST` when measuring admission.
+
 To investigate a fault, select one `SCENARIO` at a time. Available cases
 include `relay-kill`, `control-restart`, `forwarding-blackhole`,
 `publisher-blackhole`, `udp-fallback`, `latency`, and `packet-loss`. For example:
