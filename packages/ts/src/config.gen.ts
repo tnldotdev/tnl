@@ -242,7 +242,7 @@ export interface TnlConfig {
 }
 export interface Publish {
   /**
-   * Local service protocol: http (default), postgres, or mysql.
+   * Service protocol for the public URL; defaults to http.
    */
   protocol?: "http" | "postgres" | "mysql";
   /**
@@ -254,7 +254,7 @@ export interface Publish {
    */
   targetCAFile?: string;
   /**
-   * Hostname expected in the private database TLS certificate; defaults to the target host.
+   * Hostname expected in the target's TLS certificate; defaults to the target host.
    */
   targetTLSName?: string;
 }
