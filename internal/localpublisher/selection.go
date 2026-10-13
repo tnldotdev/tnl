@@ -14,18 +14,8 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/localpublisherv1"
 )
 
-var selectDockerPublisher = dockerPublisherClient
-
-func selectedPublisherClient(ctx context.Context, project projectConfiguration, timeout time.Duration) (namedPublisherClient, error) {
-	return selectDockerPublisher(ctx, project, timeout)
-}
-
-func remotePublisherScope(ctx context.Context, project projectConfiguration, app, adHoc bool, service string) (localPublisherEndpoint, error) {
-	client, err := selectedPublisherClient(ctx, project, 10*time.Second)
-	if err != nil {
-		return localPublisherEndpoint{}, err
-	}
-	owner := client.endpoint
+func remotePublisherScope(ctx context.Context, project projectConfiguration, app, adHoc bool, service string, owner localPublisherEndpoint, transport *http.Client) (localPublisherEndpoint, error) {
+	client := namedPublisherClient{endpoint: owner, http: transport}
 	var snapshot localpublisherv1.ProjectSnapshot
 	if err := client.request(ctx, http.MethodGet, "/v1/status", "", nil, &snapshot); err != nil {
 		return localPublisherEndpoint{}, err

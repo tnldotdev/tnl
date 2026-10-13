@@ -37,12 +37,14 @@ import (
 )
 
 type runtimeOptions struct {
-	Directory string
-	StateDir  string
-	App       bool
-	Service   string
-	AdHoc     bool
-	Listen    string
+	Directory     string
+	StateDir      string
+	App           bool
+	Service       string
+	AdHoc         bool
+	NoTelemetry   bool
+	RemoteScope   func(context.Context, projectconfig.Project, bool, bool, string) (localPublisherEndpoint, error)
+	QueueSDKReady func(context.Context, *clientstate.Database, string, string, string, string)
 }
 
 func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfiguration, string, error) {
@@ -194,7 +196,10 @@ func runRuntimeEndpoint(ctx context.Context, options runtimeOptions, output io.W
 	}
 	if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
 		spawn = false
-		credential, err := remotePublisherScope(ctx, project, options.App, options.AdHoc, options.Service)
+		if options.RemoteScope == nil {
+			return failure.Wrap("select external publisher", failure.ClientStateUnavailable, errors.New("publisher owner request is unavailable"))
+		}
+		credential, err := options.RemoteScope(ctx, project.Project, options.App, options.AdHoc, options.Service)
 		if err != nil {
 			return err
 		}
@@ -210,25 +215,29 @@ func runRuntimeEndpoint(ctx context.Context, options runtimeOptions, output io.W
 }
 
 type appPreparation struct {
-	assignment privateprotocol.Assignment
-	services   publisherServices
-	policy     resolvedIPPolicy
-	flags      tunnelFlags
-	framework  privateprotocol.Framework
-	project    projectConfiguration
-	named      bool
-	resolve    func() string
+	assignment  privateprotocol.Assignment
+	services    publisherServices
+	policy      resolvedIPPolicy
+	flags       tunnelFlags
+	framework   privateprotocol.Framework
+	telemetry   string
+	noTelemetry bool
+	project     projectConfiguration
+	named       bool
+	resolve     func() string
 }
 
 type appRuntime struct {
-	manager   *clientruntime.Manager
-	adhoc     *clientruntime.AdHocManager
-	project   projectConfiguration
-	state     *clientstate.Database
-	authHTTP  *http.Client
-	mu        sync.Mutex
-	prepareMu sync.Mutex
-	prepared  map[string]appPreparation
+	manager       *clientruntime.Manager
+	adhoc         *clientruntime.AdHocManager
+	project       projectConfiguration
+	state         *clientstate.Database
+	authHTTP      *http.Client
+	noTelemetry   bool
+	queueSDKReady func(context.Context, *clientstate.Database, string, string, string, string)
+	mu            sync.Mutex
+	prepareMu     sync.Mutex
+	prepared      map[string]appPreparation
 }
 
 func authenticateRuntime(ctx context.Context, state *clientstate.Database, server string) (*clientauth.Client, error) {
@@ -295,7 +304,7 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		return err
 	}
 	defer state.Close()
-	runtime := &appRuntime{project: project, state: state, prepared: map[string]appPreparation{}}
+	runtime := &appRuntime{project: project, state: state, noTelemetry: options.NoTelemetry, queueSDKReady: options.QueueSDKReady, prepared: map[string]appPreparation{}}
 	runtime.manager, err = clientruntime.New(ctx, project.Root, root, configuredRuntimeServices(project), runtime.publish)
 	if err != nil {
 		return err
@@ -311,44 +320,23 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	runtime.adhoc = clientruntime.NewAdHocManager(ctx, runtime.publishAdHoc, runtime.manager.Alive, runtime.manager.BeginPreparation)
 	defer runtime.adhoc.Close()
 	listen := "127.0.0.1:0"
-	ownerCredential := ""
 	external := false
 	if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
-		if selection.Type == "docker" {
-			external = true
-			listen = net.JoinHostPort("0.0.0.0", strconv.Itoa(*selection.ContainerPort))
-			for _, service := range configuredRuntimeServices(project) {
-				if service.ServiceProtocol != "" {
-					continue
-				}
-				base := os.Getenv("TNL_PUBLISHER_APP_ENDPOINT_DIR")
-				resolved, resolveErr := filepath.EvalSymlinks(base)
-				if !filepath.IsAbs(base) || resolveErr != nil || pathInside(resolved, project.Root) {
-					return failure.Wrap("start Docker publisher", failure.ProjectConfigInvalid,
-						errors.New("set TNL_PUBLISHER_APP_ENDPOINT_DIR to private per-service volume mounts outside the project"))
-				}
+		external = true
+		listen = net.JoinHostPort("0.0.0.0", strconv.Itoa(*selection.ContainerPort))
+		for _, service := range configuredRuntimeServices(project) {
+			if service.ServiceProtocol != "" {
+				continue
 			}
-		} else {
-			ownerCredential, err = readPublisherOwnerCredential(project.Root, selection.CredentialFile())
-			if err != nil {
-				return err
+			base := os.Getenv("TNL_PUBLISHER_APP_ENDPOINT_DIR")
+			resolved, resolveErr := filepath.EvalSymlinks(base)
+			if !filepath.IsAbs(base) || resolveErr != nil || pathInside(resolved, project.Root) {
+				return failure.Wrap("start Docker publisher", failure.ProjectConfigInvalid,
+					errors.New("set TNL_PUBLISHER_APP_ENDPOINT_DIR to private per-service volume mounts outside the project"))
 			}
-			if options.Listen == "" {
-				return failure.Wrap("start external publisher", failure.ProjectConfigInvalid, errors.New("url publishers require --listen behind HTTPS"))
-			}
-			host, port, splitErr := net.SplitHostPort(options.Listen)
-			address := net.ParseIP(host)
-			parsedPort, portErr := strconv.Atoi(port)
-			if splitErr != nil || address == nil || !address.IsLoopback() || portErr != nil || parsedPort < 0 || parsedPort > 65535 {
-				return failure.Wrap("start external publisher", failure.ProjectConfigInvalid,
-					errors.New("url publisher --listen must bind a loopback TCP address behind HTTPS"))
-			}
-			listen = options.Listen
 		}
-	} else if options.Listen != "" {
-		return failure.Wrap("start local publisher", failure.InvalidCommand, errors.New("--listen requires a docker or url publisher in project configuration"))
 	}
-	tcpServer, tcpDone, err := startRuntimeTCPWithProjectOptions(key, runtime.handler(), listen, ownerCredential, project.Config.Publisher, configuredRuntimeServices(project)...)
+	tcpServer, tcpDone, err := startRuntimeTCPWithProjectOptions(key, runtime.handler(), listen, "", project.Config.Publisher, configuredRuntimeServices(project)...)
 	if err != nil {
 		return err
 	}
@@ -364,10 +352,10 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		case err := <-tcpDone:
 			return fmt.Errorf("serve local publisher TCP API: %w", err)
 		case <-ticker.C:
-			if !external && ownerCredential == "" && os.Getppid() != parentPID {
+			if !external && os.Getppid() != parentPID {
 				return nil
 			}
-			if runtime.manager.Sweep(runtime.manager.Alive) && !external && ownerCredential == "" {
+			if runtime.manager.Sweep(runtime.manager.Alive) && !external {
 				return nil
 			}
 			runtime.adhoc.Sweep()
@@ -517,7 +505,8 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	}
 	assignment.RegistrationID = id
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{assignment: assignment, services: services, policy: policy, flags: flags, framework: request.Framework, project: project}
+	a.prepared[id] = appPreparation{assignment: assignment, services: services, policy: policy, flags: flags, framework: request.Framework, project: project,
+		telemetry: request.Owner + "\x00" + name, noTelemetry: request.TelemetryDisabled}
 	a.mu.Unlock()
 	return assignment, nil
 }
@@ -681,14 +670,6 @@ func (a *appRuntime) registeredAppTarget(ctx context.Context, service, target, b
 	if err != nil || origin.Hostname() == "" || origin.Port() == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" ||
 		(origin.Scheme != "http" && origin.Scheme != "https") {
 		return "", failure.Wrap("register app listener", failure.ProjectConfigInvalid, errors.New("app target must be a canonical HTTP origin"))
-	}
-	if publisher.Type == "url" {
-		name := strings.ToLower(origin.Hostname())
-		if ip := net.ParseIP(name); ip != nil && ip.IsLoopback() || name == "localhost" || strings.HasSuffix(name, ".localhost") {
-			return "", failure.Wrap("register app listener", failure.ProjectConfigInvalid,
-				errors.New("url publisher cannot reach another host's loopback listener; use a directly reachable app target"))
-		}
-		return target, nil
 	}
 	if localPublisherScopeFrom(ctx).kind != localScopeApp || boundHost != "0.0.0.0" && boundHost != "::" {
 		return "", failure.Wrap("register app listener", failure.ProjectConfigInvalid,
@@ -899,6 +880,9 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		case publisher.EventReady:
 			if err := observe(event.PublishRunNumber, true); err != nil {
 				return err
+			}
+			if !a.noTelemetry && !preparation.noTelemetry && a.queueSDKReady != nil {
+				a.queueSDKReady(ctx, a.state, preparation.telemetry, "dev", server, service.Framework)
 			}
 			copy := service
 			copy.PublicURL, copy.PublishRunNumber, copy.Routable = event.PublicURL, event.PublishRunNumber, true

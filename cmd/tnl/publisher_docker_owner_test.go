@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/localpublisher"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 )
 
@@ -35,11 +36,11 @@ func TestDockerOwnerRequestStaysInsidePublisherClientState(t *testing.T) {
 	handler.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
 		privateprotocol.Write(w, http.StatusOK, map[string]string{"project": project})
 	})
-	server, _, err := startRuntimeTCP(key, handler)
+	server, _, err := localpublisher.StartAPI(key, handler, "127.0.0.1:0", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = stopRuntimeTCP(context.Background(), server, key) })
+	t.Cleanup(func() { _ = localpublisher.StopAPI(context.Background(), server, key) })
 	owner, err := readRuntimeTCPEndpoint(key)
 	if err != nil {
 		t.Fatal(err)

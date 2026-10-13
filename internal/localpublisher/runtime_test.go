@@ -333,13 +333,8 @@ func TestExternalPublisherMapsOnlyReachableAppListeners(t *testing.T) {
 			t.Fatalf("accepted unreachable or unscoped app target %+v", test)
 		}
 	}
-	url := "https://publisher.example.test"
-	a.project.Config.Publisher = &config.ProjectPublisher{Type: "url", URL: &url}
-	if _, err := a.registeredAppTarget(ctx, "web", "http://127.0.0.1:49152", "0.0.0.0"); err == nil {
-		t.Fatal("remote url publisher accepted developer loopback")
-	}
-	if target, err := a.registeredAppTarget(ctx, "web", "http://web.internal:49152", "0.0.0.0"); err != nil || target != "http://web.internal:49152" {
-		t.Fatalf("directly reachable url publisher target = %q, %v", target, err)
+	if _, err := a.registeredAppTarget(ctx, "web", "http://web.internal:49152", "0.0.0.0"); err == nil {
+		t.Fatal("docker publisher accepted an app-selected private hostname")
 	}
 }
 
@@ -347,7 +342,7 @@ func TestExternalPublisherUsesMountedHostWorktreeLabel(t *testing.T) {
 	t.Setenv("TNL_CONFIG", "")
 	t.Setenv("TNL_PUBLISHER_EXTERNAL", "1")
 	root := t.TempDir()
-	configData := []byte(`{"version":1,"tnl":{"publisher":{"type":"url","url":"https://publisher.example.test","owner_credential_file":"owner-token"},"services":{"web":{"target":{"type":"app"}}}}}`)
+	configData := []byte(`{"version":1,"tnl":{"publisher":{"type":"docker","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"publisher"},"container_port":8765},"services":{"web":{"target":{"type":"app"}}}}}`)
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), configData, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -457,101 +452,6 @@ func TestDockerPublisherGeneratesOwnerCredentialInPrivateClientState(t *testing.
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("external publisher did not stop with its owner")
-	}
-}
-
-func TestExternalPublisherServesTheOwnerCredentialFromMountedProject(t *testing.T) {
-	t.Setenv("TNL_CONFIG", "")
-	t.Setenv("TNL_PUBLISHER_EXTERNAL", "1")
-	root := t.TempDir()
-	configData := []byte(`{"version":1,"tnl":{"publisher":{"type":"url","url":"https://publisher.example.test","owner_credential_file":"owner-token"},"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"127.0.0.1:5432"}}}}}`)
-	if err := os.WriteFile(filepath.Join(root, "tnl.json"), configData, 0600); err != nil {
-		t.Fatal(err)
-	}
-	owner, err := publisherCredential()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "owner-token"), []byte(owner), 0600); err != nil {
-		t.Fatal(err)
-	}
-	metadata := projectmeta.Metadata{Version: projectmeta.Version, Namespace: "shop.example.test",
-		Services: map[string]projectmeta.Service{}, ServiceDirectories: map[string]string{},
-		Worktree: &projectmeta.Worktree{Label: projectconfig.WorktreeLabel{Project: "shop", ID: "k7n2p9", FullLabel: "shop-k7n2p9"}},
-	}
-	if err := projectmeta.Write(t.Context(), root, metadata); err != nil {
-		t.Fatal(err)
-	}
-	state := t.TempDir()
-	if err := os.Chmod(state, 0700); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		done <- runRuntimeServe(ctx, runtimeOptions{Directory: root, StateDir: state, Listen: "127.0.0.1:0"})
-	}()
-	project, canonicalState, err := runtimeProject(t.Context(), runtimeOptions{Directory: root, StateDir: state})
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, err := runtimeKey(project.Root, canonicalState)
-	if err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	var endpoint localPublisherEndpoint
-	for time.Now().Before(deadline) {
-		endpoint, err = readRuntimeTCPEndpoint(key)
-		if err == nil {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if err != nil || endpoint.Credential != owner {
-		t.Fatalf("external publisher owner credential was not installed: %v", err)
-	}
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, endpoint.URL+"/v1/status", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Authorization", "Bearer "+owner)
-	response, err := (&http.Client{Timeout: time.Second}).Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("external publisher status = %d", response.StatusCode)
-	}
-	// external publishers have no app parent or local idle owner to keep them
-	// running while the CLI has no active publication.
-	time.Sleep(clientruntime.CleanupGrace + time.Second)
-	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, endpoint.URL+"/v1/status", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Authorization", "Bearer "+owner)
-	response, err = (&http.Client{Timeout: time.Second}).Do(request)
-	if err != nil {
-		t.Fatalf("idle external publisher stopped: %v", err)
-	}
-	response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("idle external publisher status = %d", response.StatusCode)
-	}
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("external publisher did not stop with its owner")
-	}
-	if err := runRuntimeServe(t.Context(), runtimeOptions{Directory: root, StateDir: state, Listen: "0.0.0.0:0"}); err == nil {
-		t.Fatal("url publisher exposed its plaintext API on all interfaces")
 	}
 }
 

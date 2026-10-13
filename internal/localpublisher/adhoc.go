@@ -95,8 +95,8 @@ func (a *appRuntime) publishAdHoc(ctx context.Context, request privateprotocol.A
 				}
 				status.State, status.PublishRunNumber = privateprotocol.AdHocRoutable, event.PublishRunNumber
 				update(status)
-				if !a.noTelemetry && !request.TelemetryDisabled {
-					queueSDKReady(ctx, a.state, request.RegistrationID, telemetryPublish, serverURL, "")
+				if !a.noTelemetry && !request.TelemetryDisabled && a.queueSDKReady != nil {
+					a.queueSDKReady(ctx, a.state, request.RegistrationID, "publish", serverURL, "")
 				}
 			case publisher.EventDraining:
 				status.State = privateprotocol.AdHocDraining

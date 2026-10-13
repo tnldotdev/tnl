@@ -53,14 +53,8 @@ func Credential() (string, error) { return publisherCredential() }
 func ConfiguredServices(project projectconfig.Project) []clientruntime.Service {
 	return configuredRuntimeServices(projectConfiguration{project})
 }
-func SelectedEndpoint(ctx context.Context, project projectconfig.Project) (Endpoint, error) {
-	return selectedPublisherEndpoint(ctx, projectConfiguration{project})
-}
-func RemoteScope(ctx context.Context, project projectconfig.Project, app, adHoc bool, service string) (Endpoint, error) {
-	return remotePublisherScope(ctx, projectConfiguration{project}, app, adHoc, service)
-}
-func ReadOwnerCredential(root, selected string) (string, error) {
-	return readPublisherOwnerCredential(root, selected)
+func RemoteScope(ctx context.Context, project projectconfig.Project, app, adHoc bool, service string, owner Endpoint, client *http.Client) (Endpoint, error) {
+	return remotePublisherScope(ctx, projectConfiguration{project}, app, adHoc, service, owner, client)
 }
 func HTTPClient(timeoutDuration time.Duration) *http.Client {
 	return publisherHTTPClient(timeoutDuration)
