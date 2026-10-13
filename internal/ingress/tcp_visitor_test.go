@@ -202,20 +202,20 @@ func TestIngressDatabasePortRejectsDeniedAndMismatchedRoutes(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := client.Read(make([]byte, 1)); err != io.EOF {
-			t.Fatalf("rejected database connection read = %v, want EOF", err)
+			t.Fatalf("rejected TCP connection read = %v, want EOF", err)
 		}
 	}
 	try(5432)
 	u := ingressAwait(t, usage.opened)
 	ingressAwait(t, u.closed)
 	if u.policyDenials != 1 || u.streams != 0 || backend.opens.Load() != 0 {
-		t.Fatalf("denied database usage = %+v, opens = %d", u, backend.opens.Load())
+		t.Fatalf("denied TCP usage = %+v, opens = %d", u, backend.opens.Load())
 	}
 	allow.Store(true)
 	try(15432)
 	https := ingressClient(t, address, "db.example", "198.51.100.3:40001")
 	if err := https.Handshake(); err == nil {
-		t.Fatal("database URL was forwarded through HTTPS hostname routing")
+		t.Fatal("TCP public URL was forwarded through HTTPS hostname routing")
 	}
 	if backend.opens.Load() != 0 {
 		t.Fatal("mismatched public port opened a backend")

@@ -75,15 +75,15 @@ visitor may use a separate, bounded forwarding budget to reach the publisher
 for an HTTPS 403, but never reaches the target. The publisher removes
 untrusted forwarding headers before proxying an allowed HTTP request.
 
-For a database public URL, ingress uses the original destination port in the
+For a TCP public URL, ingress uses the original destination port in the
 trusted outer PROXY v2 header instead of inspecting a ClientHello. A routing
 entry binds that port to a saved public URL within one ingress pool; missing or
 conflicting entries fail closed. Ingress applies the same IP policy, admission,
-and retry boundary before forwarding database startup bytes unchanged. It closes
-a denied database connection without opening a publisher stream. Database TLS
-negotiation belongs to the publisher, not ingress.
+and retry boundary before forwarding visitor bytes unchanged. It closes a denied
+TCP connection without opening a publisher stream. Ingress does not terminate
+visitor TLS for TCP public URLs; the publisher handles it when the protocol uses TLS.
 `internal/tcpport` checks allocated public ports (1024–65535) separately from
-ordinary TCP ports (1–65535). `internal/databasetarget` checks the private
+ordinary TCP ports (1–65535). `internal/tcptarget` checks the private
 host:port target before the publisher dials it.
 
 `internal/ingresspool` names the pool across control and ingress without making
@@ -96,8 +96,12 @@ public URL certificate. by default the private target receives plaintext TCP;
 the publisher never retries in plaintext after a target TLS failure. a
 PostgreSQL GSS request gets a refusal so the client can request TLS instead.
 PostgreSQL clients must disable SCRAM channel binding
-(`channel_binding=disable`): their TLS channel does not reach the database. a
-MySQL target with no TLS advertises visitor TLS through a rewritten greeting;
+(`channel_binding=disable`) when visitor TLS ends at the publisher: their TLS
+channel does not reach the database. `--visitor-tls-passthrough` instead passes
+the visitor TLS handshake to a PostgreSQL or MySQL target that accepts TLS,
+without requiring `--target-tls`. the client sees the target's certificate and
+must verify it; the publisher cannot inspect database commands in this mode.
+a MySQL target with no TLS advertises visitor TLS through a rewritten greeting;
 the publisher preserves its challenge and plugin, adjusts the authentication
 packet sequence, and handles the private server's RSA password exchange when
 required. plaintext database startup is never forwarded from a visitor.
