@@ -2,22 +2,12 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"errors"
-	"fmt"
 	"io"
-	"net/netip"
-	"slices"
-	"strings"
-	"time"
 
-	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/muxsession"
-	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/localpublisher"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
@@ -25,325 +15,93 @@ import (
 )
 
 type publisherServices struct {
-	authenticated         *clientauth.Client
-	state                 *clientstate.Store
-	hostname              string
-	namespace             string
-	teamID                string
-	membershipID          string
-	domainID              string
-	publicURLScope        controlv1.PublicURLScope
-	domainKind            authorityv1.DomainKind
-	customDomainAvailable bool
-	policyRevision        uint64
-	ephemeral             bool
-	routes                *controlclient.Client
-	traffic               trafficlimits.Selection
+	authenticated                                       *clientauth.Client
+	state                                               *clientstate.Store
+	hostname, namespace, teamID, membershipID, domainID string
+	publicURLScope                                      controlv1.PublicURLScope
+	domainKind                                          authorityv1.DomainKind
+	customDomainAvailable                               bool
+	policyRevision                                      uint64
+	ephemeral                                           bool
+	routes                                              *controlclient.Client
+	traffic                                             trafficlimits.Selection
+}
+
+func (p publisherServices) local() localpublisher.Services {
+	return localpublisher.ServicesFromFacts(localpublisher.ServiceFacts{
+		Authenticated: p.authenticated, State: p.state, Hostname: p.hostname, Namespace: p.namespace,
+		TeamID: p.teamID, MembershipID: p.membershipID, DomainID: p.domainID, Scope: p.publicURLScope,
+		DomainKind: p.domainKind, CustomDomainAvailable: p.customDomainAvailable, PolicyRevision: p.policyRevision,
+		Ephemeral: p.ephemeral, Control: p.routes, Traffic: p.traffic,
+	})
+}
+func servicesFromLocal(services localpublisher.Services) publisherServices {
+	p := services.Facts()
+	return publisherServices{authenticated: p.Authenticated, state: p.State, hostname: p.Hostname, namespace: p.Namespace,
+		teamID: p.TeamID, membershipID: p.MembershipID, domainID: p.DomainID, publicURLScope: p.Scope,
+		domainKind: p.DomainKind, customDomainAvailable: p.CustomDomainAvailable, policyRevision: p.PolicyRevision,
+		ephemeral: p.Ephemeral, routes: p.Control, traffic: p.Traffic}
+}
+func (p publisherServices) config(target string, prefixes []string, limits publisher.ApplicationLimits, traffic ...trafficlimits.Selection) publisher.Config {
+	return p.local().Config(target, prefixes, limits, traffic...)
 }
 
 type clientIPLookup interface {
 	ClientIP(context.Context) (controlv1.ClientIPResponse, error)
 }
-
 type resolvedIPPolicy struct {
 	prefixes []string
 	current  string
 }
 
-func authenticatePublisher(
-	ctx context.Context,
-	state *clientstate.Database,
-	serverURL, accessToken string,
-	command string,
-	stdin io.Reader,
-	diagnostics io.Writer,
-) (*clientauth.Client, error) {
-	return clientauth.Authenticate(ctx, clientauth.Config{
-		ServerEndpoint:       serverURL,
-		State:                state,
-		AccessToken:          accessToken,
-		Diagnostics:          diagnostics,
-		OpenURL:              interactiveBrowserOpener(stdin),
-		LoginToken:           loginTokenPrompt(stdin, diagnostics),
-		AuthenticationPrompt: authenticationPrompt(diagnostics, command),
-	})
+func resolveIPPolicy(ctx context.Context, control clientIPLookup, prefixes []string, public bool) (resolvedIPPolicy, error) {
+	allowed, current, err := localpublisher.ResolveIPPolicy(ctx, control, prefixes, public)
+	return resolvedIPPolicy{allowed, current}, err
 }
-
-func resolveIPPolicy(
-	ctx context.Context,
-	control clientIPLookup,
-	allowedIPPrefixes []string,
-	public bool,
-) (resolvedIPPolicy, error) {
-	if public {
-		return resolvedIPPolicy{prefixes: []string{}}, nil
-	}
-	canonical, err := authorization.CanonicalizeIPPrefixes(allowedIPPrefixes)
-	if err != nil {
-		return resolvedIPPolicy{}, failure.Wrap("validate allowed IP prefixes", failure.InvalidTunnelFlags, err)
-	}
-	seen := make(map[string]bool, len(canonical))
-	for _, prefix := range canonical {
-		seen[prefix] = true
-	}
-	current, err := control.ClientIP(ctx)
-	if err != nil {
-		return resolvedIPPolicy{}, fmt.Errorf("read current IP: %w", err)
-	}
-	address, err := netip.ParseAddr(current.Ip)
-	if err != nil || address.Zone() != "" {
-		return resolvedIPPolicy{}, failure.Wrap("read current IP", failure.ServerResponseInvalid, errors.Join(err, errors.New("control returned an invalid current IP")))
-	}
-	address = address.Unmap()
-	currentIP := address.String()
-	currentPrefix := netip.PrefixFrom(address, address.BitLen()).String()
-	if !seen[currentPrefix] {
-		canonical = append(canonical, currentPrefix)
-	}
-	slices.Sort(canonical)
-	return resolvedIPPolicy{prefixes: canonical, current: currentIP}, nil
+func authenticatePublisher(ctx context.Context, state *clientstate.Database, serverURL, accessToken, command string, stdin io.Reader, diagnostics io.Writer) (*clientauth.Client, error) {
+	return clientauth.Authenticate(ctx, clientauth.Config{ServerEndpoint: serverURL, State: state, AccessToken: accessToken,
+		Diagnostics: diagnostics, OpenURL: interactiveBrowserOpener(stdin), LoginToken: loginTokenPrompt(stdin, diagnostics), AuthenticationPrompt: authenticationPrompt(diagnostics, command)})
 }
-
-func preparePublisherServices(
-	ctx context.Context,
-	state *clientstate.Database,
-	serverURL, publicURL, name, selectedDomain, selectedTeam string,
-	ephemeral bool,
-	authenticated *clientauth.Client,
-) (publisherServices, error) {
-	publisherState, err := state.Server(ctx, serverURL)
-	if err != nil {
-		return publisherServices{}, err
-	}
-	discovery := authenticated.Discovery
-	if discovery.ManagedDomain == "" {
-		return publisherServices{}, failure.Wrap("read server discovery", failure.ServerResponseInvalid, errors.New("control discovery omitted the managed domain"))
-	}
-	api := teamAPI(authenticated.Authority)
-	identity, err := api.IdentityContext(ctx)
-	if err != nil {
-		return publisherServices{}, err
-	}
-	teamSession := teamSession{
-		store: publisherState, authenticated: authenticated, api: api, identity: identity,
-		projectTeam: selectedTeam,
-	}
-	current, err := teamSession.currentWithDomains(ctx)
-	if err != nil {
-		return publisherServices{}, err
-	}
-	if current.team.PolicyRevision < 0 {
-		return publisherServices{}, failure.Wrap("read team policy", failure.ServerResponseInvalid, errors.New("authority returned an invalid team policy revision"))
-	}
-	hostname, domain, publicURLScope, err := resolvePublishHostname(publicURL, name, selectedDomain, current)
-	if err != nil {
-		return publisherServices{}, err
-	}
-	customAvailable := slices.ContainsFunc(current.domains, func(domain authorityv1.Domain) bool {
-		return domain.Kind == authorityv1.Custom && domain.State == authorityv1.DomainStateReady
-	})
-	return publisherServices{
-		domainKind: domain.Kind, customDomainAvailable: customAvailable,
-		authenticated:  authenticated,
-		state:          publisherState,
-		hostname:       hostname,
-		namespace:      namespaceForMembership(current, domain),
-		teamID:         current.team.Id,
-		membershipID:   current.membership.Id,
-		domainID:       domain.Id,
-		publicURLScope: publicURLScope,
-		policyRevision: uint64(current.team.PolicyRevision),
-		ephemeral:      ephemeral,
-		routes:         authenticated.Control,
-	}, nil
+func preparePublisherServices(ctx context.Context, state *clientstate.Database, server, url, name, domain, team string, ephemeral bool, auth *clientauth.Client) (publisherServices, error) {
+	services, err := localpublisher.PrepareServices(ctx, state, server, url, name, domain, team, ephemeral, auth)
+	return servicesFromLocal(services), err
 }
-
-func resolvePublishHostname(
-	publicURL, name, selectedDomain string,
-	current teamContext,
-) (string, authorityv1.Domain, controlv1.PublicURLScope, error) {
-	if publicURL != "" && name != "" {
-		return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL options", failure.InvalidTunnelFlags, errors.New("--public-url and --name are mutually exclusive"))
-	}
-	var domain authorityv1.Domain
-	var err error
-	hostname := ""
-	if publicURL != "" {
-		hostname, err = naming.ParseExactPublicURL(publicURL)
-		if err != nil {
-			return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL", failure.InvalidTunnelFlags, err)
-		}
-		domain, err = readyDomainForHostname(current.domains, hostname)
-	} else {
-		domain, err = readyDomain(current, selectedDomain)
-	}
-	if err != nil {
-		return "", authorityv1.Domain{}, "", err
-	}
-	namespace, direct := current.namespace(domain)
-	if name != "" {
-		canonical, err := naming.CanonicalizeHostname(name)
-		if err != nil || canonical != name || strings.Contains(name, ".") {
-			return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL name", failure.InvalidTunnelFlags, errors.Join(err, errors.New("name must be one lowercase ASCII DNS label")))
-		}
-		hostname = name + "." + namespace
-	}
-	if hostname == "" {
-		label, err := naming.GeneratedHostnameLabel()
-		if err != nil {
-			return "", authorityv1.Domain{}, "", err
-		}
-		hostname = label + "." + namespace
-	}
-	canonical, err := naming.CanonicalizeHostname(hostname)
-	if err != nil || canonical != hostname {
-		return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL hostname", failure.InvalidTunnelFlags, errors.Join(err, errors.New("hostname must use lowercase ASCII DNS labels without a trailing dot")))
-	}
-	publicURLScope := controlv1.Shared
-	depth, within := naming.ChildDepth(hostname, namespace)
-	if !direct && within && depth == 0 {
-		return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL hostname", failure.InvalidTunnelFlags, errors.New("a member namespace cannot be published as a public URL"))
-	}
-	if direct && hostname == namespace && domain.Kind == authorityv1.Managed {
-		return "", authorityv1.Domain{}, "", failure.Wrap("validate public URL hostname", failure.InvalidTunnelFlags, errors.New("the managed domain itself cannot be published"))
-	}
-	if !direct && within && depth > 0 {
-		publicURLScope = controlv1.Member
-	} else if current.membership.Role == authorityv1.TeamRoleMember {
-		return "", authorityv1.Domain{}, "", failure.Wrap("authorize shared public URL", failure.ServerDenied, errors.New("shared public URLs require a team administrator or owner"))
-	}
-	return hostname, domain, publicURLScope, nil
+func (c teamContext) facts() localpublisher.TeamFacts {
+	return localpublisher.TeamFacts{Team: c.team, Membership: c.membership, Domains: c.domains, Mode: c.mode, Builtin: c.builtin}
 }
-
+func teamFromLocal(c localpublisher.TeamFacts) teamContext {
+	return teamContext{c.Team, c.Membership, c.Domains, c.Mode, c.Builtin}
+}
+func resolvePublishHostname(url, name, domain string, current teamContext) (string, authorityv1.Domain, controlv1.PublicURLScope, error) {
+	return localpublisher.ResolveHostname(url, name, domain, current.facts())
+}
 func readyDomain(current teamContext, selected string) (authorityv1.Domain, error) {
-	if selected == "" {
-		return defaultReadyDomain(current)
-	}
-	canonical, err := naming.CanonicalizeHostname(selected)
-	if err != nil || canonical != selected {
-		return authorityv1.Domain{}, failure.Wrap("validate domain", failure.InvalidDomainName,
-			errors.New("domain must use lowercase ASCII DNS labels without a trailing dot"))
-	}
-	for _, domain := range current.domains {
-		if domain.CanonicalDomain == selected {
-			if domain.State != authorityv1.DomainStateReady {
-				return authorityv1.Domain{}, failure.Wrap("select domain", failure.DomainNotReady,
-					fmt.Errorf("domain %s is not ready", selected))
-			}
-			return domain, nil
-		}
-	}
-	return authorityv1.Domain{}, failure.Wrap("select domain", failure.DomainNotAvailable,
-		fmt.Errorf("domain %s is not available to the selected team", selected))
+	return localpublisher.ReadyDomain(current.facts(), selected)
 }
-
-func defaultReadyDomain(current teamContext) (authorityv1.Domain, error) {
-	for _, domain := range current.domains {
-		if domain.Id == current.team.DefaultDomainId {
-			if domain.State != authorityv1.DomainStateReady {
-				return authorityv1.Domain{}, failure.Wrap("select default domain", failure.DomainNotReady,
-					fmt.Errorf("default domain %s is not ready", domain.CanonicalDomain))
-			}
-			return domain, nil
-		}
-	}
-	return authorityv1.Domain{}, failure.Wrap("select default domain", failure.DomainNotAvailable,
-		errors.New("selected team has no available default domain"))
+func (c teamContext) namespace(domain authorityv1.Domain) (string, bool) {
+	return localpublisher.Namespace(c.facts(), domain)
 }
-
-func readyDomainForHostname(domains []authorityv1.Domain, hostname string) (authorityv1.Domain, error) {
-	var selected authorityv1.Domain
-	for _, domain := range domains {
-		if domain.State != authorityv1.DomainStateReady || hostname != domain.CanonicalDomain && !strings.HasSuffix(hostname, "."+domain.CanonicalDomain) {
-			continue
-		}
-		if len(domain.CanonicalDomain) > len(selected.CanonicalDomain) {
-			selected = domain
-		}
-	}
-	if selected.Id == "" {
-		return authorityv1.Domain{}, failure.Wrap("select domain for hostname", failure.DomainNotAvailable,
-			fmt.Errorf("hostname %s is outside the selected team's ready domains", hostname))
-	}
-	return selected, nil
-}
-
-func (current teamContext) namespace(domain authorityv1.Domain) (string, bool) {
-	return naming.PublicURLNamespace(naming.NamespaceFacts{
-		Domain: domain.CanonicalDomain, Managed: domain.Kind == authorityv1.Managed,
-		Mode: current.mode, Personal: current.team.Kind == authorityv1.Personal, Builtin: current.builtin,
-		TeamName: current.team.DisplayName, MemberSlug: current.membership.MemberSlug,
-		ManagedLabel: current.membership.ManagedLabel,
-	})
-}
-
-func namespaceForMembership(current teamContext, domain authorityv1.Domain) string {
-	namespace, _ := current.namespace(domain)
-	return namespace
-}
-
-func (flags tunnelFlags) limits() publisher.ApplicationLimits {
-	limits := publisher.ApplicationLimits{}
-	if flags.Requests != nil {
-		limits.Requests = *flags.Requests
-	}
-	if flags.Concurrency != nil {
-		limits.Concurrency = *flags.Concurrency
-	}
-	if flags.RateRequests != nil {
-		limits.RateRequests = *flags.RateRequests
-		limits.RatePer, _ = time.ParseDuration(flags.RatePer)
-	}
-	if flags.RateBurst != nil {
-		limits.RateBurst = *flags.RateBurst
-	}
-	return limits
-}
-
+func (flags tunnelFlags) limits() publisher.ApplicationLimits { return flags.settings().Limits() }
 func (flags tunnelFlags) traffic() (trafficlimits.Selection, error) {
-	selected := trafficlimits.Selection{Connections: flags.TrafficConnections, Rate: flags.TrafficRateCount,
-		Burst: flags.TrafficRateBurst}
-	if flags.TrafficRatePer != "" {
-		selected.RatePer = &flags.TrafficRatePer
-	}
-	if flags.TrafficUpload != "" {
-		value, err := trafficlimits.ParseByteRate(flags.TrafficUpload)
-		if err != nil {
-			return selected, err
-		}
-		selected.UploadBytes = &value
-	}
-	if flags.TrafficDownload != "" {
-		value, err := trafficlimits.ParseByteRate(flags.TrafficDownload)
-		if err != nil {
-			return selected, err
-		}
-		selected.DownloadBytes = &value
-	}
-	return selected, nil
+	return flags.settings().Traffic()
 }
 
-func (p publisherServices) config(target string, allowedIPPrefixes []string, limits publisher.ApplicationLimits, traffic ...trafficlimits.Selection) publisher.Config {
-	relayTransportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
-	result := publisher.Config{
-		Control:           p.routes,
-		TeamID:            p.teamID,
-		MembershipID:      p.membershipID,
-		DomainID:          p.domainID,
-		Hostname:          p.hostname,
-		PublicURLScope:    p.publicURLScope,
-		Purpose:           controlv1.App,
-		PolicyRevision:    p.policyRevision,
-		Target:            target,
-		Limits:            limits,
-		AllowedIPPrefixes: allowedIPPrefixes,
-		Ephemeral:         p.ephemeral,
-		State:             p.state,
-		QUICConnector:     muxsession.QUICConnector{TLSConfig: relayTransportTLS},
-		TCPConnector:      muxsession.TLSYamuxConnector{TLSConfig: relayTransportTLS},
-	}
-	if len(traffic) != 0 {
-		result.Traffic = traffic[0]
-	}
-	return result
+func (flags tunnelFlags) settings() localpublisher.Settings {
+	settings := localpublisher.Settings{Domain: flags.Domain, Name: flags.Name, PublicURL: flags.PublicURL,
+		AllowIP: flags.AllowIP, AllowAllIPs: flags.AllowAllIPs, Ephemeral: flags.Ephemeral,
+		Requests: flags.Requests, RateRequests: flags.RateRequests, RateBurst: flags.RateBurst, Concurrency: flags.Concurrency, RatePer: flags.RatePer,
+		TrafficConnections: flags.TrafficConnections, TrafficRateCount: flags.TrafficRateCount, TrafficRateBurst: flags.TrafficRateBurst,
+		TrafficRatePer: flags.TrafficRatePer, TrafficUpload: flags.TrafficUpload, TrafficDownload: flags.TrafficDownload,
+		TargetCAFile: flags.TargetCAFile, InspectionMode: flags.InspectionMode, InspectionRetention: flags.InspectionRetention, InspectionMaxBytes: flags.InspectionMaxBytes}
+	settings.SetSources(localpublisher.SettingSources{AllowAllIPs: flags.allowAllIPsFromCLI, Ephemeral: flags.ephemeralFromCLI,
+		InspectionMode: flags.inspectionModeFromCLI, InspectionRetention: flags.inspectionRetentionFromCLI, InspectionMaxBytes: flags.inspectionMaxBytesFromCLI})
+	return settings
+}
+func (flags *tunnelFlags) applySettings(settings localpublisher.Settings) {
+	flags.Domain, flags.Name, flags.PublicURL = settings.Domain, settings.Name, settings.PublicURL
+	flags.AllowIP, flags.AllowAllIPs, flags.Ephemeral = settings.AllowIP, settings.AllowAllIPs, settings.Ephemeral
+	flags.Requests, flags.RateRequests, flags.RateBurst, flags.Concurrency, flags.RatePer = settings.Requests, settings.RateRequests, settings.RateBurst, settings.Concurrency, settings.RatePer
+	flags.TrafficConnections, flags.TrafficRateCount, flags.TrafficRateBurst = settings.TrafficConnections, settings.TrafficRateCount, settings.TrafficRateBurst
+	flags.TrafficRatePer, flags.TrafficUpload, flags.TrafficDownload = settings.TrafficRatePer, settings.TrafficUpload, settings.TrafficDownload
+	flags.InspectionMode, flags.InspectionRetention, flags.InspectionMaxBytes = settings.InspectionMode, settings.InspectionRetention, settings.InspectionMaxBytes
 }

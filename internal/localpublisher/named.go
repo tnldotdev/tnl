@@ -1,13 +1,11 @@
-package main
+package localpublisher
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientruntime"
@@ -44,8 +42,7 @@ func (a *appRuntime) startNamed(ctx context.Context, request localpublisherv1.Pu
 	if err := a.manager.Configure(configuredRuntimeServices(project)); err != nil {
 		return localpublisherv1.PublicationLease{}, err
 	}
-	resolver := newProjectMetadataResolver(a.state, project, strings.NewReader(""), io.Discard, "named publication")
-	resolver.silent = true
+	resolver := newProjectMetadataResolver(a.state, project)
 	metadata, err := resolver.Generate(ctx)
 	if err != nil {
 		return localpublisherv1.PublicationLease{}, err

@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/localpublisher"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
@@ -431,23 +432,16 @@ func boundedOutputError(err error) string {
 // handlePublisherEvent is where the CLI handles publisher status and policy
 // totals.
 func handlePublisherEvent(ctx context.Context, tunnel *clientstate.Tunnel, output *publishOutput, event publisher.Event) error {
+	if err := localpublisher.RecordPublisherEvent(ctx, tunnel, event); err != nil {
+		return err
+	}
 	switch event.Type {
-	case publisher.EventPublicURLAssigned:
-		return tunnel.SetPublicURL(ctx, event.PublicURLID, event.Hostname)
 	case publisher.EventProvisioning:
-		if err := tunnel.SetProvisioning(ctx, event.PublishRunNumber); err != nil {
-			return err
-		}
 		return output.provisioning(event.Hostname, event.PublishRunNumber)
 	case publisher.EventProvisioningStalled:
 		return output.provisioningStalled(event.PublishRunNumber)
 	case publisher.EventReady:
-		if err := tunnel.SetReady(ctx, event.PublicURL, event.PublishRunNumber); err != nil {
-			return err
-		}
 		return output.ready(event.PublicURL, event.PublishRunNumber)
-	case publisher.EventDraining:
-		return tunnel.SetDraining(context.WithoutCancel(ctx))
 	case publisher.EventTransportFallback:
 		return output.transportFallback(event.PublishRunNumber, string(event.Transport))
 	case publisher.EventIPPolicyDenials:

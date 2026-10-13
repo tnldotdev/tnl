@@ -1,4 +1,4 @@
-package main
+package localpublisher
 
 import (
 	"context"
@@ -67,6 +67,8 @@ type localPublisherAuthorization struct {
 	adHocCredential string
 	paths           []string
 }
+
+var _ http.Handler = (*localPublisherAuthorization)(nil)
 
 func localPublisherScopeFrom(ctx context.Context) localPublisherScope {
 	if scope, ok := ctx.Value(localScopeContextKey{}).(localPublisherScope); ok {

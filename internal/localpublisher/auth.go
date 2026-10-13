@@ -1,11 +1,10 @@
-package main
+package localpublisher
 
 import (
 	"context"
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
@@ -14,7 +13,7 @@ import (
 )
 
 func (a *appRuntime) publisherAuthConfig(ctx context.Context) (clientauth.Config, error) {
-	resolver := newProjectMetadataResolver(a.state, a.project, strings.NewReader(""), io.Discard, "project publisher login")
+	resolver := newProjectMetadataResolver(a.state, a.project)
 	server, err := resolver.server(ctx, a.project.Config.Server)
 	if err != nil {
 		return clientauth.Config{}, err

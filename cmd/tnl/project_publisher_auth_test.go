@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/localpublisher"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
@@ -77,21 +78,21 @@ func TestProjectPublisherLoginKeepsAnIndependentContainerSession(t *testing.T) {
 	}
 	project := projectConfiguration{Project: projectconfig.Project{Root: projectRoot,
 		Config: config.TNL{Server: &control.URL}, RelativeServiceDirectories: map[string]string{}}}
-	runtime := &appRuntime{project: project, state: state, authHTTP: control.Client()}
-	runtime.manager, err = clientruntime.New(t.Context(), projectRoot, stateRoot, nil, nil)
+	manager, err := clientruntime.New(t.Context(), projectRoot, stateRoot, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer runtime.manager.Close()
+	defer manager.Close()
 	key, err := runtimeKey(projectRoot, stateRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, _, err := startRuntimeTCPWithOptions(key, runtime.handler(), "127.0.0.1:0", owner)
+	handler := localpublisher.Handler(project.Project, state, manager, nil, control.Client())
+	server, _, err := localpublisher.StartAPI(key, handler, "127.0.0.1:0", owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stopRuntimeTCP(context.Background(), server, key)
+	defer localpublisher.StopAPI(context.Background(), server, key)
 	endpoint, err := readRuntimeTCPEndpoint(key)
 	if err != nil {
 		t.Fatal(err)

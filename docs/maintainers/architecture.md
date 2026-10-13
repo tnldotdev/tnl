@@ -280,12 +280,16 @@ after startup, and unregisters before lifespan shutdown. the reload parent
 only holds the listener; each worktree resolves its own project and client state.
 `tnl.open(app)` remains a separate ad-hoc publication with its own credential.
 
-`internal/clientruntime` owns registration leases, publisher observations,
-readiness, and a bounded durable local event journal. `internal/clientstate`
-stores each project's snapshot and ordered events in client SQLite; one write
-transaction advances the cursor and appends an event, retaining at most 2048
-events and 8 MiB of event data. watch cursors survive publisher restarts until
-their event falls outside the retained history. the private native command
+`internal/localpublisher` owns the local publisher process: project preparation,
+the HTTP API and credential scopes, publication coordination, readiness workers,
+and shutdown. `tnl runtime endpoint` and `tnl runtime serve` adapt command options
+to this component. it composes `internal/clientruntime`, which owns registration
+leases, publisher observations, readiness probes, and a bounded durable local
+event journal. `internal/clientstate` stores each project's snapshot and ordered
+events in client SQLite; one write transaction advances the cursor and appends
+an event, retaining at most 2048 events and 8 MiB of event data. watch cursors
+survive publisher restarts until their event falls outside the retained history.
+the private native command
 `tnl runtime endpoint` locates one private endpoint descriptor per canonical
 project/worktree/client-state identity. the app starts `tnl runtime serve` to
 maintain its loopback HTTP listener. the descriptor holds its credential in a
@@ -345,6 +349,20 @@ publication running. `tnl status` only reads observations.
 snapshot includes the cursor for its service state. cursors older than retained
 events fail with an authored diagnostic. the journal survives a
 manager restart and contains no credentials, request bodies, or OAuth state.
+
+the local publisher also owns the supporting publication setup, metadata
+resolution, dynamic Docker targets, preview association, inspection adapters,
+and integration worker lifetimes. commands reuse these operations through client
+options and facts. interactive authentication and terminal rendering belong to
+the command adapters; the component's metadata resolver uses noninteractive
+authentication unless its caller supplies an authentication operation. publisher
+events update client state before a command presents them. integration progress
+passes semantic details to the caller's output adapter.
+
+shutdown closes the local API and removes its endpoint descriptors, closes and
+joins ad-hoc workers, closes and joins configured publications, closes client
+state, then releases the project publisher lock. registration replacement and
+readiness workers keep the existing registration and publish-run fencing.
 
 `internal/adhoc.Run` owns the common publication boundary for ad-hoc SDK
 registrations. control allocates the URL before `publisher.Run` starts; the
@@ -654,6 +672,7 @@ implements handshakes, and `internal/streamcopy` copies bytes in both directions
 | `internal/projectconfig`   | Project discovery, TypeScript evaluation, worktrees, and effective services |
 | `internal/tnldconfig`      | Server-role settings and environment resolution                             |
 | `internal/clientstate`     | Client SQLite state and local ownership locks                               |
+| `internal/localpublisher`  | Local publisher composition, API scopes, publication setup, and shutdown    |
 | `internal/clientruntime`   | App registrations, public readiness, and local lifecycle events             |
 | `internal/privateprotocol` | Bounded private SDK requests and assignments                                |
 | `internal/projectmeta`     | Generated browser-safe metadata and TypeScript augmentation                 |

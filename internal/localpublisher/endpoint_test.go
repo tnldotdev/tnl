@@ -1,9 +1,10 @@
-package main
+package localpublisher
 
 import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -194,5 +195,40 @@ func TestComposePublisherWritesOnlyServiceCredentialsToSeparateVolumes(t *testin
 	}
 	if entries, err := os.ReadDir(appDir); err != nil || len(entries) != 2 {
 		t.Fatalf("app credential mounts = %d, %v", len(entries), err)
+	}
+}
+
+func TestLocalPublisherPartialStartupRemovesDescriptorsAndReleasesListener(t *testing.T) {
+	key := filepath.Join(t.TempDir(), "publisher")
+	blocked := runtimeAppEndpointPath(key, "web")
+	if err := os.Mkdir(blocked, 0700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	server, done, err := startRuntimeTCPWithOptions(key, http.NewServeMux(), address, "", clientruntime.Service{Name: "web"})
+	if err == nil || server != nil || done != nil {
+		t.Fatalf("partial startup = %v, %v, %v", server, done, err)
+	}
+	for _, path := range []string{runtimeAdHocEndpointPath(key), runtimeTCPEndpointPath(key)} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("partial startup left descriptor %s: %v", path, err)
+		}
+	}
+	if info, err := os.Stat(blocked); err != nil || !info.IsDir() {
+		t.Fatalf("startup removed the conflicting path: %v", err)
+	}
+	rebound, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Fatalf("partial startup retained its listener: %v", err)
+	}
+	if err := rebound.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
