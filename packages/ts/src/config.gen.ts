@@ -246,13 +246,17 @@ export interface Publish {
    */
   protocol?: "http" | "postgres" | "mysql";
   /**
-   * HTTP or HTTPS origin, local port, or database host:port reached by the publisher.
+   * HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher.
    */
   target?: string | number;
   /**
    * Additional PEM certificate authorities for the target; relative paths are resolved from the project root.
    */
   targetCAFile?: string;
+  /**
+   * Use verified TLS for the private TCP target.
+   */
+  targetTLS?: boolean;
   /**
    * Hostname expected in the target's TLS certificate; defaults to the target host.
    */

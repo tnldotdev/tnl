@@ -118,6 +118,9 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if usingConfiguredTarget && flags.TargetTLSName == "" && effective.Publish != nil && effective.Publish.TargetTLSName != nil {
 		flags.TargetTLSName = *effective.Publish.TargetTLSName
 	}
+	if usingConfiguredTarget && !flags.TargetTLS && effective.Publish != nil && effective.Publish.TargetTLS != nil {
+		flags.TargetTLS = *effective.Publish.TargetTLS
+	}
 	if flags.PublishCredential == "" {
 		applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
 	} else if effective.Tunnel != nil {

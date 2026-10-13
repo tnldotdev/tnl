@@ -234,11 +234,11 @@ func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) 
 }
 
 func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
-	protocol, target, tlsName, caFile := "postgres", Target("db.internal:5432"), "db.internal", "./certs/target-ca.pem"
+	protocol, target, tlsName, caFile, targetTLS := "postgres", Target("db.internal:5432"), "db.internal", "./certs/target-ca.pem", true
 	webTarget := Target("3000")
 	project := TNL{OAuth: true, Services: Services{
 		"web":    {Publish: &Publish{Target: &webTarget}},
-		"orders": {Publish: &Publish{Protocol: &protocol, Target: &target, TargetTLSName: &tlsName, TargetCAFile: &caFile}},
+		"orders": {Publish: &Publish{Protocol: &protocol, Target: &target, TargetTLS: &targetTLS, TargetTLSName: &tlsName, TargetCAFile: &caFile}},
 	}}
 	if err := ValidateTNL(project); err != nil {
 		t.Fatalf("mixed web and PostgreSQL services: %v", err)

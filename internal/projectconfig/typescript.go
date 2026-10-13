@@ -255,6 +255,7 @@ var typeScriptKeyMappings = map[string]string{
 	"startup_timeout":    "startupTimeout",
 	"request_inspection": "requestInspection",
 	"target_ca_file":     "targetCAFile",
+	"target_tls":         "targetTLS",
 	"target_tls_name":    "targetTLSName",
 	"strip_prefix":       "stripPrefix",
 	"public_url":         "publicURL",

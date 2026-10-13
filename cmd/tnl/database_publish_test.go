@@ -14,7 +14,7 @@ func TestDatabasePublishAndCredentialFlags(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"publish", "db.internal:5432", "--protocol", "postgres", "--name", "orders", "--target-tls-name", "db.internal", "--database-tls-passthrough"}, "postgres"},
+		{[]string{"publish", "db.internal:5432", "--protocol", "postgres", "--name", "orders", "--target-tls", "--target-tls-name", "db.internal"}, "postgres"},
 		{[]string{"url", "credential", "create", "--protocol", "mysql", "--name", "orders"}, "mysql"},
 	} {
 		var flags cli
@@ -27,7 +27,7 @@ func TestDatabasePublishAndCredentialFlags(t *testing.T) {
 		}
 		if test.want == "postgres" {
 			if flags.Publish.Target != "db.internal:5432" || flags.Publish.Protocol != test.want ||
-				flags.Publish.Name != "orders" || flags.Publish.TargetTLSName != "db.internal" || !flags.Publish.DatabasePassthrough {
+				flags.Publish.Name != "orders" || !flags.Publish.TargetTLS || flags.Publish.TargetTLSName != "db.internal" {
 				t.Fatalf("database publish flags = %+v", flags.Publish)
 			}
 		} else if flags.URL.Credential.Create.Protocol != test.want || flags.URL.Credential.Create.Name != "orders" {
@@ -40,6 +40,9 @@ func TestDatabasePublishTargetAndScopedProtocol(t *testing.T) {
 	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql} {
 		if got, err := normalizePublishTarget("db.internal:5432", protocol); err != nil || got != "db.internal:5432" {
 			t.Fatalf("%s target = %q, %v", protocol, got, err)
+		}
+		if got, err := normalizePublishTarget("5432", protocol); err != nil || got != "127.0.0.1:5432" {
+			t.Fatalf("%s bare port target = %q, %v", protocol, got, err)
 		}
 		if got, err := selectScopedPublishTargetForProtocol("", "db.internal:5432", protocol); err != nil || got != "db.internal:5432" {
 			t.Fatalf("%s credential target = %q, %v", protocol, got, err)
@@ -96,8 +99,8 @@ func TestDatabasePublicAddressAndFlags(t *testing.T) {
 	if err := validateDatabasePublishOptions(publishCommand{TargetTLSName: "db.internal"}, controlv1.Http); err == nil {
 		t.Fatal("HTTP accepted database TLS settings")
 	}
-	if err := validateDatabasePublishOptions(publishCommand{DatabasePassthrough: true, TargetTLSName: "db.internal"}, controlv1.Postgres); err == nil {
-		t.Fatal("passthrough accepted a misleading target TLS name")
+	if err := validateDatabasePublishOptions(publishCommand{TargetTLSName: "db.internal"}, controlv1.Postgres); err == nil {
+		t.Fatal("database accepted target TLS name without target TLS")
 	}
 	if err := validateDatabasePublishOptions(publishCommand{openOptions: openOptions{Open: true}}, controlv1.Mysql); err == nil {
 		t.Fatal("database --open was silently ignored")

@@ -21,11 +21,15 @@
               "minimum": 1
             }
           ],
-          "description": "HTTP or HTTPS origin, local port, or database host:port reached by the publisher."
+          "description": "HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher."
         },
         "target_tls_name": {
           "type": "string",
           "description": "Hostname expected in the target's TLS certificate; defaults to the target host."
+        },
+        "target_tls": {
+          "type": "boolean",
+          "description": "Use verified TLS for the private TCP target."
         },
         "target_ca_file": {
           "type": "string",

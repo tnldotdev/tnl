@@ -62,7 +62,7 @@ type Config struct {
 	Target                   string
 	ServiceProtocol          controlv1.PublicURLServiceProtocol
 	TargetTLSName            string
-	DatabaseTLSPassthrough   bool
+	TargetTLS                bool
 	PreserveSavedURLTarget   bool
 	TargetOptions            localproxy.TargetOptions
 	Handler                  http.Handler // integration URL handler; no local target is dialed.
@@ -158,7 +158,7 @@ func Run(ctx context.Context, config Config) (result error) {
 		config.ServiceProtocol = controlv1.Http
 	}
 	if config.ServiceProtocol == controlv1.Http {
-		if config.TargetTLSName != "" || config.DatabaseTLSPassthrough {
+		if config.TargetTLSName != "" || config.TargetTLS {
 			return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("database TLS settings require a database service protocol"))
 		}
 		config.Target, err = localproxy.NormalizeTarget(config.Target)
@@ -171,8 +171,8 @@ func Run(ctx context.Context, config Config) (result error) {
 	} else {
 		_, err = validateDatabaseForwarding(PublicURLServerConfig{
 			Hostname: config.Hostname, ServiceProtocol: config.ServiceProtocol,
-			Target: config.Target, TargetTLSName: config.TargetTLSName, TargetOptions: config.TargetOptions,
-			DatabaseTLSPassthrough: config.DatabaseTLSPassthrough, Handler: config.Handler, Mounts: config.Mounts,
+			Target: config.Target, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS, TargetOptions: config.TargetOptions,
+			Handler: config.Handler, Mounts: config.Mounts,
 		})
 		if err == nil {
 			var connection net.Conn

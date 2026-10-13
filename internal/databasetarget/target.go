@@ -20,3 +20,13 @@ func Host(target string) (string, error) {
 	}
 	return host, nil
 }
+
+func Normalize(target string) (string, error) {
+	if number, err := strconv.Atoi(target); err == nil && tcpport.ValidNetwork(number) {
+		return net.JoinHostPort("127.0.0.1", strconv.Itoa(number)), nil
+	}
+	if _, err := Host(target); err != nil {
+		return "", err
+	}
+	return target, nil
+}

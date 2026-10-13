@@ -1,7 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import process from "node:process";
 import { TestContainerRunner } from "./test-container-runner.ts";
 
@@ -15,31 +12,9 @@ if (command === undefined) throw new Error("test command is required");
 const image =
   "public.ecr.aws/docker/library/mysql:8.4@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242";
 const container = `tnl-test-mysql-${randomUUID()}`;
-const directory = await mkdtemp(path.join(os.tmpdir(), "tnl-test-mysql-certs-"));
-const certificate = path.join(directory, "server.pem");
-const privateKey = path.join(directory, "server.key");
 const runner = new TestContainerRunner(container);
 
 try {
-  await chmod(directory, 0o755);
-  await runner.run("openssl", [
-    "req",
-    "-x509",
-    "-newkey",
-    "rsa:2048",
-    "-nodes",
-    "-keyout",
-    privateKey,
-    "-out",
-    certificate,
-    "-days",
-    "1",
-    "-subj",
-    "/CN=db.internal",
-    "-addext",
-    "subjectAltName=DNS:db.internal",
-  ]);
-  await chmod(privateKey, 0o644); // disposable test certificate read by the mysql container user.
   await runner.run("docker", [
     "run",
     "--detach",
@@ -48,14 +23,12 @@ try {
     container,
     "--publish",
     "127.0.0.1::3306",
-    "--volume",
-    `${directory}:/tnl-test-certs:ro`,
     "--env",
     "MYSQL_ROOT_PASSWORD=testpass",
     "--env",
     "MYSQL_ROOT_HOST=%",
     "--health-cmd",
-    "mysqladmin ping --silent --host=127.0.0.1 --user=root --password=testpass",
+    "mysqladmin ping --silent --protocol=tcp --host=127.0.0.1",
     "--health-interval",
     "1s",
     "--health-timeout",
@@ -63,9 +36,8 @@ try {
     "--health-retries",
     "60",
     image,
-    "--ssl-cert=/tnl-test-certs/server.pem",
-    "--ssl-key=/tnl-test-certs/server.key",
-    "--require_secure_transport=ON",
+    "--require_secure_transport=OFF",
+    "--auto_generate_certs=OFF",
   ]);
   for (let attempt = 0; attempt < 120; attempt += 1) {
     const health = (
@@ -76,14 +48,19 @@ try {
       throw new Error("MySQL test container did not become healthy");
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
+  await runner.run("docker", [
+    "exec",
+    container,
+    "mysql",
+    "--protocol=socket",
+    "--user=root",
+    "--password=testpass",
+    "--execute=CREATE USER 'tnl_client'@'%' IDENTIFIED WITH caching_sha2_password BY 'testpass'; GRANT SELECT ON mysql.* TO 'tnl_client'@'%';",
+  ]);
   const port = await runner.port(3306);
   process.exitCode = await runner.run(
     command,
-    [
-      ...process.argv.slice(separator + 2),
-      `-tnl-test-mysql-address=127.0.0.1:${port}`,
-      `-tnl-test-mysql-ca=${certificate}`,
-    ],
+    [...process.argv.slice(separator + 2), `-tnl-test-mysql-address=127.0.0.1:${port}`],
     true,
     true,
   );
@@ -97,5 +74,4 @@ try {
   throw error;
 } finally {
   await runner.remove();
-  await rm(directory, { recursive: true, force: true });
 }
