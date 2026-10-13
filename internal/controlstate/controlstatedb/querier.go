@@ -164,6 +164,7 @@ type Querier interface {
 	GetPublishRunByIdempotency(ctx context.Context, arg GetPublishRunByIdempotencyParams) (ControlPublishRun, error)
 	GetPublishRunByTokenID(ctx context.Context, publishRunTokenID string) (ControlPublishRun, error)
 	GetPublishRunCredentialState(ctx context.Context, publishRunID string) (GetPublishRunCredentialStateRow, error)
+	GetPublishRunTrafficLimits(ctx context.Context, publishRunID string) ([]byte, error)
 	GetPublisherConnectionForClaim(ctx context.Context, publisherConnectionID string) (ControlPublishRunConnectionSlot, error)
 	GetReadyEphemeralCredentialDomain(ctx context.Context, arg GetReadyEphemeralCredentialDomainParams) (GetReadyEphemeralCredentialDomainRow, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)
@@ -213,6 +214,7 @@ type Querier interface {
 	InsertPublishRun(ctx context.Context, arg InsertPublishRunParams) (ControlPublishRun, error)
 	InsertPublishRunAuditEvent(ctx context.Context, arg InsertPublishRunAuditEventParams) error
 	InsertPublishRunConnections(ctx context.Context, arg InsertPublishRunConnectionsParams) ([]ControlPublishRunConnectionSlot, error)
+	InsertPublishRunTrafficLimits(ctx context.Context, arg InsertPublishRunTrafficLimitsParams) error
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
 	InsertShareCookie(ctx context.Context, arg InsertShareCookieParams) ([]byte, error)
 	InsertShareHandoff(ctx context.Context, arg InsertShareHandoffParams) ([]byte, error)

@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -35,7 +36,15 @@ type WorkLimits struct {
 }
 
 type Limits struct {
-	HTTP WorkLimits
+	HTTP    WorkLimits
+	Traffic TrafficLimits
+}
+
+type TrafficLimits struct {
+	Connections int
+	Rate        RateLimit
+	Upload      string
+	Download    string
 }
 
 type Options struct {
@@ -75,6 +84,34 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 		RatePer: options.Limits.HTTP.Rate.Per, RateBurst: options.Limits.HTTP.Rate.Burst, Concurrency: options.Limits.HTTP.Concurrency}
 	if err := limits.Validate(); err != nil {
 		return nil, err
+	}
+	traffic := trafficlimits.Selection{}
+	if input := options.Limits.Traffic; input.Connections != 0 {
+		traffic.Connections = &input.Connections
+	}
+	if input := options.Limits.Traffic.Rate; input.Count != 0 {
+		traffic.Rate = &input.Count
+	}
+	if input := options.Limits.Traffic.Rate; input.Per != 0 {
+		period := input.Per.String()
+		traffic.RatePer = &period
+	}
+	if input := options.Limits.Traffic.Rate; input.Burst != 0 {
+		traffic.Burst = &input.Burst
+	}
+	if options.Limits.Traffic.Upload != "" {
+		rate, parseErr := trafficlimits.ParseByteRate(options.Limits.Traffic.Upload)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		traffic.UploadBytes = &rate
+	}
+	if options.Limits.Traffic.Download != "" {
+		rate, parseErr := trafficlimits.ParseByteRate(options.Limits.Traffic.Download)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		traffic.DownloadBytes = &rate
 	}
 	serverURL := options.ServerURL
 	if serverURL == "" {
@@ -132,7 +169,7 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 			ControlURL: serverURL, HTTPClient: options.HTTPClient, State: profile,
 			Credential: credentials.EphemeralCredential(credential), InvocationID: invocationID,
 			Target: "http://" + listener.Addr().String(), AllowIP: slices.Clone(options.AllowIP),
-			AllowAllIPs: options.AllowAllIPs, Limits: limits,
+			AllowAllIPs: options.AllowAllIPs, Limits: limits, Traffic: traffic,
 			OnAllocated: func(route controlv1.PublicURL) error {
 				tunnel.mu.Lock()
 				tunnel.id, tunnel.url = route.Id, "https://"+route.CanonicalHostname

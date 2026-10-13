@@ -56,7 +56,17 @@ test("one supplied Node listener waits for its run and stays open on close", asy
   let statuses = 0;
   const handle = await openServer(
     listener,
-    { credential: credential(), targetHostname: "app.internal" },
+    {
+      credential: credential(),
+      targetHostname: "app.internal",
+      limits: {
+        traffic: {
+          connections: 16,
+          rate: { count: 10, per: "1s", burst: 20 },
+          bandwidth: { upload: "8MiB/s", download: "16MiB/s" },
+        },
+      },
+    },
     {
       start: async () => "/tmp/tnl-test.sock",
       request: async (_socket, operation, body: unknown) => {
@@ -72,6 +82,8 @@ test("one supplied Node listener waits for its run and stays open on close", asy
         expect(body.registration_id).toBe(registrationID);
         if (operation === "ad-hoc/register") {
           expect(body).toHaveProperty("target", "http://app.internal:3000");
+          expect(body).toHaveProperty("limits.traffic.rate.count", 10);
+          expect(body).toHaveProperty("limits.traffic.bandwidth.download", "16MiB/s");
         }
         if (operation === "ad-hoc/unregister" || operation === "ad-hoc/renew") return undefined;
         const status = {

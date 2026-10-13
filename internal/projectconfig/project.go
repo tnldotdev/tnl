@@ -211,8 +211,58 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 		if result.Limits == nil {
 			result.Limits = &config.Limits{}
 		}
+		result.Limits.Traffic = mergeTrafficLimits(result.Limits.Traffic, override.Limits.Traffic)
 		result.Limits.HTTP = mergeWorkLimits(result.Limits.HTTP, override.Limits.HTTP)
 		result.Limits.TCP = mergeWorkLimits(result.Limits.TCP, override.Limits.TCP)
+	}
+	return result
+}
+
+func mergeTrafficLimits(base, override *config.TrafficLimits) *config.TrafficLimits {
+	if base == nil && override == nil {
+		return nil
+	}
+	result := &config.TrafficLimits{}
+	if base != nil {
+		*result = *base
+		if base.Rate != nil {
+			rate := *base.Rate
+			result.Rate = &rate
+		}
+		if base.Bandwidth != nil {
+			bandwidth := *base.Bandwidth
+			result.Bandwidth = &bandwidth
+		}
+	}
+	if override != nil {
+		if override.Connections != nil {
+			result.Connections = override.Connections
+		}
+		if override.Rate != nil {
+			if result.Rate == nil {
+				result.Rate = &config.Rate{}
+			}
+			if override.Rate.Count != nil {
+				result.Rate.Count = override.Rate.Count
+			}
+			if override.Rate.Per != nil {
+				result.Rate.Per = override.Rate.Per
+			}
+			if override.Rate.Burst != nil {
+				result.Rate.Burst = override.Rate.Burst
+			}
+		}
+		if override.Bandwidth != nil {
+			if result.Bandwidth == nil {
+				result.Bandwidth = &config.Bandwidth{}
+			}
+			if override.Bandwidth.Upload != nil {
+				result.Bandwidth.Upload = override.Bandwidth.Upload
+			}
+			if override.Bandwidth.Download != nil {
+				result.Bandwidth.Download = override.Bandwidth.Download
+			}
+		}
 	}
 	return result
 }
@@ -262,6 +312,7 @@ func cloneTunnel(value *config.Tunnel) *config.Tunnel {
 	result.AllowIP = slices.Clone(value.AllowIP)
 	if value.Limits != nil {
 		limits := *value.Limits
+		limits.Traffic = mergeTrafficLimits(nil, limits.Traffic)
 		limits.HTTP = mergeWorkLimits(nil, limits.HTTP)
 		limits.TCP = mergeWorkLimits(nil, limits.TCP)
 		result.Limits = &limits

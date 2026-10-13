@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/tcpport"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -74,6 +75,7 @@ type Config struct {
 	Mounts                   []localproxy.Mount
 	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.
 	Limits                   ApplicationLimits
+	Traffic                  trafficlimits.Selection
 	ObserveRequest           func(RequestObservation)
 	ObserveDatabase          func(DatabaseObservation)
 	ObserveRedis             func(RedisObservation)
@@ -128,6 +130,9 @@ type PublishRunIdentity struct {
 type ResponseObserver func(*http.Response, PublishRunIdentity) error
 
 func Run(ctx context.Context, config Config) (result error) {
+	if err := config.Traffic.Validate(); err != nil {
+		return err
+	}
 	if config.Control == nil {
 		return errors.New("publisher: control client is required")
 	}

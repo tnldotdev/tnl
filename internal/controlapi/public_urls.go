@@ -1,6 +1,8 @@
 package controlapi
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/readiness"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -367,6 +370,30 @@ func (h *handler) CreatePublishRun(
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "certificate plan requires DNS-01 automation, which is not configured")
 		return
 	}
+	var body controlv1.CreatePublishRunRequest
+	if request.ContentLength != 0 {
+		if err := decodeJSONLimited(response, request, &body, 1024); err != nil {
+			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publish run limits")
+			return
+		}
+	}
+	selection := trafficlimits.Selection{}
+	if selected := body.Traffic; selected != nil {
+		selection = trafficlimits.Selection{Connections: selected.Connections, Rate: selected.Rate,
+			RatePer: selected.RatePer, Burst: selected.Burst, UploadBytes: selected.UploadBytes, DownloadBytes: selected.DownloadBytes}
+	}
+	defaults, ceiling := h.config.TrafficDefaults, h.config.TrafficCeiling
+	if defaults == (trafficlimits.Limits{}) {
+		defaults = trafficlimits.Default()
+	}
+	if ceiling == (trafficlimits.Limits{}) {
+		ceiling = trafficlimits.Ceiling()
+	}
+	effectiveTraffic, err := selection.Resolve(defaults, ceiling)
+	if err != nil {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, err.Error())
+		return
+	}
 	digest, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
 		Operation: authorization.OperationPublishRunCreate, TeamID: decision.TeamID, MembershipID: decision.ActingMembershipID,
 		DomainID: decision.DomainID, CanonicalHostname: decision.CanonicalHostname, PublicURLScope: decision.PublicURLScope,
@@ -376,6 +403,15 @@ func (h *handler) CreatePublishRun(
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
+	}
+	if body.Traffic != nil {
+		chosen, err := json.Marshal(body.Traffic)
+		if err != nil {
+			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publish run limits")
+			return
+		}
+		signed := append(digest[:], chosen...)
+		digest = sha256.Sum256(signed)
 	}
 	setup, err := h.store.CreatePublishRun(request.Context(), controlstate.PublishRunRequest{
 		PublicURLID: route.ID, TeamID: decision.TeamID, MembershipID: decision.ActingMembershipID,
@@ -387,6 +423,7 @@ func (h *handler) CreatePublishRun(
 		CertificateChallenge:     plan.ChallengeMethod,
 		ExpectedMutationRevision: route.MutationRevision,
 		PublishCredentialID:      credential.ID,
+		Traffic:                  &effectiveTraffic,
 	}, time.Now(), publisherLeaseDuration, publisherConnectionCredentialDuration)
 	if err != nil {
 		writeControlStateProblem(response, "create publish run", err)

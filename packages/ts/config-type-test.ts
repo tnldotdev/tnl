@@ -5,6 +5,7 @@ import {
   type TnlConfigInput,
   type TnlConfigForServices,
   type TnlRatePeriod,
+  type TnlByteRate,
 } from "@tnldotdev/tnl/config";
 import type { OpenOptions } from "@tnldotdev/tnl";
 
@@ -26,7 +27,14 @@ const staticConfig = {
   tunnel: {
     allowIP: ["192.0.2.0/24"],
     domain: "example.test",
-    limits: { http: { total: 20, rate: { count: 5, per: "1m" }, concurrency: 750 } },
+    limits: {
+      traffic: {
+        connections: 32,
+        rate: { count: 20, per: "1s", burst: 40 },
+        bandwidth: { upload: "8MiB/s", download: "16MiB/s" },
+      },
+      http: { total: 20, rate: { count: 5, per: "1m" }, concurrency: 750 },
+    },
   },
 } satisfies TnlConfigInput;
 
@@ -117,6 +125,9 @@ defineConfig({
 }) satisfies TnlConfig;
 
 "1m" satisfies TnlRatePeriod;
+"8MiB/s" satisfies TnlByteRate;
+// @ts-expect-error visitor bandwidth uses binary units per second.
+"8MB/s" satisfies TnlByteRate;
 "1h30m" satisfies TnlRatePeriod;
 "1h2m3s4ms" satisfies TnlRatePeriod;
 // @ts-expect-error rate periods require a numeric amount and duration unit.

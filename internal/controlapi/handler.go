@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/webhookcatalog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -48,6 +49,8 @@ type Config struct {
 	WebhookCatalog                    *webhookcatalog.Catalog
 	DNSAutomation                     bool
 	GuestDemoEnabled                  bool
+	TrafficDefaults                   trafficlimits.Limits
+	TrafficCeiling                    trafficlimits.Limits
 	Metrics                           *observability.Metrics
 	Route53CredentialsReadiness       func(context.Context) error
 	ControlReadiness                  func() error
@@ -203,6 +206,12 @@ func NewHandler(
 	readiness func(context.Context) error,
 ) (*http.ServeMux, error) {
 	h := &handler{config: cfg, store: store, certificates: store, admin: store, readiness: readiness}
+	if h.config.TrafficDefaults == (trafficlimits.Limits{}) {
+		h.config.TrafficDefaults = trafficlimits.Default()
+	}
+	if h.config.TrafficCeiling == (trafficlimits.Limits{}) {
+		h.config.TrafficCeiling = trafficlimits.Ceiling()
+	}
 	if credentials, ok := store.(PublicURLPublishCredentialStore); ok {
 		h.publishCredentials = credentials
 	}
@@ -363,6 +372,20 @@ func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 		GuestDemo:                         cfg.GuestDemoEnabled,
 		BrowserLoginAvailable:             new(cfg.BrowserOIDCClientID != ""),
 		Authentication:                    controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
+	}
+	if cfg.TrafficDefaults.Valid() {
+		result.TrafficDefaults = &controlv1.PublishRunTrafficLimits{
+			Connections: cfg.TrafficDefaults.Connections, Rate: cfg.TrafficDefaults.Rate,
+			RatePerNs: int64(cfg.TrafficDefaults.RatePer), Burst: cfg.TrafficDefaults.Burst,
+			UploadBytes: cfg.TrafficDefaults.UploadBytes, DownloadBytes: cfg.TrafficDefaults.DownloadBytes,
+		}
+	}
+	if cfg.TrafficCeiling.Valid() {
+		result.TrafficCeilings = &controlv1.PublishRunTrafficLimits{
+			Connections: cfg.TrafficCeiling.Connections, Rate: cfg.TrafficCeiling.Rate,
+			RatePerNs: int64(cfg.TrafficCeiling.RatePer), Burst: cfg.TrafficCeiling.Burst,
+			UploadBytes: cfg.TrafficCeiling.UploadBytes, DownloadBytes: cfg.TrafficCeiling.DownloadBytes,
+		}
 	}
 	if cfg.LoginToken != "" {
 		result.Authentication.Methods = append(result.Authentication.Methods, controlv1.LoginToken)

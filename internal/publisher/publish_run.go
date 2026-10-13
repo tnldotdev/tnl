@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/tcpport"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -25,7 +26,16 @@ func createPublishRun(ctx context.Context, config Config, route controlv1.Public
 		return controlv1.PublishRunSetup{}, err
 	}
 	for {
-		setup, err := config.Control.CreatePublishRun(ctx, route.Id, idempotencyKey)
+		var setup controlv1.PublishRunSetup
+		if config.Traffic == (trafficlimits.Selection{}) {
+			setup, err = config.Control.CreatePublishRun(ctx, route.Id, idempotencyKey)
+		} else if control, ok := config.Control.(interface {
+			CreatePublishRunWithTraffic(context.Context, string, string, trafficlimits.Selection) (controlv1.PublishRunSetup, error)
+		}); ok {
+			setup, err = control.CreatePublishRunWithTraffic(ctx, route.Id, idempotencyKey, config.Traffic)
+		} else {
+			return controlv1.PublishRunSetup{}, errors.New("publisher: control does not accept traffic settings")
+		}
 		if err == nil {
 			return setup, nil
 		}
@@ -50,6 +60,9 @@ func runSession(
 		return errors.New("publisher: server returned incomplete publish run setup")
 	}
 	if err := validateRouteIdentity(setup.PublicUrl, config); err != nil {
+		return err
+	}
+	if err := verifyRunTraffic(config.Traffic, setup.Traffic); err != nil {
 		return err
 	}
 	if setup.PublicUrl.CanonicalHostname != config.Hostname || setup.PublishRun.PublicUrlId != setup.PublicUrl.Id ||
@@ -342,6 +355,25 @@ func runSession(
 	}
 	cancelProvisioning()
 	return runCertificateRenewals(ctx, config, setup, route, state, material)
+}
+
+func verifyRunTraffic(selected trafficlimits.Selection, actual *controlv1.PublishRunTrafficLimits) error {
+	if selected == (trafficlimits.Selection{}) {
+		return nil
+	}
+	if actual == nil || selected.Connections != nil && *selected.Connections != actual.Connections ||
+		selected.Rate != nil && *selected.Rate != actual.Rate || selected.Burst != nil && *selected.Burst != actual.Burst ||
+		selected.UploadBytes != nil && *selected.UploadBytes != actual.UploadBytes ||
+		selected.DownloadBytes != nil && *selected.DownloadBytes != actual.DownloadBytes {
+		return errors.New("publisher: control omitted or changed selected traffic limits")
+	}
+	if selected.RatePer != nil {
+		period, err := time.ParseDuration(*selected.RatePer)
+		if err != nil || int64(period) != actual.RatePerNs {
+			return errors.New("publisher: control changed the selected traffic rate period")
+		}
+	}
+	return nil
 }
 
 func confirmPublishRunReady(

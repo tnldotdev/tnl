@@ -79,9 +79,27 @@ type AdHocRegister struct {
 }
 
 type AdHocLimits struct {
-	Requests    int             `json:"requests,omitempty"`
-	Rate        *AdHocRateLimit `json:"rate,omitempty"`
-	Concurrency int             `json:"concurrency,omitempty"`
+	Requests    int                 `json:"requests,omitempty"`
+	Rate        *AdHocRateLimit     `json:"rate,omitempty"`
+	Concurrency int                 `json:"concurrency,omitempty"`
+	Traffic     *AdHocTrafficLimits `json:"traffic,omitempty"`
+}
+
+type AdHocTrafficLimits struct {
+	Connections int                    `json:"connections,omitempty"`
+	Rate        *AdHocTrafficRate      `json:"rate,omitempty"`
+	Bandwidth   *AdHocTrafficBandwidth `json:"bandwidth,omitempty"`
+}
+
+type AdHocTrafficRate struct {
+	Count int    `json:"count,omitempty"`
+	Per   string `json:"per,omitempty"`
+	Burst int    `json:"burst,omitempty"`
+}
+
+type AdHocTrafficBandwidth struct {
+	Upload   string `json:"upload,omitempty"`
+	Download string `json:"download,omitempty"`
 }
 
 type AdHocRateLimit struct {

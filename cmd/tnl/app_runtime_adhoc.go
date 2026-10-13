@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -42,11 +43,45 @@ func (a *appRuntime) publishAdHoc(ctx context.Context, request privateprotocol.A
 	if err := limits.Validate(); err != nil {
 		return err
 	}
+	traffic := trafficlimits.Selection{}
+	if request.Limits != nil && request.Limits.Traffic != nil {
+		selected := request.Limits.Traffic
+		if selected.Connections != 0 {
+			traffic.Connections = &selected.Connections
+		}
+		if selected.Rate != nil {
+			if selected.Rate.Count != 0 {
+				traffic.Rate = &selected.Rate.Count
+			}
+			if selected.Rate.Per != "" {
+				traffic.RatePer = &selected.Rate.Per
+			}
+			if selected.Rate.Burst != 0 {
+				traffic.Burst = &selected.Rate.Burst
+			}
+		}
+		if selected.Bandwidth != nil {
+			if selected.Bandwidth.Upload != "" {
+				rate, parseErr := trafficlimits.ParseByteRate(selected.Bandwidth.Upload)
+				if parseErr != nil {
+					return parseErr
+				}
+				traffic.UploadBytes = &rate
+			}
+			if selected.Bandwidth.Download != "" {
+				rate, parseErr := trafficlimits.ParseByteRate(selected.Bandwidth.Download)
+				if parseErr != nil {
+					return parseErr
+				}
+				traffic.DownloadBytes = &rate
+			}
+		}
+	}
 	status := privateprotocol.AdHocStatus{Version: privateprotocol.Version, RegistrationID: request.RegistrationID, State: privateprotocol.AdHocStarting}
 	return adhoc.Run(ctx, adhoc.Options{
 		ControlURL: serverURL, State: profile, Credential: credentials.EphemeralCredential(request.Credential),
 		InvocationID: request.RegistrationID, Target: request.Target,
-		AllowIP: request.AllowIP, AllowAllIPs: request.AllowAllIPs, Limits: limits,
+		AllowIP: request.AllowIP, AllowAllIPs: request.AllowAllIPs, Limits: limits, Traffic: traffic,
 		OnAllocated: func(route controlv1.PublicURL) error {
 			status.State, status.PublicURLID, status.PublicURL = privateprotocol.AdHocPublishing, route.Id, "https://"+route.CanonicalHostname
 			update(status)

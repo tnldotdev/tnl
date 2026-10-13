@@ -3,6 +3,7 @@ package controlstate
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -20,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 )
 
 const publishRunConnectionCount = 2
@@ -56,6 +58,7 @@ type PublishRunRequest struct {
 	CertificateChallenge     certificateidentity.ChallengeMethod
 	ExpectedMutationRevision uint64
 	PublishCredentialID      string
+	Traffic                  *trafficlimits.Limits
 }
 
 // ConnectionAssignment is one of the two independently assigned publisher
@@ -85,6 +88,7 @@ type PublishRunSetup struct {
 	ClosedAt             *time.Time
 	PolicyDenials        uint64
 	PublisherConnections [publishRunConnectionCount]ConnectionAssignment
+	Traffic              *trafficlimits.Limits
 }
 
 // CreatePublishRun creates one publish run with two connection assignments on
@@ -240,6 +244,10 @@ func (d *Database) createPublishRun(
 		if err != nil {
 			return PublishRunSetup{}, err
 		}
+		setup.Traffic, err = readPublishRunTrafficLimits(ctx, queries, existing.ID)
+		if err != nil {
+			return PublishRunSetup{}, err
+		}
 		if err := pendingEvents.publish(ctx, queries); err != nil {
 			return PublishRunSetup{}, err
 		}
@@ -297,6 +305,16 @@ func (d *Database) createPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: protect publish run digest: %w", err)
 	}
+	var trafficData []byte
+	if request.Traffic != nil {
+		if !request.Traffic.Valid() {
+			return PublishRunSetup{}, ErrPublicURLInvalid
+		}
+		trafficData, err = json.Marshal(request.Traffic)
+		if err != nil {
+			return PublishRunSetup{}, fmt.Errorf("controlstate: encode publish run traffic: %w", err)
+		}
+	}
 	session, err := queries.InsertPublishRun(ctx, controlstatedb.InsertPublishRunParams{
 		ID: publishRunID, PublicURLID: request.PublicURLID, TeamID: request.TeamID, MembershipID: membershipID,
 		ActingIdentityID: request.ActingIdentityID, ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
@@ -316,6 +334,13 @@ func (d *Database) createPublishRun(
 	}
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: insert session: %w", err)
+	}
+	if request.Traffic != nil {
+		if err := queries.InsertPublishRunTrafficLimits(ctx, controlstatedb.InsertPublishRunTrafficLimitsParams{
+			PublishRunID: publishRunID, Limits: string(trafficData),
+		}); err != nil {
+			return PublishRunSetup{}, fmt.Errorf("controlstate: store publish run traffic limits: %w", err)
+		}
 	}
 	if request.PublishCredentialID != "" {
 		attached, err := queries.AttachPublishRunCredential(ctx, controlstatedb.AttachPublishRunCredentialParams{
@@ -368,6 +393,7 @@ func (d *Database) createPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
+	setup.Traffic = request.Traffic
 	if err := queries.InsertPublishRunAuditEvent(ctx, controlstatedb.InsertPublishRunAuditEventParams{
 		ActorIdentityID: text(request.ActingIdentityID), Actor: request.ActingIdentityID,
 		RequestID: request.IdempotencyKey, PublishRunID: publishRunID, OccurredAt: timestamptz(now),

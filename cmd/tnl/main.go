@@ -39,6 +39,7 @@ type cli struct {
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
 	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
+	Limits      limitsCommand    `cmd:"" help:"Inspect effective limits for a project service." group:"manage"`
 	Project     projectCommand   `cmd:"" help:"Inspect the current project and worktree." group:"manage"`
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
@@ -73,6 +74,12 @@ type tunnelFlags struct {
 	RatePer             string                `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-count."`
 	RateBurst           *int                  `name:"rate-burst" env:"TNL_RATE_BURST" help:"Maximum application work admitted at once; requires a rate."`
 	Concurrency         *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous HTTP requests or TCP sessions (default: 64 or 24)."`
+	TrafficConnections  *int                  `name:"traffic-connections" env:"TNL_TRAFFIC_CONNECTIONS" help:"Concurrent visitor connections for one public URL on each ingress process."`
+	TrafficRateCount    *int                  `name:"traffic-rate-count" env:"TNL_TRAFFIC_RATE_COUNT" help:"New visitor connections per traffic rate period."`
+	TrafficRatePer      string                `name:"traffic-rate-per" env:"TNL_TRAFFIC_RATE_PER" help:"Traffic connection rate period, such as 1s."`
+	TrafficRateBurst    *int                  `name:"traffic-rate-burst" env:"TNL_TRAFFIC_RATE_BURST" help:"Maximum new visitor connection burst."`
+	TrafficUpload       string                `name:"traffic-upload" env:"TNL_TRAFFIC_UPLOAD" help:"Visitor upload bandwidth, such as 8MiB/s."`
+	TrafficDownload     string                `name:"traffic-download" env:"TNL_TRAFFIC_DOWNLOAD" help:"Visitor download bandwidth, such as 16MiB/s."`
 	TargetCAFile        string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or private TCP target."`
 	InspectionMode      config.InspectionMode `name:"inspection-mode" enum:"none,summary" default:"summary" help:"Local HTTP and TCP inspection: summary (default) or none."`
 	InspectionRetention time.Duration         `name:"inspection-retention" help:"Keep this service's local inspections for this long (default 24h)."`
@@ -447,6 +454,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runConfigCheck(project, stdout)
 	case "config generate":
 		return runConfigGenerate(ctx, projectStateRoot, project, stdout, stderr)
+	case "limits show <service>":
+		return runLimitsShow(ctx, flags.Limits.Show, project, stdout)
 	case "project label":
 		return runProjectLabel(ctx, flags, stdout)
 	case "project publisher credential create":

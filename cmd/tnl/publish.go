@@ -223,6 +223,11 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			return err
 		}
 	}
+	traffic, err := flags.traffic()
+	if err != nil {
+		return failure.Wrap("validate traffic limits", failure.InvalidTunnelFlags, err)
+	}
+	services.traffic = traffic
 	if protocol == controlv1.Http && !flags.Demo && flags.project.Config.OAuth {
 		oauth, oauthServices, resolveErr := projectOAuthPublisher(ctx, state, flags.project.Project, serverURL, flags.selectedTeam, authenticated)
 		if resolveErr != nil {
@@ -236,7 +241,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, flags.project.Project, tunnel, flags.Service, integrationGroup, output, telemetry)
 		defer stopWebhooks()
 	}
-	publisherConfig := services.config(target, policy.prefixes, flags.limits())
+	publisherConfig := services.config(target, policy.prefixes, flags.limits(), traffic)
 	publisherConfig.ResolveTarget = flags.resolveTarget
 	publisherConfig.ServiceProtocol = protocol
 	publisherConfig.TargetTLSName = flags.TargetTLSName

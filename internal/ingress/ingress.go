@@ -38,6 +38,7 @@ type PublicURL struct {
 	AllowAll          bool
 	Backends          []routebackend.Backend
 	PublicPort        *uint16
+	Traffic           *TrafficLimits
 }
 
 // LookupFunc returns an empty reason for a current public URL. failure reasons

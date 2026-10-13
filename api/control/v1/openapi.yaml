@@ -641,6 +641,12 @@ paths:
       parameters:
         - $ref: "#/components/parameters/PublicURLID"
         - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePublishRunRequest"
       responses:
         "201":
           description: Publish run and two publisher connection assignments
@@ -1550,6 +1556,10 @@ components:
         guest_demo:
           type: boolean
           description: Whether this server accepts limited anonymous demo publishers.
+        traffic_defaults:
+          $ref: "#/components/schemas/PublishRunTrafficLimits"
+        traffic_ceilings:
+          $ref: "#/components/schemas/PublishRunTrafficLimits"
         browser_login_available:
           type: boolean
           description: Whether visitors can sign in through a browser OIDC client.
@@ -1822,6 +1832,33 @@ components:
             burst:
               type: integer
               minimum: 1
+    CreatePublishRunRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        traffic:
+          $ref: "#/components/schemas/PublishRunTrafficSelection"
+    PublishRunTrafficSelection:
+      type: object
+      additionalProperties: false
+      properties:
+        connections: { type: integer, minimum: 1 }
+        rate: { type: integer, minimum: 1 }
+        rate_per: { type: string }
+        burst: { type: integer, minimum: 1 }
+        upload_bytes: { type: integer, format: int64, minimum: 65536 }
+        download_bytes: { type: integer, format: int64, minimum: 65536 }
+    PublishRunTrafficLimits:
+      type: object
+      additionalProperties: false
+      required: [connections, rate, rate_per_ns, burst, upload_bytes, download_bytes]
+      properties:
+        connections: { type: integer, minimum: 1 }
+        rate: { type: integer, minimum: 1 }
+        rate_per_ns: { type: integer, format: int64, minimum: 1000000 }
+        burst: { type: integer, minimum: 1 }
+        upload_bytes: { type: integer, format: int64, minimum: 65536 }
+        download_bytes: { type: integer, format: int64, minimum: 65536 }
     IssuedEphemeralPublishCredential:
       type: object
       additionalProperties: false
@@ -2754,6 +2791,8 @@ components:
           maxItems: 2
           items:
             $ref: "#/components/schemas/ConnectionAssignment"
+        traffic:
+          $ref: "#/components/schemas/PublishRunTrafficLimits"
     PublishRunVersionRequest:
       type: object
       additionalProperties: false

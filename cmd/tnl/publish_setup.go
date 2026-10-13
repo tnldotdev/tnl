@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -37,6 +38,7 @@ type publisherServices struct {
 	policyRevision        uint64
 	ephemeral             bool
 	routes                *controlclient.Client
+	traffic               trafficlimits.Selection
 }
 
 type clientIPLookup interface {
@@ -298,9 +300,32 @@ func (flags tunnelFlags) limits() publisher.ApplicationLimits {
 	return limits
 }
 
-func (p publisherServices) config(target string, allowedIPPrefixes []string, limits publisher.ApplicationLimits) publisher.Config {
+func (flags tunnelFlags) traffic() (trafficlimits.Selection, error) {
+	selected := trafficlimits.Selection{Connections: flags.TrafficConnections, Rate: flags.TrafficRateCount,
+		Burst: flags.TrafficRateBurst}
+	if flags.TrafficRatePer != "" {
+		selected.RatePer = &flags.TrafficRatePer
+	}
+	if flags.TrafficUpload != "" {
+		value, err := trafficlimits.ParseByteRate(flags.TrafficUpload)
+		if err != nil {
+			return selected, err
+		}
+		selected.UploadBytes = &value
+	}
+	if flags.TrafficDownload != "" {
+		value, err := trafficlimits.ParseByteRate(flags.TrafficDownload)
+		if err != nil {
+			return selected, err
+		}
+		selected.DownloadBytes = &value
+	}
+	return selected, nil
+}
+
+func (p publisherServices) config(target string, allowedIPPrefixes []string, limits publisher.ApplicationLimits, traffic ...trafficlimits.Selection) publisher.Config {
 	relayTransportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
-	return publisher.Config{
+	result := publisher.Config{
 		Control:           p.routes,
 		TeamID:            p.teamID,
 		MembershipID:      p.membershipID,
@@ -317,4 +342,8 @@ func (p publisherServices) config(target string, allowedIPPrefixes []string, lim
 		QUICConnector:     muxsession.QUICConnector{TLSConfig: relayTransportTLS},
 		TCPConnector:      muxsession.TLSYamuxConnector{TLSConfig: relayTransportTLS},
 	}
+	if len(traffic) != 0 {
+		result.Traffic = traffic[0]
+	}
+	return result
 }
