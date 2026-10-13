@@ -24,7 +24,6 @@ class NativeRuntime:
         try:
             address = await asyncio.create_subprocess_exec(
                 str(binary),
-                "--no-telemetry",
                 "runtime",
                 "endpoint",
                 "--directory",
@@ -56,7 +55,6 @@ class NativeRuntime:
             if not await self.healthy(endpoint_path):
                 await asyncio.create_subprocess_exec(
                     str(binary),
-                    "--no-telemetry",
                     "runtime",
                     "serve",
                     "--directory",
