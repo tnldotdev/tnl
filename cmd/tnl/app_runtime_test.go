@@ -723,7 +723,7 @@ func TestNamedPublicationLocalAPIReportsCurrentLeaseAndEvents(t *testing.T) {
 	}
 }
 
-func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
+func TestTCPServicesWaitForPublicReadinessWithoutHTTPProbe(t *testing.T) {
 	a, stateDir, started := testAppRuntime(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -751,8 +751,18 @@ func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 		t.Fatal("TCP service sent an HTTP readiness probe")
 		return clientruntime.Observation{}
 	}
+	publicReady := true
+	tcpProbe := func(_ context.Context, service clientruntime.Service, passthrough bool) error {
+		if service.PublicURL != "orders.example:15432" || service.ServiceProtocol != "postgres" || passthrough {
+			t.Errorf("public TCP probe used the wrong run or protocol: %+v, passthrough=%t", service, passthrough)
+		}
+		if !publicReady {
+			return errors.New("public visitor path unavailable")
+		}
+		return nil
+	}
 	flags := waitCommand{Service: []string{"orders"}, Timeout: 500 * time.Millisecond, Output: "json"}
-	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err == nil {
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe, tcpProbe); err == nil {
 		t.Fatal("unready TCP publication passed wait")
 	}
 	if err := a.manager.RegisterNamed(id, "cli-owner", string(target)); err != nil {
@@ -764,7 +774,7 @@ func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 	}
 	output.Reset()
 	flags.Timeout = 2 * time.Second
-	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err != nil {
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe, tcpProbe); err != nil {
 		t.Fatal(err)
 	}
 	var snapshot clientruntime.Snapshot
@@ -777,9 +787,14 @@ func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	output.Reset()
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe, tcpProbe); err != nil {
+		t.Fatalf("private target dial changed public readiness: %v", err)
+	}
+	publicReady = false
+	output.Reset()
 	flags.Timeout = 500 * time.Millisecond
-	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err == nil {
-		t.Fatal("wait passed with closed TCP target")
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe, tcpProbe); err == nil {
+		t.Fatal("wait passed with an unavailable public visitor path")
 	}
 	if err := os.WriteFile(filepath.Join(project.Root, "tnl.json"), []byte(`{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"}},"orders":{"protocol":"postgres","target":{"type":"address","address":"`+string(target)+`"}}}}}`), 0600); err != nil {
 		t.Fatal(err)

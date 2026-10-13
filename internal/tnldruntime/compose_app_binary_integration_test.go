@@ -40,7 +40,8 @@ func TestBinaryIntegrationComposeAppAndDatabaseVisitor(t *testing.T) {
 	if address, err := netip.ParseAddr(gateway); err != nil || !address.Is4() || address.IsLoopback() {
 		t.Fatalf("disposable Docker bridge has no host address: %q, %v", gateway, err)
 	}
-	startIntegrationPublicProxy(t, "127.0.0.2:443", net.JoinHostPort(gateway, "443"))
+	stopContainerPublicProxy := startIntegrationPublicProxy(t, "127.0.0.2:443",
+		net.JoinHostPort(gateway, "443"), net.JoinHostPort(gateway, "15432"), net.JoinHostPort(gateway, "15433"))
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +52,8 @@ func TestBinaryIntegrationComposeAppAndDatabaseVisitor(t *testing.T) {
 	}
 	assertIntegrationBinaryProcessResult(t, labelProcess)
 	label := strings.TrimSpace(labelProcess.output.String())
-	configuration := fmt.Sprintf(`{"version":1,"tnl":{"server":"https://control.127.0.0.1.nip.io","publisher":{"type":"docker","compose":{"file":"compose.yaml","project":%q,"service":"publisher"},"container_port":3781},"services":{"web":{"target":{"type":"app"},"tunnel":{"name":"binary-compose-web","allow_all_ips":true}},"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"tunnel":{"name":"binary-compose-orders","allow_all_ips":true}}}}}`, label)
+	ownerFile := filepath.Join(t.TempDir(), "publisher-owner")
+	configuration := fmt.Sprintf(`{"version":1,"tnl":{"server":"https://control.127.0.0.1.nip.io","publisher":{"type":"docker","compose":{"file":"compose.yaml","project":%q,"service":"publisher"},"container_port":3781,"owner_credential_file":%q},"services":{"web":{"target":{"type":"app"},"tunnel":{"name":"binary-compose-web","allow_all_ips":true}},"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"tunnel":{"name":"binary-compose-orders","allow_all_ips":true}}}}}`, label, ownerFile)
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), []byte(configuration), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +71,15 @@ func TestBinaryIntegrationComposeAppAndDatabaseVisitor(t *testing.T) {
 	if webURL == "" || databaseURL == "" {
 		t.Fatal("project preparation omitted a saved public URL")
 	}
+	webOrigin, err := url.Parse(webURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicDatabaseHost, _, err := net.SplitHostPort(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runIntegrationBinaryCommand(t, root, fixture.environment, fixture.tnlPath, "project", "publisher", "credential", "create")
 	appModule := (&url.URL{Scheme: "file", Path: filepath.Join(fixture.repositoryRoot, "packages", "ts", "dist", "internal", "app.js")}).String()
 	appSource := fmt.Sprintf(`import {createServer} from "node:http";
 import {writeFileSync} from "node:fs";
@@ -101,12 +112,15 @@ writeFileSync("/app/ready.json", JSON.stringify({port:server.address().port,url:
       SSL_CERT_FILE: /trust/roots.pem
     volumes:
       - ${PROJECT_ROOT}:${PROJECT_ROOT}
+      - ${OWNER_FILE}:${OWNER_FILE}:ro
       - ${TRUST_FILE}:/trust/roots.pem:ro
       - publisher-state:/state
       - web-endpoint:/run/tnl-apps/web
     extra_hosts:
       - control.127.0.0.1.nip.io:host-gateway
       - relay.127.0.0.1.nip.io:host-gateway
+      - ${PUBLIC_WEB_HOST}:host-gateway
+      - ${PUBLIC_DB_HOST}:host-gateway
     ports: ["127.0.0.1::3781"]
     depends_on:
       publisher-state-init: {condition: service_completed_successfully}
@@ -140,7 +154,9 @@ volumes:
 	composeEnvironment := append([]string{}, fixture.environment...)
 	composeEnvironment = append(composeEnvironment,
 		"PROJECT_ROOT="+root, "TRUST_FILE="+fixture.trustFile, "TNL_REPOSITORY="+fixture.repositoryRoot,
-		"TNL_UID="+strconv.Itoa(os.Getuid()), "TNL_GID="+strconv.Itoa(os.Getgid()))
+		"OWNER_FILE="+ownerFile,
+		"TNL_UID="+strconv.Itoa(os.Getuid()), "TNL_GID="+strconv.Itoa(os.Getgid()),
+		"PUBLIC_WEB_HOST="+webOrigin.Hostname(), "PUBLIC_DB_HOST="+publicDatabaseHost)
 	runCompose := func(timeout time.Duration, arguments ...string) (string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
@@ -287,4 +303,5 @@ volumes:
 		err = connection.QueryRow(ctx, "SELECT 42").Scan(&answer)
 		return err == nil && answer == 42, err
 	})
+	stopContainerPublicProxy()
 }

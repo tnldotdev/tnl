@@ -584,7 +584,8 @@ func (a *appRuntime) handler() http.Handler {
 			for index := range snapshot.Services {
 				service := &snapshot.Services[index]
 				if service.Name == probe && service.Registered && service.Routable && service.ServiceProtocol != "" && service.ServiceProtocol != "http" {
-					service.Ready = probeTCPTarget(r.Context(), service.Target)
+					service.Ready = clientruntime.ProbeTCP(r.Context(), service.PublicURL, service.ServiceProtocol,
+						tcpVisitorTLSPassthrough(a.project, service.Name), nil) == nil
 				}
 			}
 		}
@@ -914,6 +915,12 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 			if service.ServiceProtocol == "" || service.ServiceProtocol == "http" {
 				probes.Add(1)
 				go func() { defer probes.Done(); a.check(probeCtx, copy) }()
+			} else {
+				probes.Add(1)
+				go func() {
+					defer probes.Done()
+					a.checkTCP(probeCtx, copy, tcpVisitorTLSPassthrough(a.project, service.Name))
+				}()
 			}
 		}
 		return nil
@@ -938,6 +945,30 @@ func (a *appRuntime) check(ctx context.Context, service clientruntime.Service) {
 		case <-ctx.Done():
 			timer.Stop()
 			return
+		case <-timer.C:
+		}
+	}
+}
+
+func (a *appRuntime) checkTCP(ctx context.Context, service clientruntime.Service, passthrough bool) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	for attempt := 0; ctx.Err() == nil; attempt++ {
+		err := clientruntime.ProbeTCP(ctx, service.PublicURL, service.ServiceProtocol, passthrough, nil)
+		observation := clientruntime.Observation{
+			RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber,
+			CheckedAt: time.Now().UTC(), Ready: err == nil, Readiness: service.Readiness,
+		}
+		if err != nil {
+			observation.Reason = "runtime.probe_failed"
+		}
+		if !a.manager.Observe(observation) || observation.Ready {
+			return
+		}
+		timer := time.NewTimer(clientruntime.RetryDelay(attempt))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
 		case <-timer.C:
 		}
 	}
