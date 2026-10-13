@@ -239,6 +239,10 @@ volumes:
 	if err := json.Unmarshal([]byte(oldDescriptor), &oldScope); err != nil {
 		t.Fatal(err)
 	}
+	webContainer, err := runCompose(10*time.Second, "ps", "-q", "web")
+	if err != nil || strings.TrimSpace(webContainer) == "" {
+		t.Fatalf("app container is not running before publisher restart: %v", err)
+	}
 	if output, err := runCompose(30*time.Second, "restart", "publisher"); err != nil {
 		t.Fatalf("restart Compose publisher: %v (%s)", err, output)
 	}
@@ -256,23 +260,10 @@ volumes:
 	if err := json.Unmarshal([]byte(currentDescriptor), &currentScope); err != nil || currentScope.Credential == oldScope.Credential {
 		t.Fatalf("restarted publisher retained a stale app credential: %v", err)
 	}
-	if err := os.Remove(filepath.Join(root, "ready.json")); err != nil {
-		t.Fatal(err)
-	}
-	if output, err := runCompose(90*time.Second, "up", "-d", "--force-recreate", "web"); err != nil {
-		t.Fatalf("restart Compose app with reissued credential: %v (%s)", err, output)
-	}
-	waitForIntegrationCondition(t, 35*time.Second, func(_ context.Context) (bool, error) {
-		data, err := os.ReadFile(filepath.Join(root, "ready.json"))
-		if err != nil {
-			return false, err
-		}
-		if err := json.Unmarshal(data, &app); err != nil {
-			return false, err
-		}
-		return app.Port > 0 && app.URL == webURL, fmt.Errorf("app did not keep its saved public URL after owner restart")
-	})
 	runIntegrationBinaryCommand(t, root, composeEnvironment, fixture.tnlPath, "wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
+	if currentWeb, err := runCompose(10*time.Second, "ps", "-q", "web"); err != nil || strings.TrimSpace(currentWeb) != strings.TrimSpace(webContainer) {
+		t.Fatalf("app did not stay running through publisher replacement: %v", err)
+	}
 	waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
 		response, body, err := visitor.requestURLContext(ctx, http.MethodGet, webURL+"/", nil)
 		if err != nil || response.StatusCode != http.StatusOK {
