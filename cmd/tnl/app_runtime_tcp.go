@@ -24,9 +24,9 @@ type localPublisherEndpoint struct {
 	Credential string `json:"credential"`
 }
 
-func runtimeTCPEndpointPath(socket string) string { return socket + ".endpoint.json" }
+func runtimeTCPEndpointPath(key string) string { return key + ".endpoint.json" }
 
-func startRuntimeTCP(socket string, handler http.Handler) (*http.Server, <-chan error, error) {
+func startRuntimeTCP(key string, handler http.Handler) (*http.Server, <-chan error, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen for local publisher requests: %w", err)
@@ -39,7 +39,7 @@ func startRuntimeTCP(socket string, handler http.Handler) (*http.Server, <-chan 
 	credential := base64.RawURLEncoding.EncodeToString(secret)
 	server := &http.Server{Handler: authorizeLocalPublisher(handler, credential), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
 	endpoint := localPublisherEndpoint{Version: privateprotocol.Version, URL: "http://" + listener.Addr().String(), Credential: credential}
-	if err := writeRuntimeTCPEndpoint(runtimeTCPEndpointPath(socket), endpoint); err != nil {
+	if err := writeRuntimeTCPEndpoint(runtimeTCPEndpointPath(key), endpoint); err != nil {
 		listener.Close()
 		return nil, nil, err
 	}
@@ -84,8 +84,8 @@ func writeRuntimeTCPEndpoint(path string, endpoint localPublisherEndpoint) error
 	return os.Rename(file.Name(), path)
 }
 
-func readRuntimeTCPEndpoint(socket string) (localPublisherEndpoint, error) {
-	data, err := os.ReadFile(runtimeTCPEndpointPath(socket))
+func readRuntimeTCPEndpoint(key string) (localPublisherEndpoint, error) {
+	data, err := os.ReadFile(runtimeTCPEndpointPath(key))
 	if err != nil {
 		return localPublisherEndpoint{}, err
 	}
@@ -110,9 +110,9 @@ func readRuntimeTCPEndpoint(socket string) (localPublisherEndpoint, error) {
 	return endpoint, nil
 }
 
-func stopRuntimeTCP(ctx context.Context, server *http.Server, socket string) error {
+func stopRuntimeTCP(ctx context.Context, server *http.Server, key string) error {
 	closeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	err := server.Shutdown(closeCtx)
-	return errors.Join(err, os.Remove(runtimeTCPEndpointPath(socket)))
+	return errors.Join(err, os.Remove(runtimeTCPEndpointPath(key)))
 }
