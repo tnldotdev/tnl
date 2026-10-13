@@ -282,11 +282,11 @@ export interface Inspection {
 }
 export interface Publish {
   /**
-   * Local service protocol: http (default), postgres, mysql, redis, or ssh.
+   * Service protocol for the public URL; defaults to http.
    */
   protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh";
   /**
-   * HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher.
+   * HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher.
    */
   target?: string | number;
   /**
@@ -294,11 +294,11 @@ export interface Publish {
    */
   targetCAFile?: string;
   /**
-   * Use verified TLS for the private TCP target.
+   * Use verified TLS for the TCP target.
    */
   targetTLS?: boolean;
   /**
-   * Hostname expected in the private target TLS certificate; defaults to the target host.
+   * Hostname expected in the target's TLS certificate; defaults to the target host.
    */
   targetTLSName?: string;
 }
