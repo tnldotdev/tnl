@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -22,6 +23,9 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/tnldotdev/tnl/internal/benchworkload"
+	"github.com/tnldotdev/tnl/internal/clientauth"
+	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
@@ -312,12 +316,29 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, shard int)
 	}
 	var fallbacks atomic.Int64
 	client := separatedHTTP(t)
+	state, err := clientstate.Open(ctx, filepath.Join(t.TempDir(), "team-state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	auth, err := clientauth.Login(ctx, clientauth.Config{
+		ServerEndpoint: "https://control." + separatedDomain, State: state, HTTPClient: client,
+		Diagnostics: io.Discard, ForceLoginToken: true,
+		LoginToken: func() (credentials.LoginToken, error) { return credentials.LoginToken(testLoginToken), nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := auth.Authority.IdentityContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	inspect := inspectStandaloneTestDatabase(t, testutil.PostgresURL(t))
 	if *runtimeLoadTrace {
 		traceRuntimeCertificateHTTP(t, client, time.Now())
 	}
 	group, err := benchworkload.OpenPublishers(ctx, benchworkload.PublisherConfig{
-		Server: "https://control." + separatedDomain, LoginToken: testLoginToken,
+		Server: "https://control." + separatedDomain, LoginToken: testLoginToken, Team: identity.PersonalTeamId,
 		Domain: "routes." + separatedDomain, StateRoot: filepath.Join(t.TempDir(), "state"), Target: "http://127.0.0.1:8080",
 		HTTPClient: client, RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
 		Transport: transport, Parallel: 4, StartParallel: max(1, *runtimeLoadStartParallel/len(separatedPublisherComponents())),

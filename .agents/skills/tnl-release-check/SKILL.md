@@ -6,43 +6,30 @@ compatibility: opencode
 
 # check a deployed release
 
-Use the same `release:check:plan` and `release:check:run` tasks for every server.
-They run a small functional check with the released `tnl` binary, not a load
-benchmark. Follow [deployed release checks](../../../docs/maintainers/release-checks.md).
+Use the Go `staging:check:smoke` task with an explicitly selected control URL,
+dedicated test team, released `tnl` binary, expected version and commit, and a
+private login-token file. See [deployed server checks](../../../docs/maintainers/release-checks.md).
 
-1. Confirm the signed release version and deployed image digest. Use that
-   release's `tnl` binary with an explicit `--server` and `--state-dir`. Run
-   `tnl team list` and `tnl team current` to find the saved login and record the
-   original team ID. `tnl domain list` shows only the selected team's domains;
-   select a different team with `tnl team use` if needed. Authentication may
-   refresh local client state, so these CLI commands are not read-only.
-2. Use a dedicated test team. If only a personal team exists, create an
-   organization team with `tnl team create` and confirm its managed domain is
-   ready before checking public URLs. An existing saved login may be used with
-   that team; prefer a separate identity and state directory when available.
-   Do not claim an unprovided domain or change DNS delegation. Without a ready
-   custom domain, run the managed-only checks and report that the shared custom
-   URL was not tested.
-3. Preview the selected server and fixture:
+1. Confirm the deployed image digest and source commit independently of the
+   client binary. Use a test identity in a dedicated organization team, not a
+   personal team. Check that the team's managed domain is ready; select a ready
+   custom domain only if shared-hostname coverage is needed.
+2. Run the smoke check with the selected deployment:
 
    ```console
-   mise exec -- task release:check:plan SERVER=<url> TEAM=<id> \
-     STATE_DIR=<absolute-path> TNL_BINARY=<absolute-path> VERSION=<version> \
-     CUSTOM_DOMAIN=<domain>
+   mise exec -- task staging:check:smoke SERVER=<control-url> TEAM=<team-id> \
+     TNL_BINARY=<absolute-path> VERSION=<version> REVISION=<commit> \
+     TOKEN_FILE=<absolute-path>
    ```
 
-   `release:check:plan` is read-only. `release:check:run` is **not**: it creates
-   up to three public URLs and four publish runs in the test team. Review the
-   plan before running with the same values.
+   The task creates public URLs and publish runs. Pass `CUSTOM_DOMAIN=<domain>` for shared URL
+   coverage. Use `staging:check:full` for both transports and the four supported
+   TCP protocols when Docker is available.
 
-4. After each run, select the test team if necessary and check `tnl url list`
-   for leftovers. Delete only a test-owned public URL ID if cleanup failed.
-   Restore the original team selection with `tnl team use <original-team-id>`
-   for that server, including after a failed run.
-5. Require staging to pass before production promotion and check production
-   after deployment. Report the version, both results, and any omitted
-   custom-domain coverage. A managed-only run does not qualify shared custom
-   public URLs.
+3. Confirm cleanup and inspect the dedicated team's URL list if a run was
+   interrupted. Remove only run-owned URLs. Check production with its own
+   server, team, token, and binary after promotion. Stop if the deployed
+   revision changes during a check.
 
-Omit `CUSTOM_DOMAIN` for managed-only checks. Keep release-signing approvals
-in `tnl-release` and obtain separate approval for deployed benchmarks.
+Obtain separate approval for deployed benchmarks; staging checks do not invoke
+`tnlbench`. Keep release-signing approvals in `tnl-release`.

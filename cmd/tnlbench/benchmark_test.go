@@ -21,7 +21,7 @@ import (
 )
 
 func smokeOptions() workloadOptions {
-	return workloadOptions{Suite: "smoke", Server: "https://control.example.test", Mode: modeFreshHeld, Transport: "mixed", VisitorNetwork: "tcp", PublicURLs: 4, StartParallel: 4, FreshRate: 16,
+	return workloadOptions{Suite: "smoke", Server: "https://control.example.test", Team: "team_bench", Mode: modeFreshHeld, Transport: "mixed", VisitorNetwork: "tcp", PublicURLs: 4, StartParallel: 4, FreshRate: 16,
 		HeldStreams: 4, Concurrency: 128, QueueSlots: 8, PayloadBytes: 32768,
 		Repetitions: 1, Warmup: 5 * time.Second, Duration: 10 * time.Second}
 }
@@ -29,7 +29,7 @@ func smokeOptions() workloadOptions {
 func TestBenchmarkPlanAndExecutionGate(t *testing.T) {
 	options := smokeOptions()
 	plan, err := options.plan()
-	if err != nil || !plan.ReadOnly || plan.Server != options.Server || plan.Workload.Transport != "mixed" || plan.Workload.VisitorNetwork != "tcp" {
+	if err != nil || !plan.ReadOnly || plan.Server != options.Server || plan.Team != options.Team || plan.Workload.Transport != "mixed" || plan.Workload.VisitorNetwork != "tcp" {
 		t.Fatalf("unexpected benchmark plan: %+v, %v", plan, err)
 	}
 	options.VisitorNetwork = "tcp4"
@@ -85,6 +85,11 @@ func TestBenchmarkPlanAndExecutionGate(t *testing.T) {
 	options.Server = ""
 	if _, err := options.plan(); err == nil {
 		t.Fatal("accepted a missing control URL")
+	}
+	options = smokeOptions()
+	options.Team = ""
+	if _, err := options.plan(); err == nil || !strings.Contains(err.Error(), "BENCH_TEAM") {
+		t.Fatalf("accepted missing team: %v", err)
 	}
 	options = smokeOptions()
 	options.PublicURLs = 5

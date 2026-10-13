@@ -52,6 +52,7 @@ const (
 type workloadOptions struct {
 	Suite                       benchmarkSuite                `name:"suite" env:"BENCH_SUITE" default:"smoke" enum:"smoke,target" help:"Small smoke or an explicit target workload."`
 	Server                      string                        `name:"server" env:"BENCH_SERVER" required:"" help:"HTTPS control URL of the approved tnl server."`
+	Team                        string                        `name:"team" env:"BENCH_TEAM" required:"" help:"Team ID whose member namespace will hold the public URLs."`
 	Mode                        benchmarkMode                 `name:"mode" env:"BENCH_MODE" default:"fresh-held" enum:"fresh-held,fresh,held,bandwidth,combined" help:"Select the measured visitor workload."`
 	Transport                   benchworkload.TransportChoice `name:"transport" env:"BENCH_TRANSPORT" default:"mixed" enum:"mixed,quic,tcp,auto" help:"Forced cohorts or normal QUIC/TLS-TCP selection."`
 	QUICDisablePathMTUDiscovery bool                          `name:"quic-disable-path-mtu-discovery" env:"BENCH_QUIC_DISABLE_PATH_MTU_DISCOVERY" help:"Disable publisher QUIC path-MTU discovery for a diagnostic run."`
@@ -80,6 +81,7 @@ type benchmarkPlan struct {
 	SchemaVersion int             `json:"schema_version"`
 	ReadOnly      bool            `json:"read_only"`
 	Server        string          `json:"server"`
+	Team          string          `json:"team"`
 	Workload      workloadSummary `json:"workload"`
 }
 
@@ -110,6 +112,9 @@ type workloadSummary struct {
 func (c workloadOptions) plan() (benchmarkPlan, error) {
 	if c.Server == "" {
 		return benchmarkPlan{}, errors.New("benchmark requires --server or BENCH_SERVER")
+	}
+	if c.Team == "" {
+		return benchmarkPlan{}, errors.New("benchmark requires --team or BENCH_TEAM")
 	}
 	server, err := clientstate.CanonicalServer(c.Server)
 	if err != nil {
@@ -156,7 +161,7 @@ func (c workloadOptions) plan() (benchmarkPlan, error) {
 		c.Repetitions != 1 || c.Warmup > 5*time.Second || c.Duration > 30*time.Second) {
 		return benchmarkPlan{}, errors.New("larger workloads require suite target")
 	}
-	return benchmarkPlan{SchemaVersion: 3, ReadOnly: true, Server: server,
+	return benchmarkPlan{SchemaVersion: 3, ReadOnly: true, Server: server, Team: c.Team,
 		Workload: workloadSummary{Suite: c.Suite, Mode: c.Mode, Transport: c.Transport, QUICDisablePathMTUDiscovery: c.QUICDisablePathMTUDiscovery, QUICQlog: c.QUICQlog, QUICKeepAlive: c.QUICKeepAlive, VisitorNetwork: c.VisitorNetwork, VisitorInterface: c.VisitorInterface, PublicURLs: c.PublicURLs, StartParallel: c.StartParallel, FreshRate: c.FreshRate,
 			HeldStreams: c.HeldStreams, BandwidthDirection: c.BandwidthDirection, BandwidthMbits: c.BandwidthMbits, BandwidthStreams: c.BandwidthStreams, Concurrency: c.Concurrency, QueueSlots: c.QueueSlots,
 			PayloadBytes: c.PayloadBytes, Repetitions: c.Repetitions, Warmup: c.Warmup, Duration: c.Duration}}, nil
@@ -182,7 +187,7 @@ func (c planCommand) run(stdout io.Writer) error {
 	if c.Format == benchmarkPlanJSON {
 		return json.NewEncoder(stdout).Encode(plan)
 	}
-	fmt.Fprintf(stdout, "Benchmark plan (READ ONLY)\nServer: %s\nGenerators: local publisher and visitor\n", plan.Server)
+	fmt.Fprintf(stdout, "Benchmark plan (READ ONLY)\nServer: %s\nTeam: %s\nGenerators: local publisher and visitor\n", plan.Server, plan.Team)
 	fmt.Fprintf(stdout, "Publisher transport: %s\n", c.Transport)
 	if c.QUICDisablePathMTUDiscovery {
 		fmt.Fprintln(stdout, "Publisher QUIC path-MTU discovery: disabled")
