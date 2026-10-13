@@ -14,7 +14,7 @@ func TestHarnessArgumentsPreserveChildCommand(t *testing.T) {
 	if parsed.Service != "postgres" || !reflect.DeepEqual(parsed.Command, arguments[2:]) {
 		t.Fatalf("parsed test command = %+v", parsed)
 	}
-	for _, input := range [][]string{{"mysql", "--", "go", "test"}, {"redis", "--", "go", "test"}, {"dns"}, {"runtime"}} {
+	for _, input := range [][]string{{"mysql", "--", "go", "test"}, {"redis", "--", "go", "test"}, {"ssh", "--", "go", "test"}, {"dns"}, {"runtime"}} {
 		if _, err := parseHarnessArguments(input); err != nil {
 			t.Fatalf("parse %v: %v", input, err)
 		}

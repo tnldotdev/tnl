@@ -244,7 +244,7 @@ export interface Publish {
   /**
    * Service protocol for the public URL; defaults to http.
    */
-  protocol?: "http" | "postgres" | "mysql" | "redis";
+  protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh";
   /**
    * HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher.
    */

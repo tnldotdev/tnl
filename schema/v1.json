@@ -6,7 +6,7 @@
       "properties": {
         "protocol": {
           "type": "string",
-          "enum": ["http", "postgres", "mysql", "redis"],
+          "enum": ["http", "postgres", "mysql", "redis", "ssh"],
           "description": "Service protocol for the public URL; defaults to http."
         },
         "target": {

@@ -68,6 +68,34 @@ func TestRedisPublishTargetAndAddress(t *testing.T) {
 	}
 }
 
+func TestSSHPublishTargetAndAddress(t *testing.T) {
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"publish", "sshd:22", "--protocol", "ssh", "--name", "shell"}); err != nil {
+		t.Fatal(err)
+	}
+	protocol, err := publishProtocol(flags.Publish.Protocol)
+	if err != nil || protocol != controlv1.Ssh {
+		t.Fatalf("SSH protocol = %q, %v", protocol, err)
+	}
+	if target, err := normalizePublishTarget(flags.Publish.Target, protocol); err != nil || target != "sshd:22" {
+		t.Fatalf("SSH private target = %q, %v", target, err)
+	}
+	if err := validateTCPPublishOptions(flags.Publish, protocol); err != nil {
+		t.Fatal(err)
+	}
+	port := 2222
+	if address, err := savedPublicAddress(controlv1.PublicURL{CanonicalHostname: "shell.example", ServiceProtocol: protocol, PublicPort: &port}); err != nil || address != "shell.example:2222" {
+		t.Fatalf("SSH public address = %q, %v", address, err)
+	}
+	if err := validateTCPPublishOptions(publishCommand{openOptions: openOptions{Open: true}}, protocol); err == nil {
+		t.Fatal("SSH --open was silently ignored")
+	}
+}
+
 func TestDatabasePublishTargetAndScopedProtocol(t *testing.T) {
 	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql} {
 		if got, err := normalizePublishTarget("db.internal:5432", protocol); err != nil || got != "db.internal:5432" {

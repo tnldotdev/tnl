@@ -123,6 +123,15 @@ Compose network can remain plaintext; `--target-tls` instead requires a
 verified TLS handshake to the target and never falls back to plaintext. Redis
 authentication and command authorization remain with the target.
 
+`tnl publish sshd:22 --protocol ssh` forwards the SSH protocol unchanged to an
+existing sshd. An SSH client must check that sshd's host key matches the key it
+expects for the saved public `hostname:port`; the public URL certificate does
+not authenticate the SSH server to the SSH client. Control and the publisher
+still issue and install that certificate before marking the publish run ready.
+The publisher checks it before forwarding new SSH visitors and retains the
+normal certificate expiration and renewal lifecycle. Target TLS remains an
+explicit option for an SSH target behind a separate TLS wrapper.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.

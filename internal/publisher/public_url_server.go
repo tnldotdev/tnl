@@ -724,6 +724,13 @@ func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
 					return
 				default:
 				}
+				// ssh has no visitor TLS handshake, so check the same installed
+				// certificate that gates publish-run readiness before forwarding.
+				if r.tcp.protocol == controlv1.Ssh {
+					if err := r.withValidCertificate(func() error { return nil }); err != nil {
+						return
+					}
+				}
 				r.tcp.forward(metadata, r.tls)
 			}
 			return
