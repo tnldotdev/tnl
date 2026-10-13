@@ -110,6 +110,11 @@ class Tunnel:
             "pid": os.getpid(),
             "target": f"http://127.0.0.1:{listener.getsockname()[1]}",
             "credential": credential,
+            **(
+                {"telemetry_disabled": True}
+                if os.getenv("TNL_NO_TELEMETRY", "").lower() in {"1", "true"}
+                else {}
+            ),
         }
         if server_url is not None:
             self._payload["server_url"] = server_url

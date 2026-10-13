@@ -136,6 +136,23 @@ type LocalInspectionUsage struct {
 	UsedBytes   int64
 }
 
+type LocalReadyTelemetry struct {
+	InvocationKey string
+	CreatedAt     int64
+}
+
+type LocalRuntimeEvent struct {
+	ProjectRoot string
+	Cursor      int64
+	EventJson   string
+}
+
+type LocalRuntimeSnapshot struct {
+	ProjectRoot  string
+	Cursor       int64
+	SnapshotJson string
+}
+
 type LocalTunnel struct {
 	ID               string
 	Command          string

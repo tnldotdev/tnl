@@ -60,7 +60,7 @@ func TestResolveTypedServiceTargetAndHTTPOptions(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "tnl.config.ts")
 	source := `export default {
-  publisher: {type: "url", url: "https://publisher.example.test", ownerCredentialFile: ".tnl/owner-token"},
+  publisher: {type: "docker", compose: {file: "compose.yaml", project: "shop-k7n2p9", service: "publisher"}, containerPort: 8765},
   services: {
     web: {target: {type: "app"}, http: {readiness: {path: "/health"}, paths: {"/api": "api"}}},
     api: {target: {type: "address", address: 3000}},
@@ -74,7 +74,7 @@ func TestResolveTypedServiceTargetAndHTTPOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if project.Config.Publisher == nil || project.Config.Publisher.Type != "url" || project.Config.Publisher.OwnerCredentialFile == nil || *project.Config.Publisher.OwnerCredentialFile != ".tnl/owner-token" {
+	if project.Config.Publisher == nil || project.Config.Publisher.Type != "docker" || project.Config.Publisher.Compose == nil || project.Config.Publisher.Compose.Service != "publisher" {
 		t.Fatalf("publisher selection = %+v", project.Config.Publisher)
 	}
 	web, err := project.EffectiveService("web")

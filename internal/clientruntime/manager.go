@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
@@ -33,7 +34,7 @@ type Manager struct {
 	op            sync.Mutex
 	mu            sync.Mutex
 	ctx           context.Context
-	state         string
+	state         *clientstate.Database
 	snapshot      Snapshot
 	registrations map[string]*registration
 	run           Run
@@ -49,11 +50,16 @@ type Manager struct {
 func (m *Manager) Context() context.Context { return m.ctx }
 
 func New(ctx context.Context, project, state string, services []Service, run Run) (*Manager, error) {
-	previous, err := ReadSnapshot(project, state)
+	db, err := clientstate.Open(ctx, state)
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{ctx: ctx, state: state, run: run, registrations: map[string]*registration{}, idleSince: time.Now(), snapshot: previous}
+	previous, err := readSnapshot(db, project)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	m := &Manager{ctx: ctx, state: db, run: run, registrations: map[string]*registration{}, idleSince: time.Now(), snapshot: previous}
 	m.snapshot.Services = slices.Clone(services)
 	slices.SortFunc(m.snapshot.Services, func(a, b Service) int {
 		if a.Name < b.Name {
@@ -82,6 +88,9 @@ func New(ctx context.Context, project, state string, services []Service, run Run
 		}
 	}
 	m.emitLocked(kind, nil)
+	if m.writeErr != nil {
+		db.Close()
+	}
 	return m, m.writeErr
 }
 
@@ -577,4 +586,5 @@ func (m *Manager) close() {
 	m.mu.Lock()
 	m.emitLocked("runtime.stopped", nil)
 	m.mu.Unlock()
+	_ = m.state.Close()
 }

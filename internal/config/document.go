@@ -48,21 +48,10 @@ type TNL struct {
 
 type Services map[string]Service
 
-const DefaultPublisherOwnerCredentialFile = ".tnl/publisher-owner"
-
-func (p ProjectPublisher) CredentialFile() string {
-	if p.OwnerCredentialFile == nil {
-		return DefaultPublisherOwnerCredentialFile
-	}
-	return *p.OwnerCredentialFile
-}
-
-// ProjectPublisher selects the project publisher's local or external API.
+// ProjectPublisher selects the host or colocated Docker project publisher.
 type ProjectPublisher struct {
-	Type                string  `json:"type" yaml:"type" jsonschema:"required,enum=local,enum=docker,enum=url"`
-	URL                 *string `json:"url,omitempty" yaml:"url,omitempty" jsonschema_description:"HTTPS origin of an external publisher API."`
-	DockerSelection     `yaml:",inline"`
-	OwnerCredentialFile *string `json:"owner_credential_file,omitempty" yaml:"owner_credential_file,omitempty" jsonschema_description:"Private file containing the project publisher owner credential; never browser metadata."`
+	Type            string `json:"type" yaml:"type" jsonschema:"required,enum=local,enum=docker"`
+	DockerSelection `yaml:",inline"`
 }
 
 // DockerSelection selects one private container port by an explicit Docker

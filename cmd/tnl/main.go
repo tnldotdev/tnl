@@ -388,7 +388,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "runtime endpoint":
 		return runRuntimeEndpoint(ctx, flags.Runtime.Endpoint, stdout)
 	case "runtime serve":
+		flags.Runtime.Serve.NoTelemetry = flags.NoTelemetry
 		return runRuntimeServe(ctx, flags.Runtime.Serve)
+	case "runtime owner":
+		return runRuntimeOwner(ctx, flags.Runtime.Owner, os.Stdin, stdout)
 	case "wait", "watch":
 		return runAppObservation(ctx, flags, parsedCommand, stdout)
 	case "publish <service-or-target>", "config check", "config generate":
@@ -445,10 +448,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runConfigGenerate(ctx, projectStateRoot, project, stdout, stderr)
 	case "project label":
 		return runProjectLabel(ctx, flags, stdout)
-	case "project publisher credential create":
-		return runProjectPublisherCredentialCreate(ctx, flags, stdout)
-	case "project publisher credential export":
-		return runProjectPublisherCredentialExport(ctx, flags, stdout)
 	case "telemetry on":
 		return runTelemetryPreference(ctx, flags.Telemetry.On, "on", stdout)
 	case "telemetry off":
