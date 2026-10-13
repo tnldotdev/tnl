@@ -107,6 +107,14 @@ func runtimeSocket(project, state string) (string, error) {
 	return filepath.Join(directory, "app-"+clientruntime.Identity(project, state)+".sock"), nil
 }
 
+func runtimeKey(project, state string) (string, error) {
+	directory, err := clientstate.RuntimeDir(state)
+	if err != nil {
+		return "", failure.Wrap("open local publisher runtime directory", failure.ClientStateUnavailable, err)
+	}
+	return filepath.Join(directory, "app-"+clientruntime.Identity(project, filepath.Dir(directory))), nil
+}
+
 func privateRuntimeDirectoryAt(base string) (string, error) {
 	directory := filepath.Join(base, fmt.Sprintf("tnl-%d", os.Getuid()))
 	if err := os.Mkdir(directory, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
@@ -167,14 +175,14 @@ func runRuntimeEndpoint(ctx context.Context, options runtimeOptions, output io.W
 	if err != nil {
 		return err
 	}
-	socket, err := runtimeSocket(project.Root, state)
+	key, err := runtimeKey(project.Root, state)
 	if err != nil {
 		return err
 	}
 	return json.NewEncoder(output).Encode(struct {
 		Version int    `json:"version"`
 		Path    string `json:"path"`
-	}{privateprotocol.Version, runtimeTCPEndpointPath(socket)})
+	}{privateprotocol.Version, runtimeTCPEndpointPath(key)})
 }
 
 type appPreparation struct {
@@ -235,7 +243,11 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	if err != nil {
 		return err
 	}
-	lock, err := filelock.Acquire(socket+".lock", filelock.Nonblocking, os.Getuid())
+	key, err := runtimeKey(project.Root, root)
+	if err != nil {
+		return err
+	}
+	lock, err := filelock.Acquire(key+".lock", filelock.Nonblocking, os.Getuid())
 	if errors.Is(err, filelock.ErrLocked) {
 		return nil
 	}
@@ -276,11 +288,11 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	defer runtime.manager.Close()
 	runtime.adhoc = clientruntime.NewAdHocManager(ctx, runtime.publishAdHoc, runtime.manager.Alive, runtime.manager.BeginPreparation)
 	defer runtime.adhoc.Close()
-	tcpServer, tcpDone, err := startRuntimeTCP(socket, runtime.handler())
+	tcpServer, tcpDone, err := startRuntimeTCP(key, runtime.handler())
 	if err != nil {
 		return err
 	}
-	defer func() { _ = stopRuntimeTCP(context.Background(), tcpServer, socket) }()
+	defer func() { _ = stopRuntimeTCP(context.Background(), tcpServer, key) }()
 	server := &http.Server{Handler: runtime.handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()

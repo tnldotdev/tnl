@@ -160,6 +160,9 @@ authenticated loopback endpoint for registration and observation. Go and Python
 ad-hoc clients still use the Unix socket while their transports are migrated;
 the registration wire shapes will move to the local publisher contract after
 all clients can attach through the same endpoint.
+the host lock and TCP credential descriptor live in the verified private `run/`
+directory under canonical client state. the temporary Unix socket stays under
+`/tmp` to fit macOS socket path limits until the Unix transport is retired.
 
 ## resolve project configuration
 
@@ -217,7 +220,11 @@ listeners that request port 0. directory inference requires a unique configured
 service. builds and production previews do not prepare registrations.
 
 `internal/clientruntime` owns registration leases, publisher observations,
-readiness, and a bounded durable local event journal. the private native command
+readiness, and a bounded durable local event journal. `internal/clientstate`
+stores each project's snapshot and ordered events in client SQLite; one write
+transaction advances the cursor and appends an event, retaining at most 2048
+events and 8 MiB of event data. watch cursors survive publisher restarts until
+their event falls outside the retained history. the private native command
 `tnl runtime address` locates one Unix socket per canonical
 project/worktree/client-state identity. the app starts `tnl runtime serve` to
 maintain it. the socket is user-owned
