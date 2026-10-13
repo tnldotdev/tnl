@@ -314,8 +314,10 @@ contain only its own thematic work.
 The sequence below is a starting order, not a fixed dependency chain. Reevaluate
 it after each substantial boundary change.
 
-R01 is in progress; the remaining tasks are planned. Update each task's status,
-PR link, actual base, and resulting ownership as work proceeds.
+R01 is implemented and verified in [PR #276](https://github.com/tnldotdev/tnl/pull/276).
+R02 is prepared below; its
+implementation has not started. the remaining tasks are planned. Update each
+task's status, PR link, actual base, and resulting ownership as work proceeds.
 
 | task | theme                                                |
 | ---- | ---------------------------------------------------- |
@@ -337,8 +339,10 @@ PR link, actual base, and resulting ownership as work proceeds.
 
 ### r01 — local publisher process ownership
 
-**Status:** in progress, implementation extracted and local validation passed;
-Linux binary integration awaits PR CI.
+**Status:** complete, implementation and applicable local/CI verification passed.
+
+**PR:** [#276](https://github.com/tnldotdev/tnl/pull/276),
+`refactor: extract local publisher process ownership`.
 
 **Actual base:** `0xcadams/public-tcp-readiness` at
 `2f5d2cca260e5a05cd0de27f6a63b07c6712504f` ([PR #274](https://github.com/tnldotdev/tnl/pull/274)).
@@ -366,8 +370,14 @@ partial-startup test checks descriptor cleanup and listener release.
 Local validation passed generation and generated-drift checks, formatting, lint,
 routine Go/TypeScript/Python tests, Go race tests, PostgreSQL-backed integration,
 the development publisher image and scoped Compose app integration, and builds.
-The existing Linux binary integration workflow covers SDK bootstrap and shared
-app/named publisher lifecycles.
+CI passed on implementation commit `9de4953cee8af25ef7fc2a29e843ce19f7b838fb`:
+[Checks](https://github.com/tnldotdev/tnl/actions/runs/38376198081),
+[Fuzz](https://github.com/tnldotdev/tnl/actions/runs/38376198172),
+[Integration](https://github.com/tnldotdev/tnl/actions/runs/38376197980), and
+[Load](https://github.com/tnldotdev/tnl/actions/runs/38376197965). Linux binary
+integration passed SDK bootstrap and shared app/named publisher lifecycles;
+integration also passed DNS, database/TLS clients, scoped Compose apps, the MySQL
+oracle, Redis, and SSH targets. the R02 preparation below is documentation only.
 
 **Goal:** make the local publisher process an explicit client component rather than
 an implementation distributed through CLI command code.
@@ -420,6 +430,118 @@ metadata generation, dynamic target resolution, and current public import paths.
 
 Update affected imports, generation paths, embedded assets, fixture consumers,
 documentation, and test targets as part of the same ownership move.
+
+#### implementation preparation
+
+**Status:** planned; implementation has not started.
+
+**Proposed PR title:** `refactor: organize client and project ownership`.
+
+**Stack base:** `0xcadams/go-type-safety`
+([PR #276](https://github.com/tnldotdev/tnl/pull/276)). R01's implementation commit
+is `9de4953cee8af25ef7fc2a29e843ce19f7b838fb`; use the branch's actual current head
+when beginning R02 so subsequent documentation and review changes are included.
+
+##### evidence from r01
+
+The process lifecycle is now contained in `internal/localpublisher`, but that
+package also contains operations reused by commands: publication preparation,
+team/domain selection, metadata resolution, Docker targets, inspection adapters,
+and integration workers. `api.go` exposes these operations to commands. the
+command package still projects its existing `publisherServices`, `teamContext`,
+and parser settings into client facts and settings.
+
+This was necessary to extract a complete lifecycle without returning its
+preparation or publishing implementation to the CLI. R02 should give the shared
+operations their own client owners and reduce these forwarding and conversion
+layers. the next useful change is an ownership reorganization, rather than a
+second process-lifecycle extraction.
+
+##### target boundaries
+
+Choose package names and directory grouping from the dependency graph. a client
+subtree can make ownership visible without adding a package-wide client façade.
+The resulting boundaries should distinguish:
+
+| boundary                        | responsibility                                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| local publisher composition     | managers, local API, credential scopes, registration-specific preparation, readiness workers, process lifetime                              |
+| reusable publication operations | authority context, hostname and IP policy selection, publisher configuration, preview association, tunnel-state events, inspection adapters |
+| project resolution and metadata | configuration selection, worktree identity, effective services, browser-safe metadata, declared integration addresses                       |
+| integration coordination        | OAuth, webhook, and alias worker election, admission, cancellation, drain, and join                                                         |
+| client infrastructure           | authentication, saved server selection, client state, and dynamic private target discovery                                                  |
+| command adapters                | parser provenance, interactive login, browser actions, human/JSON/NDJSON presentation                                                       |
+
+Keep the registration manager and publish-run implementation distinct. shared
+publication and project operations must not depend on the process owner or on
+`cmd/tnl`. metadata generation and integration workers should share project
+identity and address operations rather than importing each other's full
+composition. keep service configuration input, prepared publication facts, and
+live registration state distinguishable.
+
+Investigate the current client packages together: `localpublisher`, `clientauth`,
+`clientruntime`, `clientserver`, `clientstate`, `adhoc`, `publisher`, `localproxy`,
+`projectconfig`, `projectmeta`, and `integrationurls`. move packages only when
+their callers and dependencies establish client ownership. shared domain values,
+wire contracts, transport mechanisms, and infrastructure used by several roles
+retain their appropriate owners.
+
+##### implementation goals
+
+- Extract the reusable operations from `internal/localpublisher` into cohesive
+  client packages. the local publisher should compose these operations and own
+  registration-specific state and lifetimes.
+- Replace redundant command-side projections and forwarding helpers with the
+  owned client types or operations where that preserves the existing boundary.
+  convert parser input once at the command boundary, retaining provenance and
+  omitted/empty/false/zero distinctions.
+- Organize the remaining client-owned packages consistently and update their
+  consumers together, including `pkg/tnl` and the benchmark driver. preserve the
+  public `pkg/tnl` import path, signatures, structures, and method sets.
+- Carry tests with their owners and preserve each unique assertion. command
+  tests should continue checking bootstrap, output, and selection behavior;
+  component tests should establish the owned lifecycle and state boundaries.
+- Update the architecture guide and this task with the actual dependency
+  direction, ownership decisions, and any scope adjustment justified by evidence.
+
+##### move-sensitive inputs and verification
+
+Audit these concrete paths when choosing the package layout:
+
+- `internal/clientstate/sqlc.yaml`, migrations, queries, and `clientstatedb`;
+- project-config Go generation directives, embedded `loader.mjs` and
+  `keys.gen.json`, and the loader's TypeScript sources;
+- `scripts/generate-projectconfig-loader.ts`, `tsconfig.json`, and the explicit
+  loader path in the root package's lint command;
+- generated-drift paths and explicit publisher package selectors in `Taskfile.yml`;
+- relative shared-fixture paths in moved tests;
+- `tools/inspectionoracle/go.work` and the tagged MySQL oracle target if the
+  publisher package moves;
+- Docker source-copy boundaries and the local publisher's Linux binary fixtures.
+
+Edit authoritative inputs and regenerate committed outputs. `generate-check`
+compares generated paths with `HEAD`; account for intentional generated-file
+relocations rather than treating them as unexplained drift. preserve shared
+fixture bytes and the fixture ownership under `api/fixtures`.
+
+State ownership moves must preserve database filenames and migrations, keyring
+identities, descriptor and lock paths, worktree salts, integration group strings,
+canonical hashes, and journal cursor continuity. configuration must still reload
+at the same operation boundaries. dynamic Docker target lookups must keep owner
+context, cache expiration, and stale-target rejection. preserve noninteractive
+runtime authentication and interactive command authentication as distinct uses.
+
+Use the normal generation, formatting, lint, routine test, race, integration, and
+build sequence after the move. include the scoped Compose publisher image and
+Linux app-led/shared app-and-named-publisher binary scenarios. if publisher paths
+move, ensure every protocol-specific Task selector and the tagged oracle target
+still selects its tests; run the applicable targets through their disposable
+infrastructure. root Go checks do not cover the separate tooling modules.
+
+R02 is complete when commands and local publisher composition consume the same
+cohesive client operations through an acyclic dependency graph, the client package
+layout explains their owners, and the existing public, wire, state, configuration,
+and output contracts remain established by the carried verification.
 
 ### r03 — control and daemon package organization
 
