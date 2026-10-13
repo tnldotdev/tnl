@@ -15,8 +15,10 @@ import (
 
 const mysqlAuthenticationPacketLimit = 1 << 20
 
-// mysql has a server-first greeting. advertise TLS to the visiting client
-// without changing the private server's challenge or authentication plugin.
+// a plaintext mysql target sends its greeting before the visitor can request
+// TLS. advertise TLS on that greeting so the visitor encrypts its login with
+// the publisher; retain the target's challenge and authentication plugin so
+// the target still authenticates the visitor.
 func advertiseMySQLTLS(packet []byte) ([]byte, error) {
 	if len(packet) < 5 || packet[4] != 10 {
 		return nil, errors.New("publisher: invalid MySQL target greeting")
@@ -25,6 +27,8 @@ func advertiseMySQLTLS(packet []byte) ([]byte, error) {
 	if versionEnd < 0 {
 		return nil, errors.New("publisher: invalid MySQL target version")
 	}
+	// skip the packet header, protocol version, server version, connection id,
+	// first eight challenge bytes, and filler to reach the capability flags.
 	capabilities := 5 + versionEnd + 1 + 4 + 8 + 1
 	if len(packet) < capabilities+2+1+2+2+1+10 {
 		return nil, errors.New("publisher: incomplete MySQL target greeting")
@@ -34,6 +38,8 @@ func advertiseMySQLTLS(packet []byte) ([]byte, error) {
 	if len(packet) < challenge+max(13, authLength-8) {
 		return nil, errors.New("publisher: incomplete MySQL target challenge")
 	}
+	// the two challenge parts seed caching_sha2_password. copy them before
+	// changing the advertised TLS capability in the original packet.
 	scramble := append([]byte(nil), packet[capabilities-9:capabilities-1]...)
 	scramble = append(scramble, packet[challenge:challenge+max(13, authLength-8)]...)
 	if len(scramble) < 20 {
@@ -44,13 +50,15 @@ func advertiseMySQLTLS(packet []byte) ([]byte, error) {
 	return scramble[:20], nil
 }
 
-// the visitor's SSLRequest adds a packet the private server has not seen.
-// translate authentication packet numbers until OK or ERR; command packets
-// have their own sequence starting at zero and can then be copied unchanged.
+// the visitor's SSLRequest and TLS handshake never reach the plaintext target.
+// the visitor sends its login with sequence 2; the target expects 1. track both
+// sides' sequences during authentication; after OK or ERR, command packets
+// begin a new sequence at zero and can be copied unchanged.
 func forwardMySQLAuthentication(visitor, backend net.Conn, scramble []byte) error {
 	visitorSequence, backendSequence := byte(2), byte(1)
 	for step := 0; step < 32; step++ {
 		if step == 0 {
+			// remove CLIENT_SSL because the target never received SSLRequest.
 			response, err := readMySQLPacket(visitor, mysqlAuthenticationPacketLimit)
 			if err != nil {
 				return err
@@ -79,9 +87,10 @@ func forwardMySQLAuthentication(visitor, backend net.Conn, scramble []byte) erro
 			return errors.New("publisher: empty MySQL target authentication packet")
 		}
 		if response[4] == 1 && len(response) == 6 && response[5] == 4 {
-			// caching_sha2_password requires an RSA-encrypted password when the
-			// target is plaintext. fetch its public key without exposing the
-			// extra exchange to the TLS-protected visiting client.
+			// caching_sha2_password full authentication requires an RSA-encrypted
+			// password on a plaintext target connection. fetch the target's key
+			// ourselves; the TLS-protected visitor still sees the auth challenge,
+			// but not this additional key request or its packet sequence.
 			request := encodeMySQLPacket(backendSequence, []byte{2})
 			backendSequence++
 			if _, err := io.Copy(backend, bytes.NewReader(request)); err != nil {
@@ -171,6 +180,8 @@ func encryptMySQLPassword(password, scramble, publicKey []byte) ([]byte, error) 
 	plain := make([]byte, len(password))
 	copy(plain, password)
 	defer clear(plain)
+	// mysql xors the zero-terminated password with the target's challenge,
+	// then encrypts it with RSA-OAEP using SHA-1 for the plaintext connection.
 	for index := range plain {
 		plain[index] ^= scramble[index%len(scramble)]
 	}
