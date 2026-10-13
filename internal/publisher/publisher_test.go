@@ -238,6 +238,49 @@ func TestCreatePublishRunWaitsForPreviousRunToClose(t *testing.T) {
 	})
 }
 
+func TestSavedURLTargetWaitsForPreviousRunToClose(t *testing.T) {
+	config := func(control *publisherControlStub) Config {
+		return Config{Control: control, TeamID: "team_1", Hostname: "app.example", Target: "http://web:4000",
+			Purpose: controlv1.App, PublicURLScope: controlv1.Shared}
+	}
+	newControl := func() *publisherControlStub {
+		return &publisherControlStub{
+			allowed: []string{"lookup", "update"}, updateOpenFailures: 1,
+			routes: []controlv1.PublicURL{{
+				Id: "public_url_1", CanonicalHostname: "app.example", TeamId: "team_1",
+				LifecycleState: controlv1.Enabled, Target: "http://web:3000", Purpose: controlv1.App,
+				PublicUrlScope: controlv1.Shared,
+			}},
+		}
+	}
+	synctest.Test(t, func(t *testing.T) {
+		control := newControl()
+		route, created, err := createOrLoadPublicURLWhenAvailable(t.Context(), config(control))
+		if err != nil || created || route.Target != "http://web:4000" || control.lookupCalls != 2 ||
+			len(control.calls) != 4 {
+			t.Fatalf("saved URL did not reconcile after the old run closed: %+v, created=%t, err=%v, calls=%v", route, created, err, control.calls)
+		}
+	})
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		control := newControl()
+		control.updateOpenFailures = 100
+		_, _, err := createOrLoadPublicURLWhenAvailable(ctx, config(control))
+		if !errors.Is(err, context.DeadlineExceeded) || control.lookupCalls != 2 {
+			t.Fatalf("saved URL retry did not stop on cancellation: %v, %v", err, control.calls)
+		}
+	})
+	synctest.Test(t, func(t *testing.T) {
+		control := newControl()
+		control.updateOpenFailures = 100
+		_, _, err := createOrLoadPublicURLWhenAvailable(t.Context(), config(control))
+		if !errors.Is(err, controlclient.ErrPublishRunOpen) || control.lookupCalls != 32 {
+			t.Fatalf("saved URL retry did not stop after its window: %v, %v", err, control.calls)
+		}
+	})
+}
+
 func TestCreateOrLoadRouteCreatesTeamScopedPublicURL(t *testing.T) {
 	control := &publisherControlStub{allowed: []string{"lookup", "create"}}
 	allowed := []string{"2001:db8::1/64", "192.0.2.9/24"}
@@ -493,22 +536,23 @@ func TestObserveHeartbeatPolicyDenialsReportsCumulativeIncreases(t *testing.T) {
 }
 
 type publisherControlStub struct {
-	allowed         []string
-	calls           []string
-	routes          []controlv1.PublicURL
-	created         *controlv1.CreatePublicURLRequest
-	updated         *controlv1.UpdatePublicURLRequest
-	deleted         *string
-	lookupCalls     int
-	lookup          [2]string
-	lookupErr       error
-	heartbeat       func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error)
-	createErr       error
-	updateErr       error
-	publishRunErr   error
-	openRunFailures int
-	publishRunKeys  []string
-	publishRunSetup *controlv1.PublishRunSetup
+	allowed            []string
+	calls              []string
+	routes             []controlv1.PublicURL
+	created            *controlv1.CreatePublicURLRequest
+	updated            *controlv1.UpdatePublicURLRequest
+	deleted            *string
+	lookupCalls        int
+	lookup             [2]string
+	lookupErr          error
+	heartbeat          func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error)
+	createErr          error
+	updateErr          error
+	updateOpenFailures int
+	publishRunErr      error
+	openRunFailures    int
+	publishRunKeys     []string
+	publishRunSetup    *controlv1.PublishRunSetup
 }
 
 func (s *publisherControlStub) record(operation string) {
@@ -560,6 +604,10 @@ func (s *publisherControlStub) GetPublicURLByHostname(_ context.Context, teamID,
 func (s *publisherControlStub) UpdatePublicURL(_ context.Context, id string, body controlv1.UpdatePublicURLRequest) (controlv1.PublicURL, error) {
 	s.record("update")
 	s.updated = &body
+	if s.updateOpenFailures > 0 {
+		s.updateOpenFailures--
+		return controlv1.PublicURL{}, controlclient.ErrPublishRunOpen
+	}
 	if s.updateErr != nil {
 		return controlv1.PublicURL{}, s.updateErr
 	}
