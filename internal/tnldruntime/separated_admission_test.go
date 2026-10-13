@@ -25,6 +25,10 @@ type separatedAdmissionLimits struct {
 	PublisherConcurrency             int   `json:"publisher_concurrency"`
 	PublisherRate                    int   `json:"publisher_rate"`
 	PublisherBurst                   int   `json:"publisher_burst"`
+	TrafficDefaultRate               int   `json:"traffic_default_rate"`
+	TrafficDefaultBurst              int   `json:"traffic_default_burst"`
+	TrafficSourceRate                int   `json:"traffic_source_rate"`
+	TrafficSourceBurst               int   `json:"traffic_source_burst"`
 }
 
 type separatedIngressAdmissionLimits struct {
@@ -32,6 +36,10 @@ type separatedIngressAdmissionLimits struct {
 	ChallengeConnectionLimit         int   `json:"challenge_connection_limit"`
 	ChallengeHostnameConnectionLimit int   `json:"challenge_hostname_connection_limit"`
 	VisitorConnectionLimit           int64 `json:"visitor_connection_limit"`
+	TrafficDefaultRate               int   `json:"traffic_default_rate"`
+	TrafficDefaultBurst              int   `json:"traffic_default_burst"`
+	TrafficSourceRate                int   `json:"traffic_source_rate"`
+	TrafficSourceBurst               int   `json:"traffic_source_burst"`
 }
 
 type separatedRelayAdmissionLimits struct {
@@ -53,6 +61,10 @@ func init() {
 	flag.IntVar(&runtimeLoadAdmission.PublisherConcurrency, "tnl-runtime-load-publisher-concurrency", 500, "maximum concurrent requests handled by each publisher route")
 	flag.IntVar(&runtimeLoadAdmission.PublisherRate, "tnl-runtime-load-publisher-rate", 200, "application requests per second per public URL during the opt-in runtime workload")
 	flag.IntVar(&runtimeLoadAdmission.PublisherBurst, "tnl-runtime-load-publisher-burst", 400, "initial application request burst during the opt-in runtime workload")
+	flag.IntVar(&runtimeLoadAdmission.TrafficDefaultRate, "tnl-runtime-load-traffic-default-rate", 100, "new visitor connections per second per public URL during the opt-in runtime workload")
+	flag.IntVar(&runtimeLoadAdmission.TrafficDefaultBurst, "tnl-runtime-load-traffic-default-burst", 200, "new visitor connection burst per public URL during the opt-in runtime workload")
+	flag.IntVar(&runtimeLoadAdmission.TrafficSourceRate, "tnl-runtime-load-traffic-source-rate", 100, "new visitor connections per second per source during the opt-in runtime workload")
+	flag.IntVar(&runtimeLoadAdmission.TrafficSourceBurst, "tnl-runtime-load-traffic-source-burst", 200, "new visitor connection burst per source during the opt-in runtime workload")
 }
 
 func (limits separatedAdmissionLimits) apply(cfg *tnldconfig.Config) {
@@ -61,6 +73,8 @@ func (limits separatedAdmissionLimits) apply(cfg *tnldconfig.Config) {
 	cfg.VisitorConnectionLimit = limits.VisitorConnectionLimit
 	cfg.PublisherConnectionLimit, cfg.RelayStreamCapacity = limits.PublisherConnectionLimit, limits.RelayStreamCapacity
 	cfg.QUICMaxIncomingStreams = limits.QUICMaxIncomingStreams
+	cfg.TrafficDefaultRate, cfg.TrafficDefaultBurst = limits.TrafficDefaultRate, limits.TrafficDefaultBurst
+	cfg.TrafficSourceRate, cfg.TrafficSourceBurst = limits.TrafficSourceRate, limits.TrafficSourceBurst
 }
 
 func separatedAdmissionFrom(cfg tnldconfig.Config) separatedAdmissionLimits {
@@ -70,6 +84,8 @@ func separatedAdmissionFrom(cfg tnldconfig.Config) separatedAdmissionLimits {
 		VisitorConnectionLimit:   cfg.VisitorConnectionLimit,
 		PublisherConnectionLimit: cfg.PublisherConnectionLimit, RelayStreamCapacity: cfg.RelayStreamCapacity,
 		QUICMaxIncomingStreams: cfg.QUICMaxIncomingStreams,
+		TrafficDefaultRate:     cfg.TrafficDefaultRate, TrafficDefaultBurst: cfg.TrafficDefaultBurst,
+		TrafficSourceRate: cfg.TrafficSourceRate, TrafficSourceBurst: cfg.TrafficSourceBurst,
 	}
 }
 
@@ -78,6 +94,8 @@ func (limits separatedAdmissionLimits) ingress() separatedIngressAdmissionLimits
 		ClientHelloConnectionLimit: limits.ClientHelloConnectionLimit,
 		ChallengeConnectionLimit:   limits.ChallengeConnectionLimit, ChallengeHostnameConnectionLimit: limits.ChallengeHostnameConnectionLimit,
 		VisitorConnectionLimit: limits.VisitorConnectionLimit,
+		TrafficDefaultRate:     limits.TrafficDefaultRate, TrafficDefaultBurst: limits.TrafficDefaultBurst,
+		TrafficSourceRate: limits.TrafficSourceRate, TrafficSourceBurst: limits.TrafficSourceBurst,
 	}
 }
 
@@ -123,7 +141,9 @@ func verifySeparatedAdmission(t *testing.T) {
 				(runtimeLoadAdmission.ChallengeConnectionLimit == -1 || applied.ChallengeConnectionLimit == runtimeLoadAdmission.ChallengeConnectionLimit) &&
 				applied.ChallengeHostnameConnectionLimit == runtimeLoadAdmission.ChallengeHostnameConnectionLimit &&
 				(runtimeLoadAdmission.VisitorConnectionLimit == -1 || applied.VisitorConnectionLimit == runtimeLoadAdmission.VisitorConnectionLimit) &&
-				applied.VisitorConnectionLimit > 0 && applied.ClientHelloConnectionLimit > 0 && applied.ChallengeConnectionLimit > 0
+				applied.VisitorConnectionLimit > 0 && applied.ClientHelloConnectionLimit > 0 && applied.ChallengeConnectionLimit > 0 &&
+				applied.TrafficDefaultRate == runtimeLoadAdmission.TrafficDefaultRate && applied.TrafficDefaultBurst == runtimeLoadAdmission.TrafficDefaultBurst &&
+				applied.TrafficSourceRate == runtimeLoadAdmission.TrafficSourceRate && applied.TrafficSourceBurst == runtimeLoadAdmission.TrafficSourceBurst
 		} else {
 			components[component] = applied.relay()
 			matches = (runtimeLoadAdmission.PublisherConnectionLimit == -1 || applied.PublisherConnectionLimit == runtimeLoadAdmission.PublisherConnectionLimit) &&
