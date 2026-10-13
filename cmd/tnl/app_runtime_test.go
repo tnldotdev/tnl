@@ -175,7 +175,7 @@ func TestAdHocSocketRegistrationWaitsForTheSameReadyRun(t *testing.T) {
 	response.Body.Close()
 }
 
-func TestDatabaseServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
+func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 	a, stateDir, _ := testAppRuntime(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -209,12 +209,12 @@ func TestDatabaseServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 	}
 	var output bytes.Buffer
 	probe := func(context.Context, clientruntime.Service) clientruntime.Observation {
-		t.Fatal("database service sent an HTTP readiness probe")
+		t.Fatal("TCP service sent an HTTP readiness probe")
 		return clientruntime.Observation{}
 	}
 	flags := waitCommand{Service: []string{"orders"}, Timeout: 500 * time.Millisecond, Output: "json"}
 	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err == nil {
-		t.Fatal("unready database publication passed wait")
+		t.Fatal("unready TCP publication passed wait")
 	}
 	if err := tunnel.SetReady(t.Context(), "orders.example:15432", 1); err != nil {
 		t.Fatal(err)
@@ -228,7 +228,7 @@ func TestDatabaseServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &snapshot); err != nil || len(snapshot.Services) != 1 ||
 		!snapshot.Services[0].Ready || snapshot.Services[0].PublicURL != "orders.example:15432" ||
 		snapshot.Services[0].ServiceProtocol != protocol || snapshot.Services[0].TunnelID != tunnel.ID() {
-		t.Fatalf("database wait = %s, %v", output.String(), err)
+		t.Fatalf("TCP wait = %s, %v", output.String(), err)
 	}
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
@@ -236,14 +236,14 @@ func TestDatabaseServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 	output.Reset()
 	flags.Timeout = 500 * time.Millisecond
 	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err == nil {
-		t.Fatal("wait passed with closed database target")
+		t.Fatal("wait passed with closed TCP target")
 	}
 	if err := os.WriteFile(filepath.Join(project.Root, "tnl.json"), []byte(`{"version":1,"tnl":{"services":{"web":{},"orders":{"publish":{"protocol":"postgres","target":"`+string(target)+`"}}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	output.Reset()
 	if err := runStatus(t.Context(), statusCommand{StateDir: stateDir, Project: project.Root, Output: "human"}, &output); err != nil || !strings.Contains(output.String(), "orders routable") || !strings.Contains(output.String(), "orders.example:15432") {
-		t.Fatalf("database status = %s, %v", output.String(), err)
+		t.Fatalf("TCP status = %s, %v", output.String(), err)
 	}
 }
 
