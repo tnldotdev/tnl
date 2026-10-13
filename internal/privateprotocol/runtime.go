@@ -21,10 +21,10 @@ func ValidOwner(owner string) bool { return ownerPattern.MatchString(owner) }
 type Framework string
 
 const (
-	FrameworkNode Framework = "node"
-	FrameworkBun  Framework = "bun"
-	FrameworkVite Framework = "vite"
-	FrameworkNext Framework = "next"
+	FrameworkNode   Framework = "node"
+	FrameworkBun    Framework = "bun"
+	FrameworkVite   Framework = "vite"
+	FrameworkNext   Framework = "next"
 	FrameworkPython Framework = "python"
 )
 
