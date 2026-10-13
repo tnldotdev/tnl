@@ -211,6 +211,9 @@ func run() error {
 		if hostKey == "" {
 			return errors.New("disposable SSH host key is missing")
 		}
+		// the go test runs on the host, so it connects to docker's mapped port.
+		// pass the fixture sshd's public key separately for the visiting SSH
+		// client to pin; tnl forwards SSH bytes without checking the host key.
 		command = append(command, "-tnl-test-ssh-address="+net.JoinHostPort(host, port.Port()),
 			"-tnl-test-ssh-host-key="+hostKey)
 	default:
