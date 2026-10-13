@@ -38,22 +38,22 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 
 ### choose a test tier
 
-| When you need to check           | Command after `mise exec --`                                 | What you need                                                            |
-| -------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| Routine behavior                 | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages        |
-| Go races                         | `task go:test:race`                                          | No database                                                              |
-| Database and service boundaries  | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                               |
-| Real database clients            | `task go:test:integration:database-clients`                  | Docker; Task manages separate plaintext PostgreSQL and MySQL targets     |
-| Real Redis client                | `task go:test:integration:redis`                             | Docker; Task manages a disposable plaintext Redis target                 |
-| Real SSH client                  | `task go:test:integration:ssh`                               | Docker; Task manages a disposable sshd target                            |
-| Binary behavior                  | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available |
-| Authoritative DNS                | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers              |
-| Public Route 53 and ACME staging | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in  |
-| Fuzz targets                     | `task go:test:fuzz`                                          | Go toolchain                                                             |
-| npm exports and tarballs         | `pnpm run pack`                                              | Built package dependencies                                               |
-| Python ASGI and socket contract  | `task py:check`                                              | Pinned Python and uv; uses the locked dependencies in `packages/py`      |
-| Local release snapshot           | `task package`                                               | Builds and checks packages; does not publish                             |
-| Deployed release check           | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain              |
+| When you need to check           | Command after `mise exec --`                                 | What you need                                                                     |
+| -------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| Routine behavior                 | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages                 |
+| Go races                         | `task go:test:race`                                          | No database                                                                       |
+| Database and service boundaries  | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                        |
+| Real database clients            | `task go:test:integration:database-clients`                  | Docker; Task manages separate plaintext PostgreSQL and MySQL targets              |
+| Real Redis client                | `task go:test:integration:redis`                             | Docker; Task manages a disposable plaintext Redis target                          |
+| Real SSH client                  | `task go:test:integration:ssh`                               | Docker; Task manages a disposable sshd target                                     |
+| Binary behavior                  | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available          |
+| Authoritative DNS                | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers                       |
+| Public Route 53 and ACME staging | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in           |
+| Fuzz targets                     | `task go:test:fuzz`                                          | Go toolchain                                                                      |
+| npm exports and tarballs         | `pnpm run pack`                                              | Built package dependencies                                                        |
+| Python ASGI and socket contract  | `task py:check`                                              | Pinned Python and uv; uses the locked dependencies in `packages/py`               |
+| Local release snapshot           | `task package`                                               | Builds and checks packages; does not publish                                      |
+| Deployed server check            | `task staging:check:smoke` / `task staging:check:full`       | Explicit server, test team, released `tnl`, revision, token file; Docker for full |
 
 Use `RUN` to select an integration test, for example:
 

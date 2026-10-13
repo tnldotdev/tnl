@@ -154,7 +154,7 @@ func (c runCommand) measure(parent context.Context, plan benchmarkPlan, stateDir
 	observations := &publisherObservationRecorder{}
 	defer func() { result.Observations, result.Dropped = observations.Snapshot() }()
 	group, err := benchworkload.OpenPublishers(ctx, benchworkload.PublisherConfig{
-		Server: plan.Server, StateRoot: stateDir, Target: origin.URL,
+		Server: plan.Server, Team: plan.Team, StateRoot: stateDir, Target: origin.URL,
 		HostnamePrefix: "tnlbench" + strings.TrimPrefix(runID, "run-"), Ephemeral: true,
 		Transport: c.Transport, QUICDisablePathMTUDiscovery: c.QUICDisablePathMTUDiscovery, QUICQlog: c.QUICQlog, QUICKeepAlive: c.QUICKeepAlive,
 		RelayTLS: &tls.Config{MinVersion: tls.VersionTLS13},

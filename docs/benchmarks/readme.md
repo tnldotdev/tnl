@@ -14,14 +14,15 @@ changing the server. For example, against staging:
 
 ```console
 mise exec -- go run ./cmd/tnl auth login --server=https://control.tnl.wtf
-BENCH_SERVER=https://control.tnl.wtf mise exec -- task go:bench:plan
+BENCH_SERVER=https://control.tnl.wtf BENCH_TEAM=team_... mise exec -- task go:bench:plan
 ```
 
-The benchmark requires an existing login for the selected control URL. It uses a
-run-specific member namespace, creates ephemeral public URLs, and removes
-them when the publisher stops. It does not create Fly apps, databases, Route 53
-zones, or a separate certificate service. The selected server uses its normal
-publicly trusted certificate issuer. Successful runs and failures write
+The benchmark requires an existing login and an explicit team membership with a
+ready managed domain. It creates ephemeral public URLs in the selected member
+namespace and removes them when the publisher stops. It does not create Fly
+apps, databases, Route 53 zones, or a separate certificate service. The
+selected server uses its normal publicly trusted certificate issuer. Successful
+runs and failures write
 `bench-results/run-*/result.json` with the selected workload, direct local
 TLS baseline, verified visitor measurements, generator measurements,
 and public URL cleanup status. An interrupted process can leave ephemeral
@@ -29,13 +30,13 @@ public URLs until their publish runs expire; inspect the run's URLs before
 removing only those benchmark-owned URLs.
 
 Execution requires separate approval for the exact control URL and workload,
-with an explicit `BENCH_SERVER`, `BENCH_SUITE`, and `BENCH_APPROVED=1`.
+with an explicit `BENCH_SERVER`, `BENCH_TEAM`, `BENCH_SUITE`, and `BENCH_APPROVED=1`.
 The Task targets do not load an old `.env.bench`; pass the selected values on
 each invocation.
 For example, after approving a staging smoke run:
 
 ```console
-BENCH_SERVER=https://control.tnl.wtf BENCH_SUITE=smoke BENCH_APPROVED=1 mise exec -- task go:bench:run
+BENCH_SERVER=https://control.tnl.wtf BENCH_TEAM=team_... BENCH_SUITE=smoke BENCH_APPROVED=1 mise exec -- task go:bench:run
 mise exec -- task go:bench:report BENCH_RUN=bench-results/run-<run-id>
 ```
 
@@ -56,7 +57,7 @@ direction** and `BENCH_BANDWIDTH_STREAMS` counts streams per direction. For a
 read-only plan of one downstream step:
 
 ```console
-BENCH_SERVER=https://control.tnl.wtf BENCH_SUITE=target BENCH_MODE=bandwidth \
+BENCH_SERVER=https://control.tnl.wtf BENCH_TEAM=team_... BENCH_SUITE=target BENCH_MODE=bandwidth \
   BENCH_FRESH_CONNECTIONS_PER_SECOND=0 BENCH_HELD_STREAMS=0 \
   BENCH_BANDWIDTH_DIRECTION=downstream BENCH_BANDWIDTH_MBITS_PER_SECOND=100 \
   BENCH_BANDWIDTH_STREAMS=64 BENCH_PAYLOAD_BYTES=4096 \

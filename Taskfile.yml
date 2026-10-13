@@ -400,19 +400,21 @@ tasks:
     cmds:
       - go run ./cmd/tnlbench report
 
-  release:check:plan:
-    desc: Preview three functional checks against an explicit server
+  staging:check:smoke:
+    desc: Check real publishers and visitors on an explicitly selected deployed server
     requires:
-      vars: [SERVER, TEAM, STATE_DIR, TNL_BINARY, VERSION]
+      vars: [SERVER, TEAM, TNL_BINARY, VERSION, REVISION, TOKEN_FILE]
     cmds:
-      - node scripts/release-check.ts plan --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --custom-domain "{{.CUSTOM_DOMAIN}}"
+      - go test -v ./internal/stagingcheck -run='^TestDeployedSmoke$' -count=1 -timeout=12m -args -tnl-test-tier=deployed -tnl-server='{{.SERVER}}' -tnl-team='{{.TEAM}}' -tnl-binary='{{.TNL_BINARY}}' -tnl-version='{{.VERSION}}' -tnl-revision='{{.REVISION}}' -tnl-login-token-file='{{.TOKEN_FILE}}' -tnl-custom-domain='{{.CUSTOM_DOMAIN}}'
 
-  release:check:run:
-    desc: Publish test-owned public URLs on an explicit server
+  staging:check:full:
+    desc: Check both publisher transports and four public TCP protocols on an explicit server
     requires:
-      vars: [SERVER, TEAM, STATE_DIR, TNL_BINARY, VERSION]
+      vars: [SERVER, TEAM, TNL_BINARY, VERSION, REVISION, TOKEN_FILE]
     cmds:
-      - node scripts/release-check.ts run --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --custom-domain "{{.CUSTOM_DOMAIN}}"
+      - go test -v ./internal/stagingcheck -run='^TestDeployedFull$' -count=1 -timeout=22m -args -tnl-test-tier=deployed -tnl-server='{{.SERVER}}' -tnl-team='{{.TEAM}}' -tnl-binary='{{.TNL_BINARY}}' -tnl-version='{{.VERSION}}' -tnl-revision='{{.REVISION}}' -tnl-login-token-file='{{.TOKEN_FILE}}' -tnl-custom-domain='{{.CUSTOM_DOMAIN}}'
+      - for: [postgres, mysql, redis, ssh]
+        cmd: go -C tools/testharness run . {{.ITEM}} -- go test -v ./internal/stagingcheck -run='^TestDeployedFullTCP$' -count=1 -timeout=10m -args -tnl-test-tier=deployed -tnl-server='{{.SERVER}}' -tnl-team='{{.TEAM}}' -tnl-binary='{{.TNL_BINARY}}' -tnl-version='{{.VERSION}}' -tnl-revision='{{.REVISION}}' -tnl-login-token-file='{{.TOKEN_FILE}}' -tnl-tcp-protocol='{{.ITEM}}'
 
   go:build:
     cmds:
