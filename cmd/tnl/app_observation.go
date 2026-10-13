@@ -59,11 +59,11 @@ func readAppSnapshot(ctx context.Context, project projectConfiguration, state st
 	}
 	snapshot.Services = configured
 	snapshot.ObservedAt = time.Now().UTC()
-	socket, err := runtimeSocket(project.Root, state)
+	key, err := runtimeKey(project.Root, state)
 	if err != nil {
 		return snapshot, err
 	}
-	if !runtimeAvailable(ctx, socket) {
+	if !runtimeAvailable(ctx, key) {
 		for index := range snapshot.Services {
 			service := &snapshot.Services[index]
 			if service.Registered {
@@ -278,11 +278,11 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 				if err != nil {
 					return err
 				}
-				socket, err := runtimeSocket(project.Root, state)
+				key, err := runtimeKey(project.Root, state)
 				if err != nil {
 					return err
 				}
-				endpoint, err := readRuntimeTCPEndpoint(socket)
+				endpoint, err := readRuntimeTCPEndpoint(key)
 				if err != nil {
 					service.Ready = false
 				} else {

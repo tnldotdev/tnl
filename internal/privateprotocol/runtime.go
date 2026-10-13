@@ -25,11 +25,12 @@ const (
 	FrameworkBun  Framework = "bun"
 	FrameworkVite Framework = "vite"
 	FrameworkNext Framework = "next"
+	FrameworkPython Framework = "python"
 )
 
 func (framework Framework) Valid() bool {
 	switch framework {
-	case FrameworkNode, FrameworkBun, FrameworkVite, FrameworkNext:
+	case FrameworkNode, FrameworkBun, FrameworkVite, FrameworkNext, FrameworkPython:
 		return true
 	default:
 		return false
