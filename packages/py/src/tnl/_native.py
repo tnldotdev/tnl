@@ -15,7 +15,7 @@ from ._protocol import InvalidResponse, NativeUnavailable, RegistrationLost, Tnl
 
 
 class NativeRuntime:
-    async def start(self, directory: str) -> str:
+    async def start(self, directory: str, service: str | None = None) -> str:
         binary = Path(__file__).parent / "bin" / "tnl"
         if not binary.is_file():
             raise TnlError(
@@ -24,12 +24,11 @@ class NativeRuntime:
         try:
             address = await asyncio.create_subprocess_exec(
                 str(binary),
-                "--no-telemetry",
                 "runtime",
                 "endpoint",
                 "--directory",
                 directory,
-                "--ad-hoc",
+                *(["--ad-hoc"] if service is None else ["--app", "--service", service]),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
                 limit=64 << 10,
@@ -60,7 +59,6 @@ class NativeRuntime:
                     raise NativeUnavailable()
                 await asyncio.create_subprocess_exec(
                     str(binary),
-                    "--no-telemetry",
                     "runtime",
                     "serve",
                     "--directory",
@@ -146,16 +144,26 @@ class NativeRuntime:
     ) -> object:
         if operation not in {"register", "renew", "status", "unregister"}:
             raise InvalidResponse()
+        return await self._request(endpoint_path, f"/v1/ad-hoc/{operation}", payload)
+
+    async def app_request(
+        self, endpoint_path: str, operation: str, payload: dict[str, object]
+    ) -> object:
+        if operation not in {"prepare", "register", "renew", "unregister"}:
+            raise InvalidResponse()
+        return await self._request(endpoint_path, f"/v1/{operation}", payload)
+
+    async def _request(self, endpoint_path: str, route: str, payload: dict[str, object]) -> object:
         try:
             url, credential = self._endpoint(endpoint_path)
             async with httpx.AsyncClient(
-                timeout=45 if operation == "unregister" else 10,
+                timeout=45 if route.endswith("/unregister") else 10,
                 follow_redirects=False,
                 trust_env=False,
             ) as client:
                 async with client.stream(
                     "POST",
-                    f"{url}/v1/ad-hoc/{operation}",
+                    url + route,
                     json=payload,
                     headers={"Authorization": "Bearer " + credential},
                 ) as response:
@@ -186,9 +194,7 @@ class NativeRuntime:
                             "sdk.credential_rejected", "the ad-hoc credential was rejected"
                         )
                     if code == "runtime.owner_conflict":
-                        raise TnlError(
-                            "sdk.owner_conflict", "another live app owns this invocation"
-                        )
+                        raise TnlError("sdk.owner_conflict", "another live app owns this service")
                     if code == "runtime.authentication_required":
                         raise TnlError(
                             "sdk.authentication_required",

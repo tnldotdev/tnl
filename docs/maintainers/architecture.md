@@ -170,6 +170,8 @@ forwarding new visitors; its journal carries resumable publication events.
 an unconfigured `tnl publish TARGET` and the Go ad-hoc SDK still own their own
 publishers. app registration wire shapes still use the private protocol while
 the local publisher API contract is adopted.
+the host lock and TCP credential descriptor live in the verified private `run/`
+directory under canonical client state.
 
 ## resolve project configuration
 
@@ -234,19 +236,36 @@ listener. Node and Bun applications call `await tnl.prepare({service: "api"})`
 before startup and `await publication.register(server)` after binding, including
 listeners that request port 0. directory inference requires a unique configured
 service. builds and production previews do not prepare registrations.
+Python's `tnl.uvicorn.run("app:app", service="web", port=0, reload=True)` prepares
+in the serving worker before ASGI lifespan, registers Uvicorn's bound socket
+after startup, and unregisters before lifespan shutdown. the reload parent
+only holds the listener; each worktree resolves its own project and client state.
+`tnl.open(app)` remains a separate ad-hoc publication with its own credential.
 
 `internal/clientruntime` owns registration leases, publisher observations,
-readiness, and a bounded durable local event journal. the private native command
+readiness, and a bounded durable local event journal. `internal/clientstate`
+stores each project's snapshot and ordered events in client SQLite; one write
+transaction advances the cursor and appends an event, retaining at most 2048
+events and 8 MiB of event data. watch cursors survive publisher restarts until
+their event falls outside the retained history. the private native command
 `tnl runtime endpoint` locates one private endpoint descriptor per canonical
 project/worktree/client-state identity. the app starts `tnl runtime serve` to
 maintain its loopback HTTP listener. the descriptor holds its credential in a
-user-owned mode-0600 file beneath a mode-0700 directory under `/tmp`.
+user-owned mode-0600 file beneath the private `run/` directory in client state.
 `internal/privateprotocol` bounds and validates requests; golden fixtures
 describe the wire shape. configured-service control sessions remain in the
 native process. an ad-hoc credential crosses only this authenticated local API
 when the app registers its bound target; it does not enter snapshots,
 diagnostics, or browser metadata. the native runtime can start without a
 project file for ad-hoc registrations.
+
+the publisher queues one high-level ready telemetry event for an app invocation
+after its first routable publish run. a hash of the app's opaque invocation
+identity deduplicates it across publisher restarts without storing service names,
+paths, targets, hostnames, or credentials. the saved preference and
+`TNL_NO_TELEMETRY` take effect before queueing; hidden runtime commands are not
+reported as CLI commands. named `tnl publish` uses the same first-ready event as
+an explicit target.
 
 the same local publisher accepts several ad-hoc invocations from one app process.
 `internal/clientruntime.AdHocManager` keeps them separate from configured

@@ -407,7 +407,6 @@ export async function startRuntime(
     const { stdout } = await promisify(execFile)(
       binary,
       [
-        "--no-telemetry",
         "runtime",
         "endpoint",
         "--directory",
@@ -433,14 +432,10 @@ export async function startRuntime(
       if (!object.spawn) throw new TnlError("sdk.dev_unavailable");
       // the app process owns the local publisher's lifetime. a second service
       // can race this spawn: the runtime's hostname lock elects one owner.
-      const process_ = spawn(
-        binary,
-        ["--no-telemetry", "runtime", "serve", "--directory", directory],
-        {
-          cwd: directory,
-          stdio: "ignore",
-        },
-      );
+      const process_ = spawn(binary, ["runtime", "serve", "--directory", directory], {
+        cwd: directory,
+        stdio: "ignore",
+      });
       process_.once("error", () => {
         // an available sibling runtime may still win the publisher lock.
       });
