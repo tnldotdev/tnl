@@ -55,6 +55,10 @@ x-runtime: &runtime
         -tnl-runtime-load-publisher-concurrency='${PUBLISHER_CONCURRENCY:-500}' \
         -tnl-runtime-load-publisher-rate='${PUBLISHER_RATE:-200}' \
         -tnl-runtime-load-publisher-burst='${PUBLISHER_BURST:-400}' \
+        -tnl-runtime-load-traffic-default-rate='${TRAFFIC_DEFAULT_RATE:-100}' \
+        -tnl-runtime-load-traffic-default-burst='${TRAFFIC_DEFAULT_BURST:-200}' \
+        -tnl-runtime-load-traffic-source-rate='${TRAFFIC_SOURCE_RATE:-100}' \
+        -tnl-runtime-load-traffic-source-burst='${TRAFFIC_SOURCE_BURST:-200}' \
         -tnl-runtime-load-relay-stream-capacity='${RELAY_STREAM_CAPACITY:--1}' \
         -tnl-runtime-load-quic-max-incoming-streams='${QUIC_MAX_INCOMING_STREAMS:--1}' \
         -tnl-runtime-load-scenario='${SCENARIO:-relay-restart}' \
