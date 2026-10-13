@@ -552,6 +552,15 @@ A restarted or expired process cannot continue using stale authorization.
 Visitor TLS is separate from relay transport TLS. Visitor TLS passes through ingress
 and relay unchanged and terminates in the publisher.
 
+`internal/clientstate` encrypts private values with a key bound to the server
+profile and the value's context. on linux, `client-v3.db` uses an owner-only
+`wrapping-key-v1` file beside the database; keep that file with the database
+when moving client state. the file protects a copied database
+without the key file, not a machine where an attacker can read both. macOS
+interactive state uses the user's keychain and retains `client-v2.db`. a
+pre-login launchdaemon cannot assume that user's login keychain is unlocked;
+service-owned key access must be demonstrated before boot-time publication uses it.
+
 ## place authority decisions
 
 The authority API owns identities, authentication, teams, memberships,
