@@ -68,3 +68,30 @@ func TestLocalPublisherTCPRequiresCredentialOnPrivateOperations(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalPublisherRuntimeKeyUsesPrivateClientState(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "client-state")
+	key, err := runtimeKey("/project", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := filepath.EvalSymlinks(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(key) != filepath.Join(canonical, "run") {
+		t.Fatalf("runtime key = %q, want state run directory", key)
+	}
+	if info, err := os.Lstat(filepath.Dir(key)); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("run directory = %v, %v", info, err)
+	}
+	if err := os.Remove(filepath.Dir(key)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Dir(key)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtimeKey("/project", state); err == nil {
+		t.Fatal("accepted a symlink as the private runtime directory")
+	}
+}

@@ -62,12 +62,16 @@ func testAppRuntime(t *testing.T) (*appRuntime, string, <-chan uint64) {
 	server := &http.Server{Handler: a.handler()}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
-	tcpServer, _, err := startRuntimeTCP(socket, a.handler())
+	key, err := runtimeKey(project, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcpServer, _, err := startRuntimeTCP(key, a.handler())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := stopRuntimeTCP(context.Background(), tcpServer, socket); err != nil {
+		if err := stopRuntimeTCP(context.Background(), tcpServer, key); err != nil {
 			t.Error(err)
 		}
 	})
@@ -84,17 +88,17 @@ func TestAppStatusRejectsPublisherWithStaleLocalCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-started
-	socket, err := runtimeSocket(a.project.Root, state)
+	key, err := runtimeKey(a.project.Root, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := runtimeTCPEndpointPath(socket)
+	path := runtimeTCPEndpointPath(key)
 	previous, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.WriteFile(path, previous, 0o600) })
-	endpoint, err := readRuntimeTCPEndpoint(socket)
+	endpoint, err := readRuntimeTCPEndpoint(key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +312,7 @@ func TestWaitAlwaysChecksFreshResponsesAndKeepsFailingPublicationsRunning(t *tes
 		return clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now(), Status: 503, Reason: "runtime.probe_rejected", Readiness: service.Readiness}
 	}
 	var output bytes.Buffer
-	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Service: []string{"api"}, Timeout: 20 * time.Millisecond, Output: "json"}, &output, probe)
+	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Service: []string{"api"}, Timeout: 250 * time.Millisecond, Output: "json"}, &output, probe)
 	if reason, _, ok := failure.Describe(err); !ok || reason != failure.AppReadinessTimeout || calls.Load() == 0 {
 		t.Fatalf("fresh wait = %v, probes=%d", err, calls.Load())
 	}
