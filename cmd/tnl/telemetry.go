@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -69,13 +72,25 @@ const (
 type telemetryFrameworkName string
 
 const (
-	telemetryVite  telemetryFrameworkName = "vite"
-	telemetryNext  telemetryFrameworkName = "next"
-	telemetryOther telemetryFrameworkName = "other"
+	telemetryNode   telemetryFrameworkName = "node"
+	telemetryBun    telemetryFrameworkName = "bun"
+	telemetryVite   telemetryFrameworkName = "vite"
+	telemetryNext   telemetryFrameworkName = "next"
+	telemetryPython telemetryFrameworkName = "python"
+	telemetryOther  telemetryFrameworkName = "other"
 )
 
 type telemetryPublishMode string
+type telemetryEntryMode string
 type telemetryWebhookDelivery string
+
+const (
+	telemetryConfigured telemetryEntryMode = "configured"
+	telemetryAdHoc      telemetryEntryMode = "ad_hoc"
+	telemetryNamed      telemetryEntryMode = "named"
+	telemetryDirect     telemetryEntryMode = "direct"
+	telemetryDemo       telemetryEntryMode = "demo"
+)
 
 const (
 	telemetryFanout   telemetryWebhookDelivery = "fanout"
@@ -98,6 +113,7 @@ type telemetryPayload struct {
 	ServerKind     telemetryServerKind      `json:"server_kind,omitempty"`
 	PublishMode    telemetryPublishMode     `json:"publish_mode,omitempty"`
 	Framework      telemetryFrameworkName   `json:"framework,omitempty"`
+	EntryMode      telemetryEntryMode       `json:"entry_mode,omitempty"`
 	Delivery       telemetryWebhookDelivery `json:"delivery,omitempty"`
 	Version        string                   `json:"version"`
 	OS             string                   `json:"os"`
@@ -118,6 +134,7 @@ type telemetryInvocation struct {
 	integrationOnce [4]atomic.Bool
 	modeMu          sync.RWMutex
 	mode            telemetryPublishMode
+	entryMode       telemetryEntryMode
 	action          telemetryCommandAction
 }
 
@@ -126,10 +143,13 @@ func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, e
 	if err != nil {
 		return nil, err
 	}
-	return &telemetryInvocation{reporter: reporter, id: id}, nil
+	return &telemetryInvocation{reporter: reporter, id: id, entryMode: telemetryDirect}, nil
 }
 
 func (i *telemetryInvocation) Report(payload telemetryPayload) {
+	if payload.Event == telemetryPublishRunStarted && !i.ready.CompareAndSwap(false, true) {
+		return
+	}
 	var once *atomic.Bool
 	switch payload.Event {
 	case telemetryOAuthReady:
@@ -149,10 +169,8 @@ func (i *telemetryInvocation) Report(payload telemetryPayload) {
 	if payload.Command == telemetryPublish {
 		i.modeMu.RLock()
 		payload.PublishMode = i.mode
+		payload.EntryMode = i.entryMode
 		i.modeMu.RUnlock()
-	}
-	if payload.Event == telemetryPublishRunStarted {
-		i.ready.Store(true)
 	}
 	i.reporter.Report(payload)
 }
@@ -160,6 +178,12 @@ func (i *telemetryInvocation) Report(payload telemetryPayload) {
 func (i *telemetryInvocation) SetPublishMode(mode telemetryPublishMode) {
 	i.modeMu.Lock()
 	i.mode = mode
+	i.modeMu.Unlock()
+}
+
+func (i *telemetryInvocation) SetEntryMode(mode telemetryEntryMode) {
+	i.modeMu.Lock()
+	i.entryMode = mode
 	i.modeMu.Unlock()
 }
 
@@ -346,7 +370,45 @@ func newTelemetryReady(command telemetryTrackedCommand, kind telemetryServerKind
 	payload.Event = telemetryPublishRunStarted
 	payload.ServerKind = kind
 	payload.Framework = framework
+	if command == telemetryPublish {
+		payload.EntryMode = telemetryDirect
+	} else {
+		payload.EntryMode = telemetryConfigured
+	}
 	return payload
+}
+
+func queueSDKReady(ctx context.Context, state *clientstate.Database, invocation string, command telemetryTrackedCommand, serverURL, framework string) {
+	if disabled, _ := strconv.ParseBool(os.Getenv("TNL_NO_TELEMETRY")); disabled || invocation == "" {
+		return
+	}
+	kind := telemetrySelfHosted
+	if serverURL == defaultServerURL {
+		kind = telemetryHosted
+	}
+	payload := newTelemetryReady(command, kind, telemetryFramework(framework))
+	if command == telemetryPublish {
+		payload.PublishMode = telemetryPublishApp
+		payload.EntryMode = telemetryAdHoc
+	}
+	payload.InvocationID, _ = opaqueid.New(opaqueid.InvocationPrefix)
+	if payload.InvocationID == "" {
+		return
+	}
+	id, err := opaqueid.New(opaqueid.TelemetryEventPrefix)
+	if err != nil {
+		return
+	}
+	event := payload.wireEvent(telemetryEventID(id))
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	digest := sha256.Sum256([]byte(invocation))
+	queued, err := state.QueueReadyTelemetryEvent(ctx, hex.EncodeToString(digest[:]), id, encoded)
+	if err == nil && queued {
+		newTelemetryReporter(state.Root()).flushReady()
+	}
 }
 
 func newTelemetryDemoPing() telemetryPayload {
@@ -367,7 +429,7 @@ func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, te
 			command = append(command, element.Command.Name)
 		}
 	}
-	if len(command) == 0 || command[0] == "telemetry" || command[0] == "version" {
+	if len(command) == 0 || command[0] == "telemetry" || command[0] == "version" || command[0] == "runtime" {
 		return "", "", false
 	}
 	if len(command) == 1 {
@@ -460,6 +522,12 @@ func telemetryFramework(framework string) telemetryFrameworkName {
 		return telemetryVite
 	case "next":
 		return telemetryNext
+	case "python":
+		return telemetryPython
+	case "node":
+		return telemetryNode
+	case "bun":
+		return telemetryBun
 	default:
 		return telemetryOther
 	}

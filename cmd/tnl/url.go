@@ -204,8 +204,8 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 		return controlclient.ErrNotFound
 	}
 	if flags.Target != "" && route.ServiceProtocol != controlv1.Http {
-		return failure.Wrap("validate private TCP URL update", failure.InvalidTunnelFlags,
-			errors.New("private TCP targets are configured on the publisher, not the saved public URL"))
+		return failure.Wrap("validate TCP URL update", failure.InvalidTunnelFlags,
+			errors.New("TCP targets are configured on the publisher, not the saved public URL"))
 	}
 	target := route.Target
 	if flags.Target != "" {

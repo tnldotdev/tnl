@@ -21,15 +21,16 @@ func ValidOwner(owner string) bool { return ownerPattern.MatchString(owner) }
 type Framework string
 
 const (
-	FrameworkNode Framework = "node"
-	FrameworkBun  Framework = "bun"
-	FrameworkVite Framework = "vite"
-	FrameworkNext Framework = "next"
+	FrameworkNode   Framework = "node"
+	FrameworkBun    Framework = "bun"
+	FrameworkVite   Framework = "vite"
+	FrameworkNext   Framework = "next"
+	FrameworkPython Framework = "python"
 )
 
 func (framework Framework) Valid() bool {
 	switch framework {
-	case FrameworkNode, FrameworkBun, FrameworkVite, FrameworkNext:
+	case FrameworkNode, FrameworkBun, FrameworkVite, FrameworkNext, FrameworkPython:
 		return true
 	default:
 		return false
@@ -37,12 +38,13 @@ func (framework Framework) Valid() bool {
 }
 
 type Prepare struct {
-	Version   int       `json:"version"`
-	Directory string    `json:"directory"`
-	Service   string    `json:"service,omitempty"`
-	Framework Framework `json:"framework"`
-	Owner     string    `json:"owner"`
-	PID       int       `json:"pid"`
+	Version           int       `json:"version"`
+	Directory         string    `json:"directory"`
+	Service           string    `json:"service,omitempty"`
+	Framework         Framework `json:"framework"`
+	Owner             string    `json:"owner"`
+	PID               int       `json:"pid"`
+	TelemetryDisabled bool      `json:"telemetry_disabled,omitempty"`
 }
 
 type Assignment struct {
@@ -65,16 +67,17 @@ type Registration struct {
 // AdHocRegister binds one invocation to an already-listening local target.
 // the credential is sent only across the authenticated local API and never enters status.
 type AdHocRegister struct {
-	Version        int          `json:"version"`
-	RegistrationID string       `json:"registration_id"`
-	Owner          string       `json:"owner"`
-	PID            int          `json:"pid"`
-	Target         string       `json:"target"`
-	ServerURL      string       `json:"server_url,omitempty"`
-	Credential     string       `json:"credential"`
-	AllowIP        []string     `json:"allow_ip,omitempty"`
-	AllowAllIPs    bool         `json:"allow_all_ips,omitempty"`
-	Limits         *AdHocLimits `json:"limits,omitempty"`
+	Version           int          `json:"version"`
+	RegistrationID    string       `json:"registration_id"`
+	Owner             string       `json:"owner"`
+	PID               int          `json:"pid"`
+	TelemetryDisabled bool         `json:"telemetry_disabled,omitempty"`
+	Target            string       `json:"target"`
+	ServerURL         string       `json:"server_url,omitempty"`
+	Credential        string       `json:"credential"`
+	AllowIP           []string     `json:"allow_ip,omitempty"`
+	AllowAllIPs       bool         `json:"allow_all_ips,omitempty"`
+	Limits            *AdHocLimits `json:"limits,omitempty"`
 }
 
 type AdHocLimits struct {

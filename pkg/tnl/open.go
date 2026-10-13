@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/adhoc"
 	"github.com/tnldotdev/tnl/internal/clientserver"
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/clienttelemetry"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -168,6 +169,7 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 		valid := event.PublicURLID == tunnel.id && event.PublicURL == tunnel.url && event.PublishRunNumber > 0
 		tunnel.mu.Unlock()
 		if valid {
+			clienttelemetry.ReportAdHocReady(ctx, state, serverURL, invocationID)
 			return tunnel, nil
 		}
 		tunnel.Close()

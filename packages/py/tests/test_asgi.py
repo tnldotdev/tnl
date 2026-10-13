@@ -28,7 +28,8 @@ class FakeNative(NativeRuntime):
         self.target = ""
         self.fail_status = False
 
-    async def start(self, directory: str) -> str:
+    async def start(self, directory: str, service: str | None = None) -> str:
+        assert service is None
         self.events.append("endpoint")
         return "/tmp/tnl-test.endpoint.json"
 

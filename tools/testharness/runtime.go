@@ -47,11 +47,7 @@ type runtimeHarness struct {
 var runtimePublishers = []string{"publishers", "publishers-2", "publishers-3", "publishers-4"}
 var runtimeApps = []string{"app", "app-2", "app-3", "app-4"}
 
-func runRuntime(ctx context.Context) (retErr error) {
-	root, err := repositoryRoot()
-	if err != nil {
-		return err
-	}
+func runRuntime(ctx context.Context, root string) (retErr error) {
 	results := os.Getenv("RESULTS")
 	if results == "" {
 		return errors.New("RESULTS directory is required")
@@ -59,7 +55,7 @@ func runRuntime(ctx context.Context) (retErr error) {
 	if !filepath.IsAbs(results) {
 		results = filepath.Join(root, results)
 	}
-	results, err = filepath.Abs(results)
+	results, err := filepath.Abs(results)
 	if err != nil {
 		return err
 	}
