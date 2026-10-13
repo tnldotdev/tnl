@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisherauth"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -132,6 +133,8 @@ type integrationPublishingIdentity struct {
 	policyRevision                                          uint64
 	state                                                   *clientstate.Store
 	routes                                                  *controlclient.Client
+	owner                                                   *publisherauth.Owner
+	publisherControl                                        *controlclient.Client
 	certificatePlan                                         controlv1.CertificatePlan
 	publicURLScope                                          controlv1.PublicURLScope
 }
@@ -197,16 +200,22 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 		t.Fatal(err)
 	}
 	hostname := hostnameLabel + "." + membership.ManagedLabel + "." + domain.CanonicalDomain
+	publisherOwner, err := publisherauth.Interactive(authenticated, "test-publisher")
+	if err != nil {
+		t.Fatal(err)
+	}
 	return &integrationPublishingIdentity{
 		controlOrigin: controlOrigin, hostname: hostname, teamID: team.Id, domainID: domain.Id, membershipID: membership.Id,
-		policyRevision: uint64(team.PolicyRevision), state: publisherState, routes: authenticated.Control, publicURLScope: controlv1.Member,
+		policyRevision: uint64(team.PolicyRevision), state: publisherState, routes: authenticated.Control,
+		owner: publisherOwner, publisherControl: authenticated.PublisherControl, publicURLScope: controlv1.Member,
 		certificatePlan: controlv1.CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.TlsAlpn01},
 	}
 }
 
 func (i *integrationPublishingIdentity) publisherConfig(target string, quicConnector, tcpConnector muxsession.Connector) publisher.Config {
 	return publisher.Config{
-		Control: i.routes, TeamID: i.teamID, DomainID: i.domainID, MembershipID: i.membershipID,
+		Control: &publisherauth.RunControl{Client: i.publisherControl, Owner: i.owner},
+		TeamID:  i.teamID, DomainID: i.domainID, MembershipID: i.membershipID,
 		PolicyRevision: i.policyRevision, PublicURLScope: i.publicURLScope, Purpose: controlv1.App,
 		Hostname: i.hostname, Target: target, AllowedIPPrefixes: []string{"127.0.0.1/32"},
 		State: i.state, QUICConnector: quicConnector, TCPConnector: tcpConnector,

@@ -14,6 +14,58 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
+func (h *handler) ListPublisherIdentities(w http.ResponseWriter, r *http.Request, params controlv1.ListPublisherIdentitiesParams) {
+	principal, ok := h.authorizeRouteReads(w, r)
+	if !ok {
+		return
+	}
+	teamID := string(params.TeamId)
+	if _, member := principal.teamIDs[teamID]; !member {
+		writeProblem(w, http.StatusNotFound, controlv1.NotFound, "publisher team not found")
+		return
+	}
+	if h.publisherIdentities == nil {
+		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher identities are unavailable")
+		return
+	}
+	cursor := ""
+	if params.Cursor != nil {
+		cursor = string(*params.Cursor)
+		if !opaqueid.Valid(cursor, opaqueid.PublisherIdentityPrefix) {
+			writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publisher cursor")
+			return
+		}
+	}
+	page, err := h.publisherIdentities.ListTeamPublisherIdentities(r.Context(), teamID, cursor)
+	if err != nil {
+		writeControlStateProblem(w, "list team publishers", err)
+		return
+	}
+	response := controlv1.PublisherIdentityPage{Identities: make([]controlv1.PublisherIdentitySummary, 0, len(page.Identities))}
+	for _, identity := range page.Identities {
+		item := controlv1.PublisherIdentitySummary{Id: identity.ID, Name: identity.Name, TeamId: controlv1.TeamID(identity.TeamID),
+			Kind: controlv1.PublisherIdentitySummaryKind(identity.Kind), CreatedAt: identity.CreatedAt,
+			RevokedAt: identity.RevokedAt, Grants: make([]controlv1.PublisherGrantSummary, 0, len(identity.Grants))}
+		for _, grant := range identity.Grants {
+			summary := controlv1.PublisherGrantSummary{Id: grant.ID, Kind: controlv1.PublisherGrantSummaryKind(grant.Kind),
+				CreatedAt: grant.CreatedAt, ExpiresAt: grant.ExpiresAt, RevokedAt: grant.RevokedAt}
+			if grant.PublicURLID != "" {
+				publicURLID := controlv1.PublicURLID(grant.PublicURLID)
+				summary.PublicUrlId, summary.PublicUrl = &publicURLID, &grant.PublicURL
+			} else {
+				domainID := controlv1.DomainID(grant.DomainID)
+				summary.DomainId, summary.Namespace = &domainID, &grant.Namespace
+			}
+			item.Grants = append(item.Grants, summary)
+		}
+		response.Identities = append(response.Identities, item)
+	}
+	if page.NextCursor != "" {
+		response.NextCursor = &page.NextCursor
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Request) {
 	if h.publisherIdentities == nil || h.store == nil {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher enrollment is unavailable")
@@ -21,7 +73,7 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 	}
 	var body controlv1.CreatePublisherEnrollmentRequest
 	if err := decodeJSON(w, r, &body); err != nil || !naming.ValidServiceName(body.Name) ||
-		body.Kind != "installed" && body.Kind != "automation" {
+		body.Kind != "installed" && body.Kind != "automation" && body.Kind != "run" {
 		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "select one public URL or namespace grant")
 		return
 	}
@@ -65,7 +117,7 @@ func (h *handler) authorizePublisherSelection(w http.ResponseWriter, r *http.Req
 		return controlstate.PublisherScope{}, authorization.Decision{}, false
 	}
 	if publicURL != nil {
-		route, decision, ok := h.credentialManagementRoute(w, r, string(*publicURL))
+		route, decision, ok := h.publisherManagementRoute(w, r, string(*publicURL))
 		if !ok {
 			return controlstate.PublisherScope{}, authorization.Decision{}, false
 		}
@@ -94,6 +146,50 @@ func (h *handler) authorizePublisherSelection(w http.ResponseWriter, r *http.Req
 	}
 	return controlstate.PublisherScope{TeamID: decision.TeamID, DomainID: decision.DomainID,
 		Namespace: decision.Namespace, Kind: "namespace"}, decision, true
+}
+
+func (h *handler) publisherManagementRoute(w http.ResponseWriter, r *http.Request, publicURLID string) (controlstate.PublicURL, authorization.Decision, bool) {
+	if h.store == nil {
+		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "public URL state is unavailable")
+		return controlstate.PublicURL{}, authorization.Decision{}, false
+	}
+	principal, ok := h.authorizeRouteReads(w, r)
+	if !ok {
+		return controlstate.PublicURL{}, authorization.Decision{}, false
+	}
+	route, err := h.store.GetPublicURLForAuthorization(r.Context(), publicURLID)
+	if err != nil {
+		writeControlStateProblem(w, "read publisher public URL", err)
+		return controlstate.PublicURL{}, authorization.Decision{}, false
+	}
+	if route.Ephemeral || route.LifecycleState != controlstate.PublicURLLifecycleEnabled {
+		writeProblem(w, http.StatusConflict, controlv1.Conflict, "publisher enrollment requires an enabled saved public URL")
+		return controlstate.PublicURL{}, authorization.Decision{}, false
+	}
+	allowed := make([]string, len(route.AllowedIPPrefixes))
+	for index, prefix := range route.AllowedIPPrefixes {
+		allowed[index] = prefix.String()
+	}
+	decision, ok := h.authorizeExistingRouteMutation(w, r, principal, authorization.Request{
+		Operation: authorization.OperationPublishRunCreate, TeamID: route.TeamID,
+		PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
+		CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
+		Target: route.Target, AllowedIPPrefixes: allowed, Ephemeral: route.Ephemeral,
+		PublicURLID: route.ID, PublishRunNumber: route.AuthorizationPublishRunNumber,
+		PublicURLMutationRevision: route.MutationRevision,
+	})
+	if !ok {
+		return controlstate.PublicURL{}, authorization.Decision{}, false
+	}
+	if decision.CertificatePlan == nil {
+		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "certificate plan is unavailable")
+		return controlstate.PublicURL{}, authorization.Decision{}, false
+	}
+	if decision.CertificatePlan.ChallengeMethod == certificateidentity.ChallengeDNS01 && !h.config.DNSAutomation {
+		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "certificate plan needs DNS automation")
+		return controlstate.PublicURL{}, authorization.Decision{}, false
+	}
+	return route, decision, true
 }
 
 func (h *handler) CreatePublisherGrant(w http.ResponseWriter, r *http.Request, id controlv1.ResourceID) {
@@ -205,4 +301,63 @@ func (h *handler) authorizePublisherGrantRevocation(w http.ResponseWriter, r *ht
 		return false
 	}
 	return true
+}
+
+func (h *handler) authenticatePublisherAccess(w http.ResponseWriter, r *http.Request) (controlstate.PublisherIdentity, bool) {
+	token, ok := requestBearerToken(r)
+	if !ok {
+		writeBearerProblem(w)
+		return controlstate.PublisherIdentity{}, false
+	}
+	if h.publisherIdentities == nil {
+		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher authentication is unavailable")
+		return controlstate.PublisherIdentity{}, false
+	}
+	identity, err := h.publisherIdentities.AuthenticatePublisherAccess(r.Context(), token, time.Now().UTC())
+	if errors.Is(err, controlstate.ErrPublisherIdentity) {
+		writeBearerProblem(w)
+		return controlstate.PublisherIdentity{}, false
+	}
+	if err != nil {
+		writeControlStateProblem(w, "authenticate publisher", err)
+		return controlstate.PublisherIdentity{}, false
+	}
+	if identity.GuestID != "" {
+		address, err := guestRequestAddress(r)
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid guest publisher address")
+			return controlstate.PublisherIdentity{}, false
+		}
+		matched, err := h.publisherIdentities.GuestPublisherSourceMatches(r.Context(), identity.GuestID, address)
+		if err != nil {
+			writeControlStateProblem(w, "check guest publisher IP", err)
+			return controlstate.PublisherIdentity{}, false
+		}
+		if !matched {
+			writeProblem(w, http.StatusForbidden, controlv1.GuestIpChanged, "guest publisher IP differs from its trial")
+			return controlstate.PublisherIdentity{}, false
+		}
+	}
+	return identity, true
+}
+
+func (h *handler) GetPublisherPublicURL(w http.ResponseWriter, r *http.Request) {
+	identity, ok := h.authenticatePublisherAccess(w, r)
+	if !ok {
+		return
+	}
+	if identity.Scope.Kind != "saved_url" {
+		writeProblem(w, http.StatusForbidden, controlv1.Forbidden, "a saved public URL grant is required")
+		return
+	}
+	route, err := h.store.GetPublicURLForAuthorization(r.Context(), identity.Scope.PublicURLID)
+	if err != nil {
+		writeControlStateProblem(w, "read publisher public URL", err)
+		return
+	}
+	if route.TeamID != identity.Scope.TeamID || route.Ephemeral || route.LifecycleState != controlstate.PublicURLLifecycleEnabled {
+		writeBearerProblem(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, publicURLResponse(route))
 }

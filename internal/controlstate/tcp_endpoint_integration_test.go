@@ -1,12 +1,12 @@
 package controlstate
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/authorization"
-	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
@@ -27,21 +27,25 @@ func TestIntegrationDatabasePublicURLClaimsPortWithCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, _, err := database.CreatePublicURLPublishCredential(t.Context(), CreatePublicURLPublishCredentialRequest{
-		PublicURLID: first.ID, TeamID: request.TeamID, IdentityID: request.ActingIdentityID,
-		MembershipID: request.MembershipID, PolicyRevision: uint64(membership.PolicyRevision),
-		CertificatePlan: authorization.CertificatePlan{
-			CacheKey: first.CanonicalHostname, Scope: first.CanonicalHostname,
-			Identifiers: []string{first.CanonicalHostname}, ChallengeMethod: certificateidentity.ChallengeTLSALPN01,
-		}, Now: now, ExpiresAt: now.Add(time.Hour),
+	enrollment, err := database.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{
+		Scope: PublisherScope{TeamID: request.TeamID, Kind: "saved_url", PublicURLID: first.ID},
+		Name:  "store-42", Kind: "installed", EditorID: request.ActingIdentityID,
+		EditorMembershipID: request.MembershipID, PolicyRevision: uint64(membership.PolicyRevision), Now: now,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := database.ListTeamPublicURLPublishCredentials(t.Context(), request.TeamID, "")
-	if err != nil || len(page.Credentials) != 1 || page.Credentials[0].ID != credential.ID ||
-		page.Credentials[0].PublicURL != first.CanonicalHostname+":5432" {
-		t.Fatalf("database credential address = %+v, %v", page, err)
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := database.RedeemPublisherEnrollment(t.Context(), enrollment.Key, public, now)
+	if err != nil || identity.Scope.PublicURLID != first.ID || identity.Scope.Kind != "saved_url" {
+		t.Fatalf("database publisher enrollment = %+v, %v", identity, err)
+	}
+	selected, err := database.GetPublicURLForAuthorization(t.Context(), identity.Scope.PublicURLID)
+	if err != nil || selected.PublicPort == nil || *selected.PublicPort != 5432 {
+		t.Fatalf("enrolled database public address = %+v, %v", selected, err)
 	}
 	repeated, err := database.CreatePublicURL(t.Context(), request, now.Add(time.Minute))
 	if err != nil || repeated.PublicPort == nil || *repeated.PublicPort != 5432 || repeated.ID != first.ID {

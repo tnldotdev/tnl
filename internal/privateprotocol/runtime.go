@@ -65,7 +65,6 @@ type Registration struct {
 }
 
 // AdHocRegister binds one invocation to an already-listening local target.
-// the credential is sent only across the authenticated local API and never enters status.
 type AdHocRegister struct {
 	Version           int          `json:"version"`
 	RegistrationID    string       `json:"registration_id"`
@@ -74,7 +73,6 @@ type AdHocRegister struct {
 	TelemetryDisabled bool         `json:"telemetry_disabled,omitempty"`
 	Target            string       `json:"target"`
 	ServerURL         string       `json:"server_url,omitempty"`
-	Credential        string       `json:"credential"`
 	AllowIP           []string     `json:"allow_ip,omitempty"`
 	AllowAllIPs       bool         `json:"allow_all_ips,omitempty"`
 	Limits            *AdHocLimits `json:"limits,omitempty"`

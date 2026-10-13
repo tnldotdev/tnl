@@ -8,9 +8,9 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/adhoc"
 	"github.com/tnldotdev/tnl/internal/clientserver"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisherauth"
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -24,7 +24,20 @@ func (a *appRuntime) publishAdHoc(ctx context.Context, request privateprotocol.A
 	if err != nil {
 		return err
 	}
-	profile, err := a.state.Server(ctx, serverURL)
+	authenticated, err := authenticateRuntime(ctx, a.state, serverURL)
+	if err != nil {
+		return err
+	}
+	domain := ""
+	if a.project.Config.Tunnel != nil && a.project.Config.Tunnel.Domain != nil {
+		domain = *a.project.Config.Tunnel.Domain
+	}
+	services, err := preparePublisherServices(ctx, a.state, serverURL, "", "", domain,
+		valueOrEmpty(a.project.Config.Team), true, authenticated)
+	if err != nil {
+		return err
+	}
+	owner, err := a.publisherOwner(authenticated, services.TeamID)
 	if err != nil {
 		return err
 	}
@@ -79,7 +92,9 @@ func (a *appRuntime) publishAdHoc(ctx context.Context, request privateprotocol.A
 	}
 	status := privateprotocol.AdHocStatus{Version: privateprotocol.Version, RegistrationID: request.RegistrationID, State: privateprotocol.AdHocStarting}
 	return adhoc.Run(ctx, adhoc.Options{
-		ControlURL: serverURL, State: profile, Credential: credentials.EphemeralCredential(request.Credential),
+		ControlURL: serverURL, State: services.State, Owner: owner,
+		Namespace: publisherauth.Namespace{TeamID: services.TeamID, DomainID: services.DomainID,
+			Hostname: services.Namespace, Scope: services.PublicURLScope},
 		InvocationID: request.RegistrationID, Target: request.Target,
 		AllowIP: request.AllowIP, AllowAllIPs: request.AllowAllIPs, Limits: limits, Traffic: traffic,
 		OnAllocated: func(route controlv1.PublicURL) error {

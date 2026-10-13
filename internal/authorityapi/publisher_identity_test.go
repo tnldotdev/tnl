@@ -22,12 +22,36 @@ type publisherAuthorityStore struct {
 	redeemedKey ed25519.PublicKey
 	audience    string
 	assertion   string
+	scope       controlstate.PublisherScope
 }
 
 func (s *publisherAuthorityStore) RedeemPublisherEnrollment(_ context.Context, _ string, public ed25519.PublicKey, _ time.Time) (controlstate.PublisherIdentity, error) {
 	s.redeemedKey = public
+	scope := s.scope
+	if scope.Kind == "" {
+		scope = controlstate.PublisherScope{TeamID: "tm_team", Kind: "saved_url", PublicURLID: "url_saved"}
+	}
 	return controlstate.PublisherIdentity{ID: "pub_client", KeyID: "pik_key", GrantID: "pgr_grant",
-		Scope: controlstate.PublisherScope{TeamID: "tm_team", Kind: "saved_url", PublicURLID: "url_saved"}}, nil
+		Scope: scope}, nil
+}
+
+func TestPublisherEnrollmentReturnsNamespaceBoundary(t *testing.T) {
+	store := &publisherAuthorityStore{scope: controlstate.PublisherScope{
+		TeamID: "tm_team", DomainID: "dm_domain", Namespace: "ci.example.test", Kind: "namespace",
+	}}
+	handler := testHandler(t, Config{ControlURL: "https://control.example"}, store)
+	public := make([]byte, ed25519.PublicKeySize)
+	request := httptest.NewRequest(http.MethodPost, "/v1/publisher/enrollments/redeem",
+		strings.NewReader(`{"enrollment_key":"one-use-key","public_key":"`+base64.RawURLEncoding.EncodeToString(public)+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var result authorityv1.PublisherEnrollmentResult
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &result) != nil ||
+		result.Kind != "namespace" || result.Namespace == nil || *result.Namespace != "ci.example.test" ||
+		result.DomainId == nil || *result.DomainId != "dm_domain" || result.PublicUrlId != nil {
+		t.Fatalf("namespace enrollment = %d %q", response.Code, response.Body.String())
+	}
 }
 
 func (s *publisherAuthorityStore) ExchangePublisherAssertion(_ context.Context, _, _, audience, assertion string, now time.Time) (controlstate.PublisherAccess, error) {

@@ -1,8 +1,6 @@
 package controlapi
 
 import (
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -10,12 +8,10 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
-	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/readiness"
-	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -271,173 +267,7 @@ func (h *handler) CreatePublishRun(
 	publicURLID controlv1.PublicURLID,
 	_ controlv1.CreatePublishRunParams,
 ) {
-	token, bearerOK := requestBearerToken(request)
-	if !bearerOK {
-		writeBearerProblem(response)
-		return
-	}
-	var credential controlstate.PublicURLPublishCredential
-	var retrySecret []byte
-	if credentials.IsPublicURLPublishCredential(token) {
-		var bound controlstate.PublicURL
-		var ok bool
-		credential, bound, retrySecret, ok = h.authenticateScopedPublisher(response, request)
-		if !ok {
-			return
-		}
-		if bound.ID != string(publicURLID) {
-			writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-			return
-		}
-	} else if credentials.IsEphemeralCredential(token) {
-		if h.publishCredentials == nil {
-			writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "ad-hoc credentials are unavailable")
-			return
-		}
-		var err error
-		_, _, retrySecret, err = credentials.ParseEphemeralCredential(credentials.EphemeralCredential(token))
-		if err != nil {
-			writeBearerProblem(response)
-			return
-		}
-		credential, err = h.publishCredentials.AuthenticateEphemeralCredential(request.Context(), credentials.EphemeralCredential(token), time.Now())
-		if errors.Is(err, controlstate.ErrEphemeralCredential) {
-			writeBearerProblem(response)
-			return
-		}
-		if err != nil {
-			writeControlStateProblem(response, "authenticate ad-hoc publication", err)
-			return
-		}
-	}
-	var principal publicURLReadPrincipal
-	if credential.ID == "" {
-		var ok bool
-		principal, ok = h.authorizeRouteReads(response, request)
-		if !ok {
-			return
-		}
-	}
-	idempotencyKey := request.Header.Get("Idempotency-Key")
-	route, err := h.store.GetPublicURLForPublishRunAuthorization(request.Context(), string(publicURLID), idempotencyKey)
-	if err != nil {
-		writeControlStateProblem(response, "read public URL for publish run", err)
-		return
-	}
-	allowedIPPrefixes := make([]string, len(route.AllowedIPPrefixes))
-	for index, prefix := range route.AllowedIPPrefixes {
-		allowedIPPrefixes[index] = prefix.String()
-	}
-	var decision authorization.Decision
-	if credential.ID != "" {
-		var err error
-		if credential.Kind == controlstate.PublishCredentialEphemeral {
-			err = h.publishCredentials.ValidateEphemeralCredentialPublicURL(request.Context(), credential, route, time.Now())
-		} else {
-			err = h.publishCredentials.ValidatePublicURLPublishCredential(request.Context(), credential, route)
-		}
-		if err != nil {
-			writeBearerProblem(response)
-			return
-		}
-		decision = authorization.Decision{
-			IdentityID: credential.IdentityID, TeamID: route.TeamID, ActingMembershipID: credential.MembershipID,
-			PublicURLMembershipID: route.MembershipID, PolicyRevision: credential.PolicyRevision,
-			DomainID: route.DomainID, CanonicalHostname: route.CanonicalHostname,
-			PublicURLScope: authorization.PublicURLScope(route.PublicURLScope), CertificatePlan: &credential.CertificatePlan,
-		}
-		copy(decision.RetrySecret[:], retrySecret)
-	} else {
-		var ok bool
-		decision, ok = h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
-			Operation: authorization.OperationPublishRunCreate, TeamID: route.TeamID,
-			PublicURLMembershipID: route.MembershipID, DomainID: route.DomainID,
-			CanonicalHostname: route.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(route.PublicURLScope),
-			Target: route.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: route.Ephemeral,
-			PublicURLID: route.ID, PublishRunNumber: route.AuthorizationPublishRunNumber,
-			PublicURLMutationRevision: route.MutationRevision,
-		})
-		if !ok {
-			return
-		}
-	}
-	if decision.CertificatePlan == nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "authorization is unavailable")
-		return
-	}
-	plan := *decision.CertificatePlan
-	if plan.ChallengeMethod == certificateidentity.ChallengeDNS01 && !h.config.DNSAutomation {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "certificate plan requires DNS-01 automation, which is not configured")
-		return
-	}
-	var body controlv1.CreatePublishRunRequest
-	if request.ContentLength != 0 {
-		if err := decodeJSONLimited(response, request, &body, 1024); err != nil {
-			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publish run limits")
-			return
-		}
-	}
-	selection := trafficlimits.Selection{}
-	if selected := body.Traffic; selected != nil {
-		selection = trafficlimits.Selection{Connections: selected.Connections, Rate: selected.Rate,
-			RatePer: selected.RatePer, Burst: selected.Burst, UploadBytes: selected.UploadBytes, DownloadBytes: selected.DownloadBytes}
-	}
-	defaults, ceiling := h.config.TrafficDefaults, h.config.TrafficCeiling
-	if defaults == (trafficlimits.Limits{}) {
-		defaults = trafficlimits.Default()
-	}
-	if ceiling == (trafficlimits.Limits{}) {
-		ceiling = trafficlimits.Ceiling()
-	}
-	effectiveTraffic, err := selection.Resolve(defaults, ceiling)
-	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, err.Error())
-		return
-	}
-	digest, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
-		Operation: authorization.OperationPublishRunCreate, TeamID: decision.TeamID, MembershipID: decision.ActingMembershipID,
-		DomainID: decision.DomainID, CanonicalHostname: decision.CanonicalHostname, PublicURLScope: decision.PublicURLScope,
-		PublicURLID: route.ID, PublishRunNumber: route.AuthorizationPublishRunNumber, PolicyRevision: decision.PolicyRevision,
-		Target: route.Target, Ephemeral: route.Ephemeral, CertificatePlan: &plan, AllowedIPPrefixes: allowedIPPrefixes,
-	})
-	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
-		return
-	}
-	if body.Traffic != nil {
-		chosen, err := json.Marshal(body.Traffic)
-		if err != nil {
-			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publish run limits")
-			return
-		}
-		signed := append(digest[:], chosen...)
-		digest = sha256.Sum256(signed)
-	}
-	setup, err := h.store.CreatePublishRun(request.Context(), controlstate.PublishRunRequest{
-		PublicURLID: route.ID, TeamID: decision.TeamID, MembershipID: decision.ActingMembershipID,
-		ActingIdentityID: decision.IdentityID, GuestID: decision.GuestID,
-		RetrySecret:    decision.RetrySecret[:],
-		IdempotencyKey: idempotencyKey, RequestDigest: [32]byte(digest),
-		PolicyRevision: decision.PolicyRevision, CertificateCacheKey: plan.CacheKey,
-		CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers,
-		CertificateChallenge:     plan.ChallengeMethod,
-		ExpectedMutationRevision: route.MutationRevision,
-		PublishCredentialID:      credential.ID,
-		Traffic:                  &effectiveTraffic,
-	}, time.Now(), publisherLeaseDuration, publisherConnectionCredentialDuration)
-	if err != nil {
-		writeControlStateProblem(response, "create publish run", err)
-		return
-	}
-	route, err = h.store.GetPublicURLForAuthorization(request.Context(), route.ID)
-	if err != nil {
-		writeControlStateProblem(response, "read created publish run", err)
-		return
-	}
-	writeJSON(response, http.StatusCreated, publishRunSetupResponse(route, setup, controlv1.CertificatePlan{
-		CacheKey: plan.CacheKey, Scope: plan.Scope, Identifiers: plan.Identifiers,
-		ChallengeMethod: controlv1.CertificateChallengeMethod(plan.ChallengeMethod),
-	}))
+	h.createPublisherIdentityRun(response, request, publicURLID)
 }
 
 func (h *handler) HeartbeatPublishRun(response http.ResponseWriter, request *http.Request, publishRunID controlv1.PublishRunID) {
@@ -448,6 +278,20 @@ func (h *handler) HeartbeatPublishRun(response http.ResponseWriter, request *htt
 	}
 	authentication, ok := h.authenticatePublishRunRequest(response, request, string(publishRunID), uint64(body.PublishRunNumber))
 	if !ok {
+		return
+	}
+	linked, err := h.store.PublisherRunLinked(request.Context(), authentication)
+	if err != nil {
+		writeControlStateProblem(response, "check publisher identity for run", err)
+		return
+	}
+	if !linked {
+		if err := h.store.ClosePublishRun(request.Context(), string(publishRunID), authentication.PublishRunToken, time.Now().UTC()); err != nil &&
+			!errors.Is(err, controlstate.ErrPublishRunStale) && !errors.Is(err, controlstate.ErrPublishRunCredential) {
+			writeControlStateProblem(response, "close run without publisher identity", err)
+			return
+		}
+		writeBearerProblem(response)
 		return
 	}
 	setup, err := h.store.HeartbeatPublishRun(

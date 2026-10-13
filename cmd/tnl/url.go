@@ -18,11 +18,10 @@ import (
 )
 
 type publicURLCommand struct {
-	List       publicURLListCommand       `cmd:"" help:"List public URLs for the selected team."`
-	Show       publicURLShowCommand       `cmd:"" help:"Show one saved public URL for a configured service or ID."`
-	Update     publicURLUpdateCommand     `cmd:"" help:"Change a saved public URL target or visitor policy."`
-	Delete     publicURLDeleteCommand     `cmd:"" help:"Delete a public URL by ID; use tnl url list to find it."`
-	Credential publicURLCredentialCommand `cmd:"" help:"Manage credentials scoped to publishing one public URL."`
+	List   publicURLListCommand   `cmd:"" help:"List public URLs for the selected team."`
+	Show   publicURLShowCommand   `cmd:"" help:"Show one saved public URL for a configured service or ID."`
+	Update publicURLUpdateCommand `cmd:"" help:"Change a saved public URL target or visitor policy."`
+	Delete publicURLDeleteCommand `cmd:"" help:"Delete a public URL by ID; use tnl url list to find it."`
 }
 
 type publicURLShowCommand struct {

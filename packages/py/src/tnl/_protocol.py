@@ -16,13 +16,6 @@ class TnlError(Exception):
         self.code = code
 
 
-class CredentialRequired(TnlError):
-    def __init__(self) -> None:
-        super().__init__(
-            "sdk.credential_required", "set TNL_CREDENTIAL or pass an ad-hoc credential"
-        )
-
-
 class RegistrationLost(TnlError):
     def __init__(self) -> None:
         super().__init__("sdk.registration_stale", "the app-owned tnl registration was lost")

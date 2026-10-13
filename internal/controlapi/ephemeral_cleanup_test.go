@@ -4,12 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
-	"github.com/tnldotdev/tnl/internal/credentials"
 )
 
 type ephemeralCleanupStoreStub struct {
@@ -22,23 +20,19 @@ func (s *ephemeralCleanupStoreStub) DeleteAuthorizedPublicURL(_ context.Context,
 	return nil
 }
 
-func TestEphemeralCleanupForwardsOnlyTheScopedCredential(t *testing.T) {
-	token, _, _, err := credentials.NewEphemeralCredential()
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestEphemeralCleanupUsesOnlyItsNamespaceGrant(t *testing.T) {
 	store := &ephemeralCleanupStoreStub{}
-	h := &handler{store: store, publishCredentials: &scopedCredentialStoreStub{credential: controlstate.PublicURLPublishCredential{
-		ID: "upc_ephemeral", Kind: controlstate.PublishCredentialEphemeral,
-		IdentityID: "identity_1", TeamID: "team_1",
+	h := &handler{store: store, publisherIdentities: &namespacePublisherStub{identity: controlstate.PublisherIdentity{
+		ID: "pub_1", GrantID: "pgr_1", CreatorID: "identity_1",
+		Scope: controlstate.PublisherScope{TeamID: "team_1", Kind: "namespace", DomainID: "domain_1", Namespace: "member.example.test"},
 	}}}
 	request := httptest.NewRequest(http.MethodDelete, "/v1/ephemeral-public-urls/url_1", nil)
-	request.Header.Set("Authorization", "Bearer "+token.String())
+	request.Header.Set("Authorization", "Bearer pta_scoped")
 	response := httptest.NewRecorder()
 	h.DeleteEphemeralPublicURL(response, request, "url_1")
 	if response.Code != http.StatusNoContent || store.request.PublicURLID != "url_1" ||
-		store.request.ActingIdentityID != "identity_1" || store.request.EphemeralCredential != token ||
-		strings.Contains(response.Body.String(), token.String()) {
-		t.Fatalf("ad-hoc cleanup returned status %d or failed to keep its credential scoped", response.Code)
+		store.request.ActingIdentityID != "identity_1" || store.request.PublisherIdentityID != "pub_1" ||
+		store.request.PublisherGrantID != "pgr_1" {
+		t.Fatalf("ad-hoc cleanup returned status %d or lost its grant scope", response.Code)
 	}
 }

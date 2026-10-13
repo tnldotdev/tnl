@@ -34,7 +34,7 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	if err != nil || stored.ID != guest.ID || stored.NamespaceLabel != guest.NamespaceLabel {
 		t.Fatalf("guest = %+v, error = %v", stored, err)
 	}
-	if _, err := database.EnsureGuestPrincipal(t.Context(), guest.ID, now); err != nil {
+	if err := database.EnsureGuestIdentity(t.Context(), guest.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	request := CreatePublicURLRequest{

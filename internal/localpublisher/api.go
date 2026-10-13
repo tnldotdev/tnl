@@ -7,7 +7,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
@@ -46,6 +50,20 @@ func OwnerEndpointPath(key string) string            { return runtimeTCPEndpoint
 func AppEndpointPath(key, service string) string     { return runtimeAppEndpointPath(key, service) }
 func AdHocEndpointPath(key string) string            { return runtimeAdHocEndpointPath(key) }
 func ReadEndpoint(key string) (Endpoint, error)      { return readRuntimeTCPEndpoint(key) }
+func ReadDescriptor(path string) (Endpoint, error) {
+	if !filepath.IsAbs(path) || !strings.HasSuffix(path, ".endpoint.json") {
+		return Endpoint{}, errors.New("local publisher descriptor path is invalid")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return Endpoint{}, err
+	}
+	owner, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || owner.Uid != uint32(os.Geteuid()) {
+		return Endpoint{}, errors.New("local publisher descriptor must be an owner-only regular file")
+	}
+	return readLocalPublisherDescriptor(path)
+}
 func WriteDescriptor(path string, endpoint Endpoint) error {
 	return writeRuntimeTCPEndpoint(path, endpoint)
 }

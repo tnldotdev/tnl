@@ -9,16 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 )
 
 func TestAdHocRegistrationsHaveIndependentOwnerLeasesAndPrivateStatus(t *testing.T) {
-	token, _, _, err := credentials.NewEphemeralCredential()
-	if err != nil {
-		t.Fatal(err)
-	}
 	var active atomic.Int32
 	started := make(chan string, 2)
 	manager := NewAdHocManager(t.Context(), func(ctx context.Context, request privateprotocol.AdHocRegister, update func(privateprotocol.AdHocStatus)) error {
@@ -40,7 +35,7 @@ func TestAdHocRegistrationsHaveIndependentOwnerLeasesAndPrivateStatus(t *testing
 		}
 		return privateprotocol.AdHocRegister{Version: 1, RegistrationID: id,
 			Owner: "0123456789abcdef0123456789abcdef", PID: 123,
-			Target: "http://127.0.0.1:3000", Credential: token.String()}
+			Target: "http://127.0.0.1:3000"}
 	}
 	first, second := register(), register()
 	for _, request := range []privateprotocol.AdHocRegister{first, second} {
@@ -63,8 +58,8 @@ func TestAdHocRegistrationsHaveIndependentOwnerLeasesAndPrivateStatus(t *testing
 		t.Fatalf("routability status = %#v, %v", status, err)
 	}
 	encoded, err := json.Marshal(status)
-	if err != nil || strings.Contains(string(encoded), token.String()) || strings.Contains(string(encoded), "credential") {
-		t.Fatal("private status disclosed a credential")
+	if err != nil || strings.Contains(string(encoded), "credential") || strings.Contains(string(encoded), first.Target) {
+		t.Fatal("private status disclosed local publication inputs")
 	}
 	if _, err := manager.Status(first.RegistrationID, second.Owner+"a"); !errors.Is(err, ErrRegistrationStale) {
 		t.Fatalf("wrong owner observed another registration: %v", err)
@@ -82,10 +77,6 @@ func TestAdHocRegistrationsHaveIndependentOwnerLeasesAndPrivateStatus(t *testing
 }
 
 func TestAdHocLeaseLossStopsTheOwnedPublisher(t *testing.T) {
-	token, _, _, err := credentials.NewEphemeralCredential()
-	if err != nil {
-		t.Fatal(err)
-	}
 	id, err := opaqueid.New(opaqueid.InvocationPrefix)
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +92,7 @@ func TestAdHocLeaseLossStopsTheOwnedPublisher(t *testing.T) {
 	t.Cleanup(manager.Close)
 	request := privateprotocol.AdHocRegister{Version: 1, RegistrationID: id,
 		Owner: "0123456789abcdef0123456789abcdef", PID: 123,
-		Target: "http://127.0.0.1:3000", Credential: token.String()}
+		Target: "http://127.0.0.1:3000"}
 	if _, err := manager.Register(request); err != nil {
 		t.Fatal(err)
 	}

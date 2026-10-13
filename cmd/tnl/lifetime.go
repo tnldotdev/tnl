@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// parseWholeDayDuration handles the day suffix shared by share links and
-// publish credentials. callers validate sub-day durations separately.
+// parseWholeDayDuration handles whole-day share lifetimes; callers validate
+// sub-day durations separately.
 func parseWholeDayDuration(value string, maxDays int64) (time.Duration, bool, error) {
 	days, found := strings.CutSuffix(value, "d")
 	if !found {

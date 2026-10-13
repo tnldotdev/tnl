@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -54,9 +54,6 @@ func (m *AdHocManager) Register(request privateprotocol.AdHocRegister) (privatep
 	canonical, err := localproxy.NormalizeTarget(request.Target)
 	if err != nil || canonical != request.Target {
 		return privateprotocol.AdHocStatus{}, errors.New("ad-hoc target must be canonical")
-	}
-	if _, _, _, err := credentials.ParseEphemeralCredential(credentials.EphemeralCredential(request.Credential)); err != nil {
-		return privateprotocol.AdHocStatus{}, errors.New("ad-hoc credential is invalid")
 	}
 	encoded, err := json.Marshal(request)
 	if err != nil || len(encoded) > privateprotocol.MaxBytes {
@@ -105,9 +102,10 @@ func (m *AdHocManager) publish(ctx context.Context, request privateprotocol.AdHo
 	entry.status.State = privateprotocol.AdHocStopped
 	if err != nil && ctx.Err() == nil {
 		entry.status.State, entry.status.FailureCode = privateprotocol.AdHocFailed, "runtime.publication_failed"
-		if errors.Is(err, controlclient.ErrUnauthenticated) {
-			entry.status.FailureCode = "runtime.credential_rejected"
-		} else if reason, _, ok := failure.Describe(err); ok {
+		reason, _, known := failure.Describe(err)
+		if errors.Is(err, controlclient.ErrUnauthenticated) || errors.Is(err, authorityclient.ErrUnauthenticated) || reason == failure.Authentication {
+			entry.status.FailureCode = "runtime.authentication_required"
+		} else if known {
 			entry.status.FailureCode = string(reason)
 		}
 	}

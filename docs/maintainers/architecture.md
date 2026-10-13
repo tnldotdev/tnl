@@ -128,9 +128,10 @@ required. plaintext database startup is never forwarded from a visitor.
 the customer machine and displays the saved public `hostname:port` after the
 publish run is ready. a configured database service can select the same protocol
 and private `host:port` target through `publish.protocol` and `publish.target` in
-`tnl.config.ts`. `tnl url credential create --protocol postgres` saves the
-endpoint without a private target; a credential-backed `tnl publish` must then
-supply that target locally. a bare port selects a loopback target, while a
+`tnl.config.ts`. `tnl publisher enroll --team support --name orders --protocol postgres`
+creates or reuses a saved URL without a private target and issues a one-use key.
+the device supplies the private target when running `tnl publish` with that key.
+a bare port selects a loopback target, while a
 host:port such as `postgres:5432` reaches a service on the publisher's network.
 `--target-ca-file` extends the trust roots for an explicit `--target-tls`
 connection, while `--target-tls-name` sets its expected certificate hostname.
@@ -432,36 +433,30 @@ back to ordinary public URL lookup.
 
 ## understand public urls and publishing
 
-control can issue a public URL publish credential to a signed-in member who may
-publish one enabled, saved app URL. it records only a digest. the credential
-authenticates reads for that URL and publish run creation, never team management
-or public URL mutations. the saved target and current membership must still
-match; the publish run token handles later run operations. control records the
-credential used to start a run and closes that run on heartbeat if the
-credential expires, is revoked, or its issuer loses publish authority.
+a signed-in editor can create or reuse a saved URL and issue one short-lived
+enrollment key in `tnl publisher enroll`. the publisher generates the signing
+key on the publishing machine and redeems the enrollment key to get an exact
+saved-URL grant. the publisher uses a short-lived, per-grant access token to
+start a run; it cannot change a public URL or its visitor policy. the run token
+handles later run operations. control links the run to its current identity
+and grant and closes it on heartbeat when either is revoked.
 
-an ephemeral credential instead records a team, ready domain, membership,
-namespace, and DNS-01 wildcard certificate plan. issuing it does not create a
-public URL or allow it to act as a saved-URL credential. control checks the
-stored kind as well as the token's prefix, and team credential listing and
-revocation handle both kinds by credential ID.
+for `tnl.open(app)`, the native local publisher owner gets an explicit namespace
+grant using the signed-in project's authority. the SDK sends a target,
+invocation ID, limits, and visitor policy through its scoped local HTTP API;
+it never receives the control-facing signing key. control checks the owner,
+current grant, ready domain, and public URL creation gate in one transaction.
+member namespaces also need current member authority; a team-owned shared
+namespace does not depend on the enrolling person's continuing membership.
 
-ad-hoc allocation is control-owned: one invocation ID and an ephemeral
-credential select one URL beneath the stored namespace. control rechecks the
-stored credential, current membership and domain, and the public URL creation
-gate in the creation transaction. the caller supplies a canonical loopback
-target and visitor IP policy, never the hostname. the 128-bit `eph-` label is
-random; identical allocation retries return the same saved URL, while changed
-inputs conflict. namespace wildcard DNS covers the label, but ingress still
-requires the exact saved URL and a ready publish run before routing visitors.
-control records the allocating credential beside the exact URL in PostgreSQL.
-a publish run can use that credential only for its allocation; run creation
-rechecks the current role, certificate plan, and domain, and heartbeat closes
-the run after credential revocation, expiry, or a changed ownership boundary.
-after the publisher drains, control removes an ad-hoc URL only when its
-allocating credential still owns that exact URL. process loss leaves the URL
-for the existing ephemeral expiry path; retention removes its ownership row
-when it eventually removes the public URL row.
+control chooses a random 128-bit `eph-` label under the exact namespace.
+identical invocation retries return the same URL; changed inputs conflict.
+the allocation records its publisher identity and grant separately from the
+URL. only that grant may start or clean up this URL, and ingress still needs
+the exact URL and a ready publish run before routing visitors. process loss
+leaves the URL for the ephemeral expiry path. guest identities use the same
+run authentication but stay bound to their own trial, source IP, and limits;
+they cannot allocate ordinary ad-hoc URLs or obtain team grants.
 
 control owns hostname policy: a member may publish any valid descendant of
 their namespace, subject to the managed domain's configured depth limit.

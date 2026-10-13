@@ -6,26 +6,25 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"net/http"
 	"slices"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisherauth"
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type Options struct {
 	ControlURL   string
-	HTTPClient   *http.Client
 	State        *clientstate.Store
-	Credential   credentials.EphemeralCredential
+	Owner        *publisherauth.Owner
+	Namespace    publisherauth.Namespace
 	InvocationID string
 	Target       string
 	AllowIP      []string
@@ -39,11 +38,8 @@ type Options struct {
 // Run allocates one ad-hoc URL, publishes its local target, then removes the URL.
 // callers retain the invocation ID across retries and worker restarts.
 func Run(ctx context.Context, options Options) (result error) {
-	if options.State == nil || !opaqueid.Valid(options.InvocationID, opaqueid.InvocationPrefix) {
+	if options.State == nil || options.Owner == nil || !opaqueid.Valid(options.InvocationID, opaqueid.InvocationPrefix) {
 		return errors.New("ad-hoc publisher requires client state and an invocation ID")
-	}
-	if _, _, _, err := credentials.ParseEphemeralCredential(options.Credential); err != nil {
-		return err
 	}
 	if err := options.Limits.Validate(); err != nil {
 		return err
@@ -55,10 +51,7 @@ func Run(ctx context.Context, options Options) (result error) {
 	if err != nil || target != options.Target {
 		return errors.New("ad-hoc target must be an HTTP or HTTPS address with a host and port")
 	}
-	client, err := controlclient.New(options.ControlURL, options.HTTPClient, "")
-	if err != nil {
-		return err
-	}
+	client := options.Owner.Control
 	body := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: options.InvocationID, Target: target}
 	if options.AllowAllIPs {
 		body.AllowAllIps = &options.AllowAllIPs
@@ -86,14 +79,14 @@ func Run(ctx context.Context, options Options) (result error) {
 		}
 		body.Limits = limits
 	}
-	route, err := client.AllocateEphemeralPublicURL(ctx, options.Credential, body)
+	route, grantID, err := options.Owner.Allocate(ctx, options.Namespace, body)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := client.DeleteEphemeralPublicURL(cleanupCtx, options.Credential, route.Id); err != nil && !errors.Is(err, controlclient.ErrNotFound) {
+		if err := options.Owner.DeleteNamespaceURL(cleanupCtx, grantID, route.Id); err != nil && !errors.Is(err, controlclient.ErrNotFound) {
 			result = errors.Join(result, fmt.Errorf("remove ad-hoc public URL: %w", err))
 		}
 	}()
@@ -116,7 +109,7 @@ func Run(ctx context.Context, options Options) (result error) {
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
 	publication := publisher.Config{
-		Control:    &scopedControl{Client: client, route: route, credential: options.Credential},
+		Control:    &scopedControl{Client: client, route: route, owner: options.Owner, grantID: grantID},
 		ControlURL: options.ControlURL, State: options.State,
 		TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membershipID,
 		PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: route.PublicUrlScope,

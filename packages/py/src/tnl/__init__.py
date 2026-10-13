@@ -3,7 +3,6 @@
 from ._asgi import Limits, RateLimit, Tunnel, open
 from ._handler import handler
 from ._protocol import (
-    CredentialRequired,
     InvalidResponse,
     NativeUnavailable,
     RegistrationLost,
@@ -11,7 +10,6 @@ from ._protocol import (
 )
 
 __all__ = [
-    "CredentialRequired",
     "InvalidResponse",
     "Limits",
     "NativeUnavailable",

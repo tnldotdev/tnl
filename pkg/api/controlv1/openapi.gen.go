@@ -132,6 +132,7 @@ func (e ControlDiscoveryManagedUrlMode) Valid() bool {
 const (
 	CreatePublisherEnrollmentRequestKindAutomation CreatePublisherEnrollmentRequestKind = "automation"
 	CreatePublisherEnrollmentRequestKindInstalled  CreatePublisherEnrollmentRequestKind = "installed"
+	CreatePublisherEnrollmentRequestKindRun        CreatePublisherEnrollmentRequestKind = "run"
 )
 
 // Valid indicates whether the value is a known member of the CreatePublisherEnrollmentRequestKind enum.
@@ -140,6 +141,8 @@ func (e CreatePublisherEnrollmentRequestKind) Valid() bool {
 	case CreatePublisherEnrollmentRequestKindAutomation:
 		return true
 	case CreatePublisherEnrollmentRequestKindInstalled:
+		return true
+	case CreatePublisherEnrollmentRequestKindRun:
 		return true
 	default:
 		return false
@@ -239,21 +242,6 @@ const (
 func (e HealthResponseStatus) Valid() bool {
 	switch e {
 	case HealthResponseStatusOk:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for IssuedEphemeralPublishCredentialKind.
-const (
-	IssuedEphemeralPublishCredentialKindEphemeral IssuedEphemeralPublishCredentialKind = "ephemeral"
-)
-
-// Valid indicates whether the value is a known member of the IssuedEphemeralPublishCredentialKind enum.
-func (e IssuedEphemeralPublishCredentialKind) Valid() bool {
-	switch e {
-	case IssuedEphemeralPublishCredentialKindEphemeral:
 		return true
 	default:
 		return false
@@ -407,24 +395,6 @@ func (e PublicURLLifecycleState) Valid() bool {
 	}
 }
 
-// Defines values for PublicURLPublishCredentialKind.
-const (
-	PublicURLPublishCredentialKindEphemeral PublicURLPublishCredentialKind = "ephemeral"
-	PublicURLPublishCredentialKindSavedUrl  PublicURLPublishCredentialKind = "saved_url"
-)
-
-// Valid indicates whether the value is a known member of the PublicURLPublishCredentialKind enum.
-func (e PublicURLPublishCredentialKind) Valid() bool {
-	switch e {
-	case PublicURLPublishCredentialKindEphemeral:
-		return true
-	case PublicURLPublishCredentialKindSavedUrl:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for PublicURLPurpose.
 const (
 	Alias    PublicURLPurpose = "alias"
@@ -563,6 +533,48 @@ func (e PublisherGrantKind) Valid() bool {
 	case PublisherGrantKindNamespace:
 		return true
 	case PublisherGrantKindSavedUrl:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherGrantSummaryKind.
+const (
+	PublisherGrantSummaryKindNamespace PublisherGrantSummaryKind = "namespace"
+	PublisherGrantSummaryKindSavedUrl  PublisherGrantSummaryKind = "saved_url"
+)
+
+// Valid indicates whether the value is a known member of the PublisherGrantSummaryKind enum.
+func (e PublisherGrantSummaryKind) Valid() bool {
+	switch e {
+	case PublisherGrantSummaryKindNamespace:
+		return true
+	case PublisherGrantSummaryKindSavedUrl:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherIdentitySummaryKind.
+const (
+	PublisherIdentitySummaryKindAutomation PublisherIdentitySummaryKind = "automation"
+	PublisherIdentitySummaryKindGuest      PublisherIdentitySummaryKind = "guest"
+	PublisherIdentitySummaryKindInstalled  PublisherIdentitySummaryKind = "installed"
+	PublisherIdentitySummaryKindRun        PublisherIdentitySummaryKind = "run"
+)
+
+// Valid indicates whether the value is a known member of the PublisherIdentitySummaryKind enum.
+func (e PublisherIdentitySummaryKind) Valid() bool {
+	switch e {
+	case PublisherIdentitySummaryKindAutomation:
+		return true
+	case PublisherIdentitySummaryKindGuest:
+		return true
+	case PublisherIdentitySummaryKindInstalled:
+		return true
+	case PublisherIdentitySummaryKindRun:
 		return true
 	default:
 		return false
@@ -1051,14 +1063,6 @@ type CreateCertificateIssuanceRequest struct {
 	PublishRunNumber int64  `json:"publish_run_number"`
 }
 
-// CreateEphemeralPublishCredentialRequest defines model for CreateEphemeralPublishCredentialRequest.
-type CreateEphemeralPublishCredentialRequest struct {
-	DomainId         DomainID       `json:"domain_id"`
-	ExpiresInSeconds *int64         `json:"expires_in_seconds,omitempty"`
-	PublicUrlScope   PublicURLScope `json:"public_url_scope"`
-	TeamId           TeamID         `json:"team_id"`
-}
-
 // CreateFeedbackReportRequest defines model for CreateFeedbackReportRequest.
 type CreateFeedbackReportRequest struct {
 	Access           FeedbackReviewerAccess `json:"access"`
@@ -1083,11 +1087,6 @@ type CreatePreviewRequest struct {
 	TeamId TeamID `json:"team_id"`
 }
 
-// CreatePublicURLPublishCredentialRequest defines model for CreatePublicURLPublishCredentialRequest.
-type CreatePublicURLPublishCredentialRequest struct {
-	ExpiresInSeconds *int64 `json:"expires_in_seconds,omitempty"`
-}
-
 // CreatePublicURLRequest defines model for CreatePublicURLRequest.
 type CreatePublicURLRequest struct {
 	AllowedIpPrefixes *[]string                 `json:"allowed_ip_prefixes,omitempty"`
@@ -1106,7 +1105,9 @@ type CreatePublicURLRequest struct {
 
 // CreatePublishRunRequest defines model for CreatePublishRunRequest.
 type CreatePublishRunRequest struct {
-	Traffic *PublishRunTrafficSelection `json:"traffic,omitempty"`
+	// PublisherProof Ed25519 signature binding this URL and idempotency key to the registered publisher key.
+	PublisherProof string                      `json:"publisher_proof"`
+	Traffic        *PublishRunTrafficSelection `json:"traffic,omitempty"`
 }
 
 // CreatePublisherEnrollmentRequest defines model for CreatePublisherEnrollmentRequest.
@@ -1333,6 +1334,16 @@ type GuestDemoSession struct {
 	TeamId       TeamID            `json:"team_id"`
 }
 
+// GuestPublisherIdentity defines model for GuestPublisherIdentity.
+type GuestPublisherIdentity struct {
+	ClientId  ResourceID `json:"client_id"`
+	DomainId  DomainID   `json:"domain_id"`
+	GrantId   ResourceID `json:"grant_id"`
+	KeyId     ResourceID `json:"key_id"`
+	Namespace string     `json:"namespace"`
+	TeamId    TeamID     `json:"team_id"`
+}
+
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
 	Status HealthResponseStatus `json:"status"`
@@ -1349,30 +1360,6 @@ type IdentityID = ResourceID
 
 // IssuanceID defines model for IssuanceID.
 type IssuanceID = ResourceID
-
-// IssuedEphemeralPublishCredential defines model for IssuedEphemeralPublishCredential.
-type IssuedEphemeralPublishCredential struct {
-	CreatedAt  time.Time                            `json:"created_at"`
-	Credential *string                              `json:"credential,omitempty"`
-	DomainId   DomainID                             `json:"domain_id"`
-	ExpiresAt  time.Time                            `json:"expires_at"`
-	Id         ResourceID                           `json:"id"`
-	Kind       IssuedEphemeralPublishCredentialKind `json:"kind"`
-	Namespace  string                               `json:"namespace"`
-	TeamId     TeamID                               `json:"team_id"`
-}
-
-// IssuedEphemeralPublishCredentialKind defines model for IssuedEphemeralPublishCredential.Kind.
-type IssuedEphemeralPublishCredentialKind string
-
-// IssuedPublicURLPublishCredential defines model for IssuedPublicURLPublishCredential.
-type IssuedPublicURLPublishCredential struct {
-	CreatedAt   time.Time   `json:"created_at"`
-	Credential  string      `json:"credential"`
-	ExpiresAt   time.Time   `json:"expires_at"`
-	Id          ResourceID  `json:"id"`
-	PublicUrlId PublicURLID `json:"public_url_id"`
-}
 
 // IssuedPublisherEnrollment defines model for IssuedPublisherEnrollment.
 type IssuedPublisherEnrollment struct {
@@ -1495,29 +1482,6 @@ type PublicURLPage struct {
 	PublicUrls []PublicURL  `json:"public_urls"`
 }
 
-// PublicURLPublishCredential defines model for PublicURLPublishCredential.
-type PublicURLPublishCredential struct {
-	CreatedAt   time.Time                      `json:"created_at"`
-	DomainId    *DomainID                      `json:"domain_id,omitempty"`
-	ExpiresAt   time.Time                      `json:"expires_at"`
-	Id          ResourceID                     `json:"id"`
-	Kind        PublicURLPublishCredentialKind `json:"kind"`
-	Namespace   *string                        `json:"namespace,omitempty"`
-	PublicUrl   *string                        `json:"public_url,omitempty"`
-	PublicUrlId *PublicURLID                   `json:"public_url_id,omitempty"`
-	RevokedAt   *time.Time                     `json:"revoked_at,omitempty"`
-	TeamId      *TeamID                        `json:"team_id,omitempty"`
-}
-
-// PublicURLPublishCredentialKind defines model for PublicURLPublishCredential.Kind.
-type PublicURLPublishCredentialKind string
-
-// PublicURLPublishCredentialPage defines model for PublicURLPublishCredentialPage.
-type PublicURLPublishCredentialPage struct {
-	Credentials []PublicURLPublishCredential `json:"credentials"`
-	NextCursor  *ResourceID                  `json:"next_cursor,omitempty"`
-}
-
 // PublicURLPurpose defines model for PublicURLPurpose.
 type PublicURLPurpose string
 
@@ -1631,6 +1595,42 @@ type PublisherGrant struct {
 // PublisherGrantKind defines model for PublisherGrant.Kind.
 type PublisherGrantKind string
 
+// PublisherGrantSummary defines model for PublisherGrantSummary.
+type PublisherGrantSummary struct {
+	CreatedAt   time.Time                 `json:"created_at"`
+	DomainId    *DomainID                 `json:"domain_id,omitempty"`
+	ExpiresAt   *time.Time                `json:"expires_at,omitempty"`
+	Id          ResourceID                `json:"id"`
+	Kind        PublisherGrantSummaryKind `json:"kind"`
+	Namespace   *string                   `json:"namespace,omitempty"`
+	PublicUrl   *string                   `json:"public_url,omitempty"`
+	PublicUrlId *PublicURLID              `json:"public_url_id,omitempty"`
+	RevokedAt   *time.Time                `json:"revoked_at,omitempty"`
+}
+
+// PublisherGrantSummaryKind defines model for PublisherGrantSummary.Kind.
+type PublisherGrantSummaryKind string
+
+// PublisherIdentityPage defines model for PublisherIdentityPage.
+type PublisherIdentityPage struct {
+	Identities []PublisherIdentitySummary `json:"identities"`
+	NextCursor *ResourceID                `json:"next_cursor,omitempty"`
+}
+
+// PublisherIdentitySummary defines model for PublisherIdentitySummary.
+type PublisherIdentitySummary struct {
+	CreatedAt time.Time                    `json:"created_at"`
+	Grants    []PublisherGrantSummary      `json:"grants"`
+	Id        ResourceID                   `json:"id"`
+	Kind      PublisherIdentitySummaryKind `json:"kind"`
+	Name      string                       `json:"name"`
+	RevokedAt *time.Time                   `json:"revoked_at,omitempty"`
+	TeamId    TeamID                       `json:"team_id"`
+}
+
+// PublisherIdentitySummaryKind defines model for PublisherIdentitySummary.Kind.
+type PublisherIdentitySummaryKind string
+
 // PublisherShare defines model for PublisherShare.
 type PublisherShare struct {
 	CookieHashes []string  `json:"cookie_hashes"`
@@ -1685,6 +1685,12 @@ type RedeemShareRequest struct {
 	PublishRunNumber int64    `json:"publish_run_number"`
 	Secret           *string  `json:"secret,omitempty"`
 	ShareId          *ShareID `json:"share_id,omitempty"`
+}
+
+// RegisterGuestPublisherIdentityRequest defines model for RegisterGuestPublisherIdentityRequest.
+type RegisterGuestPublisherIdentityRequest struct {
+	// PublicKey Base64url-encoded Ed25519 public key, without padding.
+	PublicKey string `json:"public_key"`
 }
 
 // RelayID defines model for RelayID.
@@ -1929,17 +1935,6 @@ type CreatePublishRunParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
-// ListTeamPublicURLPublishCredentialsParams defines parameters for ListTeamPublicURLPublishCredentials.
-type ListTeamPublicURLPublishCredentialsParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
-	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
-}
-
-// RevokePublishCredentialByIDParams defines parameters for RevokePublishCredentialByID.
-type RevokePublishCredentialByIDParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
-}
-
 // CreateCertificateIssuanceParams defines parameters for CreateCertificateIssuance.
 type CreateCertificateIssuanceParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
@@ -1953,6 +1948,12 @@ type CreateFeedbackReportParams struct {
 // AppendReviewerFeedbackEventParams defines parameters for AppendReviewerFeedbackEvent.
 type AppendReviewerFeedbackEventParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// ListPublisherIdentitiesParams defines parameters for ListPublisherIdentities.
+type ListPublisherIdentitiesParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // RevokePublisherIdentityParams defines parameters for RevokePublisherIdentity.
@@ -1983,6 +1984,9 @@ type AllocateEphemeralPublicURLJSONRequestBody = AllocateEphemeralPublicURLReque
 // AppendFeedbackEventJSONRequestBody defines body for AppendFeedbackEvent for application/json ContentType.
 type AppendFeedbackEventJSONRequestBody = AppendFeedbackEventRequest
 
+// RegisterGuestPublisherIdentityJSONRequestBody defines body for RegisterGuestPublisherIdentity for application/json ContentType.
+type RegisterGuestPublisherIdentityJSONRequestBody = RegisterGuestPublisherIdentityRequest
+
 // CreatePreviewJSONRequestBody defines body for CreatePreview for application/json ContentType.
 type CreatePreviewJSONRequestBody = CreatePreviewRequest
 
@@ -2001,14 +2005,8 @@ type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
 // UpdatePublicURLJSONRequestBody defines body for UpdatePublicURL for application/json ContentType.
 type UpdatePublicURLJSONRequestBody = UpdatePublicURLRequest
 
-// CreatePublicURLPublishCredentialJSONRequestBody defines body for CreatePublicURLPublishCredential for application/json ContentType.
-type CreatePublicURLPublishCredentialJSONRequestBody = CreatePublicURLPublishCredentialRequest
-
 // CreatePublishRunJSONRequestBody defines body for CreatePublishRun for application/json ContentType.
 type CreatePublishRunJSONRequestBody = CreatePublishRunRequest
-
-// CreateEphemeralPublishCredentialJSONRequestBody defines body for CreateEphemeralPublishCredential for application/json ContentType.
-type CreateEphemeralPublishCredentialJSONRequestBody = CreateEphemeralPublishCredentialRequest
 
 // CheckPreviewBrowserAccessJSONRequestBody defines body for CheckPreviewBrowserAccess for application/json ContentType.
 type CheckPreviewBrowserAccessJSONRequestBody = BrowserAccessRequest
@@ -2295,7 +2293,7 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
 	AllocateEphemeralPublicURL(ctx context.Context, body AllocateEphemeralPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteEphemeralPublicURL Remove a temporary public URL owned by an ad-hoc credential
+	// DeleteEphemeralPublicURL Remove a temporary public URL owned by the publisher's namespace grant
 	//
 	// Corresponds with DELETE /v1/ephemeral-public-urls/{public_url_id} (the `DeleteEphemeralPublicURL` operationId).
 	DeleteEphemeralPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2343,6 +2341,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
 	AllocateGuestDemoNumber(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterGuestPublisherIdentityWithBody Register a guest-only signing key within one current demo trial
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/guest-publisher/identity (the `RegisterGuestPublisherIdentity` operationId).
+	RegisterGuestPublisherIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterGuestPublisherIdentity Register a guest-only signing key within one current demo trial
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/guest-publisher/identity (the `RegisterGuestPublisherIdentity` operationId).
+	RegisterGuestPublisherIdentity(ctx context.Context, body RegisterGuestPublisherIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth Confirm that the control HTTP server is serving
 	//
@@ -2458,30 +2470,6 @@ type ClientInterface interface {
 	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 	UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListPublicURLPublishCredentials List credentials issued for a public URL
-	//
-	// Corresponds with GET /v1/public-urls/{public_url_id}/publish-credentials (the `ListPublicURLPublishCredentials` operationId).
-	ListPublicURLPublishCredentials(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreatePublicURLPublishCredentialWithBody Issue one public URL-scoped publish credential
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
-	CreatePublicURLPublishCredentialWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreatePublicURLPublishCredential Issue one public URL-scoped publish credential
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
-	CreatePublicURLPublishCredential(ctx context.Context, publicUrlId PublicURLID, body CreatePublicURLPublishCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokePublicURLPublishCredential Revoke one public URL publish credential
-	//
-	// Corresponds with DELETE /v1/public-urls/{public_url_id}/publish-credentials/{credential_id} (the `RevokePublicURLPublishCredential` operationId).
-	RevokePublicURLPublishCredential(ctx context.Context, publicUrlId PublicURLID, credentialId ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// CreatePublishRunWithBody Create a publish run and allocate its publish run number
 	//
 	// Takes any type of body and a specified content type.
@@ -2495,35 +2483,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
 	CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListTeamPublicURLPublishCredentials List publish credentials in the selected team without secrets
-	//
-	// Corresponds with GET /v1/publish-credentials (the `ListTeamPublicURLPublishCredentials` operationId).
-	ListTeamPublicURLPublishCredentials(ctx context.Context, params *ListTeamPublicURLPublishCredentialsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateEphemeralPublishCredentialWithBody Issue a credential for ad-hoc public URLs in one namespace
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/publish-credentials (the `CreateEphemeralPublishCredential` operationId).
-	CreateEphemeralPublishCredentialWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateEphemeralPublishCredential Issue a credential for ad-hoc public URLs in one namespace
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/publish-credentials (the `CreateEphemeralPublishCredential` operationId).
-	CreateEphemeralPublishCredential(ctx context.Context, body CreateEphemeralPublishCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetPublicURLForPublishCredential Read the one public URL bound to this publish credential
-	//
-	// Corresponds with GET /v1/publish-credentials/current (the `GetPublicURLForPublishCredential` operationId).
-	GetPublicURLForPublishCredential(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokePublishCredentialByID Revoke a publish credential by its globally unique ID
-	//
-	// Corresponds with DELETE /v1/publish-credentials/{credential_id} (the `RevokePublishCredentialByID` operationId).
-	RevokePublishCredentialByID(ctx context.Context, credentialId ResourceID, params *RevokePublishCredentialByIDParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClosePublishRun Close and drain a publish run without deleting its public URL
 	//
@@ -2768,6 +2727,11 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
 	GetPublishRunShareState(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListPublisherIdentities List publisher identities and their separate grants in one team
+	//
+	// Corresponds with GET /v1/publisher-identities (the `ListPublisherIdentities` operationId).
+	ListPublisherIdentities(ctx context.Context, params *ListPublisherIdentitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RevokePublisherIdentity Revoke one enrolled publisher identity
 	//
 	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id} (the `RevokePublisherIdentity` operationId).
@@ -2805,6 +2769,11 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/publisher/enrollments (the `CreatePublisherEnrollment` operationId).
 	CreatePublisherEnrollment(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPublisherPublicURL Read the saved URL bound to one active publisher grant
+	//
+	// Corresponds with GET /v1/publisher/public-url (the `GetPublisherPublicURL` operationId).
+	GetPublisherPublicURL(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReadiness Confirm that the tnld role is ready to serve
 	//
@@ -3084,7 +3053,7 @@ func (c *Client) AllocateEphemeralPublicURL(ctx context.Context, body AllocateEp
 	return c.Client.Do(req)
 }
 
-// DeleteEphemeralPublicURL Remove a temporary public URL owned by an ad-hoc credential
+// DeleteEphemeralPublicURL Remove a temporary public URL owned by the publisher's namespace grant
 //
 // Corresponds with DELETE /v1/ephemeral-public-urls/{public_url_id} (the `DeleteEphemeralPublicURL` operationId).
 func (c *Client) DeleteEphemeralPublicURL(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3213,6 +3182,40 @@ func (c *Client) CreateGuestDemo(ctx context.Context, reqEditors ...RequestEdito
 // Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
 func (c *Client) AllocateGuestDemoNumber(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAllocateGuestDemoNumberRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterGuestPublisherIdentityWithBody Register a guest-only signing key within one current demo trial
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/guest-publisher/identity (the `RegisterGuestPublisherIdentity` operationId).
+func (c *Client) RegisterGuestPublisherIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterGuestPublisherIdentityRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterGuestPublisherIdentity Register a guest-only signing key within one current demo trial
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/guest-publisher/identity (the `RegisterGuestPublisherIdentity` operationId).
+func (c *Client) RegisterGuestPublisherIdentity(ctx context.Context, body RegisterGuestPublisherIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterGuestPublisherIdentityRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3517,70 +3520,6 @@ func (c *Client) UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, b
 	return c.Client.Do(req)
 }
 
-// ListPublicURLPublishCredentials List credentials issued for a public URL
-//
-// Corresponds with GET /v1/public-urls/{public_url_id}/publish-credentials (the `ListPublicURLPublishCredentials` operationId).
-func (c *Client) ListPublicURLPublishCredentials(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListPublicURLPublishCredentialsRequest(c.Server, publicUrlId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreatePublicURLPublishCredentialWithBody Issue one public URL-scoped publish credential
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
-func (c *Client) CreatePublicURLPublishCredentialWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublicURLPublishCredentialRequestWithBody(c.Server, publicUrlId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreatePublicURLPublishCredential Issue one public URL-scoped publish credential
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
-func (c *Client) CreatePublicURLPublishCredential(ctx context.Context, publicUrlId PublicURLID, body CreatePublicURLPublishCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublicURLPublishCredentialRequest(c.Server, publicUrlId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokePublicURLPublishCredential Revoke one public URL publish credential
-//
-// Corresponds with DELETE /v1/public-urls/{public_url_id}/publish-credentials/{credential_id} (the `RevokePublicURLPublishCredential` operationId).
-func (c *Client) RevokePublicURLPublishCredential(ctx context.Context, publicUrlId PublicURLID, credentialId ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokePublicURLPublishCredentialRequest(c.Server, publicUrlId, credentialId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // CreatePublishRunWithBody Create a publish run and allocate its publish run number
 //
 // Takes any type of body and a specified content type.
@@ -3605,85 +3544,6 @@ func (c *Client) CreatePublishRunWithBody(ctx context.Context, publicUrlId Publi
 // Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
 func (c *Client) CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublishRunRequest(c.Server, publicUrlId, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListTeamPublicURLPublishCredentials List publish credentials in the selected team without secrets
-//
-// Corresponds with GET /v1/publish-credentials (the `ListTeamPublicURLPublishCredentials` operationId).
-func (c *Client) ListTeamPublicURLPublishCredentials(ctx context.Context, params *ListTeamPublicURLPublishCredentialsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListTeamPublicURLPublishCredentialsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateEphemeralPublishCredentialWithBody Issue a credential for ad-hoc public URLs in one namespace
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/publish-credentials (the `CreateEphemeralPublishCredential` operationId).
-func (c *Client) CreateEphemeralPublishCredentialWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateEphemeralPublishCredentialRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateEphemeralPublishCredential Issue a credential for ad-hoc public URLs in one namespace
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/publish-credentials (the `CreateEphemeralPublishCredential` operationId).
-func (c *Client) CreateEphemeralPublishCredential(ctx context.Context, body CreateEphemeralPublishCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateEphemeralPublishCredentialRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetPublicURLForPublishCredential Read the one public URL bound to this publish credential
-//
-// Corresponds with GET /v1/publish-credentials/current (the `GetPublicURLForPublishCredential` operationId).
-func (c *Client) GetPublicURLForPublishCredential(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetPublicURLForPublishCredentialRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RevokePublishCredentialByID Revoke a publish credential by its globally unique ID
-//
-// Corresponds with DELETE /v1/publish-credentials/{credential_id} (the `RevokePublishCredentialByID` operationId).
-func (c *Client) RevokePublishCredentialByID(ctx context.Context, credentialId ResourceID, params *RevokePublishCredentialByIDParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokePublishCredentialByIDRequest(c.Server, credentialId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -4287,6 +4147,21 @@ func (c *Client) GetPublishRunShareState(ctx context.Context, publishRunId Publi
 	return c.Client.Do(req)
 }
 
+// ListPublisherIdentities List publisher identities and their separate grants in one team
+//
+// Corresponds with GET /v1/publisher-identities (the `ListPublisherIdentities` operationId).
+func (c *Client) ListPublisherIdentities(ctx context.Context, params *ListPublisherIdentitiesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPublisherIdentitiesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RevokePublisherIdentity Revoke one enrolled publisher identity
 //
 // Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id} (the `RevokePublisherIdentity` operationId).
@@ -4375,6 +4250,21 @@ func (c *Client) CreatePublisherEnrollmentWithBody(ctx context.Context, contentT
 // Corresponds with POST /v1/publisher/enrollments (the `CreatePublisherEnrollment` operationId).
 func (c *Client) CreatePublisherEnrollment(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublisherEnrollmentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPublisherPublicURL Read the saved URL bound to one active publisher grant
+//
+// Corresponds with GET /v1/publisher/public-url (the `GetPublisherPublicURL` operationId).
+func (c *Client) GetPublisherPublicURL(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPublisherPublicURLRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -5365,6 +5255,46 @@ func NewAllocateGuestDemoNumberRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewRegisterGuestPublisherIdentityRequest calls the generic RegisterGuestPublisherIdentity builder with application/json body
+func NewRegisterGuestPublisherIdentityRequest(server string, body RegisterGuestPublisherIdentityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterGuestPublisherIdentityRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRegisterGuestPublisherIdentityRequestWithBody constructs an http.Request for the RegisterGuestPublisherIdentity method, with any body, and a specified content type
+func NewRegisterGuestPublisherIdentityRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/guest-publisher/identity")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetHealthRequest constructs an http.Request for the GetHealth method
 func NewGetHealthRequest(server string) (*http.Request, error) {
 	var err error
@@ -5936,128 +5866,6 @@ func NewUpdatePublicURLRequestWithBody(server string, publicUrlId PublicURLID, c
 	return req, nil
 }
 
-// NewListPublicURLPublishCredentialsRequest constructs an http.Request for the ListPublicURLPublishCredentials method
-func NewListPublicURLPublishCredentialsRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/publish-credentials", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreatePublicURLPublishCredentialRequest calls the generic CreatePublicURLPublishCredential builder with application/json body
-func NewCreatePublicURLPublishCredentialRequest(server string, publicUrlId PublicURLID, body CreatePublicURLPublishCredentialJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreatePublicURLPublishCredentialRequestWithBody(server, publicUrlId, "application/json", bodyReader)
-}
-
-// NewCreatePublicURLPublishCredentialRequestWithBody constructs an http.Request for the CreatePublicURLPublishCredential method, with any body, and a specified content type
-func NewCreatePublicURLPublishCredentialRequestWithBody(server string, publicUrlId PublicURLID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/publish-credentials", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRevokePublicURLPublishCredentialRequest constructs an http.Request for the RevokePublicURLPublishCredential method
-func NewRevokePublicURLPublishCredentialRequest(server string, publicUrlId PublicURLID, credentialId ResourceID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/publish-credentials/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewCreatePublishRunRequest calls the generic CreatePublishRun builder with application/json body
 func NewCreatePublishRunRequest(server string, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -6113,192 +5921,6 @@ func NewCreatePublishRunRequestWithBody(server string, publicUrlId PublicURLID, 
 
 		req.Header.Set("Idempotency-Key", headerParam0)
 
-	}
-
-	return req, nil
-}
-
-// NewListTeamPublicURLPublishCredentialsRequest constructs an http.Request for the ListTeamPublicURLPublishCredentials method
-func NewListTeamPublicURLPublishCredentialsRequest(server string, params *ListTeamPublicURLPublishCredentialsParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-credentials")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateEphemeralPublishCredentialRequest calls the generic CreateEphemeralPublishCredential builder with application/json body
-func NewCreateEphemeralPublishCredentialRequest(server string, body CreateEphemeralPublishCredentialJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateEphemeralPublishCredentialRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewCreateEphemeralPublishCredentialRequestWithBody constructs an http.Request for the CreateEphemeralPublishCredential method, with any body, and a specified content type
-func NewCreateEphemeralPublishCredentialRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-credentials")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetPublicURLForPublishCredentialRequest constructs an http.Request for the GetPublicURLForPublishCredential method
-func NewGetPublicURLForPublishCredentialRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-credentials/current")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRevokePublishCredentialByIDRequest constructs an http.Request for the RevokePublishCredentialByID method
-func NewRevokePublishCredentialByIDRequest(server string, credentialId ResourceID, params *RevokePublishCredentialByIDParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/publish-credentials/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
 	}
 
 	return req, nil
@@ -7197,6 +6819,68 @@ func NewGetPublishRunShareStateRequestWithBody(server string, publishRunId Publi
 	return req, nil
 }
 
+// NewListPublisherIdentitiesRequest constructs an http.Request for the ListPublisherIdentities method
+func NewListPublisherIdentitiesRequest(server string, params *ListPublisherIdentitiesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher-identities")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewRevokePublisherIdentityRequest constructs an http.Request for the RevokePublisherIdentity method
 func NewRevokePublisherIdentityRequest(server string, publisherIdentityId ResourceID, params *RevokePublisherIdentityParams) (*http.Request, error) {
 	var err error
@@ -7401,6 +7085,33 @@ func NewCreatePublisherEnrollmentRequestWithBody(server string, contentType stri
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetPublisherPublicURLRequest constructs an http.Request for the GetPublisherPublicURL method
+func NewGetPublisherPublicURLRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/public-url")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -7752,7 +7463,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/ephemeral-public-urls (the `AllocateEphemeralPublicURL` operationId).
 	AllocateEphemeralPublicURLWithResponse(ctx context.Context, body AllocateEphemeralPublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*AllocateEphemeralPublicURLResponse, error)
 
-	// DeleteEphemeralPublicURLWithResponse Remove a temporary public URL owned by an ad-hoc credential
+	// DeleteEphemeralPublicURLWithResponse Remove a temporary public URL owned by the publisher's namespace grant
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7814,6 +7525,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
 	AllocateGuestDemoNumberWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AllocateGuestDemoNumberResponse, error)
+
+	// RegisterGuestPublisherIdentityWithBodyWithResponse Register a guest-only signing key within one current demo trial
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/guest-publisher/identity (the `RegisterGuestPublisherIdentity` operationId).
+	RegisterGuestPublisherIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterGuestPublisherIdentityResponse, error)
+
+	// RegisterGuestPublisherIdentityWithResponse Register a guest-only signing key within one current demo trial
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/guest-publisher/identity (the `RegisterGuestPublisherIdentity` operationId).
+	RegisterGuestPublisherIdentityWithResponse(ctx context.Context, body RegisterGuestPublisherIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterGuestPublisherIdentityResponse, error)
 
 	// GetHealthWithResponse Confirm that the control HTTP server is serving
 	//
@@ -7941,34 +7666,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 	UpdatePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error)
 
-	// ListPublicURLPublishCredentialsWithResponse List credentials issued for a public URL
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/public-urls/{public_url_id}/publish-credentials (the `ListPublicURLPublishCredentials` operationId).
-	ListPublicURLPublishCredentialsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListPublicURLPublishCredentialsResponse, error)
-
-	// CreatePublicURLPublishCredentialWithBodyWithResponse Issue one public URL-scoped publish credential
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
-	CreatePublicURLPublishCredentialWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLPublishCredentialResponse, error)
-
-	// CreatePublicURLPublishCredentialWithResponse Issue one public URL-scoped publish credential
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
-	CreatePublicURLPublishCredentialWithResponse(ctx context.Context, publicUrlId PublicURLID, body CreatePublicURLPublishCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLPublishCredentialResponse, error)
-
-	// RevokePublicURLPublishCredentialWithResponse Revoke one public URL publish credential
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/public-urls/{public_url_id}/publish-credentials/{credential_id} (the `RevokePublicURLPublishCredential` operationId).
-	RevokePublicURLPublishCredentialWithResponse(ctx context.Context, publicUrlId PublicURLID, credentialId ResourceID, reqEditors ...RequestEditorFn) (*RevokePublicURLPublishCredentialResponse, error)
-
 	// CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -7982,41 +7679,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
 	CreatePublishRunWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error)
-
-	// ListTeamPublicURLPublishCredentialsWithResponse List publish credentials in the selected team without secrets
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/publish-credentials (the `ListTeamPublicURLPublishCredentials` operationId).
-	ListTeamPublicURLPublishCredentialsWithResponse(ctx context.Context, params *ListTeamPublicURLPublishCredentialsParams, reqEditors ...RequestEditorFn) (*ListTeamPublicURLPublishCredentialsResponse, error)
-
-	// CreateEphemeralPublishCredentialWithBodyWithResponse Issue a credential for ad-hoc public URLs in one namespace
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-credentials (the `CreateEphemeralPublishCredential` operationId).
-	CreateEphemeralPublishCredentialWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEphemeralPublishCredentialResponse, error)
-
-	// CreateEphemeralPublishCredentialWithResponse Issue a credential for ad-hoc public URLs in one namespace
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/publish-credentials (the `CreateEphemeralPublishCredential` operationId).
-	CreateEphemeralPublishCredentialWithResponse(ctx context.Context, body CreateEphemeralPublishCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEphemeralPublishCredentialResponse, error)
-
-	// GetPublicURLForPublishCredentialWithResponse Read the one public URL bound to this publish credential
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/publish-credentials/current (the `GetPublicURLForPublishCredential` operationId).
-	GetPublicURLForPublishCredentialWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublicURLForPublishCredentialResponse, error)
-
-	// RevokePublishCredentialByIDWithResponse Revoke a publish credential by its globally unique ID
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/publish-credentials/{credential_id} (the `RevokePublishCredentialByID` operationId).
-	RevokePublishCredentialByIDWithResponse(ctx context.Context, credentialId ResourceID, params *RevokePublishCredentialByIDParams, reqEditors ...RequestEditorFn) (*RevokePublishCredentialByIDResponse, error)
 
 	// ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
 	//
@@ -8263,6 +7925,13 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
 	GetPublishRunShareStateWithResponse(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*GetPublishRunShareStateResponse, error)
 
+	// ListPublisherIdentitiesWithResponse List publisher identities and their separate grants in one team
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/publisher-identities (the `ListPublisherIdentities` operationId).
+	ListPublisherIdentitiesWithResponse(ctx context.Context, params *ListPublisherIdentitiesParams, reqEditors ...RequestEditorFn) (*ListPublisherIdentitiesResponse, error)
+
 	// RevokePublisherIdentityWithResponse Revoke one enrolled publisher identity
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -8304,6 +7973,13 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/publisher/enrollments (the `CreatePublisherEnrollment` operationId).
 	CreatePublisherEnrollmentWithResponse(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherEnrollmentResponse, error)
+
+	// GetPublisherPublicURLWithResponse Read the saved URL bound to one active publisher grant
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/publisher/public-url (the `GetPublisherPublicURL` operationId).
+	GetPublisherPublicURLWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherPublicURLResponse, error)
 
 	// GetReadinessWithResponse Confirm that the tnld role is ready to serve
 	//
@@ -9328,6 +9004,54 @@ func (r AllocateGuestDemoNumberResponse) ContentType() string {
 	return ""
 }
 
+type RegisterGuestPublisherIdentityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *GuestPublisherIdentity
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RegisterGuestPublisherIdentityResponse) GetJSON201() *GuestPublisherIdentity {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegisterGuestPublisherIdentityResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterGuestPublisherIdentityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterGuestPublisherIdentityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterGuestPublisherIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterGuestPublisherIdentityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -9897,147 +9621,6 @@ func (r UpdatePublicURLResponse) ContentType() string {
 	return ""
 }
 
-type ListPublicURLPublishCredentialsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *struct {
-		Credentials []PublicURLPublishCredential `json:"credentials"`
-	}
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListPublicURLPublishCredentialsResponse) GetJSON200() *struct {
-	Credentials []PublicURLPublishCredential `json:"credentials"`
-} {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListPublicURLPublishCredentialsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListPublicURLPublishCredentialsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListPublicURLPublishCredentialsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListPublicURLPublishCredentialsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListPublicURLPublishCredentialsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreatePublicURLPublishCredentialResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *IssuedPublicURLPublishCredential
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreatePublicURLPublishCredentialResponse) GetJSON201() *IssuedPublicURLPublishCredential {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreatePublicURLPublishCredentialResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreatePublicURLPublishCredentialResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreatePublicURLPublishCredentialResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreatePublicURLPublishCredentialResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreatePublicURLPublishCredentialResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RevokePublicURLPublishCredentialResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RevokePublicURLPublishCredentialResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RevokePublicURLPublishCredentialResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokePublicURLPublishCredentialResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokePublicURLPublishCredentialResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RevokePublicURLPublishCredentialResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type CreatePublishRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -10080,198 +9663,6 @@ func (r CreatePublishRunResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreatePublishRunResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListTeamPublicURLPublishCredentialsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublicURLPublishCredentialPage
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListTeamPublicURLPublishCredentialsResponse) GetJSON200() *PublicURLPublishCredentialPage {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListTeamPublicURLPublishCredentialsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListTeamPublicURLPublishCredentialsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListTeamPublicURLPublishCredentialsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListTeamPublicURLPublishCredentialsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListTeamPublicURLPublishCredentialsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateEphemeralPublishCredentialResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *IssuedEphemeralPublishCredential
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateEphemeralPublishCredentialResponse) GetJSON201() *IssuedEphemeralPublishCredential {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateEphemeralPublishCredentialResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateEphemeralPublishCredentialResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateEphemeralPublishCredentialResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateEphemeralPublishCredentialResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateEphemeralPublishCredentialResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetPublicURLForPublishCredentialResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublicURL
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetPublicURLForPublishCredentialResponse) GetJSON200() *PublicURL {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetPublicURLForPublishCredentialResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetPublicURLForPublishCredentialResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetPublicURLForPublishCredentialResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetPublicURLForPublishCredentialResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetPublicURLForPublishCredentialResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RevokePublishCredentialByIDResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PublicURLPublishCredential
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RevokePublishCredentialByIDResponse) GetJSON200() *PublicURLPublishCredential {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RevokePublishCredentialByIDResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RevokePublishCredentialByIDResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokePublishCredentialByIDResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokePublishCredentialByIDResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RevokePublishCredentialByIDResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -11114,6 +10505,54 @@ func (r GetPublishRunShareStateResponse) ContentType() string {
 	return ""
 }
 
+type ListPublisherIdentitiesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherIdentityPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPublisherIdentitiesResponse) GetJSON200() *PublisherIdentityPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPublisherIdentitiesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPublisherIdentitiesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPublisherIdentitiesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPublisherIdentitiesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPublisherIdentitiesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RevokePublisherIdentityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -11286,6 +10725,54 @@ func (r CreatePublisherEnrollmentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreatePublisherEnrollmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPublisherPublicURLResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicURL
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPublisherPublicURLResponse) GetJSON200() *PublicURL {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPublisherPublicURLResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPublisherPublicURLResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPublisherPublicURLResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPublisherPublicURLResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPublisherPublicURLResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -11755,7 +11242,7 @@ func (c *ClientWithResponses) AllocateEphemeralPublicURLWithResponse(ctx context
 	return ParseAllocateEphemeralPublicURLResponse(rsp)
 }
 
-// DeleteEphemeralPublicURLWithResponse Remove a temporary public URL owned by an ad-hoc credential
+// DeleteEphemeralPublicURLWithResponse Remove a temporary public URL owned by the publisher's namespace grant
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -11870,6 +11357,32 @@ func (c *ClientWithResponses) AllocateGuestDemoNumberWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseAllocateGuestDemoNumberResponse(rsp)
+}
+
+// RegisterGuestPublisherIdentityWithBodyWithResponse Register a guest-only signing key within one current demo trial
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/guest-publisher/identity (the `RegisterGuestPublisherIdentity` operationId).
+func (c *ClientWithResponses) RegisterGuestPublisherIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterGuestPublisherIdentityResponse, error) {
+	rsp, err := c.RegisterGuestPublisherIdentityWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterGuestPublisherIdentityResponse(rsp)
+}
+
+// RegisterGuestPublisherIdentityWithResponse Register a guest-only signing key within one current demo trial
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/guest-publisher/identity (the `RegisterGuestPublisherIdentity` operationId).
+func (c *ClientWithResponses) RegisterGuestPublisherIdentityWithResponse(ctx context.Context, body RegisterGuestPublisherIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterGuestPublisherIdentityResponse, error) {
+	rsp, err := c.RegisterGuestPublisherIdentity(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterGuestPublisherIdentityResponse(rsp)
 }
 
 // GetHealthWithResponse Confirm that the control HTTP server is serving
@@ -12106,58 +11619,6 @@ func (c *ClientWithResponses) UpdatePublicURLWithResponse(ctx context.Context, p
 	return ParseUpdatePublicURLResponse(rsp)
 }
 
-// ListPublicURLPublishCredentialsWithResponse List credentials issued for a public URL
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/public-urls/{public_url_id}/publish-credentials (the `ListPublicURLPublishCredentials` operationId).
-func (c *ClientWithResponses) ListPublicURLPublishCredentialsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListPublicURLPublishCredentialsResponse, error) {
-	rsp, err := c.ListPublicURLPublishCredentials(ctx, publicUrlId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListPublicURLPublishCredentialsResponse(rsp)
-}
-
-// CreatePublicURLPublishCredentialWithBodyWithResponse Issue one public URL-scoped publish credential
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
-func (c *ClientWithResponses) CreatePublicURLPublishCredentialWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLPublishCredentialResponse, error) {
-	rsp, err := c.CreatePublicURLPublishCredentialWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreatePublicURLPublishCredentialResponse(rsp)
-}
-
-// CreatePublicURLPublishCredentialWithResponse Issue one public URL-scoped publish credential
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/publish-credentials (the `CreatePublicURLPublishCredential` operationId).
-func (c *ClientWithResponses) CreatePublicURLPublishCredentialWithResponse(ctx context.Context, publicUrlId PublicURLID, body CreatePublicURLPublishCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLPublishCredentialResponse, error) {
-	rsp, err := c.CreatePublicURLPublishCredential(ctx, publicUrlId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreatePublicURLPublishCredentialResponse(rsp)
-}
-
-// RevokePublicURLPublishCredentialWithResponse Revoke one public URL publish credential
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/public-urls/{public_url_id}/publish-credentials/{credential_id} (the `RevokePublicURLPublishCredential` operationId).
-func (c *ClientWithResponses) RevokePublicURLPublishCredentialWithResponse(ctx context.Context, publicUrlId PublicURLID, credentialId ResourceID, reqEditors ...RequestEditorFn) (*RevokePublicURLPublishCredentialResponse, error) {
-	rsp, err := c.RevokePublicURLPublishCredential(ctx, publicUrlId, credentialId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokePublicURLPublishCredentialResponse(rsp)
-}
-
 // CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -12182,71 +11643,6 @@ func (c *ClientWithResponses) CreatePublishRunWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseCreatePublishRunResponse(rsp)
-}
-
-// ListTeamPublicURLPublishCredentialsWithResponse List publish credentials in the selected team without secrets
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/publish-credentials (the `ListTeamPublicURLPublishCredentials` operationId).
-func (c *ClientWithResponses) ListTeamPublicURLPublishCredentialsWithResponse(ctx context.Context, params *ListTeamPublicURLPublishCredentialsParams, reqEditors ...RequestEditorFn) (*ListTeamPublicURLPublishCredentialsResponse, error) {
-	rsp, err := c.ListTeamPublicURLPublishCredentials(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListTeamPublicURLPublishCredentialsResponse(rsp)
-}
-
-// CreateEphemeralPublishCredentialWithBodyWithResponse Issue a credential for ad-hoc public URLs in one namespace
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-credentials (the `CreateEphemeralPublishCredential` operationId).
-func (c *ClientWithResponses) CreateEphemeralPublishCredentialWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateEphemeralPublishCredentialResponse, error) {
-	rsp, err := c.CreateEphemeralPublishCredentialWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateEphemeralPublishCredentialResponse(rsp)
-}
-
-// CreateEphemeralPublishCredentialWithResponse Issue a credential for ad-hoc public URLs in one namespace
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/publish-credentials (the `CreateEphemeralPublishCredential` operationId).
-func (c *ClientWithResponses) CreateEphemeralPublishCredentialWithResponse(ctx context.Context, body CreateEphemeralPublishCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateEphemeralPublishCredentialResponse, error) {
-	rsp, err := c.CreateEphemeralPublishCredential(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateEphemeralPublishCredentialResponse(rsp)
-}
-
-// GetPublicURLForPublishCredentialWithResponse Read the one public URL bound to this publish credential
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/publish-credentials/current (the `GetPublicURLForPublishCredential` operationId).
-func (c *ClientWithResponses) GetPublicURLForPublishCredentialWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublicURLForPublishCredentialResponse, error) {
-	rsp, err := c.GetPublicURLForPublishCredential(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetPublicURLForPublishCredentialResponse(rsp)
-}
-
-// RevokePublishCredentialByIDWithResponse Revoke a publish credential by its globally unique ID
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/publish-credentials/{credential_id} (the `RevokePublishCredentialByID` operationId).
-func (c *ClientWithResponses) RevokePublishCredentialByIDWithResponse(ctx context.Context, credentialId ResourceID, params *RevokePublishCredentialByIDParams, reqEditors ...RequestEditorFn) (*RevokePublishCredentialByIDResponse, error) {
-	rsp, err := c.RevokePublishCredentialByID(ctx, credentialId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokePublishCredentialByIDResponse(rsp)
 }
 
 // ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
@@ -12704,6 +12100,19 @@ func (c *ClientWithResponses) GetPublishRunShareStateWithResponse(ctx context.Co
 	return ParseGetPublishRunShareStateResponse(rsp)
 }
 
+// ListPublisherIdentitiesWithResponse List publisher identities and their separate grants in one team
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/publisher-identities (the `ListPublisherIdentities` operationId).
+func (c *ClientWithResponses) ListPublisherIdentitiesWithResponse(ctx context.Context, params *ListPublisherIdentitiesParams, reqEditors ...RequestEditorFn) (*ListPublisherIdentitiesResponse, error) {
+	rsp, err := c.ListPublisherIdentities(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPublisherIdentitiesResponse(rsp)
+}
+
 // RevokePublisherIdentityWithResponse Revoke one enrolled publisher identity
 //
 // Returns a wrapper object for the known response body format(s).
@@ -12780,6 +12189,19 @@ func (c *ClientWithResponses) CreatePublisherEnrollmentWithResponse(ctx context.
 		return nil, err
 	}
 	return ParseCreatePublisherEnrollmentResponse(rsp)
+}
+
+// GetPublisherPublicURLWithResponse Read the saved URL bound to one active publisher grant
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/publisher/public-url (the `GetPublisherPublicURL` operationId).
+func (c *ClientWithResponses) GetPublisherPublicURLWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPublisherPublicURLResponse, error) {
+	rsp, err := c.GetPublisherPublicURL(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPublisherPublicURLResponse(rsp)
 }
 
 // GetReadinessWithResponse Confirm that the tnld role is ready to serve
@@ -13528,6 +12950,39 @@ func ParseAllocateGuestDemoNumberResponse(rsp *http.Response) (*AllocateGuestDem
 	return response, nil
 }
 
+// ParseRegisterGuestPublisherIdentityResponse parses an HTTP response from a RegisterGuestPublisherIdentityWithResponse call
+func ParseRegisterGuestPublisherIdentityResponse(rsp *http.Response) (*RegisterGuestPublisherIdentityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterGuestPublisherIdentityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest GuestPublisherIdentity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetHealthResponse parses an HTTP response from a GetHealthWithResponse call
 func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -13920,103 +13375,6 @@ func ParseUpdatePublicURLResponse(rsp *http.Response) (*UpdatePublicURLResponse,
 	return response, nil
 }
 
-// ParseListPublicURLPublishCredentialsResponse parses an HTTP response from a ListPublicURLPublishCredentialsWithResponse call
-func ParseListPublicURLPublishCredentialsResponse(rsp *http.Response) (*ListPublicURLPublishCredentialsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListPublicURLPublishCredentialsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest struct {
-			Credentials []PublicURLPublishCredential `json:"credentials"`
-		}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreatePublicURLPublishCredentialResponse parses an HTTP response from a CreatePublicURLPublishCredentialWithResponse call
-func ParseCreatePublicURLPublishCredentialResponse(rsp *http.Response) (*CreatePublicURLPublishCredentialResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreatePublicURLPublishCredentialResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest IssuedPublicURLPublishCredential
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokePublicURLPublishCredentialResponse parses an HTTP response from a RevokePublicURLPublishCredentialWithResponse call
-func ParseRevokePublicURLPublishCredentialResponse(rsp *http.Response) (*RevokePublicURLPublishCredentialResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokePublicURLPublishCredentialResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseCreatePublishRunResponse parses an HTTP response from a CreatePublishRunWithResponse call
 func ParseCreatePublishRunResponse(rsp *http.Response) (*CreatePublishRunResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -14037,138 +13395,6 @@ func ParseCreatePublishRunResponse(rsp *http.Response) (*CreatePublishRunRespons
 			return nil, err
 		}
 		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListTeamPublicURLPublishCredentialsResponse parses an HTTP response from a ListTeamPublicURLPublishCredentialsWithResponse call
-func ParseListTeamPublicURLPublishCredentialsResponse(rsp *http.Response) (*ListTeamPublicURLPublishCredentialsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListTeamPublicURLPublishCredentialsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublicURLPublishCredentialPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateEphemeralPublishCredentialResponse parses an HTTP response from a CreateEphemeralPublishCredentialWithResponse call
-func ParseCreateEphemeralPublishCredentialResponse(rsp *http.Response) (*CreateEphemeralPublishCredentialResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateEphemeralPublishCredentialResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest IssuedEphemeralPublishCredential
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetPublicURLForPublishCredentialResponse parses an HTTP response from a GetPublicURLForPublishCredentialWithResponse call
-func ParseGetPublicURLForPublishCredentialResponse(rsp *http.Response) (*GetPublicURLForPublishCredentialResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetPublicURLForPublishCredentialResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublicURL
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokePublishCredentialByIDResponse parses an HTTP response from a RevokePublishCredentialByIDWithResponse call
-func ParseRevokePublishCredentialByIDResponse(rsp *http.Response) (*RevokePublishCredentialByIDResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokePublishCredentialByIDResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PublicURLPublishCredential
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -14760,6 +13986,39 @@ func ParseGetPublishRunShareStateResponse(rsp *http.Response) (*GetPublishRunSha
 	return response, nil
 }
 
+// ParseListPublisherIdentitiesResponse parses an HTTP response from a ListPublisherIdentitiesWithResponse call
+func ParseListPublisherIdentitiesResponse(rsp *http.Response) (*ListPublisherIdentitiesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPublisherIdentitiesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherIdentityPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRevokePublisherIdentityResponse parses an HTTP response from a RevokePublisherIdentityWithResponse call
 func ParseRevokePublisherIdentityResponse(rsp *http.Response) (*RevokePublisherIdentityResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -14871,6 +14130,39 @@ func ParseCreatePublisherEnrollmentResponse(rsp *http.Response) (*CreatePublishe
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPublisherPublicURLResponse parses an HTTP response from a GetPublisherPublicURLWithResponse call
+func ParseGetPublisherPublicURLResponse(rsp *http.Response) (*GetPublisherPublicURLResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPublisherPublicURLResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicURL
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -15120,7 +14412,7 @@ type ServerInterface interface {
 	// AllocateEphemeralPublicURL Create a temporary public URL for one ad-hoc publication
 	// (POST /v1/ephemeral-public-urls)
 	AllocateEphemeralPublicURL(w http.ResponseWriter, r *http.Request)
-	// DeleteEphemeralPublicURL Remove a temporary public URL owned by an ad-hoc credential
+	// DeleteEphemeralPublicURL Remove a temporary public URL owned by the publisher's namespace grant
 	// (DELETE /v1/ephemeral-public-urls/{public_url_id})
 	DeleteEphemeralPublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
 	// ListFeedbackThreads List feedback threads manageable in one team
@@ -15144,6 +14436,9 @@ type ServerInterface interface {
 	// AllocateGuestDemoNumber Allocate a new hostname number for this guest trial
 	// (POST /v1/guest-demo/number)
 	AllocateGuestDemoNumber(w http.ResponseWriter, r *http.Request)
+	// RegisterGuestPublisherIdentity Register a guest-only signing key within one current demo trial
+	// (POST /v1/guest-publisher/identity)
+	RegisterGuestPublisherIdentity(w http.ResponseWriter, r *http.Request)
 	// GetHealth Confirm that the control HTTP server is serving
 	// (GET /v1/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
@@ -15180,30 +14475,9 @@ type ServerInterface interface {
 	// UpdatePublicURL Update a public URL's target and IP policy
 	// (PATCH /v1/public-urls/{public_url_id})
 	UpdatePublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// ListPublicURLPublishCredentials List credentials issued for a public URL
-	// (GET /v1/public-urls/{public_url_id}/publish-credentials)
-	ListPublicURLPublishCredentials(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// CreatePublicURLPublishCredential Issue one public URL-scoped publish credential
-	// (POST /v1/public-urls/{public_url_id}/publish-credentials)
-	CreatePublicURLPublishCredential(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// RevokePublicURLPublishCredential Revoke one public URL publish credential
-	// (DELETE /v1/public-urls/{public_url_id}/publish-credentials/{credential_id})
-	RevokePublicURLPublishCredential(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, credentialId ResourceID)
 	// CreatePublishRun Create a publish run and allocate its publish run number
 	// (POST /v1/public-urls/{public_url_id}/publish-runs)
 	CreatePublishRun(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreatePublishRunParams)
-	// ListTeamPublicURLPublishCredentials List publish credentials in the selected team without secrets
-	// (GET /v1/publish-credentials)
-	ListTeamPublicURLPublishCredentials(w http.ResponseWriter, r *http.Request, params ListTeamPublicURLPublishCredentialsParams)
-	// CreateEphemeralPublishCredential Issue a credential for ad-hoc public URLs in one namespace
-	// (POST /v1/publish-credentials)
-	CreateEphemeralPublishCredential(w http.ResponseWriter, r *http.Request)
-	// GetPublicURLForPublishCredential Read the one public URL bound to this publish credential
-	// (GET /v1/publish-credentials/current)
-	GetPublicURLForPublishCredential(w http.ResponseWriter, r *http.Request)
-	// RevokePublishCredentialByID Revoke a publish credential by its globally unique ID
-	// (DELETE /v1/publish-credentials/{credential_id})
-	RevokePublishCredentialByID(w http.ResponseWriter, r *http.Request, credentialId ResourceID, params RevokePublishCredentialByIDParams)
 	// ClosePublishRun Close and drain a publish run without deleting its public URL
 	// (DELETE /v1/publish-runs/{publish_run_id})
 	ClosePublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
@@ -15258,6 +14532,9 @@ type ServerInterface interface {
 	// GetPublishRunShareState Read short-lived share access state for this publisher
 	// (POST /v1/publish-runs/{publish_run_id}/share-state)
 	GetPublishRunShareState(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// ListPublisherIdentities List publisher identities and their separate grants in one team
+	// (GET /v1/publisher-identities)
+	ListPublisherIdentities(w http.ResponseWriter, r *http.Request, params ListPublisherIdentitiesParams)
 	// RevokePublisherIdentity Revoke one enrolled publisher identity
 	// (DELETE /v1/publisher-identities/{publisher_identity_id})
 	RevokePublisherIdentity(w http.ResponseWriter, r *http.Request, publisherIdentityId ResourceID, params RevokePublisherIdentityParams)
@@ -15270,6 +14547,9 @@ type ServerInterface interface {
 	// CreatePublisherEnrollment Issue a one-use enrollment key for one authorized publisher grant
 	// (POST /v1/publisher/enrollments)
 	CreatePublisherEnrollment(w http.ResponseWriter, r *http.Request)
+	// GetPublisherPublicURL Read the saved URL bound to one active publisher grant
+	// (GET /v1/publisher/public-url)
+	GetPublisherPublicURL(w http.ResponseWriter, r *http.Request)
 	// GetReadiness Confirm that the tnld role is ready to serve
 	// (GET /v1/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
@@ -15915,6 +15195,20 @@ func (siw *ServerInterfaceWrapper) AllocateGuestDemoNumber(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// RegisterGuestPublisherIdentity operation middleware
+func (siw *ServerInterfaceWrapper) RegisterGuestPublisherIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegisterGuestPublisherIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetHealth operation middleware
 func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Request) {
 
@@ -16330,93 +15624,6 @@ func (siw *ServerInterfaceWrapper) UpdatePublicURL(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
-// ListPublicURLPublishCredentials operation middleware
-func (siw *ServerInterfaceWrapper) ListPublicURLPublishCredentials(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListPublicURLPublishCredentials(w, r, publicUrlId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreatePublicURLPublishCredential operation middleware
-func (siw *ServerInterfaceWrapper) CreatePublicURLPublishCredential(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreatePublicURLPublishCredential(w, r, publicUrlId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RevokePublicURLPublishCredential operation middleware
-func (siw *ServerInterfaceWrapper) RevokePublicURLPublishCredential(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "credential_id" -------------
-	var credentialId ResourceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "credential_id", r.PathValue("credential_id"), &credentialId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "credential_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokePublicURLPublishCredential(w, r, publicUrlId, credentialId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // CreatePublishRun operation middleware
 func (siw *ServerInterfaceWrapper) CreatePublishRun(w http.ResponseWriter, r *http.Request) {
 
@@ -16462,122 +15669,6 @@ func (siw *ServerInterfaceWrapper) CreatePublishRun(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreatePublishRun(w, r, publicUrlId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListTeamPublicURLPublishCredentials operation middleware
-func (siw *ServerInterfaceWrapper) ListTeamPublicURLPublishCredentials(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListTeamPublicURLPublishCredentialsParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Optional query parameter "cursor" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListTeamPublicURLPublishCredentials(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateEphemeralPublishCredential operation middleware
-func (siw *ServerInterfaceWrapper) CreateEphemeralPublishCredential(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateEphemeralPublishCredential(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetPublicURLForPublishCredential operation middleware
-func (siw *ServerInterfaceWrapper) GetPublicURLForPublishCredential(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPublicURLForPublishCredential(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RevokePublishCredentialByID operation middleware
-func (siw *ServerInterfaceWrapper) RevokePublishCredentialByID(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "credential_id" -------------
-	var credentialId ResourceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "credential_id", r.PathValue("credential_id"), &credentialId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "credential_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params RevokePublishCredentialByIDParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokePublishCredentialByID(w, r, credentialId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -17166,6 +16257,52 @@ func (siw *ServerInterfaceWrapper) GetPublishRunShareState(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// ListPublisherIdentities operation middleware
+func (siw *ServerInterfaceWrapper) ListPublisherIdentities(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListPublisherIdentitiesParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPublisherIdentities(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RevokePublisherIdentity operation middleware
 func (siw *ServerInterfaceWrapper) RevokePublisherIdentity(w http.ResponseWriter, r *http.Request) {
 
@@ -17290,6 +16427,20 @@ func (siw *ServerInterfaceWrapper) CreatePublisherEnrollment(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreatePublisherEnrollment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPublisherPublicURL operation middleware
+func (siw *ServerInterfaceWrapper) GetPublisherPublicURL(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPublisherPublicURL(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -17588,6 +16739,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls", wrapper.ListPublicURLs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls", wrapper.CreatePublicURL)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/enrollments", wrapper.CreatePublisherEnrollment)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher/public-url", wrapper.GetPublisherPublicURL)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-publisher/identity", wrapper.RegisterGuestPublisherIdentity)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher-identities", wrapper.ListPublisherIdentities)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publisher-identities/{publisher_identity_id}", wrapper.RevokePublisherIdentity)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-identities/{publisher_identity_id}/grants", wrapper.CreatePublisherGrant)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publisher-identities/{publisher_identity_id}/grants/{grant_id}", wrapper.RevokePublisherGrant)
@@ -17595,13 +16749,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.GetPublicURL)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.UpdatePublicURL)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/publish-runs", wrapper.CreatePublishRun)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/publish-credentials", wrapper.ListPublicURLPublishCredentials)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/publish-credentials", wrapper.CreatePublicURLPublishCredential)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/publish-credentials/{credential_id}", wrapper.RevokePublicURLPublishCredential)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publish-credentials/current", wrapper.GetPublicURLForPublishCredential)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publish-credentials", wrapper.ListTeamPublicURLPublishCredentials)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-credentials", wrapper.CreateEphemeralPublishCredential)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publish-credentials/{credential_id}", wrapper.RevokePublishCredentialByID)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/ephemeral-public-urls", wrapper.AllocateEphemeralPublicURL)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/ephemeral-public-urls/{public_url_id}", wrapper.DeleteEphemeralPublicURL)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/heartbeat", wrapper.HeartbeatPublishRun)

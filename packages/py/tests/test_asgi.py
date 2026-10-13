@@ -18,7 +18,6 @@ from tnl import _asgi
 from tnl._native import NativeRuntime
 from tnl._protocol import InvalidResponse, NativeUnavailable, RegistrationLost, parse_status
 
-_token = "tnl_eph_" + "A" * 22 + "." + "B" * 43
 _public_url = "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test"
 
 
@@ -37,7 +36,7 @@ class FakeNative(NativeRuntime):
         if operation == "register":
             self.events.append("register")
             self.target = str(payload["target"])
-            assert payload["credential"] == _token
+            assert "credential" not in payload
             return {
                 "version": 1,
                 "registration_id": payload["registration_id"],
@@ -124,9 +123,7 @@ def test_lifespan_precedes_registration_and_close_joins_websockets(
                 await send({"type": "websocket.send", "text": "hello websocket"})
                 await receive()
 
-        async with tnl.open(
-            app, credential=_token, allow_all_ips=True, limits=tnl.Limits(requests=2)
-        ) as tunnel:
+        async with tnl.open(app, allow_all_ips=True, limits=tnl.Limits(requests=2)) as tunnel:
             assert tunnel.url == _public_url
             assert events.index("startup") < events.index("register")
             async with httpx.AsyncClient() as client:
@@ -159,7 +156,7 @@ def test_strict_budget_fails_closed_if_native_manager_disappears(
                         await send({"type": "lifespan.shutdown.complete"})
                         return
 
-        async with tnl.open(app, credential=_token, limits=tnl.Limits(requests=1)) as tunnel:
+        async with tnl.open(app, limits=tnl.Limits(requests=1)) as tunnel:
             native.fail_status = True
             with pytest.raises(RegistrationLost):
                 await asyncio.wait_for(tunnel.wait(), 2)
@@ -182,7 +179,7 @@ def test_listener_exit_stops_reporting_a_routable_app(monkeypatch: pytest.Monkey
                         await send({"type": "lifespan.shutdown.complete"})
                         return
 
-        async with tnl.open(app, credential=_token) as tunnel:
+        async with tnl.open(app) as tunnel:
             tunnel._server.should_exit = True
             await asyncio.wait_for(tunnel._serve_task, 2)
             with pytest.raises(tnl.TnlError, match="ASGI listener stopped") as caught:
@@ -222,7 +219,7 @@ def test_asgi_setup_preserves_publication_and_cleanup_failures(
     monkeypatch.setattr(_asgi, "_native", FailingNative([]))
 
     async def scenario() -> None:
-        async with tnl.open(app, credential=_token):
+        async with tnl.open(app):
             pytest.fail("publication failure was accepted")
 
     with pytest.raises(ExceptionGroup) as caught:

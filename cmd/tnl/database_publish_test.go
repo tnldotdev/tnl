@@ -9,14 +9,14 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func TestDatabasePublishAndCredentialFlags(t *testing.T) {
+func TestDatabasePublishAndPublisherEnrollmentFlags(t *testing.T) {
 	for _, test := range []struct {
 		args []string
 		want string
 	}{
 		{[]string{"publish", "db.internal:5432", "--protocol", "postgres", "--name", "orders", "--target-tls", "--target-tls-name", "db.internal"}, "postgres"},
-		{[]string{"url", "credential", "create", "--protocol", "mysql", "--name", "orders"}, "mysql"},
-		{[]string{"url", "credential", "create", "--protocol", "redis", "--name", "orders"}, "redis"},
+		{[]string{"publisher", "enroll", "--protocol", "mysql", "--name", "orders"}, "mysql"},
+		{[]string{"publisher", "enroll", "--protocol", "redis", "--name", "orders"}, "redis"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)
@@ -31,8 +31,8 @@ func TestDatabasePublishAndCredentialFlags(t *testing.T) {
 				flags.Publish.Name != "orders" || !flags.Publish.TargetTLS || flags.Publish.TargetTLSName != "db.internal" {
 				t.Fatalf("database publish flags = %+v", flags.Publish)
 			}
-		} else if flags.URL.Credential.Create.Protocol != test.want || flags.URL.Credential.Create.Name != "orders" {
-			t.Fatalf("database credential flags = %+v", flags.URL.Credential.Create)
+		} else if flags.Publisher.Enroll.Protocol != test.want || flags.Publisher.Enroll.Name != "orders" {
+			t.Fatalf("database publisher enrollment flags = %+v", flags.Publisher.Enroll)
 		}
 	}
 }
@@ -128,7 +128,7 @@ func TestSSHPublishTargetAndAddress(t *testing.T) {
 	}
 }
 
-func TestDatabasePublishTargetAndScopedProtocol(t *testing.T) {
+func TestDatabasePublishTargetAndEnrolledProtocol(t *testing.T) {
 	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql} {
 		if got, err := normalizePublishTarget("db.internal:5432", protocol); err != nil || got != "db.internal:5432" {
 			t.Fatalf("%s target = %q, %v", protocol, got, err)
@@ -136,16 +136,18 @@ func TestDatabasePublishTargetAndScopedProtocol(t *testing.T) {
 		if got, err := normalizePublishTarget("5432", protocol); err != nil || got != "127.0.0.1:5432" {
 			t.Fatalf("%s bare port target = %q, %v", protocol, got, err)
 		}
-		if got, err := selectScopedPublishTargetForProtocol("", "db.internal:5432", protocol); err != nil || got != "db.internal:5432" {
-			t.Fatalf("%s credential target = %q, %v", protocol, got, err)
+		route := controlv1.PublicURL{ServiceProtocol: protocol}
+		if got, err := selectEnrolledTarget(route, "db.internal:5432"); err != nil || got != "db.internal:5432" {
+			t.Fatalf("%s enrolled target = %q, %v", protocol, got, err)
 		}
-		if _, err := selectScopedPublishTargetForProtocol("", "", protocol); err == nil {
-			t.Fatal("database credential accepted a missing local target")
+		if _, err := selectEnrolledTarget(route, ""); err == nil {
+			t.Fatal("enrolled database URL accepted a missing local target")
 		} else if reason, _, ok := failure.Describe(err); !ok || reason != failure.MissingTarget {
 			t.Fatalf("missing target reason = %q, %v", reason, err)
 		}
-		if _, err := selectScopedPublishTargetForProtocol("http://db.internal:5432", "db.internal:5432", protocol); err == nil {
-			t.Fatal("database credential accepted a control-stored private target")
+		route.Target = "http://db.internal:5432"
+		if _, err := selectEnrolledTarget(route, "db.internal:5432"); err == nil {
+			t.Fatal("enrolled database URL accepted a control-stored private target")
 		}
 	}
 	for _, target := range []string{"http://db.internal:5432", "db.internal", "db.internal:0", "db.internal:65536"} {

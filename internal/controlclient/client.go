@@ -11,6 +11,8 @@ package controlclient
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -313,112 +315,73 @@ func (c *Client) DeletePublicURL(ctx context.Context, publicURLID string) error 
 	return err
 }
 
-// CreatePublicURLPublishCredential returns the secret only on creation.
-func (c *Client) CreatePublicURLPublishCredential(ctx context.Context, publicURLID string, expiresIn time.Duration) (controlv1.IssuedPublicURLPublishCredential, error) {
-	seconds := int64(expiresIn / time.Second)
-	return requestWithAccess[controlv1.IssuedPublicURLPublishCredential](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublicURLPublishCredential(ctx, publicURLID, controlv1.CreatePublicURLPublishCredentialRequest{ExpiresInSeconds: &seconds}, editors...)
+// CreatePublisherEnrollment returns the one-use key only on creation.
+func (c *Client) CreatePublisherEnrollment(ctx context.Context, request controlv1.CreatePublisherEnrollmentRequest) (controlv1.IssuedPublisherEnrollment, error) {
+	return requestWithAccess[controlv1.IssuedPublisherEnrollment](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreatePublisherEnrollment(ctx, request, editors...)
 	})
 }
 
-func (c *Client) CreateEphemeralPublishCredential(ctx context.Context, teamID, domainID string, scope controlv1.PublicURLScope, expiresIn time.Duration) (controlv1.IssuedEphemeralPublishCredential, error) {
-	seconds := int64(expiresIn / time.Second)
-	return requestWithAccess[controlv1.IssuedEphemeralPublishCredential](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateEphemeralPublishCredential(ctx, controlv1.CreateEphemeralPublishCredentialRequest{
-			TeamId: teamID, DomainId: domainID, PublicUrlScope: scope, ExpiresInSeconds: &seconds,
+func (c *Client) RegisterGuestPublisherIdentity(ctx context.Context, guestToken credentials.AccessToken, public ed25519.PublicKey) (controlv1.GuestPublisherIdentity, error) {
+	return request[controlv1.GuestPublisherIdentity](ctx, c, guestToken.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RegisterGuestPublisherIdentity(ctx, controlv1.RegisterGuestPublisherIdentityRequest{
+			PublicKey: base64.RawURLEncoding.EncodeToString(public),
 		}, editors...)
 	})
 }
 
-func (c *Client) ListPublicURLPublishCredentials(ctx context.Context, publicURLID string) ([]controlv1.PublicURLPublishCredential, error) {
-	page, err := requestWithAccess[struct {
-		Credentials []controlv1.PublicURLPublishCredential `json:"credentials"`
-	}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ListPublicURLPublishCredentials(ctx, publicURLID, editors...)
+func (c *Client) CreatePublisherGrant(ctx context.Context, publisherID string, request controlv1.CreatePublisherGrantRequest) (controlv1.PublisherGrant, error) {
+	return requestWithAccess[controlv1.PublisherGrant](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreatePublisherGrant(ctx, publisherID, request, editors...)
 	})
-	return page.Credentials, err
 }
 
-func (c *Client) ListTeamPublicURLPublishCredentials(ctx context.Context, teamID, cursor string) (controlv1.PublicURLPublishCredentialPage, error) {
-	params := &controlv1.ListTeamPublicURLPublishCredentialsParams{TeamId: teamID}
+func (c *Client) ListPublisherIdentities(ctx context.Context, teamID, cursor string) (controlv1.PublisherIdentityPage, error) {
+	params := &controlv1.ListPublisherIdentitiesParams{TeamId: teamID}
 	if cursor != "" {
 		params.Cursor = &cursor
 	}
-	return requestWithAccess[controlv1.PublicURLPublishCredentialPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ListTeamPublicURLPublishCredentials(ctx, params, editors...)
+	return requestWithAccess[controlv1.PublisherIdentityPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListPublisherIdentities(ctx, params, editors...)
 	})
 }
 
-func (c *Client) AllTeamPublicURLPublishCredentials(ctx context.Context, teamID string) ([]controlv1.PublicURLPublishCredential, error) {
-	items := []controlv1.PublicURLPublishCredential{}
-	cursor := ""
-	for {
-		page, err := c.ListTeamPublicURLPublishCredentials(ctx, teamID, cursor)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, page.Credentials...)
-		if page.NextCursor == nil {
-			return items, nil
-		}
-		if len(page.Credentials) == 0 || *page.NextCursor <= cursor {
-			return nil, failure.Wrap("list publish credentials", failure.ServerResponseInvalid, errors.New("control returned an invalid credential cursor"))
-		}
-		cursor = *page.NextCursor
-	}
-}
-
-func (c *Client) RevokePublishCredentialByID(ctx context.Context, teamID, credentialID string) (controlv1.PublicURLPublishCredential, error) {
-	params := &controlv1.RevokePublishCredentialByIDParams{TeamId: teamID}
-	return requestWithAccess[controlv1.PublicURLPublishCredential](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RevokePublishCredentialByID(ctx, credentialID, params, editors...)
-	})
-}
-
-func (c *Client) RevokePublicURLPublishCredential(ctx context.Context, publicURLID, credentialID string) error {
+func (c *Client) RevokePublisherIdentity(ctx context.Context, teamID, publisherID string) error {
 	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RevokePublicURLPublishCredential(ctx, publicURLID, credentialID, editors...)
+		return c.api.RevokePublisherIdentity(ctx, publisherID, &controlv1.RevokePublisherIdentityParams{TeamId: teamID}, editors...)
 	})
 	return err
 }
 
-func (c *Client) PublicURLForPublishCredential(ctx context.Context, credential credentials.PublicURLPublishCredential) (controlv1.PublicURL, error) {
-	return request[controlv1.PublicURL](ctx, c, credential.String(), c.api.GetPublicURLForPublishCredential)
+func (c *Client) RevokePublisherGrant(ctx context.Context, teamID, publisherID, grantID string) error {
+	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RevokePublisherGrant(ctx, publisherID, grantID, &controlv1.RevokePublisherGrantParams{TeamId: teamID}, editors...)
+	})
+	return err
 }
 
-func (c *Client) AllocateEphemeralPublicURL(ctx context.Context, credential credentials.EphemeralCredential, body controlv1.AllocateEphemeralPublicURLRequest) (controlv1.PublicURL, error) {
-	return request[controlv1.PublicURL](ctx, c, credential.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+func (c *Client) PublisherPublicURL(ctx context.Context, accessToken string) (controlv1.PublicURL, error) {
+	return request[controlv1.PublicURL](ctx, c, accessToken, c.api.GetPublisherPublicURL)
+}
+
+func (c *Client) AllocatePublisherPublicURL(ctx context.Context, accessToken string, body controlv1.AllocateEphemeralPublicURLRequest) (controlv1.PublicURL, error) {
+	return request[controlv1.PublicURL](ctx, c, accessToken, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.AllocateEphemeralPublicURL(ctx, body, editors...)
 	})
 }
 
-func (c *Client) DeleteEphemeralPublicURL(ctx context.Context, credential credentials.EphemeralCredential, publicURLID string) error {
-	_, err := request[struct{}](ctx, c, credential.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+func (c *Client) DeletePublisherPublicURL(ctx context.Context, accessToken, publicURLID string) error {
+	_, err := request[struct{}](ctx, c, accessToken, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.DeleteEphemeralPublicURL(ctx, publicURLID, editors...)
 	})
 	return err
 }
 
-func (c *Client) CreatePublishRunWithCredential(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.PublicURLPublishCredential) (controlv1.PublishRunSetup, error) {
-	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String())
-}
-
-func (c *Client) CreatePublishRunWithCredentialTraffic(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.PublicURLPublishCredential, traffic trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
-	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String(), traffic)
-}
-
-func (c *Client) CreatePublishRunWithEphemeralCredential(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.EphemeralCredential) (controlv1.PublishRunSetup, error) {
-	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String())
-}
-
-func (c *Client) CreatePublishRunWithEphemeralCredentialTraffic(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.EphemeralCredential, traffic trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
-	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String(), traffic)
-}
-
-func (c *Client) createPublishRunWithBearer(ctx context.Context, publicURLID, idempotencyKey, bearer string, traffic ...trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+func (c *Client) CreatePublishRunWithPublisherAccess(ctx context.Context, publicURLID, idempotencyKey, accessToken, proof string, traffic ...trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
 	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
 	body := createPublishRunBody(traffic)
-	return request[controlv1.PublishRunSetup](ctx, c, bearer, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+	body.PublisherProof = proof
+	return request[controlv1.PublishRunSetup](ctx, c, accessToken, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreatePublishRun(ctx, publicURLID, params, body, editors...)
 	})
 }

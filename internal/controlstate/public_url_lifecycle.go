@@ -354,6 +354,15 @@ func (d *Database) HeartbeatPublishRun(
 			invalid = invalid || !linked.PublicURLID.Valid || linked.PublicURLID.String != route.ID
 		} else if linked.Kind == "namespace" {
 			invalid = invalid || !route.Ephemeral || linked.DomainID.String != route.DomainID || linked.Namespace.String != route.Namespace
+			if !invalid {
+				_, domainErr := queries.GetReadyPublisherDomain(ctx, controlstatedb.GetReadyPublisherDomainParams{
+					DomainID: route.DomainID, TeamID: text(route.TeamID),
+				})
+				if domainErr != nil && !errors.Is(domainErr, pgx.ErrNoRows) {
+					return PublishRunSetup{}, domainErr
+				}
+				invalid = errors.Is(domainErr, pgx.ErrNoRows)
+			}
 		} else {
 			invalid = true
 		}
@@ -369,57 +378,6 @@ func (d *Database) HeartbeatPublishRun(
 			}
 			return PublishRunSetup{}, ErrPublicURLCredential
 		}
-	}
-	credential, credentialErr := queries.GetPublishRunCredentialState(ctx, session.ID)
-	if credentialErr != nil && !errors.Is(credentialErr, pgx.ErrNoRows) {
-		return PublishRunSetup{}, fmt.Errorf("controlstate: read publish credential state: %w", credentialErr)
-	}
-	credentialRevoked := credentialErr == nil && (credential.RevokedAt.Valid || !credential.ExpiresAt.Time.After(now))
-	if credentialErr == nil && !credentialRevoked {
-		switch PublishCredentialKind(credential.Kind) {
-		case PublishCredentialSavedURL:
-			credentialRevoked = !credential.PublicURLID.Valid || credential.PublicURLID.String != route.ID || credential.Target != route.Target
-		case PublishCredentialEphemeral:
-			credentialRevoked = !route.Ephemeral || credential.AllocationCredentialID != credential.ID ||
-				credential.TeamID.String != route.TeamID || credential.DomainID.String != route.DomainID ||
-				credential.Namespace.String != route.Namespace
-			if !credentialRevoked {
-				_, domainErr := queries.GetReadyEphemeralCredentialDomain(ctx, controlstatedb.GetReadyEphemeralCredentialDomainParams{
-					DomainID: route.DomainID, TeamID: nullableText(route.TeamID),
-				})
-				if domainErr != nil && !errors.Is(domainErr, pgx.ErrNoRows) {
-					return PublishRunSetup{}, domainErr
-				}
-				credentialRevoked = errors.Is(domainErr, pgx.ErrNoRows)
-			}
-		default:
-			credentialRevoked = true
-		}
-	}
-	if credentialErr == nil && !credentialRevoked {
-		membership, memberErr := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
-			TeamID: route.TeamID, IdentityID: credential.IssuedByIdentityID,
-		})
-		if memberErr != nil && !errors.Is(memberErr, pgx.ErrNoRows) {
-			return PublishRunSetup{}, fmt.Errorf("controlstate: read publish credential membership: %w", memberErr)
-		}
-		credentialRevoked = errors.Is(memberErr, pgx.ErrNoRows) || membership.ID != credential.MembershipID ||
-			membership.PolicyRevision != credential.PolicyRevision ||
-			credential.Kind == string(PublishCredentialEphemeral) && membership.Role != credential.IssuedRole.String ||
-			route.PublicURLScope == "member" && (!route.MembershipID.Valid || route.MembershipID.String != membership.ID) ||
-			route.PublicURLScope == "shared" && membership.Role != "admin" && membership.Role != "owner"
-	}
-	if credentialRevoked {
-		if err := closePublishRun(ctx, queries, &pendingEvents, route, session, PublishRunClosed, now, "publish_credential_revoked"); err != nil {
-			return PublishRunSetup{}, err
-		}
-		if err := pendingEvents.publish(ctx, queries); err != nil {
-			return PublishRunSetup{}, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return PublishRunSetup{}, err
-		}
-		return PublishRunSetup{}, ErrPublicURLCredential
 	}
 	spentReason, err := queries.GuestRunAllowanceSpent(ctx, controlstatedb.GuestRunAllowanceSpentParams{
 		PublishRunID: text(session.ID), Now: timestamptz(now),

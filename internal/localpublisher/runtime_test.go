@@ -18,7 +18,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
@@ -475,10 +474,6 @@ func TestAdHocTCPRegistrationWaitsForTheSameReadyRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true, Proxy: nil}}
-	token, _, _, err := credentials.NewEphemeralCredential()
-	if err != nil {
-		t.Fatal(err)
-	}
 	id, err := opaqueid.New(opaqueid.InvocationPrefix)
 	if err != nil {
 		t.Fatal(err)
@@ -498,7 +493,7 @@ func TestAdHocTCPRegistrationWaitsForTheSameReadyRun(t *testing.T) {
 		return client.Do(request)
 	}
 	response, err := call("register", privateprotocol.AdHocRegister{Version: 1, RegistrationID: id, Owner: owner,
-		PID: os.Getpid(), Target: "http://127.0.0.1:3000", Credential: token.String()})
+		PID: os.Getpid(), Target: "http://127.0.0.1:3000"})
 	if err != nil || response.StatusCode != http.StatusOK {
 		t.Fatalf("register = %v, %v", response, err)
 	}

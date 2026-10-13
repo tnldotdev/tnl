@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"net/netip"
 	"testing"
 	"time"
 )
@@ -50,17 +49,6 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	if _, err := database.StoreRelayTransportCertificate(ctx, lease.RelayServiceID, lease.TLSServerName, certificate, privateKey, now); err != nil {
 		t.Fatal(err)
 	}
-	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.CreateGuestTrial(ctx, guest, "routes.example.test", now); err != nil {
-		t.Fatal(err)
-	}
-	masterKey, err := database.EnsureGuestPrincipal(ctx, guest.ID, now)
-	if err != nil {
-		t.Fatal(err)
-	}
 	visitorLease, err := database.RegisterIngress(ctx, IngressRegistration{
 		IngressID: "ingress_original_key", IngressRunID: "run_original_key", ProtocolVersion: 1, ConnectionCapacity: 10,
 	}, now, time.Minute)
@@ -86,7 +74,6 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 		{"control_tls_cache", "cache_ciphertext", "cache_storage_key_id", cacheData},
 		{"relay_services", "transport_private_key_ciphertext", "transport_private_key_storage_key_id", privateKey},
 		{"relay_certificate_orders", "private_key_ciphertext", "private_key_storage_key_id", order.PrivateKeyPEM},
-		{"runtime_secret", "guest_retry_master_key_ciphertext", "guest_retry_master_key_storage_key_id", masterKey[:]},
 		{"public_url_usage_configuration", "visitor_network_hash_master_key_ciphertext", "visitor_network_hash_master_key_storage_key_id", visitorKey},
 	}
 	before := make(map[string][]byte)
@@ -123,7 +110,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 			t.Fatalf("bounded batch left %d old-key rows, want %d: %v", count, remaining-1, err)
 		}
 	}
-	// Complete must drain the other five kinds. the earlier size-limited calls
+	// complete must drain the other kinds. the earlier size-limited calls
 	// must not have already done all the work.
 	if err := rotating.CompleteStorageKeyRotation(ctx); err != nil {
 		t.Fatal(err)
@@ -133,9 +120,6 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	}
 	if rotated, err := rotating.ReencryptStorageSecrets(ctx, 1); err != nil || rotated != 0 {
 		t.Fatalf("completed rotation = %d, %v", rotated, err)
-	}
-	if _, err := rotating.ForgetGuestPrivateState(ctx, now.Add(73*time.Hour)); err != nil {
-		t.Fatal(err)
 	}
 	rotating.Close()
 	database.Close()
@@ -180,10 +164,6 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	recoveredOrder, found, err := reopened.ClaimRelayCertificateOrderWork(ctx, "new-key-worker", now.Add(time.Second), time.Minute)
 	if err != nil || !found || recoveredOrder.ID != order.ID || !bytes.Equal(recoveredOrder.PrivateKeyPEM, order.PrivateKeyPEM) {
 		t.Fatalf("recover relay order key: found %t, %v", found, err)
-	}
-	recoveredMaster, err := reopened.EnsureGuestPrincipal(ctx, guest.ID, now)
-	if err != nil || recoveredMaster != masterKey {
-		t.Fatalf("recover external retry master key: %v", err)
 	}
 	recoveredVisitorLease, err := reopened.RegisterIngress(ctx, IngressRegistration{
 		IngressID: "ingress_rotated_key", IngressRunID: "run_rotated_key", ProtocolVersion: 1, ConnectionCapacity: 10,

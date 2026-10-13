@@ -125,7 +125,7 @@ func TestBarePublishUsesStableDirectoryNameWithoutConfiguration(t *testing.T) {
 	}
 }
 
-func TestCredentialPublishDoesNotInheritProjectVisitorPolicy(t *testing.T) {
+func TestEnrolledPublishDoesNotInheritProjectVisitorPolicy(t *testing.T) {
 	name := "project-url"
 	allowAllIPs := true
 	ephemeral := true
@@ -134,16 +134,16 @@ func TestCredentialPublishDoesNotInheritProjectVisitorPolicy(t *testing.T) {
 		Tunnel:   &config.Tunnel{Name: &name, AllowAllIPs: &allowAllIPs, Ephemeral: &ephemeral, Limits: &config.Limits{HTTP: &config.WorkLimits{Concurrency: &limit}}},
 		Services: config.Services{"api": {}, "web": {}},
 	}}}
-	flags := publishCommand{PublishCredential: "tnl_publish_example"}
+	flags := publishCommand{EnrollKey: "pen_0123456789abcdefghijkl.secret"}
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
 	if flags.Service != "" || flags.Target != "" || flags.Name != "" || flags.PublicURL != "" || flags.AllowAllIPs || flags.Ephemeral || flags.Concurrency != nil {
-		t.Fatalf("credential publish inherited a project URL or visitor policy: %#v", flags)
+		t.Fatalf("enrolled publish inherited a project URL or visitor policy: %#v", flags)
 	}
 	applyTunnelLimits(&flags.tunnelFlags, project.Config.Tunnel.Limits, "http")
 	if flags.Concurrency == nil || *flags.Concurrency != limit {
-		t.Fatalf("credential publish did not inherit HTTP admission after selecting the saved protocol: %#v", flags)
+		t.Fatalf("enrolled publish did not inherit HTTP admission after selecting the saved protocol: %#v", flags)
 	}
 }
 

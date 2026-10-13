@@ -531,6 +531,7 @@ type PublicURLScope string
 // PublisherEnrollmentResult defines model for PublisherEnrollmentResult.
 type PublisherEnrollmentResult struct {
 	ClientId    string                        `json:"client_id"`
+	DomainId    *string                       `json:"domain_id,omitempty"`
 	GrantId     string                        `json:"grant_id"`
 	KeyId       string                        `json:"key_id"`
 	Kind        PublisherEnrollmentResultKind `json:"kind"`

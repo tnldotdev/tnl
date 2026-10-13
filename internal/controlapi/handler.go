@@ -3,6 +3,7 @@ package controlapi
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -71,31 +73,25 @@ type PublicURLStore interface {
 	CreatePublishRun(context.Context, controlstate.PublishRunRequest, time.Time, time.Duration, time.Duration) (controlstate.PublishRunSetup, error)
 	PublishRunAuthentication(context.Context, string, uint64, credentials.PublishRunToken) (controlstate.PublishRunAuthentication, error)
 	HeartbeatPublishRun(context.Context, controlstate.PublishRunAuthentication, time.Time, time.Duration, time.Duration) (controlstate.PublishRunSetup, error)
+	PublisherRunLinked(context.Context, controlstate.PublishRunAuthentication) (bool, error)
 	MarkPublicURLCertificateInstalled(context.Context, controlstate.PublishRunAuthentication, string, time.Time, time.Time) (controlstate.PublishRunLifecycle, error)
 	MarkPublishRunReady(context.Context, controlstate.PublishRunAuthentication, time.Time) (controlstate.PublishRunLifecycle, error)
 	ClosePublishRun(context.Context, string, credentials.PublishRunToken, time.Time) error
 }
 
-type PublicURLPublishCredentialStore interface {
-	CreatePublicURLPublishCredential(context.Context, controlstate.CreatePublicURLPublishCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.PublicURLPublishCredential, error)
-	CreateEphemeralCredential(context.Context, controlstate.CreateEphemeralCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.EphemeralCredential, error)
-	AuthenticateEphemeralCredential(context.Context, credentials.EphemeralCredential, time.Time) (controlstate.PublicURLPublishCredential, error)
-	ValidateEphemeralCredentialPublicURL(context.Context, controlstate.PublicURLPublishCredential, controlstate.PublicURL, time.Time) error
-	RevokeEphemeralCredential(context.Context, string, string, time.Time) (controlstate.PublicURLPublishCredential, error)
-	AuthenticatePublicURLPublishCredential(context.Context, credentials.PublicURLPublishCredential, time.Time) (controlstate.PublicURLPublishCredential, []byte, error)
-	ValidatePublicURLPublishCredential(context.Context, controlstate.PublicURLPublishCredential, controlstate.PublicURL) error
-	ListPublicURLPublishCredentials(context.Context, string) ([]controlstate.PublicURLPublishCredential, error)
-	ListTeamPublicURLPublishCredentials(context.Context, string, string) (controlstate.PublicURLPublishCredentialPage, error)
-	PublicURLPublishCredentialByID(context.Context, string) (controlstate.PublicURLPublishCredential, error)
-	RevokePublicURLPublishCredential(context.Context, string, string, time.Time) (controlstate.PublicURLPublishCredential, error)
-}
-
 type PublisherIdentityStore interface {
+	ListTeamPublisherIdentities(context.Context, string, string) (controlstate.PublisherIdentityPage, error)
 	IssuePublisherEnrollment(context.Context, controlstate.CreatePublisherEnrollmentRequest) (controlstate.PublisherEnrollment, error)
 	CreatePublisherGrant(context.Context, controlstate.CreatePublisherGrantRequest) (string, error)
 	PublisherManagementGrants(context.Context, string, string) ([]controlstate.PublisherManagementGrant, error)
 	RevokePublisherIdentity(context.Context, string, string, time.Time) error
 	RevokePublisherGrant(context.Context, string, string, string, time.Time) error
+	RegisterGuestPublisherIdentity(context.Context, string, ed25519.PublicKey, time.Time) (controlstate.PublisherIdentity, error)
+	GuestPublisherSourceMatches(context.Context, string, netip.Addr) (bool, error)
+	AuthenticatePublisherAccess(context.Context, string, time.Time) (controlstate.PublisherIdentity, error)
+	PublisherKeyForAccess(context.Context, controlstate.PublisherIdentity) (ed25519.PublicKey, error)
+	PublisherRunPlan(context.Context, controlstate.PublisherIdentity, controlstate.PublicURL, bool) (authorization.CertificatePlan, error)
+	PublisherMayStartRun(context.Context, controlstate.PublisherIdentity, string) (bool, error)
 }
 
 // CertificateStore owns publish run certificate issuance state.
@@ -184,7 +180,6 @@ type AuthorizationStore interface {
 type handler struct {
 	config              Config
 	store               PublicURLStore
-	publishCredentials  PublicURLPublishCredentialStore
 	publisherIdentities PublisherIdentityStore
 	certificates        CertificateStore
 	admin               AdminStore
@@ -224,9 +219,6 @@ func NewHandler(
 	}
 	if h.config.TrafficCeiling == (trafficlimits.Limits{}) {
 		h.config.TrafficCeiling = trafficlimits.Ceiling()
-	}
-	if credentials, ok := store.(PublicURLPublishCredentialStore); ok {
-		h.publishCredentials = credentials
 	}
 	if identities, ok := store.(PublisherIdentityStore); ok {
 		h.publisherIdentities = identities
@@ -297,7 +289,6 @@ func NewHandler(
 		if guestStore, ok := store.(guestAuthorizationStore); ok {
 			h.authorizer = guestAuthorizer{
 				fallback: h.authorizer, store: guestStore, managedDomain: cfg.ManagedDomain,
-				dnsAutomation: cfg.DNSAutomation,
 			}
 		}
 	}

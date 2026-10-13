@@ -56,6 +56,8 @@ type CreatePublisherEnrollmentRequest struct {
 type PublisherIdentity struct {
 	ID, KeyID, GrantID string
 	Scope              PublisherScope
+	CreatorID          string
+	Kind, GuestID      string
 }
 
 type PublisherManagementGrant struct {
@@ -85,7 +87,7 @@ func (d *Database) IssuePublisherEnrollment(ctx context.Context, request CreateP
 	scope, now := request.Scope, request.Now
 	if !scope.valid() || !naming.ValidServiceName(request.Name) || !validStateText(request.EditorID) ||
 		!validStateText(request.EditorMembershipID) || request.PolicyRevision == 0 ||
-		request.Kind != "installed" && request.Kind != "automation" {
+		request.Kind != "installed" && request.Kind != "automation" && request.Kind != "run" {
 		return PublisherEnrollment{}, ErrPublisherEnrollment
 	}
 	if err := d.requireOpen(); err != nil {
@@ -186,11 +188,38 @@ func (d *Database) RedeemPublisherEnrollment(ctx context.Context, key string, pu
 			return PublisherIdentity{}, ErrPublisherEnrollment
 		}
 		return PublisherIdentity{ID: enrollment.RedeemedIdentityID.String,
-			KeyID: enrollment.RedeemedKeyID.String, GrantID: enrollment.RedeemedGrantID.String, Scope: scope}, nil
+			KeyID: enrollment.RedeemedKeyID.String, GrantID: enrollment.RedeemedGrantID.String,
+			Scope: scope, CreatorID: enrollment.CreatedByIdentityID, Kind: enrollment.IdentityKind}, nil
 	}
 	if !enrollment.ExpiresAt.Time.After(now) || validatePublisherScope(ctx, queries, scope) != nil {
 		return PublisherIdentity{}, ErrPublisherEnrollment
 	}
+	var expiresAt *time.Time
+	if enrollment.IdentityKind == "automation" {
+		short := now.Add(time.Hour)
+		expiresAt = &short
+	}
+	identity, err := insertPublisherIdentity(ctx, queries, scope, enrollment.Name, enrollment.IdentityKind,
+		enrollment.CreatedByIdentityID, public, expiresAt, now)
+	if err != nil {
+		return PublisherIdentity{}, err
+	}
+	updated, err := queries.RedeemPublisherEnrollment(ctx, controlstatedb.RedeemPublisherEnrollmentParams{
+		ID: enrollment.ID, PublisherIdentityID: text(identity.ID), KeyID: text(identity.KeyID), GrantID: text(identity.GrantID),
+		PublicKey: public, RedeemedAt: timestamptz(now),
+	})
+	if err != nil || updated != 1 {
+		return PublisherIdentity{}, ErrPublisherEnrollment
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return PublisherIdentity{}, err
+	}
+	return identity, nil
+}
+
+func insertPublisherIdentity(ctx context.Context, queries *controlstatedb.Queries, scope PublisherScope,
+	name, kind, creatorID string, public ed25519.PublicKey, expiresAt *time.Time, now time.Time,
+) (PublisherIdentity, error) {
 	id, err := opaqueid.New(opaqueid.PublisherIdentityPrefix)
 	if err != nil {
 		return PublisherIdentity{}, err
@@ -204,8 +233,8 @@ func (d *Database) RedeemPublisherEnrollment(ctx context.Context, key string, pu
 		return PublisherIdentity{}, err
 	}
 	if _, err := queries.InsertPublisherIdentity(ctx, controlstatedb.InsertPublisherIdentityParams{
-		ID: id, TeamID: scope.TeamID, Name: enrollment.Name, Kind: enrollment.IdentityKind,
-		CreatedByIdentityID: text(enrollment.CreatedByIdentityID), CreatedAt: timestamptz(now),
+		ID: id, TeamID: scope.TeamID, Name: name, Kind: kind,
+		CreatedByIdentityID: text(creatorID), CreatedAt: timestamptz(now),
 	}); err != nil {
 		return PublisherIdentity{}, err
 	}
@@ -214,11 +243,6 @@ func (d *Database) RedeemPublisherEnrollment(ctx context.Context, key string, pu
 	}); err != nil {
 		return PublisherIdentity{}, err
 	}
-	var expiresAt *time.Time
-	if enrollment.IdentityKind == "automation" {
-		short := now.Add(time.Hour)
-		expiresAt = &short
-	}
 	if _, err := queries.InsertPublisherIdentityGrant(ctx, controlstatedb.InsertPublisherIdentityGrantParams{
 		ID: grantID, PublisherIdentityID: id, Kind: scope.Kind,
 		PublicURLID: nullableText(scope.PublicURLID), DomainID: nullableText(scope.DomainID), Namespace: nullableText(scope.Namespace),
@@ -226,17 +250,7 @@ func (d *Database) RedeemPublisherEnrollment(ctx context.Context, key string, pu
 	}); err != nil {
 		return PublisherIdentity{}, err
 	}
-	updated, err := queries.RedeemPublisherEnrollment(ctx, controlstatedb.RedeemPublisherEnrollmentParams{
-		ID: enrollment.ID, PublisherIdentityID: text(id), KeyID: text(keyID), GrantID: text(grantID),
-		PublicKey: public, RedeemedAt: timestamptz(now),
-	})
-	if err != nil || updated != 1 {
-		return PublisherIdentity{}, ErrPublisherEnrollment
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return PublisherIdentity{}, err
-	}
-	return PublisherIdentity{ID: id, KeyID: keyID, GrantID: grantID, Scope: scope}, nil
+	return PublisherIdentity{ID: id, KeyID: keyID, GrantID: grantID, Scope: scope, CreatorID: creatorID, Kind: kind}, nil
 }
 
 type CreatePublisherGrantRequest struct {
@@ -311,12 +325,13 @@ func validatePublisherScope(ctx context.Context, queries *controlstatedb.Queries
 	}
 	if scope.Kind == "saved_url" {
 		route, err := queries.GetPublisherGrantURL(ctx, scope.PublicURLID)
-		if err != nil || route.TeamID != scope.TeamID || route.Ephemeral || route.LifecycleState != string(PublicURLLifecycleEnabled) || route.Purpose != string(PublicURLPurposeApp) {
+		if err != nil || route.TeamID != scope.TeamID || route.Ephemeral || route.LifecycleState != string(PublicURLLifecycleEnabled) ||
+			!PublicURLPurpose(route.Purpose).ValidForCreation() {
 			return ErrPublisherIdentity
 		}
 		return nil
 	}
-	domain, err := queries.GetReadyEphemeralCredentialDomain(ctx, controlstatedb.GetReadyEphemeralCredentialDomainParams{
+	domain, err := queries.GetReadyPublisherDomain(ctx, controlstatedb.GetReadyPublisherDomainParams{
 		DomainID: scope.DomainID, TeamID: text(scope.TeamID),
 	})
 	if err != nil || domain.ID != scope.DomainID || !hostnameWithin(scope.Namespace, domain.CanonicalDomain) {
@@ -375,6 +390,17 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, clientID, gra
 	if err := validatePublisherScope(ctx, queries, scope); err != nil {
 		return PublisherAccess{}, ErrPublisherIdentity
 	}
+	if identity.Kind == "guest" {
+		guest, err := queries.GetGuestPublisherTrial(ctx, clientID)
+		if err != nil || guest.TeamID != scope.TeamID || guest.DomainID != scope.DomainID ||
+			!guest.ExpiresAt.Time.After(now) || guest.UsedReadyNs >= int64(GuestReadyAllowance) || guest.UsedBytes >= GuestByteAllowance {
+			return PublisherAccess{}, ErrPublisherIdentity
+		}
+		domain, err := queries.FindManagedDomain(ctx)
+		if err != nil || domain.ID != guest.DomainID || scope.Namespace != guest.NamespaceLabel+"."+domain.CanonicalDomain {
+			return PublisherAccess{}, ErrPublisherIdentity
+		}
+	}
 	if err := queries.DeleteExpiredPublisherAssertions(ctx, timestamptz(now)); err != nil {
 		return PublisherAccess{}, err
 	}
@@ -406,7 +432,8 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, clientID, gra
 	if err := tx.Commit(ctx); err != nil {
 		return PublisherAccess{}, err
 	}
-	return PublisherAccess{PublisherIdentity: PublisherIdentity{ID: clientID, KeyID: keyID, GrantID: grantID, Scope: scope}, Token: access, Until: until}, nil
+	return PublisherAccess{PublisherIdentity: PublisherIdentity{ID: clientID, KeyID: keyID, GrantID: grantID,
+		Scope: scope, CreatorID: identity.CreatedByIdentityID.String, Kind: identity.Kind}, Token: access, Until: until}, nil
 }
 
 // AuthenticatePublisherAccess rechecks grant and identity revocation. the
@@ -424,9 +451,27 @@ func (d *Database) AuthenticatePublisherAccess(ctx context.Context, token string
 	if err != nil {
 		return PublisherIdentity{}, fmt.Errorf("read publisher access token: %w", err)
 	}
+	if row.IdentityKind == "guest" && (!row.GuestID.Valid || !row.GuestExpiresAt.Time.After(now) ||
+		!row.GuestUsedReadyNs.Valid || row.GuestUsedReadyNs.Int64 >= int64(GuestReadyAllowance) ||
+		!row.GuestUsedBytes.Valid || row.GuestUsedBytes.Int64 >= GuestByteAllowance) {
+		return PublisherIdentity{}, ErrPublisherIdentity
+	}
 	return PublisherIdentity{ID: row.PublisherIdentityID, GrantID: row.GrantID, KeyID: row.KeyID,
 		Scope: PublisherScope{TeamID: row.TeamID, Kind: row.Kind, PublicURLID: row.PublicURLID.String,
-			DomainID: row.DomainID.String, Namespace: row.Namespace.String}}, nil
+			DomainID: row.DomainID.String, Namespace: row.Namespace.String},
+		CreatorID: row.CreatedByIdentityID.String, Kind: row.IdentityKind, GuestID: row.GuestID.String}, nil
+}
+
+// PublisherKeyForAccess returns only the key registered to the authenticated
+// publisher token. a token issued before rotation can finish its current run.
+func (d *Database) PublisherKeyForAccess(ctx context.Context, identity PublisherIdentity) (ed25519.PublicKey, error) {
+	key, err := controlstatedb.New(d.pool).GetPublisherIdentityKey(ctx, controlstatedb.GetPublisherIdentityKeyParams{
+		KeyID: identity.KeyID, PublisherIdentityID: identity.ID,
+	})
+	if err != nil || key.IdentityRevokedAt.Valid || key.TeamID != identity.Scope.TeamID || len(key.PublicKey) != ed25519.PublicKeySize {
+		return nil, ErrPublisherIdentity
+	}
+	return ed25519.PublicKey(key.PublicKey), nil
 }
 
 // RotatePublisherKey requires a current scoped token from the previous key

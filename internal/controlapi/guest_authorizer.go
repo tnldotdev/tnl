@@ -17,14 +17,13 @@ type guestAuthorizer struct {
 	fallback      publicURLAuthorizer
 	store         guestAuthorizationStore
 	managedDomain string
-	dnsAutomation bool
 }
 
 type guestAuthorizationStore interface {
 	GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 	GuestOwnsPublicURL(context.Context, string, string) (bool, error)
 	GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
-	EnsureGuestPrincipal(context.Context, string, time.Time) ([32]byte, error)
+	EnsureGuestIdentity(context.Context, string, time.Time) error
 }
 
 func (a guestAuthorizer) AuthorizePublicURLReads(ctx context.Context, token string) (publicURLReadPrincipal, error) {
@@ -50,6 +49,7 @@ func (a guestAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		request.Operation == authorization.OperationShareCreate ||
 		request.Operation == authorization.OperationFeedbackManage ||
 		request.Operation == authorization.OperationPreviewVisit ||
+		request.Operation != authorization.OperationPublicURLCreate && request.Operation != authorization.OperationPublicURLDelete ||
 		request.Operation != authorization.OperationPublicURLDelete &&
 			(!guest.ExpiresAt.After(time.Now()) || guest.UsedReady >= controlstate.GuestReadyAllowance || guest.UsedBytes >= controlstate.GuestByteAllowance) {
 		if !guest.ExpiresAt.After(time.Now()) || guest.UsedReady >= controlstate.GuestReadyAllowance || guest.UsedBytes >= controlstate.GuestByteAllowance {
@@ -96,8 +96,7 @@ func (a guestAuthorizer) Authorize(ctx context.Context, request authorization.Re
 			return authorization.Decision{}, authorization.ErrForbidden
 		}
 	}
-	retrySecret, err := a.store.EnsureGuestPrincipal(ctx, guest.ID, time.Now())
-	if err != nil {
+	if err := a.store.EnsureGuestIdentity(ctx, guest.ID, time.Now()); err != nil {
 		return authorization.Decision{}, authorization.ErrUnavailable
 	}
 	decision := authorization.Decision{
@@ -105,10 +104,6 @@ func (a guestAuthorizer) Authorize(ctx context.Context, request authorization.Re
 		ActingMembershipID: guest.MembershipID, ActingRole: "owner", PublicURLMembershipID: guest.MembershipID,
 		PolicyRevision: 1, DomainID: guest.DomainID, CanonicalHostname: request.CanonicalHostname,
 		PublicURLScope: authorization.PublicURLScopeMember, DNSAuthorityReference: guest.DNSAuthorityReference,
-		RetrySecret: retrySecret,
-	}
-	if request.Operation == authorization.OperationPublishRunCreate {
-		decision.CertificatePlan = authorization.PublicURLCertificatePlan(request.CanonicalHostname, namespace, false, a.dnsAutomation)
 	}
 	return decision, nil
 }

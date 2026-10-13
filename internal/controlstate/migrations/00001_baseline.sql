@@ -280,13 +280,6 @@ CREATE TABLE control.authority_revision_states (
     UNIQUE (issuer, team_id)
 );
 
-CREATE TABLE control.runtime_secret (
-    id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    external_retry_master_key_ciphertext bytea NOT NULL CHECK (octet_length(external_retry_master_key_ciphertext) > 29),
-    external_retry_master_key_storage_key_id text NOT NULL CHECK (external_retry_master_key_storage_key_id <> ''),
-    created_at timestamptz NOT NULL
-);
-
 CREATE TABLE control.public_urls (
     id text PRIMARY KEY CHECK (id <> ''),
     team_id text NOT NULL CHECK (team_id <> ''),

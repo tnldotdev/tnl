@@ -82,7 +82,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	service := ""
 	if _, found := c.Config.Services[flags.Target]; found && flags.Target != "" {
 		service, flags.Target = flags.Target, ""
-	} else if flags.Target == "" && flags.PublishCredential == "" {
+	} else if flags.Target == "" && flags.EnrollKey == "" {
 		var err error
 		service, err = c.defaultService()
 		if err != nil {
@@ -129,7 +129,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if usingConfiguredTarget && !flags.TargetTLS && effective.Publish != nil && effective.Publish.TargetTLS != nil {
 		flags.TargetTLS = *effective.Publish.TargetTLS
 	}
-	if flags.PublishCredential == "" {
+	if flags.EnrollKey == "" {
 		applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel, flags.Protocol)
 	} else if effective.Tunnel != nil && flags.Protocol != "" {
 		// a saved URL supplies hostname and visitor policy; local admission is still configurable.
@@ -140,10 +140,10 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		flags.VisitorTLSPassthrough = *c.Config.Services[service].TCP.VisitorTLS == "passthrough"
 	}
 	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
-	if flags.PublishCredential == "" {
+	if flags.EnrollKey == "" {
 		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	}
-	if flags.Target == "" && flags.PublishCredential == "" && flags.dockerTarget == nil {
+	if flags.Target == "" && flags.EnrollKey == "" && flags.dockerTarget == nil {
 		if service != "" {
 			if selected := c.Config.Services[service].Target; selected != nil && selected.Type == "app" {
 				return failure.Wrap("select app service", failure.MissingTarget,
@@ -155,7 +155,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		return failure.Wrap("select target", failure.MissingTarget,
 			errors.New("target is required as an argument or publish.target in project configuration"))
 	}
-	if flags.PublishCredential == "" || flags.Protocol != "" {
+	if flags.EnrollKey == "" || flags.Protocol != "" {
 		if err := validateTunnelFlags(flags.tunnelFlags); err != nil {
 			return failure.Wrap("validate tunnel options", failure.InvalidTunnelFlags, err)
 		}
@@ -296,7 +296,7 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 
 func projectSensitiveCommand(command string) bool {
 	return strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "limits ") || strings.HasPrefix(command, "admin ") ||
-		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ") || strings.HasPrefix(command, "alias ")
+		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "publisher ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ") || strings.HasPrefix(command, "alias ")
 }
 
 // resolveProjectServer preserves invocation selection and its provenance. A
@@ -405,12 +405,16 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Update.remoteFlags, true)
 	case "url delete <public-url-id>":
 		apply(&flags.URL.Delete.remoteFlags, true)
-	case "url credential create <service-or-public-url-id>":
-		apply(&flags.URL.Credential.Create.remoteFlags, true)
-	case "url credential list <public-url-id>":
-		apply(&flags.URL.Credential.List.remoteFlags, true)
-	case "url credential revoke <credential-id>":
-		apply(&flags.URL.Credential.Revoke.remoteFlags, true)
+	case "publisher enroll <service-or-public-url-id>":
+		apply(&flags.Publisher.Enroll.remoteFlags, true)
+	case "publisher list":
+		apply(&flags.Publisher.List.remoteFlags, true)
+	case "publisher revoke <publisher-id>":
+		apply(&flags.Publisher.Revoke.remoteFlags, true)
+	case "publisher grant add <publisher-id> <public-url-id>":
+		apply(&flags.Publisher.Grant.Add.remoteFlags, true)
+	case "publisher grant revoke <publisher-id> <grant-id>":
+		apply(&flags.Publisher.Grant.Revoke.remoteFlags, true)
 	case "share link create <url>":
 		apply(&flags.Share.Link.Create.remoteFlags, true)
 	case "share list <url>":

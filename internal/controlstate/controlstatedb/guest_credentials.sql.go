@@ -43,28 +43,3 @@ func (q *Queries) EnsureGuestPrincipal(ctx context.Context, arg EnsureGuestPrinc
 	)
 	return i, err
 }
-
-const ensureGuestRetryMasterKey = `-- name: EnsureGuestRetryMasterKey :one
-INSERT INTO control.runtime_secret(id, guest_retry_master_key_ciphertext, guest_retry_master_key_storage_key_id, created_at)
-VALUES (1, $1, $2, $3)
-ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
-RETURNING guest_retry_master_key_ciphertext, guest_retry_master_key_storage_key_id
-`
-
-type EnsureGuestRetryMasterKeyParams struct {
-	Ciphertext []byte
-	KeyID      string
-	CreatedAt  pgtype.Timestamptz
-}
-
-type EnsureGuestRetryMasterKeyRow struct {
-	GuestRetryMasterKeyCiphertext   []byte
-	GuestRetryMasterKeyStorageKeyID string
-}
-
-func (q *Queries) EnsureGuestRetryMasterKey(ctx context.Context, arg EnsureGuestRetryMasterKeyParams) (EnsureGuestRetryMasterKeyRow, error) {
-	row := q.db.QueryRow(ctx, ensureGuestRetryMasterKey, arg.Ciphertext, arg.KeyID, arg.CreatedAt)
-	var i EnsureGuestRetryMasterKeyRow
-	err := row.Scan(&i.GuestRetryMasterKeyCiphertext, &i.GuestRetryMasterKeyStorageKeyID)
-	return i, err
-}

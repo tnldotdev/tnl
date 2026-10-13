@@ -45,6 +45,7 @@ func (h *handler) RedeemPublisherEnrollment(w http.ResponseWriter, r *http.Reque
 	if identity.Scope.PublicURLID != "" {
 		result.PublicUrlId = &identity.Scope.PublicURLID
 	} else {
+		result.DomainId = &identity.Scope.DomainID
 		result.Namespace = &identity.Scope.Namespace
 	}
 	w.Header().Set("Cache-Control", "no-store")

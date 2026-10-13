@@ -31,8 +31,8 @@ func (s guestStoreStub) GuestSourceMatches(_ controlstate.GuestTrial, prefix str
 	return prefix == "192.0.2.7/32", nil
 }
 
-func (s guestStoreStub) EnsureGuestPrincipal(context.Context, string, time.Time) ([32]byte, error) {
-	return [32]byte{1}, nil
+func (s guestStoreStub) EnsureGuestIdentity(context.Context, string, time.Time) error {
+	return nil
 }
 
 type guestFallback struct{}
@@ -54,7 +54,7 @@ func TestGuestAuthorizationLimitsPublicURLsToOneLocalDemo(t *testing.T) {
 	}
 	authorizer := guestAuthorizer{
 		fallback: guestFallback{}, store: guestStoreStub{guest: guest, owned: true},
-		managedDomain: "tnl.wtf", dnsAutomation: true,
+		managedDomain: "tnl.wtf",
 	}
 	create := authorization.Request{
 		AccessToken: "guest-token", Operation: authorization.OperationPublicURLCreate,
@@ -105,12 +105,8 @@ func TestGuestAuthorizationLimitsPublicURLsToOneLocalDemo(t *testing.T) {
 	create.PublicURLID = "url_1"
 	create.PublicURLMembershipID = guest.MembershipID
 	decision, err = authorizer.Authorize(t.Context(), create)
-	if err != nil || decision.CertificatePlan == nil || decision.CertificatePlan.Scope != "guest-01234567.tnl.wtf" {
-		t.Fatalf("guest certificate plan = %+v, error = %v", decision, err)
-	}
-	authorizer.store = guestStoreStub{guest: guest}
-	if _, err := authorizer.Authorize(t.Context(), create); !errors.Is(err, authorization.ErrForbidden) {
-		t.Fatalf("foreign public URL accepted: %v", err)
+	if !errors.Is(err, authorization.ErrGuestDemoOnly) {
+		t.Fatalf("guest session started a publisher run without its identity: %+v, %v", decision, err)
 	}
 	guest.UsedBytes = controlstate.GuestByteAllowance
 	authorizer.store = guestStoreStub{guest: guest, owned: true}

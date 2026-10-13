@@ -19,6 +19,14 @@ const maxNamedPublisherResponse = 256 << 10
 var ErrUnauthenticated = errors.New("local publisher credential is no longer current")
 var ErrLost = errors.New("local publisher stopped")
 
+type ProblemError struct {
+	Status int
+	Code   string
+	Detail string
+}
+
+func (e *ProblemError) Error() string { return e.Code + ": " + e.Detail }
+
 type namedPublisherClient struct {
 	endpoint Endpoint
 	http     *http.Client
@@ -80,7 +88,7 @@ func Request(ctx context.Context, client *http.Client, endpoint Endpoint, method
 		if problem.Code == string(failure.AuthOperationNotFound) {
 			return failure.Wrap("find publisher login", failure.AuthOperationNotFound, errors.New(problem.Message))
 		}
-		return fmt.Errorf("%s: %s", problem.Code, problem.Message)
+		return &ProblemError{Status: response.StatusCode, Code: problem.Code, Detail: problem.Message}
 	}
 	if value == nil {
 		if response.StatusCode != http.StatusNoContent || len(data) != 0 {

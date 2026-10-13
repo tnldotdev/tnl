@@ -641,6 +641,8 @@ components:
           enum: [saved_url, namespace]
         public_url_id:
           type: string
+        domain_id:
+          type: string
         namespace:
           type: string
     PublisherTokenRequest:

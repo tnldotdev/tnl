@@ -1,6 +1,4 @@
 export type TnlErrorCode =
-  | "sdk.credential_required"
-  | "sdk.credential_rejected"
   | "sdk.publication_failed"
   | "sdk.owner_conflict"
   | "sdk.registration_stale"
@@ -24,16 +22,6 @@ export type TnlErrorCode =
 type FailureClass = "invalid" | "internal" | "unavailable" | "conflict";
 type Retry = "never" | "later" | "after_change";
 const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; message: string }> = {
-  "sdk.credential_required": {
-    class: "invalid",
-    retry: "after_change",
-    message: "set TNL_CREDENTIAL or pass an ad-hoc credential to tnl.open",
-  },
-  "sdk.credential_rejected": {
-    class: "invalid",
-    retry: "after_change",
-    message: "ad-hoc credential is invalid or no longer authorized; issue a replacement",
-  },
   "sdk.publication_failed": {
     class: "unavailable",
     retry: "later",
@@ -53,7 +41,7 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   "sdk.authentication_required": {
     class: "unavailable",
     retry: "after_change",
-    message: "tnl needs a saved login; run tnl auth login, then start the app again",
+    message: "sign in to tnl or renew the publisher grant, then start the app again",
   },
   "sdk.configuration_invalid": {
     class: "invalid",

@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { expect, test } from "vitest";
@@ -13,9 +12,6 @@ const listener: NodeHTTPServer = {
   off: () => listener,
   close: () => listener,
 };
-
-const credential = () =>
-  `tnl_eph_${randomBytes(16).toString("base64url")}.${randomBytes(32).toString("base64url")}`;
 
 test("the ad-hoc Go, TypeScript, and Python socket fixture has the same bounded status", async () => {
   const fixturePath = path.resolve(
@@ -57,7 +53,6 @@ test("one supplied Node listener waits for its run and stays open on close", asy
   const handle = await openServer(
     listener,
     {
-      credential: credential(),
       targetHostname: "app.internal",
       limits: {
         traffic: {
@@ -81,6 +76,7 @@ test("one supplied Node listener waits for its run and stays open on close", asy
         registrationID ||= body.registration_id;
         expect(body.registration_id).toBe(registrationID);
         if (operation === "ad-hoc/register") {
+          expect(body).not.toHaveProperty("credential");
           expect(body).toHaveProperty("target", "http://app.internal:3000");
           expect(body).toHaveProperty("limits.traffic.rate.count", 10);
           expect(body).toHaveProperty("limits.traffic.bandwidth.download", "16MiB/s");
@@ -122,7 +118,7 @@ test("a strict total budget fails closed when the native manager disappears", as
   await expect(
     openServer(
       listener,
-      { credential: credential(), limits: { http: { total: 1 } } },
+      { limits: { http: { total: 1 } } },
       {
         start: async () => {
           starts++;
@@ -148,7 +144,7 @@ test("an unlimited handle reuses its invocation after a native manager restart",
   let lost = false;
   const handle = await openServer(
     listener,
-    { credential: credential() },
+    {},
     {
       start: async () => {
         starts++;
@@ -192,11 +188,11 @@ test("an unlimited handle reuses its invocation after a native manager restart",
   await handle.close();
 });
 
-test("an authored native credential denial becomes a typed SDK error", async () => {
+test("an authored native publisher authentication failure becomes a typed SDK error", async () => {
   await expect(
     openServer(
       listener,
-      { credential: credential() },
+      {},
       {
         start: async () => "/tmp/tnl-test.sock",
         request: async (_socket, operation, body: unknown) => {
@@ -207,11 +203,11 @@ test("an authored native credential denial becomes a typed SDK error", async () 
             version: 1,
             registration_id: body.registration_id,
             state: "failed",
-            failure_code: "runtime.credential_rejected",
+            failure_code: "runtime.authentication_required",
           };
         },
         pause: async () => new Promise((resolve) => setTimeout(resolve, 1)),
       },
     ),
-  ).rejects.toMatchObject({ code: "sdk.credential_rejected" });
+  ).rejects.toMatchObject({ code: "sdk.authentication_required" });
 });

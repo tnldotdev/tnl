@@ -3,80 +3,102 @@ package tnl
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"sync/atomic"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/internal/privateprotocol"
 )
 
-func TestOpenWaitsForRoutabilityAndCleansUpOnCancellation(t *testing.T) {
-	credential, _, _, err := credentials.NewEphemeralCredential()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var allocations, publishRuns, deletions, reads atomic.Int32
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+credential.String() {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+func TestOpenUsesLocalPublisherAndRetainsInvocationThroughClose(t *testing.T) {
+	credential := strings.Repeat("A", 43)
+	var mu sync.Mutex
+	var registered privateprotocol.AdHocRegister
+	statusReads, unregistered := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+credential {
+			http.Error(w, "local publisher credential required", http.StatusUnauthorized)
 			return
 		}
-		switch r.Method + " " + r.URL.Path {
-		case "POST /v1/ephemeral-public-urls":
-			allocations.Add(1)
-			var body controlv1.AllocateEphemeralPublicURLRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, "invalid allocation", http.StatusBadRequest)
-				return
-			}
+		write := func(value any) {
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(controlv1.PublicURL{Id: "url_allocated", TeamId: "team_1", DomainId: "domain_1",
-				CanonicalHostname: "eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test", Target: body.Target,
-				Ephemeral: true, Purpose: controlv1.App, LifecycleState: controlv1.Enabled,
-				PublicUrlScope: controlv1.Shared, PolicyRevision: 1})
-		case "POST /v1/public-urls/url_allocated/publish-runs":
-			publishRuns.Add(1)
-			_, _ = io.Copy(io.Discard, r.Body)
-			<-r.Context().Done()
-		case "DELETE /v1/ephemeral-public-urls/url_allocated":
-			deletions.Add(1)
+			_ = json.NewEncoder(w).Encode(value)
+		}
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/status":
+			write(map[string]any{"version": 1})
+		case "POST /v1/ad-hoc/register":
+			mu.Lock()
+			defer mu.Unlock()
+			if err := json.NewDecoder(r.Body).Decode(&registered); err != nil {
+				t.Error(err)
+			}
+			write(privateprotocol.AdHocStatus{Version: 1, RegistrationID: registered.RegistrationID, State: privateprotocol.AdHocStarting})
+		case "POST /v1/ad-hoc/status":
+			mu.Lock()
+			defer mu.Unlock()
+			statusReads++
+			status := privateprotocol.AdHocStatus{Version: 1, RegistrationID: registered.RegistrationID,
+				State: privateprotocol.AdHocPublishing}
+			if statusReads > 1 {
+				status.State, status.PublicURLID = privateprotocol.AdHocRoutable, "url_allocated"
+				status.PublicURL = "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test"
+				status.PublishRunNumber = 1
+			}
+			write(status)
+		case "POST /v1/ad-hoc/renew":
+			w.WriteHeader(http.StatusNoContent)
+		case "POST /v1/ad-hoc/unregister":
+			mu.Lock()
+			unregistered++
+			mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 		default:
-			reads.Add(1)
+			t.Errorf("unexpected local publisher request: %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
 		}
 	}))
 	defer server.Close()
-	state := t.TempDir()
-	if err := os.Chmod(state, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	database, err := clientstate.Open(t.Context(), state)
+	path := filepath.Join(t.TempDir(), "ad-hoc.endpoint.json")
+	descriptor, err := json.Marshal(map[string]any{"version": 1, "url": server.URL, "credential": credential})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.SaveServer(t.Context(), server.URL); err != nil {
+	if err := os.WriteFile(path, descriptor, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Close(); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	tunnel, err := Open(ctx, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
-	}), Options{Credential: credential.String(), HTTPClient: server.Client(), StateDir: state})
-	if tunnel != nil || !errors.Is(err, context.DeadlineExceeded) || allocations.Load() != 1 || publishRuns.Load() < 1 ||
-		deletions.Load() != 1 || reads.Load() != 0 {
-		t.Fatalf("Open returned before ready or failed cleanup: tunnel=%v error=%v allocations=%d runs=%d deletes=%d unexpected=%d",
-			tunnel, err, allocations.Load(), publishRuns.Load(), deletions.Load(), reads.Load())
+	}), Options{PublisherEndpointFile: path, Limits: Limits{HTTP: WorkLimits{Total: 1}}})
+	if err != nil || tunnel.URL() != "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test" {
+		t.Fatalf("ad-hoc URL = %v, %v", tunnel, err)
+	}
+	mu.Lock()
+	target, id, owner, requests := registered.Target, registered.RegistrationID, registered.Owner, statusReads
+	mu.Unlock()
+	if requests < 2 || !strings.HasPrefix(id, "ivk_") || owner == "" || !strings.HasPrefix(target, "http://127.0.0.1:") {
+		t.Fatalf("native registration = %+v, status reads = %d", registered, requests)
+	}
+	response, err := (&http.Client{Timeout: time.Second}).Get(target)
+	if err != nil || response.StatusCode != http.StatusNoContent {
+		t.Fatalf("local listener = %v, %v", response, err)
+	}
+	response.Body.Close()
+	cancel()
+	if err := tunnel.Wait(); err != nil && err != context.Canceled {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	removed := unregistered
+	mu.Unlock()
+	if removed != 1 {
+		t.Fatalf("local publication unregistrations = %d, want one", removed)
 	}
 }

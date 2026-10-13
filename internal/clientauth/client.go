@@ -50,6 +50,9 @@ type Client struct {
 	Discovery      controlv1.ControlDiscovery
 	Control        *controlclient.Client
 	Authority      *authorityclient.Client
+	// publisher clients use the same trust roots without the human token source.
+	PublisherControl   *controlclient.Client
+	PublisherAuthority *authorityclient.Client
 }
 
 type control struct {
@@ -85,6 +88,20 @@ func Authenticate(ctx context.Context, config Config) (*Client, error) {
 	return authenticatedResult(resolved, source)
 }
 
+// PublisherClients reads public server discovery and uses the configured
+// transport without loading or attaching a human control session.
+func PublisherClients(ctx context.Context, endpoint string, httpClient *http.Client) (*Client, error) {
+	resolved, err := resolveControl(ctx, endpoint, httpClient)
+	if err != nil {
+		return nil, err
+	}
+	result := &Client{ServerEndpoint: resolved.serverEndpoint, Discovery: resolved.discovery}
+	if err := configurePublisherClients(resolved, result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func authenticatedResult(resolved control, source *tokenSource) (*Client, error) {
 	authenticatedHTTP := authenticatedClient(resolved.rawHTTP, source)
 	result := &Client{ServerEndpoint: resolved.serverEndpoint, Discovery: resolved.discovery}
@@ -97,7 +114,20 @@ func authenticatedResult(resolved control, source *tokenSource) (*Client, error)
 	if err != nil {
 		return nil, err
 	}
+	if err := configurePublisherClients(resolved, result); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+func configurePublisherClients(resolved control, result *Client) error {
+	var err error
+	result.PublisherControl, err = controlclient.New(resolved.serverEndpoint, resolved.rawHTTP, "")
+	if err != nil {
+		return err
+	}
+	result.PublisherAuthority, err = authorityclient.New(resolved.serverEndpoint, resolved.rawHTTP, "")
+	return err
 }
 
 func Logout(ctx context.Context, config Config) error {

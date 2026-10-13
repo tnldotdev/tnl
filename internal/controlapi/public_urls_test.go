@@ -13,9 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
-	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -206,9 +204,6 @@ func TestRouteMutationsDoNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
 		{http.MethodDelete, "", func(response http.ResponseWriter, request *http.Request) {
 			h.DeletePublicURL(response, request, "public_url_1")
 		}},
-		{http.MethodPost, "", func(response http.ResponseWriter, request *http.Request) {
-			h.CreatePublishRun(response, request, "public_url_1", controlv1.CreatePublishRunParams{})
-		}},
 	}
 	for _, test := range calls {
 		request := httptest.NewRequest(test.method, "/v1/public-urls/public_url_1", strings.NewReader(test.body))
@@ -231,100 +226,6 @@ func TestUpdateRouteMapsOpenSessionConflict(t *testing.T) {
 		if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"code":"publish_run_open"`) {
 			t.Fatalf("%v response = %d: %s", conflict, response.Code, response.Body.String())
 		}
-	}
-}
-
-func TestCreatePublishRunReturnsAuthoritativeRouteState(t *testing.T) {
-	expiresAt := time.Date(2026, 9, 5, 12, 2, 0, 0, time.UTC)
-	updatedAt := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
-	store := &publicURLMutationStoreStub{
-		route: controlstate.PublicURL{
-			ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
-			CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
-			PublicURLScope: controlstate.PublicURLScopeMember, LifecycleState: controlstate.PublicURLLifecycleEnabled,
-			MutationRevision: 4, AuthorizationPublishRunNumber: 7, Ephemeral: true,
-		},
-		postSessionPublicURL: &controlstate.PublicURL{
-			ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
-			CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
-			PublicURLScope: controlstate.PublicURLScopeMember, LifecycleState: controlstate.PublicURLLifecycleEnabled,
-			NextPublishRunNumber: 8, MutationRevision: 5, Ephemeral: true, ExpiresAt: &expiresAt,
-			OpenPublishRunID: "session_1", UpdatedAt: updatedAt,
-		},
-		sessionSetup: controlstate.PublishRunSetup{
-			PublishRunID: "session_1", PublicURLID: "public_url_1", TeamID: "team_1", MembershipID: "membership_1",
-			PublishRunNumber: 7, PolicyRevision: 9, PublishRunToken: credentials.PublishRunToken("session-token"),
-			State: controlstate.PublishRunStarting,
-		},
-	}
-	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
-		IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1",
-		ActingRole: "member", PublicURLMembershipID: "membership_1", PolicyRevision: 9,
-		DomainID: "domain_1", CanonicalHostname: "demo.example", PublicURLScope: "member", RetrySecret: [32]byte{1, 2, 3},
-		CertificatePlan: &authorization.CertificatePlan{
-			CacheKey: "member.example", Scope: "member.example", Identifiers: []string{"member.example", "*.member.example"},
-			ChallengeMethod: certificateidentity.ChallengeDNS01,
-		},
-	}}
-	h := &handler{config: Config{DNSAutomation: true}, store: store, authorizer: authorizer}
-	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", strings.NewReader(`{"traffic":{"connections":16,"rate":5,"rate_per":"2s","burst":9,"upload_bytes":2097152,"download_bytes":4194304}}`))
-	request.Header.Set("Authorization", "Bearer access-token")
-	request.Header.Set("Idempotency-Key", "session-idempotency")
-	response := httptest.NewRecorder()
-	h.CreatePublishRun(response, request, "public_url_1", controlv1.CreatePublishRunParams{})
-	if response.Code != http.StatusCreated {
-		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
-	}
-	var setup controlv1.PublishRunSetup
-	if err := json.Unmarshal(response.Body.Bytes(), &setup); err != nil {
-		t.Fatal(err)
-	}
-	if setup.PublicUrl.OpenPublishRunId == nil || *setup.PublicUrl.OpenPublishRunId != "session_1" ||
-		setup.PublicUrl.ExpiresAt == nil || !setup.PublicUrl.ExpiresAt.Equal(expiresAt) || !setup.PublicUrl.UpdatedAt.Equal(updatedAt) ||
-		setup.PublicUrl.NextPublishRunNumber != 8 || store.authorizationReads != 2 {
-		t.Fatalf("route = %#v, authorization reads = %d", setup.PublicUrl, store.authorizationReads)
-	}
-	if len(authorizer.requests) != 1 || authorizer.requests[0].AccessToken != "access-token" ||
-		authorizer.requests[0].Operation != authorization.OperationPublishRunCreate || authorizer.requests[0].PublicURLID != "public_url_1" ||
-		authorizer.requests[0].PublishRunNumber != 7 || authorizer.requests[0].PublicURLMutationRevision != 4 ||
-		store.sessionLookup != [2]string{"public_url_1", "session-idempotency"} || store.sessionRequest.IdempotencyKey != "session-idempotency" ||
-		store.sessionRequest.ExpectedMutationRevision != 4 || store.sessionRequest.ActingIdentityID != "identity_1" ||
-		store.sessionRequest.PolicyRevision != 9 || !reflect.DeepEqual(store.sessionRequest.RetrySecret, authorizer.decision.RetrySecret[:]) ||
-		store.sessionRequest.RequestDigest == ([32]byte{}) {
-		t.Fatalf("session authorization = %#v, store = %#v", authorizer, store)
-	}
-	selected := store.sessionRequest.Traffic
-	if selected == nil || selected.Connections != 16 || selected.Rate != 5 || selected.RatePer != 2*time.Second ||
-		selected.Burst != 9 || selected.UploadBytes != 2<<20 || selected.DownloadBytes != 4<<20 {
-		t.Fatalf("selected publish-run traffic = %+v", selected)
-	}
-	firstDigest := store.sessionRequest.RequestDigest
-	request = httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", strings.NewReader(`{"traffic":{"connections":17,"rate":5,"rate_per":"2s","burst":9,"upload_bytes":2097152,"download_bytes":4194304}}`))
-	request.Header.Set("Authorization", "Bearer access-token")
-	request.Header.Set("Idempotency-Key", "session-idempotency")
-	response = httptest.NewRecorder()
-	h.CreatePublishRun(response, request, "public_url_1", controlv1.CreatePublishRunParams{})
-	if response.Code != http.StatusCreated || firstDigest == store.sessionRequest.RequestDigest {
-		t.Fatalf("changed traffic reused the same idempotency digest: status=%d", response.Code)
-	}
-	request = httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", strings.NewReader(`{"traffic":{"connections":129}}`))
-	request.Header.Set("Authorization", "Bearer access-token")
-	response = httptest.NewRecorder()
-	h.CreatePublishRun(response, request, "public_url_1", controlv1.CreatePublishRunParams{})
-	if response.Code != http.StatusBadRequest || store.sessions != 2 {
-		t.Fatalf("above-ceiling traffic = %d, writes=%d", response.Code, store.sessions)
-	}
-}
-
-func TestCreatePublishRunRejectsUnconfiguredDNSPlan(t *testing.T) {
-	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1"}}
-	h := &handler{store: store, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{CertificatePlan: &authorization.CertificatePlan{ChallengeMethod: "dns-01"}}}}
-	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
-	request.Header.Set("Authorization", "Bearer access-token")
-	response := httptest.NewRecorder()
-	h.CreatePublishRun(response, request, "public_url_1", controlv1.CreatePublishRunParams{})
-	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "requires DNS-01 automation") {
-		t.Fatalf("unsupported plan = %d: %s", response.Code, response.Body.String())
 	}
 }
 
@@ -436,9 +337,6 @@ func publicURLMutationCalls() []publicURLMutationCall {
 	return []publicURLMutationCall{
 		{"update", func(h *handler, w http.ResponseWriter, r *http.Request) { h.UpdatePublicURL(w, r, "public_url_1") }},
 		{"delete", func(h *handler, w http.ResponseWriter, r *http.Request) { h.DeletePublicURL(w, r, "public_url_1") }},
-		{"session", func(h *handler, w http.ResponseWriter, r *http.Request) {
-			h.CreatePublishRun(w, r, "public_url_1", controlv1.CreatePublishRunParams{})
-		}},
 	}
 }
 

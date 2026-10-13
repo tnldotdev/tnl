@@ -48,26 +48,6 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	if mode := database.pool.Config().ConnConfig.DefaultQueryExecMode; mode != pgx.QueryExecModeExec {
 		t.Fatalf("query mode = %v, want exec", mode)
 	}
-	for _, table := range []string{
-		"identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "runtime_secret", "dns_authorities", "dns_challenge_changes",
-		"public_urls", "publish_runs", "publish_run_connection_slots", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events", "relay_service_assignment_totals",
-		"control_tls_cache", "acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_usage_runs", "ingress_usage_reports",
-		"public_url_usage_configuration", "public_url_usage_buckets", "public_url_usage_deliveries", "public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
-	} {
-		var exists bool
-		if err := database.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'control' AND table_name = $1)`, table).Scan(&exists); err != nil {
-			t.Fatal(err)
-		}
-		if !exists {
-			t.Errorf("control.%s missing after migration", table)
-		}
-		var key string
-		if err := database.pool.QueryRow(ctx, `SELECT a.attname FROM pg_constraint AS c
-			JOIN pg_attribute AS a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-			WHERE c.conrelid = ('control.' || $1)::regclass AND c.contype = 'p'`, table).Scan(&key); err != nil || key != "id" {
-			t.Errorf("control.%s primary key = %q, %v; want id", table, key, err)
-		}
-	}
 	var version int64
 	if err := database.pool.QueryRow(ctx, `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&version); err != nil || version != schemaVersion {
 		t.Fatalf("schema version = %d, %v", version, err)

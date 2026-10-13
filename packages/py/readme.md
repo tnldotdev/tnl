@@ -23,11 +23,11 @@ Define `web` as an app service in your project configuration. Uvicorn owns the
 listener; the serving worker registers its actual bound port after startup and
 unregisters before shutdown. The reloader does not publish from its parent.
 
-For a temporary public URL outside configured services, use the separate
-ad-hoc API. Run `tnl url credential create --ephemeral` after signing in, then
-set `TNL_CREDENTIAL` in your app environment. `async with tnl.open(app)` starts
-ASGI lifespan before publishing, waits for the URL to become routable, and
-removes it when the context exits.
+For a temporary public URL outside configured services, sign in to tnl and use
+`async with tnl.open(app)`. The native local publisher obtains a namespace grant
+for the selected project; the ASGI app only uses a scoped local HTTP credential.
+The context starts ASGI lifespan before publishing, waits for the URL to become
+routable, and removes it on exit.
 
 See the [Python ASGI guide](https://tnl.dev/docs/publish#publish-a-python-asgi-app)
 for FastAPI, visitor policy, limits, streaming, and WebSocket examples.

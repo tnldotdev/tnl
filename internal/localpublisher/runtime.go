@@ -33,6 +33,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisherauth"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -238,6 +239,40 @@ type appRuntime struct {
 	mu            sync.Mutex
 	prepareMu     sync.Mutex
 	prepared      map[string]appPreparation
+	ownersMu      sync.Mutex
+	owners        map[string]*publisherauth.Owner
+}
+
+func (a *appRuntime) publisherOwner(auth *clientauth.Client, teamID string) (*publisherauth.Owner, error) {
+	a.ownersMu.Lock()
+	defer a.ownersMu.Unlock()
+	if a.owners == nil {
+		a.owners = make(map[string]*publisherauth.Owner)
+	}
+	key := auth.ServerEndpoint + "\x00" + teamID
+	if owner := a.owners[key]; owner != nil {
+		return owner, nil
+	}
+	owner, err := publisherauth.Interactive(auth, "local-publisher")
+	if err == nil {
+		a.owners[key] = owner
+	}
+	return owner, err
+}
+
+func (a *appRuntime) closeOwners(ctx context.Context) error {
+	a.ownersMu.Lock()
+	owners := make([]*publisherauth.Owner, 0, len(a.owners))
+	for _, owner := range a.owners {
+		owners = append(owners, owner)
+	}
+	clear(a.owners)
+	a.ownersMu.Unlock()
+	var result error
+	for _, owner := range owners {
+		result = errors.Join(result, owner.Close(ctx))
+	}
+	return result
 }
 
 func authenticateRuntime(ctx context.Context, state *clientstate.Database, server string) (*clientauth.Client, error) {
@@ -279,7 +314,7 @@ func configuredRuntimeServices(project projectConfiguration) []clientruntime.Ser
 	return services
 }
 
-func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
+func runRuntimeServe(ctx context.Context, options runtimeOptions) (result error) {
 	// the app process starts this worker. when it exits, the other registered
 	// apps reconnect to a worker they own instead of relying on an orphan.
 	parentPID := os.Getppid()
@@ -305,6 +340,11 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	}
 	defer state.Close()
 	runtime := &appRuntime{project: project, state: state, noTelemetry: options.NoTelemetry, queueSDKReady: options.QueueSDKReady, prepared: map[string]appPreparation{}}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		result = errors.Join(result, runtime.closeOwners(closeCtx))
+	}()
 	runtime.manager, err = clientruntime.New(ctx, project.Root, root, configuredRuntimeServices(project), runtime.publish)
 	if err != nil {
 		return err
@@ -756,6 +796,11 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		return failure.Wrap("validate traffic limits", failure.InvalidTunnelFlags, err)
 	}
 	services.Traffic = traffic
+	owner, err := a.publisherOwner(services.Authenticated, services.TeamID)
+	if err != nil {
+		return err
+	}
+	services.RunControl = &publisherauth.RunControl{Client: services.Authenticated.PublisherControl, Owner: owner}
 	configuration := services.config(service.Target, preparation.policy.prefixes, flags.limits(), traffic)
 	configuration.ServiceProtocol = controlv1.PublicURLServiceProtocol(service.ServiceProtocol)
 	configuration.ResolveTarget = preparation.resolve
@@ -816,6 +861,11 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		if err != nil {
 			return err
 		}
+		oauthOwner, err := a.publisherOwner(oauthServices.Authenticated, oauthServices.TeamID)
+		if err != nil {
+			return err
+		}
+		oauthServices.RunControl = &publisherauth.RunControl{Client: oauthServices.Authenticated.PublisherControl, Owner: oauthOwner}
 		stop := startOAuthIntegrationURL(ctx, a.state, oauthServices, origin, tunnel, output, nil)
 		defer stop()
 		configuration.ObserveResponse = integrationurls.Observer(a.state, server, origin.Hostname, group, tunnel.ID())

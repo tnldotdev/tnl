@@ -331,10 +331,10 @@ func TestIntegrationFeedbackPolicyGuestDefaultAndMissingTeam(t *testing.T) {
 	if _, err := f.database.AllocateGuestDemoNumber(t.Context(), guest.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	secret, err := f.database.EnsureGuestPrincipal(t.Context(), guest.ID, f.now)
-	if err != nil {
+	if err := f.database.EnsureGuestIdentity(t.Context(), guest.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
+	secret := sha256.Sum256([]byte("guest feedback test run"))
 	publicURL, err := f.database.CreatePublicURL(t.Context(), CreatePublicURLRequest{
 		GuestID: guest.ID, TeamID: guest.TeamID, DomainID: domainID, MembershipID: guest.MembershipID, ActingIdentityID: guest.ID,
 		IdempotencyKey: "guest-policy", RequestDigest: sha256.Sum256([]byte("guest-policy")), CanonicalHostname: "demo-1." + guest.NamespaceLabel + ".guest-policy.example.test",

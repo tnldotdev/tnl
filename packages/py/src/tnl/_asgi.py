@@ -17,7 +17,6 @@ from starlette.types import ASGIApp
 
 from ._native import NativeRuntime
 from ._protocol import (
-    CredentialRequired,
     InvalidResponse,
     NativeUnavailable,
     RegistrationLost,
@@ -27,7 +26,6 @@ from ._protocol import (
 )
 
 _native = NativeRuntime()
-_credential = re.compile(r"tnl_eph_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}")
 _duration = re.compile(r"(?:(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:ns|us|µs|ms|s|m|h))+")
 _alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
@@ -86,7 +84,6 @@ class Tunnel:
         serve_task: asyncio.Task[None],
         listener: socket.socket,
         directory: str,
-        credential: str,
         server_url: str | None,
         allow_ip: Sequence[str] | None,
         allow_all_ips: bool,
@@ -109,7 +106,6 @@ class Tunnel:
             **self._registration,
             "pid": os.getpid(),
             "target": f"http://127.0.0.1:{listener.getsockname()[1]}",
-            "credential": credential,
             **(
                 {"telemetry_disabled": True}
                 if os.getenv("TNL_NO_TELEMETRY", "").lower() in {"1", "true"}
@@ -182,8 +178,8 @@ class Tunnel:
                 self._finished.set_result(None)
         elif status.state == "failed":
             code = (
-                "sdk.credential_rejected"
-                if status.failure_code == "runtime.credential_rejected"
+                "sdk.authentication_required"
+                if status.failure_code == "runtime.authentication_required"
                 else "sdk.publication_failed"
             )
             error = TnlError(code, "the ad-hoc public URL could not be published")
@@ -330,7 +326,6 @@ async def _start_asgi(app: ASGIApp) -> tuple[uvicorn.Server, asyncio.Task[None],
 async def open(
     app: ASGIApp,
     *,
-    credential: str | None = None,
     server: str | None = None,
     directory: str | Path | None = None,
     allow_ip: Sequence[str] | None = None,
@@ -340,11 +335,6 @@ async def open(
     """open an ASGI app after lifespan startup and close its URL on exit."""
     if not callable(app):
         raise TnlError("sdk.configuration_invalid", "an ASGI application is required")
-    selected = credential if credential is not None else os.environ.get("TNL_CREDENTIAL")
-    if selected is None or selected == "":
-        raise CredentialRequired()
-    if _credential.fullmatch(selected) is None:
-        raise TnlError("sdk.credential_rejected", "invalid ad-hoc credential")
     if allow_all_ips and allow_ip is not None:
         raise TnlError("sdk.configuration_invalid", "choose allow_ip or allow_all_ips")
     _limit_payload(limits)
@@ -356,7 +346,6 @@ async def open(
         task,
         listener,
         root,
-        selected,
         server,
         allow_ip,
         allow_all_ips,

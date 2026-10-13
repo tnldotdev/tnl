@@ -628,6 +628,60 @@ paths:
                 $ref: "#/components/schemas/IssuedPublisherEnrollment"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/publisher/public-url:
+    get:
+      operationId: getPublisherPublicURL
+      summary: Read the saved URL bound to one active publisher grant
+      security:
+        - publisherAccessAuth: []
+      responses:
+        "200":
+          description: Saved public URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicURL"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/guest-publisher/identity:
+    post:
+      operationId: registerGuestPublisherIdentity
+      summary: Register a guest-only signing key within one current demo trial
+      security:
+        - guestAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterGuestPublisherIdentityRequest"
+      responses:
+        "201":
+          description: Guest-only publisher identity and managed namespace grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestPublisherIdentity"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publisher-identities:
+    get:
+      operationId: listPublisherIdentities
+      summary: List publisher identities and their separate grants in one team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamIDQuery"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One bounded page of publisher identities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublisherIdentityPage"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/publisher-identities/{publisher_identity_id}:
     delete:
       operationId: revokePublisherIdentity
@@ -752,13 +806,12 @@ paths:
       operationId: createPublishRun
       summary: Create a publish run and allocate its publish run number
       security:
-        - bearerAuth: []
-        - publicURLPublishAuth: []
+        - publisherAccessAuth: []
       parameters:
         - $ref: "#/components/parameters/PublicURLID"
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
@@ -772,150 +825,12 @@ paths:
                 $ref: "#/components/schemas/PublishRunSetup"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/public-urls/{public_url_id}/publish-credentials:
-    post:
-      operationId: createPublicURLPublishCredential
-      summary: Issue one public URL-scoped publish credential
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/PublicURLID"
-      requestBody:
-        description: Optional control-calculated credential lifetime; defaults to 90 days
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreatePublicURLPublishCredentialRequest"
-      responses:
-        "201":
-          description: One-time credential and its public metadata
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IssuedPublicURLPublishCredential"
-        default:
-          $ref: "#/components/responses/Problem"
-    get:
-      operationId: listPublicURLPublishCredentials
-      summary: List credentials issued for a public URL
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/PublicURLID"
-      responses:
-        "200":
-          description: Credential metadata for this public URL
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [credentials]
-                properties:
-                  credentials:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/PublicURLPublishCredential"
-        default:
-          $ref: "#/components/responses/Problem"
-  /v1/public-urls/{public_url_id}/publish-credentials/{credential_id}:
-    delete:
-      operationId: revokePublicURLPublishCredential
-      summary: Revoke one public URL publish credential
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/PublicURLID"
-        - name: credential_id
-          in: path
-          required: true
-          schema:
-            $ref: "#/components/schemas/ResourceID"
-      responses:
-        "204":
-          description: Credential revoked; active run will close on heartbeat
-        default:
-          $ref: "#/components/responses/Problem"
-  /v1/publish-credentials/current:
-    get:
-      operationId: getPublicURLForPublishCredential
-      summary: Read the one public URL bound to this publish credential
-      security:
-        - publicURLPublishAuth: []
-      responses:
-        "200":
-          description: Bound public URL
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PublicURL"
-        default:
-          $ref: "#/components/responses/Problem"
-  /v1/publish-credentials:
-    post:
-      operationId: createEphemeralPublishCredential
-      summary: Issue a credential for ad-hoc public URLs in one namespace
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateEphemeralPublishCredentialRequest"
-      responses:
-        "201":
-          description: One-time credential and its authorized namespace
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IssuedEphemeralPublishCredential"
-        default:
-          $ref: "#/components/responses/Problem"
-    get:
-      operationId: listTeamPublicURLPublishCredentials
-      summary: List publish credentials in the selected team without secrets
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/TeamIDQuery"
-        - $ref: "#/components/parameters/Cursor"
-      responses:
-        "200":
-          description: Page of public URL publish credentials
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PublicURLPublishCredentialPage"
-        default:
-          $ref: "#/components/responses/Problem"
-  /v1/publish-credentials/{credential_id}:
-    delete:
-      operationId: revokePublishCredentialByID
-      summary: Revoke a publish credential by its globally unique ID
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: credential_id
-          in: path
-          required: true
-          schema:
-            $ref: "#/components/schemas/ResourceID"
-        - $ref: "#/components/parameters/TeamIDQuery"
-      responses:
-        "200":
-          description: Revoked credential metadata
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PublicURLPublishCredential"
-        default:
-          $ref: "#/components/responses/Problem"
   /v1/ephemeral-public-urls:
     post:
       operationId: allocateEphemeralPublicURL
       summary: Create a temporary public URL for one ad-hoc publication
       security:
-        - bearerAuth: []
+        - publisherAccessAuth: []
       requestBody:
         required: true
         content:
@@ -934,9 +849,9 @@ paths:
   /v1/ephemeral-public-urls/{public_url_id}:
     delete:
       operationId: deleteEphemeralPublicURL
-      summary: Remove a temporary public URL owned by an ad-hoc credential
+      summary: Remove a temporary public URL owned by the publisher's namespace grant
       security:
-        - bearerAuth: []
+        - publisherAccessAuth: []
       parameters:
         - $ref: "#/components/parameters/PublicURLID"
       responses:
@@ -1391,10 +1306,14 @@ components:
       type: http
       scheme: bearer
       bearerFormat: tnl publish-run token
-    publicURLPublishAuth:
+    publisherAccessAuth:
       type: http
       scheme: bearer
-      bearerFormat: tnl public URL publish credential
+      bearerFormat: scoped publisher access token
+    guestAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: guest trial access token
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -1494,6 +1413,93 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    PublisherIdentityPage:
+      type: object
+      additionalProperties: false
+      required: [identities]
+      properties:
+        identities:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublisherIdentitySummary"
+        next_cursor:
+          $ref: "#/components/schemas/ResourceID"
+    PublisherIdentitySummary:
+      type: object
+      additionalProperties: false
+      required: [id, name, kind, team_id, created_at, grants]
+      properties:
+        id:
+          $ref: "#/components/schemas/ResourceID"
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [installed, run, automation, guest]
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        created_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+        grants:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublisherGrantSummary"
+    PublisherGrantSummary:
+      type: object
+      additionalProperties: false
+      required: [id, kind, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ResourceID"
+        kind:
+          type: string
+          enum: [saved_url, namespace]
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        public_url:
+          type: string
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        namespace:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+    RegisterGuestPublisherIdentityRequest:
+      type: object
+      additionalProperties: false
+      required: [public_key]
+      properties:
+        public_key:
+          type: string
+          description: Base64url-encoded Ed25519 public key, without padding.
+    GuestPublisherIdentity:
+      type: object
+      additionalProperties: false
+      required: [client_id, key_id, grant_id, team_id, domain_id, namespace]
+      properties:
+        client_id:
+          $ref: "#/components/schemas/ResourceID"
+        key_id:
+          $ref: "#/components/schemas/ResourceID"
+        grant_id:
+          $ref: "#/components/schemas/ResourceID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        namespace:
+          type: string
     CreatePublisherGrantRequest:
       type: object
       additionalProperties: false
@@ -1544,7 +1550,7 @@ components:
           maxLength: 32
         kind:
           type: string
-          enum: [installed, automation]
+          enum: [installed, automation, run]
         public_url_id:
           $ref: "#/components/schemas/PublicURLID"
         domain_id:
@@ -1920,73 +1926,6 @@ components:
         updated_at:
           type: string
           format: date-time
-    PublicURLPublishCredential:
-      type: object
-      additionalProperties: false
-      required: [id, kind, created_at, expires_at]
-      properties:
-        id:
-          $ref: "#/components/schemas/ResourceID"
-        kind:
-          type: string
-          enum: [saved_url, ephemeral]
-        public_url_id:
-          $ref: "#/components/schemas/PublicURLID"
-        public_url:
-          type: string
-          format: uri
-          pattern: "^https://"
-        team_id:
-          $ref: "#/components/schemas/TeamID"
-        domain_id:
-          $ref: "#/components/schemas/DomainID"
-        namespace:
-          type: string
-        created_at:
-          type: string
-          format: date-time
-        expires_at:
-          type: string
-          format: date-time
-        revoked_at:
-          type: string
-          format: date-time
-    PublicURLPublishCredentialPage:
-      type: object
-      additionalProperties: false
-      required: [credentials]
-      properties:
-        credentials:
-          type: array
-          items:
-            $ref: "#/components/schemas/PublicURLPublishCredential"
-        next_cursor:
-          $ref: "#/components/schemas/ResourceID"
-    CreatePublicURLPublishCredentialRequest:
-      type: object
-      additionalProperties: false
-      properties:
-        expires_in_seconds:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 7776000
-    CreateEphemeralPublishCredentialRequest:
-      type: object
-      additionalProperties: false
-      required: [team_id, domain_id, public_url_scope]
-      properties:
-        team_id:
-          $ref: "#/components/schemas/TeamID"
-        domain_id:
-          $ref: "#/components/schemas/DomainID"
-        public_url_scope:
-          $ref: "#/components/schemas/PublicURLScope"
-        expires_in_seconds:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 7776000
     AllocateEphemeralPublicURLRequest:
       type: object
       additionalProperties: false
@@ -2033,7 +1972,13 @@ components:
     CreatePublishRunRequest:
       type: object
       additionalProperties: false
+      required: [publisher_proof]
       properties:
+        publisher_proof:
+          type: string
+          minLength: 86
+          maxLength: 86
+          description: Ed25519 signature binding this URL and idempotency key to the registered publisher key.
         traffic:
           $ref: "#/components/schemas/PublishRunTrafficSelection"
     PublishRunTrafficSelection:
@@ -2057,49 +2002,6 @@ components:
         burst: { type: integer, minimum: 1 }
         upload_bytes: { type: integer, format: int64, minimum: 65536 }
         download_bytes: { type: integer, format: int64, minimum: 65536 }
-    IssuedEphemeralPublishCredential:
-      type: object
-      additionalProperties: false
-      required: [id, kind, team_id, domain_id, namespace, created_at, expires_at, credential]
-      properties:
-        id:
-          $ref: "#/components/schemas/ResourceID"
-        kind:
-          type: string
-          enum: [ephemeral]
-        team_id:
-          $ref: "#/components/schemas/TeamID"
-        domain_id:
-          $ref: "#/components/schemas/DomainID"
-        namespace:
-          type: string
-        created_at:
-          type: string
-          format: date-time
-        expires_at:
-          type: string
-          format: date-time
-        credential:
-          type: string
-          writeOnly: true
-    IssuedPublicURLPublishCredential:
-      type: object
-      additionalProperties: false
-      required: [id, public_url_id, created_at, expires_at, credential]
-      properties:
-        id:
-          $ref: "#/components/schemas/ResourceID"
-        public_url_id:
-          $ref: "#/components/schemas/PublicURLID"
-        created_at:
-          type: string
-          format: date-time
-        expires_at:
-          type: string
-          format: date-time
-        credential:
-          type: string
-          minLength: 1
     PublicURLPage:
       type: object
       additionalProperties: false

@@ -13,6 +13,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
@@ -20,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/localpublisher"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisherauth"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -33,7 +35,7 @@ type publishCommand struct {
 	TargetTLS             bool   `name:"target-tls" env:"TNL_TARGET_TLS" help:"Use verified TLS for the TCP target."`
 	VisitorTLSPassthrough bool   `name:"visitor-tls-passthrough" help:"Pass database visitor TLS to the private target; the client verifies its certificate and tnl cannot inspect it."`
 	visitorTLSFromCLI     bool
-	PublishCredential     string            `name:"credential" env:"TNL_CREDENTIAL" help:"Credential for publishing one saved public URL without a control session."`
+	EnrollKey             string            `name:"enroll-key" env:"TNL_ENROLL_KEY" help:"Redeem a one-use publisher enrollment key on this machine; pass - to read stdin."`
 	Output                publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 	Demo                  bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
@@ -54,7 +56,7 @@ type dockerPublishTarget struct {
 }
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
-	if flags.Service != "" && flags.PublishCredential == "" {
+	if flags.Service != "" && flags.EnrollKey == "" {
 		if target := flags.project.Config.Services[flags.Service].Target; target != nil && target.Type != "app" {
 			if invocation, ok := optionalTelemetryReporter(reporters).(*telemetryInvocation); ok {
 				invocation.SetEntryMode(telemetryNamed)
@@ -78,11 +80,8 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	output.setInspectionMode(flags.InspectionMode)
 	defer func() { result = output.finish(ctx, result) }()
-	if flags.PublishCredential != "" {
-		if flags.Demo {
-			return failure.Wrap("validate demo options", failure.InvalidTunnelFlags, errors.New("a public URL publish credential cannot be used with --demo"))
-		}
-		return runScopedPublish(ctx, flags, output, telemetry)
+	if flags.EnrollKey != "" {
+		return runEnrolledPublish(ctx, flags, output, telemetry, os.Stdin)
 	}
 	protocol, err := publishProtocol(flags.Protocol)
 	if err != nil {
@@ -209,6 +208,27 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
+	var mainOwner *publisherauth.Owner
+	if guest != nil {
+		mainOwner, err = publisherauth.Guest(ctx, authenticated, credentials.AccessToken(guest.AccessToken))
+		if err != nil {
+			return err
+		}
+		services.RunControl = &publisherauth.RunControl{Client: authenticated.PublisherControl, Owner: mainOwner}
+	} else {
+		mainOwner, err = publisherauth.Interactive(authenticated, "local-publisher")
+		if err != nil {
+			return err
+		}
+		services.RunControl = &publisherauth.RunControl{Client: authenticated.PublisherControl, Owner: mainOwner}
+	}
+	if mainOwner != nil {
+		defer func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			result = errors.Join(result, mainOwner.Close(closeCtx))
+		}()
+	}
 	integrationGroup := ""
 	if protocol == controlv1.Http && !flags.Demo && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
 		if flags.project.Root == "" {
@@ -233,6 +253,19 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		if resolveErr != nil {
 			return resolveErr
 		}
+		oauthOwner := mainOwner
+		if oauthServices.TeamID != services.TeamID {
+			oauthOwner, err = publisherauth.Interactive(oauthServices.Authenticated, "local-publisher")
+			if err != nil {
+				return err
+			}
+			defer func() {
+				closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				result = errors.Join(result, oauthOwner.Close(closeCtx))
+			}()
+		}
+		oauthServices.RunControl = &publisherauth.RunControl{Client: oauthServices.Authenticated.PublisherControl, Owner: oauthOwner}
 		stopCallbacks := startOAuthIntegrationURL(ctx, state, oauthServices, oauth, tunnel, output, telemetry)
 		defer stopCallbacks()
 		oauthHostname = oauth.Hostname

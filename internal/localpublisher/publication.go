@@ -37,10 +37,40 @@ type Services struct {
 	PolicyRevision        uint64
 	Ephemeral             bool
 	Routes                *controlclient.Client
+	RunControl            publisher.PublicURLControlClient
 	Traffic               trafficlimits.Selection
 }
 
 type publisherServices = Services
+
+// EnrolledServices selects only the saved URL returned under a current
+// publisher grant; it does not load a human session or mutable team settings.
+func EnrolledServices(ctx context.Context, state *clientstate.Database, auth *clientauth.Client, route controlv1.PublicURL) (Services, error) {
+	if auth == nil || auth.PublisherControl == nil || route.Ephemeral || route.LifecycleState != controlv1.Enabled ||
+		route.TeamId == "" || route.DomainId == "" || route.PolicyRevision <= 0 {
+		return Services{}, ErrEnrolledPublicURL
+	}
+	profile, err := state.Server(ctx, auth.ServerEndpoint)
+	if err != nil {
+		return Services{}, err
+	}
+	namespace := route.CanonicalHostname
+	if index := strings.IndexByte(namespace, '.'); index != -1 {
+		namespace = namespace[index+1:]
+	}
+	services := Services{
+		Authenticated: auth, State: profile, Hostname: route.CanonicalHostname,
+		Namespace: namespace, TeamID: route.TeamId, DomainID: route.DomainId,
+		PublicURLScope: route.PublicUrlScope, PolicyRevision: uint64(route.PolicyRevision),
+		Routes: auth.PublisherControl,
+	}
+	if route.MembershipId != nil {
+		services.MembershipID = *route.MembershipId
+	}
+	return services, nil
+}
+
+var ErrEnrolledPublicURL = errors.New("publisher grant did not return an enabled saved public URL")
 
 type clientIPLookup interface {
 	ClientIP(context.Context) (controlv1.ClientIPResponse, error)
@@ -323,6 +353,9 @@ func (p Services) config(target string, allowedIPPrefixes []string, limits publi
 		State:             p.State,
 		QUICConnector:     muxsession.QUICConnector{TLSConfig: relayTransportTLS},
 		TCPConnector:      muxsession.TLSYamuxConnector{TLSConfig: relayTransportTLS},
+	}
+	if p.RunControl != nil {
+		result.Control = p.RunControl
 	}
 	if len(traffic) != 0 {
 		result.Traffic = traffic[0]

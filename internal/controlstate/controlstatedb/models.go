@@ -228,12 +228,6 @@ type ControlEmailDelivery struct {
 	LastStatus        int32
 }
 
-type ControlEphemeralPublicUrlAllocation struct {
-	PublicURLID  string
-	CredentialID string
-	InvocationID string
-}
-
 type ControlFeedbackEvent struct {
 	Cursor            int64
 	SchemaVersion     int16
@@ -289,6 +283,12 @@ type ControlGuestPublicUrl struct {
 	PublicURLID string
 	GuestID     string
 	CreatedAt   pgtype.Timestamptz
+}
+
+type ControlGuestPublisherIdentity struct {
+	PublisherIdentityID string
+	GuestID             string
+	CreatedAt           pgtype.Timestamptz
 }
 
 type ControlGuestTrial struct {
@@ -521,29 +521,6 @@ type ControlPublicUrl struct {
 	PublicPort                  pgtype.Int4
 }
 
-type ControlPublicUrlPublishCredential struct {
-	ID                         string
-	PublicURLID                pgtype.Text
-	TokenID                    string
-	TokenDigest                []byte
-	IssuedByIdentityID         string
-	MembershipID               string
-	PolicyRevision             int64
-	Target                     string
-	CertificateCacheKey        string
-	CertificateScope           string
-	CertificateIdentifiers     []string
-	CertificateChallengeMethod string
-	CreatedAt                  pgtype.Timestamptz
-	ExpiresAt                  pgtype.Timestamptz
-	RevokedAt                  pgtype.Timestamptz
-	Kind                       string
-	TeamID                     pgtype.Text
-	DomainID                   pgtype.Text
-	Namespace                  pgtype.Text
-	IssuedRole                 pgtype.Text
-}
-
 type ControlPublicUrlRecoveryEpisode struct {
 	ID               int64
 	PublicURLID      string
@@ -681,12 +658,6 @@ type ControlPublishRunConnectionSlot struct {
 	SessionOpen                            bool
 }
 
-type ControlPublishRunPublishCredential struct {
-	PublishRunID string
-	PublicURLID  string
-	CredentialID string
-}
-
 type ControlPublishRunPublisherIdentity struct {
 	PublishRunID        string
 	PublicURLID         string
@@ -766,6 +737,14 @@ type ControlPublisherIdentityKey struct {
 	RetiredAt           pgtype.Timestamptz
 }
 
+type ControlPublisherNamespaceAllocation struct {
+	PublicURLID         string
+	PublisherIdentityID string
+	PublisherGrantID    string
+	InvocationID        string
+	CreatedAt           pgtype.Timestamptz
+}
+
 type ControlRelayCertificateOrder struct {
 	ID                     string
 	AccountID              string
@@ -840,13 +819,6 @@ type ControlRelayServiceAssignmentTotal struct {
 	ID              int64
 	RelayServiceID  string
 	AssignmentCount int64
-}
-
-type ControlRuntimeSecret struct {
-	ID                              int16
-	GuestRetryMasterKeyCiphertext   []byte
-	GuestRetryMasterKeyStorageKeyID string
-	CreatedAt                       pgtype.Timestamptz
 }
 
 type ControlShare struct {

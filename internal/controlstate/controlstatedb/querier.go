@@ -26,7 +26,6 @@ type Querier interface {
 	// delta, and update denials atomically. reject any missing required step and
 	// roll back the whole page.
 	ApplyIngressUsageReport(ctx context.Context, arg ApplyIngressUsageReportParams) (ApplyIngressUsageReportRow, error)
-	AttachPublishRunCredential(ctx context.Context, arg AttachPublishRunCredentialParams) (int64, error)
 	AttachPublishRunIdentity(ctx context.Context, arg AttachPublishRunIdentityParams) (int64, error)
 	BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayDrainParams) (BeginAdminRelayDrainRow, error)
 	BeginDNSAuthorityRelease(ctx context.Context, arg BeginDNSAuthorityReleaseParams) (ControlDnsAuthority, error)
@@ -107,7 +106,6 @@ type Querier interface {
 	EnablePublishRunShareAccess(ctx context.Context, arg EnablePublishRunShareAccessParams) (string, error)
 	EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountParams) (ControlAcmeAccount, error)
 	EnsureGuestPrincipal(ctx context.Context, arg EnsureGuestPrincipalParams) (ControlIdentity, error)
-	EnsureGuestRetryMasterKey(ctx context.Context, arg EnsureGuestRetryMasterKeyParams) (EnsureGuestRetryMasterKeyRow, error)
 	EnsureIngressUsageRun(ctx context.Context, arg EnsureIngressUsageRunParams) (ControlIngressUsageRun, error)
 	EnsurePublicURLUsageConfiguration(ctx context.Context, arg EnsurePublicURLUsageConfigurationParams) (ControlPublicUrlUsageConfiguration, error)
 	ExpirePublisherConnection(ctx context.Context, arg ExpirePublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
@@ -142,11 +140,11 @@ type Querier interface {
 	GetDNSAuthorityByReleaseIdempotency(ctx context.Context, releaseIdempotencyKey pgtype.Text) (ControlDnsAuthority, error)
 	GetDNSChallengeChange(ctx context.Context, arg GetDNSChallengeChangeParams) (GetDNSChallengeChangeRow, error)
 	GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error)
-	GetEphemeralPublicURLAllocation(ctx context.Context, publicUrlID string) (ControlEphemeralPublicUrlAllocation, error)
 	// one idempotency key cannot create events under different authors.
 	GetFeedbackEventByKey(ctx context.Context, arg GetFeedbackEventByKeyParams) (ControlFeedbackEvent, error)
 	GetFeedbackPublicURL(ctx context.Context, id string) (ControlPublicUrl, error)
 	GetFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error)
+	GetGuestPublisherTrial(ctx context.Context, publisherIdentityID string) (GetGuestPublisherTrialRow, error)
 	GetGuestTrialByCredentialID(ctx context.Context, credentialID pgtype.Text) (ControlGuestTrial, error)
 	GetGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error)
 	GetHeldTCPPortClaim(ctx context.Context, publicUrlID string) (ControlTcpPortClaim, error)
@@ -165,14 +163,11 @@ type Querier interface {
 	GetPublicURLByCreatorIdempotency(ctx context.Context, arg GetPublicURLByCreatorIdempotencyParams) (GetPublicURLByCreatorIdempotencyRow, error)
 	GetPublicURLCreationContext(ctx context.Context, arg GetPublicURLCreationContextParams) (GetPublicURLCreationContextRow, error)
 	GetPublicURLForAuthorizationData(ctx context.Context, arg GetPublicURLForAuthorizationDataParams) (GetPublicURLForAuthorizationDataRow, error)
-	GetPublicURLPublishCredentialByID(ctx context.Context, id string) (ControlPublicUrlPublishCredential, error)
-	GetPublicURLPublishCredentialByTokenID(ctx context.Context, tokenID string) (ControlPublicUrlPublishCredential, error)
 	GetPublicURLUsageBucketByID(ctx context.Context, bucketID int64) (ControlPublicUrlUsageBucket, error)
 	GetPublicURLUsageBucketForUpdate(ctx context.Context, arg GetPublicURLUsageBucketForUpdateParams) (ControlPublicUrlUsageBucket, error)
 	GetPublishRun(ctx context.Context, publishRunID string) (ControlPublishRun, error)
 	GetPublishRunByIdempotency(ctx context.Context, arg GetPublishRunByIdempotencyParams) (ControlPublishRun, error)
 	GetPublishRunByTokenID(ctx context.Context, publishRunTokenID string) (ControlPublishRun, error)
-	GetPublishRunCredentialState(ctx context.Context, publishRunID string) (GetPublishRunCredentialStateRow, error)
 	GetPublishRunPublisherIdentity(ctx context.Context, publishRunID string) (GetPublishRunPublisherIdentityRow, error)
 	GetPublishRunTrafficLimits(ctx context.Context, publishRunID string) ([]byte, error)
 	GetPublisherAccessToken(ctx context.Context, digest []byte) (GetPublisherAccessTokenRow, error)
@@ -180,7 +175,9 @@ type Querier interface {
 	GetPublisherGrantURL(ctx context.Context, publicUrlID string) (GetPublisherGrantURLRow, error)
 	GetPublisherIdentityGrant(ctx context.Context, arg GetPublisherIdentityGrantParams) (GetPublisherIdentityGrantRow, error)
 	GetPublisherIdentityKey(ctx context.Context, arg GetPublisherIdentityKeyParams) (GetPublisherIdentityKeyRow, error)
-	GetReadyEphemeralCredentialDomain(ctx context.Context, arg GetReadyEphemeralCredentialDomainParams) (GetReadyEphemeralCredentialDomainRow, error)
+	GetPublisherNamespaceAllocation(ctx context.Context, publicUrlID string) (GetPublisherNamespaceAllocationRow, error)
+	GetPublisherNamespaceContext(ctx context.Context, arg GetPublisherNamespaceContextParams) (GetPublisherNamespaceContextRow, error)
+	GetReadyPublisherDomain(ctx context.Context, arg GetReadyPublisherDomainParams) (GetReadyPublisherDomainRow, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)
 	// claims and readiness share the relay-service guard across processes.
 	// claims take NO KEY UPDATE on the selected lease to serialize capacity with
@@ -211,8 +208,6 @@ type Querier interface {
 	InsertBrowserAccessSession(ctx context.Context, arg InsertBrowserAccessSessionParams) error
 	InsertBrowserLoginAttempt(ctx context.Context, arg InsertBrowserLoginAttemptParams) error
 	InsertCertificateIssuanceAuditEvent(ctx context.Context, arg InsertCertificateIssuanceAuditEventParams) error
-	InsertEphemeralPublicURLAllocation(ctx context.Context, arg InsertEphemeralPublicURLAllocationParams) (int64, error)
-	InsertEphemeralPublishCredential(ctx context.Context, arg InsertEphemeralPublishCredentialParams) (ControlPublicUrlPublishCredential, error)
 	InsertExpiredEphemeralPublicURLDeleteAuditEvent(ctx context.Context, arg InsertExpiredEphemeralPublicURLDeleteAuditEventParams) error
 	InsertFeedbackEvent(ctx context.Context, arg InsertFeedbackEventParams) (ControlFeedbackEvent, error)
 	// take the routing clock before allocating the revision in this command.
@@ -220,12 +215,12 @@ type Querier interface {
 	// already hold the clock. keep it through commit to preserve revision order.
 	InsertFinalIngressRoutingTableEvent(ctx context.Context, arg InsertFinalIngressRoutingTableEventParams) (int64, error)
 	InsertGuestPublicURL(ctx context.Context, arg InsertGuestPublicURLParams) error
+	InsertGuestPublisherIdentity(ctx context.Context, arg InsertGuestPublisherIdentityParams) error
 	InsertGuestTrial(ctx context.Context, arg InsertGuestTrialParams) (ControlGuestTrial, error)
 	InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error)
 	InsertPublicURL(ctx context.Context, arg InsertPublicURLParams) (ControlPublicUrl, error)
 	InsertPublicURLCreateAuditEvent(ctx context.Context, arg InsertPublicURLCreateAuditEventParams) error
 	InsertPublicURLDeleteAuditEvent(ctx context.Context, arg InsertPublicURLDeleteAuditEventParams) error
-	InsertPublicURLPublishCredential(ctx context.Context, arg InsertPublicURLPublishCredentialParams) (ControlPublicUrlPublishCredential, error)
 	InsertPublicURLUpdateAuditEvent(ctx context.Context, arg InsertPublicURLUpdateAuditEventParams) error
 	InsertPublicURLUsageDelivery(ctx context.Context, arg InsertPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	InsertPublishRun(ctx context.Context, arg InsertPublishRunParams) (ControlPublishRun, error)
@@ -236,6 +231,7 @@ type Querier interface {
 	InsertPublisherIdentity(ctx context.Context, arg InsertPublisherIdentityParams) (ControlPublisherIdentity, error)
 	InsertPublisherIdentityGrant(ctx context.Context, arg InsertPublisherIdentityGrantParams) (ControlPublisherIdentityGrant, error)
 	InsertPublisherIdentityKey(ctx context.Context, arg InsertPublisherIdentityKeyParams) (ControlPublisherIdentityKey, error)
+	InsertPublisherNamespaceAllocation(ctx context.Context, arg InsertPublisherNamespaceAllocationParams) (int64, error)
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
 	InsertShareCookie(ctx context.Context, arg InsertShareCookieParams) ([]byte, error)
 	InsertShareHandoff(ctx context.Context, arg InsertShareHandoffParams) ([]byte, error)
@@ -265,8 +261,8 @@ type Querier interface {
 	ListLatestIngressUsageReports(ctx context.Context, arg ListLatestIngressUsageReportsParams) ([]ListLatestIngressUsageReportsRow, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
-	ListPublicURLPublishCredentials(ctx context.Context, publicUrlID pgtype.Text) ([]ControlPublicUrlPublishCredential, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
+	ListPublisherGrantsForIdentities(ctx context.Context, publisherIdentityIds []string) ([]ListPublisherGrantsForIdentitiesRow, error)
 	ListPublisherIdentityManagementGrants(ctx context.Context, arg ListPublisherIdentityManagementGrantsParams) ([]ListPublisherIdentityManagementGrantsRow, error)
 	ListReadyPreviewBrowserHostnames(ctx context.Context, arg ListReadyPreviewBrowserHostnamesParams) ([]ListReadyPreviewBrowserHostnamesRow, error)
 	ListReadyShareHostnames(ctx context.Context, arg ListReadyShareHostnamesParams) ([]ListReadyShareHostnamesRow, error)
@@ -278,7 +274,7 @@ type Querier interface {
 	ListTeamInvitations(ctx context.Context, teamID string) ([]ListTeamInvitationsRow, error)
 	ListTeamMembershipContexts(ctx context.Context, arg ListTeamMembershipContextsParams) ([]ListTeamMembershipContextsRow, error)
 	ListTeamNamespaceLabels(ctx context.Context, teamID string) ([]ListTeamNamespaceLabelsRow, error)
-	ListTeamPublicURLPublishCredentials(ctx context.Context, arg ListTeamPublicURLPublishCredentialsParams) ([]ListTeamPublicURLPublishCredentialsRow, error)
+	ListTeamPublisherIdentities(ctx context.Context, arg ListTeamPublisherIdentitiesParams) ([]ListTeamPublisherIdentitiesRow, error)
 	ListTeamShares(ctx context.Context, arg ListTeamSharesParams) ([]ControlShare, error)
 	ListValidReadyPublisherConnections(ctx context.Context, arg ListValidReadyPublisherConnectionsParams) ([]ListValidReadyPublisherConnectionsRow, error)
 	LockACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)
@@ -416,8 +412,6 @@ type Querier interface {
 	ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (string, error)
 	RevokeBrowserAccessSession(ctx context.Context, arg RevokeBrowserAccessSessionParams) error
 	RevokeControlSession(ctx context.Context, arg RevokeControlSessionParams) (int64, error)
-	RevokeEphemeralPublishCredential(ctx context.Context, arg RevokeEphemeralPublishCredentialParams) (ControlPublicUrlPublishCredential, error)
-	RevokePublicURLPublishCredential(ctx context.Context, arg RevokePublicURLPublishCredentialParams) (ControlPublicUrlPublishCredential, error)
 	RevokePublisherIdentity(ctx context.Context, arg RevokePublisherIdentityParams) (ControlPublisherIdentity, error)
 	RevokePublisherIdentityGrant(ctx context.Context, arg RevokePublisherIdentityGrantParams) (int64, error)
 	RevokeShare(ctx context.Context, arg RevokeShareParams) (ControlShare, error)

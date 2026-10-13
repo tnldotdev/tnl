@@ -44,6 +44,7 @@ type cli struct {
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
+	Publisher   publisherCommand `cmd:"" help:"Enroll and manage native publishers." group:"manage"`
 	Share       shareCommand     `cmd:"" help:"Manage preview shares." group:"manage"`
 	Feedback    feedbackCommand  `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
 	Webhook     webhookCommand   `cmd:"" help:"Choose a receiver for a selected webhook." group:"manage"`
@@ -597,12 +598,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
 	case "url delete <public-url-id>":
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
-	case "url credential create <service-or-public-url-id>":
-		return runURLCredentialCreate(ctx, flags.URL.Credential.Create, project, stdout, stderr)
-	case "url credential list <public-url-id>":
-		return runURLCredentialList(ctx, flags.URL.Credential.List, stdout, stderr)
-	case "url credential revoke <credential-id>":
-		return runURLCredentialRevoke(ctx, flags.URL.Credential.Revoke, stdout, stderr)
+	case "publisher enroll <service-or-public-url-id>":
+		return runPublisherEnroll(ctx, flags.Publisher.Enroll, project, stdout, stderr)
+	case "publisher list":
+		return runPublisherList(ctx, flags.Publisher.List, stdout, stderr)
+	case "publisher revoke <publisher-id>":
+		return runPublisherRevoke(ctx, flags.Publisher.Revoke, stdout, stderr)
+	case "publisher grant add <publisher-id> <public-url-id>":
+		return runPublisherGrantAdd(ctx, flags.Publisher.Grant.Add, stdout, stderr)
+	case "publisher grant revoke <publisher-id> <grant-id>":
+		return runPublisherGrantRevoke(ctx, flags.Publisher.Grant.Revoke, stdout, stderr)
 	case "share link create <url>":
 		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
 	case "share list <url>":
@@ -688,10 +693,10 @@ func canonicalParsedCommand(command string) string {
 		return "auth login"
 	case "publish":
 		return "publish <service-or-target>"
-	case "url credential create":
-		return "url credential create <service-or-public-url-id>"
-	case "url credential list":
-		return "url credential list <public-url-id>"
+	case "publisher enroll":
+		return "publisher enroll <service-or-public-url-id>"
+	case "publisher grant add <publisher-id>":
+		return "publisher grant add <publisher-id> <public-url-id>"
 	case "share link create":
 		return "share link create <url>"
 	case "share team create":

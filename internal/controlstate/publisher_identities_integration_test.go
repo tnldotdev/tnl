@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -287,6 +288,15 @@ func TestIntegrationPublisherGrantsRemainSeparate(t *testing.T) {
 	if grantID == identity.GrantID {
 		t.Fatal("namespace grant reused the saved URL grant")
 	}
+	page, err := fixture.database.ListTeamPublisherIdentities(t.Context(), saved.TeamID, "")
+	if err != nil || len(page.Identities) != 1 || len(page.Identities[0].Grants) != 2 {
+		t.Fatalf("separate publisher grants = %+v, %v", page, err)
+	}
+	for _, grant := range page.Identities[0].Grants {
+		if grant.ID == grantID && (grant.Kind != "namespace" || grant.PublicURL != "" || grant.Namespace != namespace.Namespace) {
+			t.Fatalf("namespace grant disclosed a saved URL: %+v", grant)
+		}
+	}
 	recovered, err := fixture.database.RedeemPublisherEnrollment(t.Context(), enrollment.Key, public, fixture.now.Add(20*time.Minute))
 	if err != nil || recovered != identity {
 		t.Fatalf("initial grant changed after adding another grant: %+v, %v", recovered, err)
@@ -296,6 +306,9 @@ func TestIntegrationPublisherGrantsRemainSeparate(t *testing.T) {
 		EditorMembershipID: fixture.request.MembershipID, PolicyRevision: fixture.request.PolicyRevision, Now: fixture.now,
 	}); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("duplicate active namespace grant accepted: %v", err)
+	}
+	if err := fixture.database.RevokePublisherGrant(t.Context(), "team_other", identity.ID, grantID, fixture.now); !errors.Is(err, ErrPublisherIdentity) {
+		t.Fatalf("another team revoked the namespace grant: %v", err)
 	}
 	const audience = "https://control.example/v1/publisher/token"
 	jwt, err := publisheridentity.Sign(identity.ID, identity.KeyID, audience, private, fixture.now)
@@ -314,5 +327,57 @@ func TestIntegrationPublisherGrantsRemainSeparate(t *testing.T) {
 	}
 	if _, err := fixture.database.AuthenticatePublisherAccess(t.Context(), scoped.Token, fixture.now.Add(2*time.Second)); err != nil {
 		t.Fatalf("separate namespace grant lost access: %v", err)
+	}
+}
+
+func TestIntegrationPublisherIdentityPagesShowScopesWithoutSecrets(t *testing.T) {
+	database, now, run, _ := newPublishRunPrerequisites(t)
+	scope := PublisherScope{TeamID: run.TeamID, PublicURLID: run.PublicURLID, Kind: "saved_url"}
+	var last PublisherIdentity
+	for index := range 102 {
+		enrollment, err := database.IssuePublisherEnrollment(t.Context(), publisherEnrollmentFixture(run, scope,
+			fmt.Sprintf("device-%d", index), now.Add(time.Duration(index)*time.Millisecond)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		public, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last, err = database.RedeemPublisherEnrollment(t.Context(), enrollment.Key, public, now.Add(time.Duration(index)*time.Millisecond))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := database.RevokePublisherIdentity(t.Context(), run.TeamID, last.ID, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	first, err := database.ListTeamPublisherIdentities(t.Context(), run.TeamID, "")
+	if err != nil || len(first.Identities) != 100 || first.NextCursor == "" {
+		t.Fatalf("first publisher page = %+v, %v", first, err)
+	}
+	second, err := database.ListTeamPublisherIdentities(t.Context(), run.TeamID, first.NextCursor)
+	if err != nil || len(second.Identities) != 2 || second.NextCursor != "" {
+		t.Fatalf("second publisher page = %+v, %v", second, err)
+	}
+	seen := make(map[string]bool)
+	revoked := false
+	for _, entry := range append(first.Identities, second.Identities...) {
+		if seen[entry.ID] || entry.TeamID != run.TeamID || len(entry.Grants) != 1 ||
+			entry.Grants[0].PublicURLID != run.PublicURLID || entry.Grants[0].Kind != "saved_url" ||
+			entry.Grants[0].PublicURL != "https://route-session.example.test" {
+			t.Fatalf("publisher listing crossed a scope: %+v", entry)
+		}
+		seen[entry.ID] = true
+		if entry.ID == last.ID {
+			revoked = entry.RevokedAt != nil
+		}
+	}
+	if !revoked || len(seen) != 102 {
+		t.Fatalf("publisher list lost a revocation or identity: revoked=%t count=%d", revoked, len(seen))
+	}
+	other, err := database.ListTeamPublisherIdentities(t.Context(), "team_other", "")
+	if err != nil || len(other.Identities) != 0 {
+		t.Fatalf("other team publishers = %+v, %v", other, err)
 	}
 }

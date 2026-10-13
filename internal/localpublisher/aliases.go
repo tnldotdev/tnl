@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisherauth"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -117,6 +118,17 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 		if err != nil {
 			reportIntegrationURL(tunnel, output, "alias unavailable", "app tunnel continues", clioutput.Text("alias "+name+" could not resolve its domain"))
 			continue
+		}
+		if parent.RunControl != nil {
+			services.RunControl = parent.RunControl
+			if services.TeamID != parent.TeamID {
+				owner, ownerErr := publisherauth.Interactive(services.Authenticated, "local-publisher")
+				if ownerErr != nil {
+					reportIntegrationURL(tunnel, output, "alias unavailable", "app tunnel continues", clioutput.Text("alias "+name+" could not select its publisher identity"))
+					continue
+				}
+				services.RunControl = &publisherauth.RunControl{Client: services.Authenticated.PublisherControl, Owner: owner}
+			}
 		}
 		if services.Hostname == base.Hostname {
 			reportIntegrationURL(tunnel, output, "alias name conflict", "choose a distinct alias name", clioutput.Text("alias "+name+" uses the entry service's hostname"))

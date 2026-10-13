@@ -8,7 +8,6 @@ import { closeServer, listeningTarget, type LocalHTTPServer } from "./register.j
 import { record, requiredHostname } from "./runtime.js";
 
 export interface OpenOptions {
-  readonly credential?: string;
   readonly server?: string;
   readonly directory?: string;
   /** hostname the publisher uses to reach this listener. */
@@ -89,10 +88,6 @@ export async function openServer(
   runtime: Dependencies = dependencies,
 ): Promise<AdHocTunnel> {
   validateOptions(options);
-  const credential = options.credential ?? process.env.TNL_CREDENTIAL;
-  if (credential === undefined || credential === "") throw new TnlError("sdk.credential_required");
-  if (!/^tnl_eph_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/.test(credential))
-    throw new TnlError("sdk.credential_rejected");
   const target = await listeningTarget(server, options);
   const directory = path.resolve(options.directory ?? process.cwd());
   const owner = randomBytes(16).toString("hex");
@@ -106,7 +101,6 @@ export async function openServer(
     pid: process.pid,
     target,
     ...(options.server === undefined ? {} : { server_url: options.server }),
-    credential,
     ...(options.allowIP === undefined ? {} : { allow_ip: [...options.allowIP] }),
     ...(options.allowAllIPs === undefined ? {} : { allow_all_ips: options.allowAllIPs }),
     ...(options.limits?.http === undefined && options.limits?.traffic === undefined
@@ -252,8 +246,8 @@ export async function openServer(
     } else if (status.state === "failed") {
       fail(
         new TnlError(
-          status.failureCode === "runtime.credential_rejected"
-            ? "sdk.credential_rejected"
+          status.failureCode === "runtime.authentication_required"
+            ? "sdk.authentication_required"
             : "sdk.publication_failed",
         ),
       );
@@ -395,7 +389,6 @@ function validateOptions(options: OpenOptions): void {
     Object.keys(options).some(
       (key) =>
         ![
-          "credential",
           "server",
           "directory",
           "targetHostname",
@@ -405,7 +398,6 @@ function validateOptions(options: OpenOptions): void {
           "signal",
         ].includes(key),
     ) ||
-    (options.credential !== undefined && typeof options.credential !== "string") ||
     (options.server !== undefined &&
       (typeof options.server !== "string" || !/^https:\/\/[^/]+$/.test(options.server))) ||
     (options.directory !== undefined &&
