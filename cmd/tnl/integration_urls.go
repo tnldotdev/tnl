@@ -23,10 +23,10 @@ func projectIntegrationGroup(project projectconfig.Project, namespace string) st
 }
 func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, project projectconfig.Project, server, team string, auth *clientauth.Client) (projectmeta.IntegrationOrigin, publisherServices, error) {
 	origin, services, err := localpublisher.OAuthServices(ctx, state, project, server, team, auth)
-	return origin, servicesFromLocal(services), err
+	return origin, services, err
 }
 func integrationURLConfig(services publisherServices, hostname string, purpose controlv1.PublicURLPurpose) publisher.Config {
-	return localpublisher.IntegrationConfig(services.local(), hostname, purpose)
+	return localpublisher.IntegrationConfig(services, hostname, purpose)
 }
 
 type integrationTelemetryAdapter struct{ reporter telemetryReporter }
@@ -41,10 +41,10 @@ func integrationReporter(reporter telemetryReporter) localpublisher.IntegrationR
 	return integrationTelemetryAdapter{reporter}
 }
 func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, origin projectmeta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *publishOutput, reporter telemetryReporter) func() {
-	return localpublisher.StartOAuth(ctx, state, services.local(), origin, tunnel, output.integrationURLMessage, integrationReporter(reporter))
+	return localpublisher.StartOAuth(ctx, state, services, origin, tunnel, output.integrationURLMessage, integrationReporter(reporter))
 }
 func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, project projectconfig.Project, tunnel *clientstate.Tunnel, service, group string, output *publishOutput, reporter telemetryReporter) func() {
-	return localpublisher.StartWebhooks(ctx, state, services.local(), project, tunnel, service, group, output.integrationURLMessage, integrationReporter(reporter))
+	return localpublisher.StartWebhooks(ctx, state, services, project, tunnel, service, group, output.integrationURLMessage, integrationReporter(reporter))
 }
 func readyWebhookDelivery(ctx context.Context, state *clientstate.Database, server, group, hostname string, definitions map[string]config.Webhook) telemetryWebhookDelivery {
 	return telemetryWebhookDelivery(localpublisher.ReadyWebhookDelivery(ctx, state, server, group, hostname, definitions))

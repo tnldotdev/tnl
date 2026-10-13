@@ -58,18 +58,18 @@ func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, pro
 	if project.Config.Tunnel != nil {
 		flags := tunnelFlags{}
 		applyTunnelLimits(&flags, project.Config.Tunnel.Limits, "http")
-		services.traffic, err = flags.traffic()
+		services.Traffic, err = flags.traffic()
 		if err != nil {
 			return projectmeta.IntegrationOrigin{}, publisherServices{}, err
 		}
 	}
-	origin, err := projectIntegrationOrigin(ctx, state, project, server, services.namespace, "oauth")
+	origin, err := projectIntegrationOrigin(ctx, state, project, server, services.Namespace, "oauth")
 	return origin, services, err
 }
 
 func integrationURLConfig(services publisherServices, hostname string, purpose controlv1.PublicURLPurpose) publisher.Config {
-	config := services.config(integrationURLTarget, []string{}, publisher.ApplicationLimits{Concurrency: 32}, services.traffic)
-	config.Hostname, config.PublicURLScope, config.Ephemeral = hostname, services.publicURLScope, false
+	config := services.config(integrationURLTarget, []string{}, publisher.ApplicationLimits{Concurrency: 32}, services.Traffic)
+	config.Hostname, config.PublicURLScope, config.Ephemeral = hostname, services.PublicURLScope, false
 	config.Purpose = purpose
 	return config
 }
@@ -90,10 +90,10 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 	var reportMu sync.Mutex
 	lastReport := time.Time{}
 	integrationURLPublisher := integrationurls.Publisher{
-		State: state, Store: services.state, Server: services.authenticated.ServerEndpoint, Hostname: oauth.Hostname,
+		State: state, Store: services.State, Server: services.Authenticated.ServerEndpoint, Hostname: oauth.Hostname,
 		Prepare: func(context.Context) (integrationurls.Snapshot, error) {
 			config := integrationURLConfig(services, oauth.Hostname, controlv1.Oauth)
-			config.Handler = integrationurls.OAuthHandler(state, services.authenticated.ServerEndpoint, oauth.Hostname, func() {
+			config.Handler = integrationurls.OAuthHandler(state, services.Authenticated.ServerEndpoint, oauth.Hostname, func() {
 				if telemetry != nil {
 					telemetry.Report(newIntegrationTelemetry(telemetryOAuthRedirected, ""))
 				}
@@ -155,7 +155,7 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 			reportIntegrationURL(tunnel, output, state, "app tunnel continues", clioutput.Text(message))
 		}
 	}
-	hooks, err := projectIntegrationOrigin(ctx, state, project, services.authenticated.ServerEndpoint, services.namespace, "hooks")
+	hooks, err := projectIntegrationOrigin(ctx, state, project, services.Authenticated.ServerEndpoint, services.Namespace, "hooks")
 	if err != nil {
 		reportIntegrationURL(tunnel, output, "webhooks unavailable", "app tunnel continues", clioutput.Text("the stable webhook origin could not be selected"))
 		cancel()
@@ -182,7 +182,7 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 	workers.Go(func() { worker.Maintain(ctx) })
 	if telemetry != nil && len(registered) != 0 {
 		workers.Go(func() {
-			watchWebhookReady(ctx, state, services.authenticated.ServerEndpoint, group, hooks.Hostname, registered, telemetry)
+			watchWebhookReady(ctx, state, services.Authenticated.ServerEndpoint, group, hooks.Hostname, registered, telemetry)
 		})
 	}
 	return func() { cancel(); workers.Wait() }
@@ -242,7 +242,7 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 		}
 	}
 	definitionsAt := func(ctx context.Context) (map[string]config.Webhook, string, error) {
-		definitions, err := state.ActiveWebhookDefinitions(ctx, services.authenticated.ServerEndpoint, group)
+		definitions, err := state.ActiveWebhookDefinitions(ctx, services.Authenticated.ServerEndpoint, group)
 		if err != nil {
 			return nil, "", err
 		}
@@ -257,13 +257,13 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 		return definitions, hex.EncodeToString(digest[:]), nil
 	}
 	return integrationurls.Publisher{
-		State: state, Store: services.state, Server: services.authenticated.ServerEndpoint, Hostname: origin.Hostname,
+		State: state, Store: services.State, Server: services.Authenticated.ServerEndpoint, Hostname: origin.Hostname,
 		Prepare: func(ctx context.Context) (integrationurls.Snapshot, error) {
 			definitions, revision, err := definitionsAt(ctx)
 			if err != nil {
 				return integrationurls.Snapshot{}, err
 			}
-			handler, prefixes, err := integrationurls.NewWebhooks(ctx, state, services.authenticated.ServerEndpoint, group, origin.Hostname, definitions,
+			handler, prefixes, err := integrationurls.NewWebhooks(ctx, state, services.Authenticated.ServerEndpoint, group, origin.Hostname, definitions,
 				func(endpoint, receiver, reason string) { failure(endpoint + " to " + receiver + ": " + reason) })
 			if err != nil {
 				return integrationurls.Snapshot{}, err

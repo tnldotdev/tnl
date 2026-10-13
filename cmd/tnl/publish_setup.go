@@ -6,7 +6,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/localpublisher"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
@@ -14,37 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-type publisherServices struct {
-	authenticated                                       *clientauth.Client
-	state                                               *clientstate.Store
-	hostname, namespace, teamID, membershipID, domainID string
-	publicURLScope                                      controlv1.PublicURLScope
-	domainKind                                          authorityv1.DomainKind
-	customDomainAvailable                               bool
-	policyRevision                                      uint64
-	ephemeral                                           bool
-	routes                                              *controlclient.Client
-	traffic                                             trafficlimits.Selection
-}
-
-func (p publisherServices) local() localpublisher.Services {
-	return localpublisher.ServicesFromFacts(localpublisher.ServiceFacts{
-		Authenticated: p.authenticated, State: p.state, Hostname: p.hostname, Namespace: p.namespace,
-		TeamID: p.teamID, MembershipID: p.membershipID, DomainID: p.domainID, Scope: p.publicURLScope,
-		DomainKind: p.domainKind, CustomDomainAvailable: p.customDomainAvailable, PolicyRevision: p.policyRevision,
-		Ephemeral: p.ephemeral, Control: p.routes, Traffic: p.traffic,
-	})
-}
-func servicesFromLocal(services localpublisher.Services) publisherServices {
-	p := services.Facts()
-	return publisherServices{authenticated: p.Authenticated, state: p.State, hostname: p.Hostname, namespace: p.Namespace,
-		teamID: p.TeamID, membershipID: p.MembershipID, domainID: p.DomainID, publicURLScope: p.Scope,
-		domainKind: p.DomainKind, customDomainAvailable: p.CustomDomainAvailable, policyRevision: p.PolicyRevision,
-		ephemeral: p.Ephemeral, routes: p.Control, traffic: p.Traffic}
-}
-func (p publisherServices) config(target string, prefixes []string, limits publisher.ApplicationLimits, traffic ...trafficlimits.Selection) publisher.Config {
-	return p.local().Config(target, prefixes, limits, traffic...)
-}
+type publisherServices = localpublisher.Services
 
 type clientIPLookup interface {
 	ClientIP(context.Context) (controlv1.ClientIPResponse, error)
@@ -63,8 +32,7 @@ func authenticatePublisher(ctx context.Context, state *clientstate.Database, ser
 		Diagnostics: diagnostics, OpenURL: interactiveBrowserOpener(stdin), LoginToken: loginTokenPrompt(stdin, diagnostics), AuthenticationPrompt: authenticationPrompt(diagnostics, command)})
 }
 func preparePublisherServices(ctx context.Context, state *clientstate.Database, server, url, name, domain, team string, ephemeral bool, auth *clientauth.Client) (publisherServices, error) {
-	services, err := localpublisher.PrepareServices(ctx, state, server, url, name, domain, team, ephemeral, auth)
-	return servicesFromLocal(services), err
+	return localpublisher.PrepareServices(ctx, state, server, url, name, domain, team, ephemeral, auth)
 }
 func (c teamContext) facts() localpublisher.TeamFacts {
 	return localpublisher.TeamFacts{Team: c.team, Membership: c.membership, Domains: c.domains, Mode: c.mode, Builtin: c.builtin}

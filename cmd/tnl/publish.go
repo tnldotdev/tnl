@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/localpublisher"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -62,12 +63,13 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		}
 	}
 	if selected := flags.dockerTarget; selected != nil {
-		resolver := newDockerPublishResolver(ctx, flags.projectRoot, *selected, flags.Protocol == "" || flags.Protocol == "http")
-		target, err := resolver.initial()
+		resolver := localpublisher.NewDockerResolver(ctx, flags.projectRoot, selected.selection,
+			selected.projectLabel, flags.Protocol == "" || flags.Protocol == "http")
+		target, err := resolver.Initial()
 		if err != nil {
 			return err
 		}
-		flags.Target, flags.resolveTarget = target, resolver.target
+		flags.Target, flags.resolveTarget = target, resolver.Target
 	}
 	telemetry := optionalTelemetryReporter(reporters)
 	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
@@ -216,7 +218,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			}
 			flags.project.Project = projectconfig.Project{Root: flags.projectRoot, Worktree: worktree}
 		}
-		integrationGroup = projectIntegrationGroup(flags.project.Project, services.namespace)
+		integrationGroup = projectIntegrationGroup(flags.project.Project, services.Namespace)
 		if err := tunnel.SetIntegrationGroup(ctx, integrationGroup); err != nil {
 			return err
 		}
@@ -225,7 +227,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return failure.Wrap("validate traffic limits", failure.InvalidTunnelFlags, err)
 	}
-	services.traffic = traffic
+	services.Traffic = traffic
 	if protocol == controlv1.Http && !flags.Demo && flags.project.Config.OAuth {
 		oauth, oauthServices, resolveErr := projectOAuthPublisher(ctx, state, flags.project.Project, serverURL, flags.selectedTeam, authenticated)
 		if resolveErr != nil {
@@ -239,7 +241,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, flags.project.Project, tunnel, flags.Service, integrationGroup, output, telemetry)
 		defer stopWebhooks()
 	}
-	publisherConfig := services.config(target, policy.prefixes, flags.limits(), traffic)
+	publisherConfig := services.Config(target, policy.prefixes, flags.limits(), traffic)
 	publisherConfig.ResolveTarget = flags.resolveTarget
 	publisherConfig.ServiceProtocol = protocol
 	publisherConfig.TargetTLSName = flags.TargetTLSName

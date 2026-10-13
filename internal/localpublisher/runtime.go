@@ -731,14 +731,14 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	a.mu.Unlock()
 	services, flags := preparation.services, preparation.flags
 	project := preparation.project
-	server := services.authenticated.ServerEndpoint
+	server := services.Authenticated.ServerEndpoint
 	group := ""
 	command := clientstate.TunnelCommandDev
 	if preparation.named {
 		command = clientstate.TunnelCommandPublish
 	}
 	if service.ServiceProtocol == "" || service.ServiceProtocol == "http" {
-		group = projectIntegrationGroup(project.Project, services.namespace)
+		group = projectIntegrationGroup(project.Project, services.Namespace)
 	}
 	tunnel, err := a.state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
 		Command: command, Server: server, Target: service.Target, Project: a.project.Root, Service: service.Name,
@@ -765,7 +765,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	output := &publishOutput{}
 	previewID := ""
 	if group != "" {
-		previewID, err = ensurePreview(ctx, a.state, services.state, services.routes, server, services.teamID, a.project.Root)
+		previewID, err = ensurePreview(ctx, a.state, services.State, services.Routes, server, services.TeamID, a.project.Root)
 		if err != nil {
 			return err
 		}
@@ -774,7 +774,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	if err != nil {
 		return failure.Wrap("validate traffic limits", failure.InvalidTunnelFlags, err)
 	}
-	services.traffic = traffic
+	services.Traffic = traffic
 	configuration := services.config(service.Target, preparation.policy.prefixes, flags.limits(), traffic)
 	configuration.ServiceProtocol = controlv1.PublicURLServiceProtocol(service.ServiceProtocol)
 	configuration.ResolveTarget = preparation.resolve
@@ -800,7 +800,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		configuration.VisitorTLSPassthrough = *effective.Tunnel.VisitorTLS == "passthrough"
 	}
 	configuration.ControlURL = server
-	configuration.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
+	configuration.BrowserLoginAvailable = services.Authenticated.Discovery.BrowserLoginAvailable != nil && *services.Authenticated.Discovery.BrowserLoginAvailable
 	configuration.PreviewID, configuration.ProjectRoot, configuration.Service = previewID, a.project.Root, service.Name
 	configuration.Feedback = (service.ServiceProtocol == "" || service.ServiceProtocol == "http") && project.Config.Feedback != nil && *project.Config.Feedback
 	configuration.InspectionMode = flags.InspectionMode
@@ -831,7 +831,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		}
 	}
 	if group != "" && project.Config.OAuth {
-		origin, oauthServices, err := projectOAuthPublisher(ctx, a.state, project.Project, server, valueOrEmpty(project.Config.Team), services.authenticated)
+		origin, oauthServices, err := projectOAuthPublisher(ctx, a.state, project.Project, server, valueOrEmpty(project.Config.Team), services.Authenticated)
 		if err != nil {
 			return err
 		}
@@ -869,11 +869,11 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	defer func() { cancelProbes(); probes.Wait() }()
 	configuration.Observe = func(event publisher.Event) error {
 		if event.Type == publisher.EventPublicURLAssigned && previewID != "" {
-			preview, err := services.routes.AddPreviewPublicURL(ctx, previewID, event.PublicURLID)
+			preview, err := services.Routes.AddPreviewPublicURL(ctx, previewID, event.PublicURLID)
 			if err != nil {
 				return err
 			}
-			if preview.Id != previewID || preview.TeamId != services.teamID || !slices.Contains(preview.PublicUrlIds, event.PublicURLID) {
+			if preview.Id != previewID || preview.TeamId != services.TeamID || !slices.Contains(preview.PublicUrlIds, event.PublicURLID) {
 				return failure.Wrap("associate preview", failure.ServerResponseInvalid, errors.New("preview omitted assigned public URL"))
 			}
 		}

@@ -17,8 +17,8 @@ import (
 
 func TestNestedAliasDiagnosticNamesDomainPolicyAndAvailableCustomDomain(t *testing.T) {
 	for _, custom := range []bool{false, true} {
-		services := publisherServices{hostname: "api.shop.member.tnl.dev", namespace: "member.tnl.dev", domainKind: authorityv1.Managed, publicURLScope: controlv1.Member,
-			customDomainAvailable: custom, authenticated: &clientauth.Client{Discovery: controlv1.ControlDiscovery{ManagedDomain: "tnl.dev", ManagedDomainMaxMemberChildLabels: 1}}}
+		services := publisherServices{Hostname: "api.shop.member.tnl.dev", Namespace: "member.tnl.dev", DomainKind: authorityv1.Managed, PublicURLScope: controlv1.Member,
+			CustomDomainAvailable: custom, Authenticated: &clientauth.Client{Discovery: controlv1.ControlDiscovery{ManagedDomain: "tnl.dev", ManagedDomainMaxMemberChildLabels: 1}}}
 		err := checkAliasHostnamePolicy(services)
 		if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.MemberHostnameDepthExceeded {
 			t.Fatal("nested name did not have its own policy diagnostic")
@@ -32,12 +32,12 @@ func TestNestedAliasDiagnosticNamesDomainPolicyAndAvailableCustomDomain(t *testi
 		if strings.Contains(text, "custom domain") != custom {
 			t.Fatalf("custom-domain advice does not match availability: %s", text)
 		}
-		services.hostname = "review.member.tnl.dev"
+		services.Hostname = "review.member.tnl.dev"
 		if err := checkAliasHostnamePolicy(services); err != nil {
 			t.Fatal("one-label alias rejected")
 		}
-		services.hostname, services.domainKind = "api.shop.member.custom.example", authorityv1.Custom
-		services.namespace = "member.custom.example"
+		services.Hostname, services.DomainKind = "api.shop.member.custom.example", authorityv1.Custom
+		services.Namespace = "member.custom.example"
 		if err := checkAliasHostnamePolicy(services); err != nil {
 			t.Fatal("hosted managed-domain limit applied to a custom domain")
 		}

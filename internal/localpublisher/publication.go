@@ -23,22 +23,24 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-type publisherServices struct {
-	authenticated         *clientauth.Client
-	state                 *clientstate.Store
-	hostname              string
-	namespace             string
-	teamID                string
-	membershipID          string
-	domainID              string
-	publicURLScope        controlv1.PublicURLScope
-	domainKind            authorityv1.DomainKind
-	customDomainAvailable bool
-	policyRevision        uint64
-	ephemeral             bool
-	routes                *controlclient.Client
-	traffic               trafficlimits.Selection
+type Services struct {
+	Authenticated         *clientauth.Client
+	State                 *clientstate.Store
+	Hostname              string
+	Namespace             string
+	TeamID                string
+	MembershipID          string
+	DomainID              string
+	PublicURLScope        controlv1.PublicURLScope
+	DomainKind            authorityv1.DomainKind
+	CustomDomainAvailable bool
+	PolicyRevision        uint64
+	Ephemeral             bool
+	Routes                *controlclient.Client
+	Traffic               trafficlimits.Selection
 }
+
+type publisherServices = Services
 
 type clientIPLookup interface {
 	ClientIP(context.Context) (controlv1.ClientIPResponse, error)
@@ -123,18 +125,18 @@ func preparePublisherServices(
 		return domain.Kind == authorityv1.Custom && domain.State == authorityv1.DomainStateReady
 	})
 	return publisherServices{
-		domainKind: domain.Kind, customDomainAvailable: customAvailable,
-		authenticated:  authenticated,
-		state:          publisherState,
-		hostname:       hostname,
-		namespace:      namespaceForMembership(current, domain),
-		teamID:         current.team.Id,
-		membershipID:   current.membership.Id,
-		domainID:       domain.Id,
-		publicURLScope: publicURLScope,
-		policyRevision: uint64(current.team.PolicyRevision),
-		ephemeral:      ephemeral,
-		routes:         authenticated.Control,
+		DomainKind: domain.Kind, CustomDomainAvailable: customAvailable,
+		Authenticated:  authenticated,
+		State:          publisherState,
+		Hostname:       hostname,
+		Namespace:      namespaceForMembership(current, domain),
+		TeamID:         current.team.Id,
+		MembershipID:   current.membership.Id,
+		DomainID:       domain.Id,
+		PublicURLScope: publicURLScope,
+		PolicyRevision: uint64(current.team.PolicyRevision),
+		Ephemeral:      ephemeral,
+		Routes:         authenticated.Control,
 	}, nil
 }
 
@@ -303,22 +305,22 @@ func (flags tunnelFlags) traffic() (trafficlimits.Selection, error) {
 	return selected, nil
 }
 
-func (p publisherServices) config(target string, allowedIPPrefixes []string, limits publisher.ApplicationLimits, traffic ...trafficlimits.Selection) publisher.Config {
+func (p Services) config(target string, allowedIPPrefixes []string, limits publisher.ApplicationLimits, traffic ...trafficlimits.Selection) publisher.Config {
 	relayTransportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	result := publisher.Config{
-		Control:           p.routes,
-		TeamID:            p.teamID,
-		MembershipID:      p.membershipID,
-		DomainID:          p.domainID,
-		Hostname:          p.hostname,
-		PublicURLScope:    p.publicURLScope,
+		Control:           p.Routes,
+		TeamID:            p.TeamID,
+		MembershipID:      p.MembershipID,
+		DomainID:          p.DomainID,
+		Hostname:          p.Hostname,
+		PublicURLScope:    p.PublicURLScope,
 		Purpose:           controlv1.App,
-		PolicyRevision:    p.policyRevision,
+		PolicyRevision:    p.PolicyRevision,
 		Target:            target,
 		Limits:            limits,
 		AllowedIPPrefixes: allowedIPPrefixes,
-		Ephemeral:         p.ephemeral,
-		State:             p.state,
+		Ephemeral:         p.Ephemeral,
+		State:             p.State,
 		QUICConnector:     muxsession.QUICConnector{TLSConfig: relayTransportTLS},
 		TCPConnector:      muxsession.TLSYamuxConnector{TLSConfig: relayTransportTLS},
 	}

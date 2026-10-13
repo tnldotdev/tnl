@@ -19,8 +19,8 @@ import (
 func TestIntegrationURLUsesTheSelectedPublicURLScope(t *testing.T) {
 	selectedConnections := 16
 	for _, scope := range []controlv1.PublicURLScope{controlv1.Shared, controlv1.Member} {
-		config := integrationURLConfig(publisherServices{publicURLScope: scope,
-			traffic: trafficlimits.Selection{Connections: &selectedConnections}}, "hooks.example.test", controlv1.Webhooks)
+		config := integrationURLConfig(publisherServices{PublicURLScope: scope,
+			Traffic: trafficlimits.Selection{Connections: &selectedConnections}}, "hooks.example.test", controlv1.Webhooks)
 		if config.PublicURLScope != scope || config.Purpose != controlv1.Webhooks || config.Hostname != "hooks.example.test" || config.Ephemeral ||
 			config.Traffic.Connections != &selectedConnections {
 			t.Fatalf("integration URL scope %q produced %#v", scope, config)

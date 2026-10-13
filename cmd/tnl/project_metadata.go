@@ -49,20 +49,16 @@ func runConfigGenerate(ctx context.Context, stateRoot string, project projectCon
 	return writeHumanFrame(stdout, "tnl config generate", "generated", "", blocks...)
 }
 
-type projectMetadataResolver struct {
-	*localpublisher.MetadataResolver
-}
-
-func newProjectMetadataResolver(state *clientstate.Database, project projectConfiguration, input io.Reader, diagnostics io.Writer, command string) *projectMetadataResolver {
+func newProjectMetadataResolver(state *clientstate.Database, project projectConfiguration, input io.Reader, diagnostics io.Writer, command string) *localpublisher.MetadataResolver {
 	if input == nil {
 		input = os.Stdin
 	}
 	if diagnostics == nil {
 		diagnostics = io.Discard
 	}
-	return &projectMetadataResolver{localpublisher.NewMetadataResolver(state, project.Project, func(ctx context.Context, server string) (*clientauth.Client, error) {
+	return localpublisher.NewMetadataResolver(state, project.Project, func(ctx context.Context, server string) (*clientauth.Client, error) {
 		return authenticatePublisher(ctx, state, server, "", command, input, diagnostics)
-	})}
+	})
 }
 func configuredProjectService(service string, worktree projectconfig.Worktree, effective config.TNL, current teamContext) (projectmeta.Service, error) {
 	return localpublisher.ConfiguredProjectService(service, worktree, effective, current.facts())

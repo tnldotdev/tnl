@@ -39,9 +39,9 @@ func prepareAliasServices(ctx context.Context, state *clientstate.Database, proj
 		return publisherServices{}, err
 	}
 	if alias.PublicURL == nil {
-		services.hostname = alias.RelativeName(name) + "." + services.namespace
-		canonical, err := naming.CanonicalizeHostname(services.hostname)
-		if err != nil || canonical != services.hostname {
+		services.Hostname = alias.RelativeName(name) + "." + services.Namespace
+		canonical, err := naming.CanonicalizeHostname(services.Hostname)
+		if err != nil || canonical != services.Hostname {
 			return publisherServices{}, failure.Wrap("resolve alias hostname", failure.ProjectConfigInvalid, errors.New("alias hostname exceeds DNS bounds"))
 		}
 	}
@@ -59,26 +59,26 @@ func aliasDomainName(alias config.Alias, effective config.TNL) string {
 }
 
 func checkAliasHostnamePolicy(services publisherServices) error {
-	limit := services.authenticated.Discovery.ManagedDomainMaxMemberChildLabels
+	limit := services.Authenticated.Discovery.ManagedDomainMaxMemberChildLabels
 	if limit < 0 {
 		return failure.Wrap("read alias hostname policy", failure.ServerResponseInvalid, errors.New("negative member hostname depth limit"))
 	}
-	depth, member := naming.ChildDepth(services.hostname, services.namespace)
-	if !member || services.publicURLScope != controlv1.Member || services.domainKind != authorityv1.Managed || limit == 0 || depth <= limit {
+	depth, member := naming.ChildDepth(services.Hostname, services.Namespace)
+	if !member || services.PublicURLScope != controlv1.Member || services.DomainKind != authorityv1.Managed || limit == 0 || depth <= limit {
 		return nil
 	}
-	name := strings.TrimSuffix(services.hostname, "."+services.namespace)
+	name := strings.TrimSuffix(services.Hostname, "."+services.Namespace)
 	message := fmt.Sprintf("%s needs %d labels beneath your namespace, but this server allows %d on its managed domain. use a one-label alias name", name, depth, limit)
-	if services.customDomainAvailable {
+	if services.CustomDomainAvailable {
 		message += ", or publish the alias on a custom domain your team has added"
 	}
 	return diagnostic.WrapMessage(diagnostic.MemberHostnameDepthExceeded, message+".", errors.New("alias hostname depth rejected"))
 }
 
 func aliasScope(project projectConfiguration, name string, services publisherServices) clientstate.AliasScope {
-	return clientstate.AliasScope{Server: services.authenticated.ServerEndpoint,
-		ProjectKey: projectconfig.SharedProjectIdentity(project.Worktree, project.Root), TeamID: services.teamID,
-		MembershipID: services.membershipID, Namespace: services.namespace, Name: name}
+	return clientstate.AliasScope{Server: services.Authenticated.ServerEndpoint,
+		ProjectKey: projectconfig.SharedProjectIdentity(project.Worktree, project.Root), TeamID: services.TeamID,
+		MembershipID: services.MembershipID, Namespace: services.Namespace, Name: name}
 }
 
 func registerProjectAlias(ctx context.Context, state *clientstate.Database, project projectConfiguration, name string, definition config.Alias, services publisherServices, tunnelID, group string) (clientstate.AliasSelection, error) {
@@ -86,7 +86,7 @@ func registerProjectAlias(ctx context.Context, state *clientstate.Database, proj
 	if err != nil {
 		return clientstate.AliasSelection{}, err
 	}
-	return state.RegisterAlias(ctx, clientstate.AliasRegistration{Scope: aliasScope(project, name, services), Hostname: services.hostname,
+	return state.RegisterAlias(ctx, clientstate.AliasRegistration{Scope: aliasScope(project, name, services), Hostname: services.Hostname,
 		Service: definition.Service, TunnelID: tunnelID, IntegrationGroup: group, Fingerprint: fingerprint})
 }
 
@@ -113,12 +113,12 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 		if definition.Service != service {
 			continue
 		}
-		services, err := prepareAliasServices(ctx, state, project, name, definition, parent.authenticated.ServerEndpoint, team, parent.authenticated)
+		services, err := prepareAliasServices(ctx, state, project, name, definition, parent.Authenticated.ServerEndpoint, team, parent.Authenticated)
 		if err != nil {
 			reportIntegrationURL(tunnel, output, "alias unavailable", "app tunnel continues", clioutput.Text("alias "+name+" could not resolve its domain"))
 			continue
 		}
-		if services.hostname == base.Hostname {
+		if services.Hostname == base.Hostname {
 			reportIntegrationURL(tunnel, output, "alias name conflict", "choose a distinct alias name", clioutput.Text("alias "+name+" uses the entry service's hostname"))
 			continue
 		}
@@ -136,7 +136,7 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 		}
 		prefixes := base.AllowedIPPrefixes
 		if definition.AllowIP != nil || definition.AllowAllIPs != nil {
-			policy, err := resolveIPPolicy(ctx, services.authenticated.Control, definition.AllowIP, definition.AllowAllIPs != nil && *definition.AllowAllIPs)
+			policy, err := resolveIPPolicy(ctx, services.Authenticated.Control, definition.AllowIP, definition.AllowAllIPs != nil && *definition.AllowAllIPs)
 			if err != nil {
 				_ = state.RecordAliasFailure(ctx, selection, failure.ServerUnavailable)
 				continue
@@ -149,7 +149,7 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 		config.AdmitRequest = base.AdmitRequest
 		var mu sync.Mutex
 		lastReport := time.Time{}
-		worker := integrationurls.AliasPublisher(state, services.state, selection, tunnel.ID(), config, func(event publisher.Event, err error) {
+		worker := integrationurls.AliasPublisher(state, services.State, selection, tunnel.ID(), config, func(event publisher.Event, err error) {
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {

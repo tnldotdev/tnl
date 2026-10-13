@@ -352,11 +352,12 @@ manager restart and contains no credentials, request bodies, or OAuth state.
 
 the local publisher also owns the supporting publication setup, metadata
 resolution, dynamic Docker targets, preview association, inspection adapters,
-and integration worker lifetimes. commands reuse these operations through client
-options and facts. interactive authentication and terminal rendering belong to
-the command adapters; the component's metadata resolver uses noninteractive
-authentication unless its caller supplies an authentication operation. publisher
-events update client state before a command presents them. integration progress
+and integration worker lifetimes. commands reuse the publisher services value
+directly while adapting CLI-only flags at the command boundary. interactive
+authentication and terminal rendering belong to the command adapters; the
+component's metadata resolver uses noninteractive authentication unless its caller
+supplies an authentication operation. publisher events update client state before
+a command presents them. integration progress
 passes semantic details to the caller's output adapter.
 
 shutdown closes the local API and removes its endpoint descriptors, closes and

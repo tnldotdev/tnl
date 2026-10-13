@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/localpublisher"
 )
 
 type waitCommand struct {
@@ -65,10 +66,9 @@ func readAppSnapshot(ctx context.Context, project projectConfiguration, state st
 		if selected == nil || selected.Type != "docker" {
 			continue
 		}
-		resolver := newDockerPublishResolver(ctx, project.Root, dockerPublishTarget{
-			selection: selected.DockerSelection, projectLabel: project.Worktree.Label.FullLabel,
-		}, service.ServiceProtocol == "" || service.ServiceProtocol == "http")
-		service.Target = resolver.target()
+		resolver := localpublisher.NewDockerResolver(ctx, project.Root, selected.DockerSelection,
+			project.Worktree.Label.FullLabel, service.ServiceProtocol == "" || service.ServiceProtocol == "http")
+		service.Target = resolver.Target()
 		if service.Target == "" {
 			service.Ready = false
 			if service.Registered {

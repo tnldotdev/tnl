@@ -110,8 +110,8 @@ func guestPublisherServices(
 		return publisherServices{}, err
 	}
 	return publisherServices{
-		state: store, hostname: hostname + "." + guest.Namespace, namespace: guest.Namespace,
-		teamID: guest.TeamID, membershipID: guest.MembershipID, domainID: guest.DomainID,
-		publicURLScope: controlv1.Member, policyRevision: 1, ephemeral: true, routes: routes,
+		State: store, Hostname: hostname + "." + guest.Namespace, Namespace: guest.Namespace,
+		TeamID: guest.TeamID, MembershipID: guest.MembershipID, DomainID: guest.DomainID,
+		PublicURLScope: controlv1.Member, PolicyRevision: 1, Ephemeral: true, Routes: routes,
 	}, nil
 }

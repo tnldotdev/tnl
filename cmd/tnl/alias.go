@@ -17,20 +17,20 @@ import (
 
 func prepareAliasServices(ctx context.Context, state *clientstate.Database, project projectConfiguration, name string, alias config.Alias, server, team string, auth *clientauth.Client) (publisherServices, error) {
 	services, err := localpublisher.PrepareAlias(ctx, state, project.Project, name, alias, server, team, auth)
-	return servicesFromLocal(services), err
+	return services, err
 }
 func checkAliasHostnamePolicy(services publisherServices) error {
-	return localpublisher.CheckAliasPolicy(services.local())
+	return localpublisher.CheckAliasPolicy(services)
 }
 func aliasScope(project projectConfiguration, name string, services publisherServices) clientstate.AliasScope {
-	return localpublisher.AliasScope(project.Project, name, services.local())
+	return localpublisher.AliasScope(project.Project, name, services)
 }
 func registerProjectAlias(ctx context.Context, state *clientstate.Database, project projectConfiguration, name string, definition config.Alias, services publisherServices, tunnelID, group string) (clientstate.AliasSelection, error) {
-	return localpublisher.RegisterAlias(ctx, state, project.Project, name, definition, services.local(), tunnelID, group)
+	return localpublisher.RegisterAlias(ctx, state, project.Project, name, definition, services, tunnelID, group)
 }
 func aliasChoiceError(err error) error { return localpublisher.AliasChoiceError(err) }
 func startProjectAliases(ctx context.Context, state *clientstate.Database, project projectConfiguration, service, team string, parent publisherServices, base publisher.Config, group string, tunnel *clientstate.Tunnel, output *publishOutput) func() {
-	return localpublisher.StartAliases(ctx, state, project.Project, service, team, parent.local(), base, group, tunnel, output.integrationURLMessage)
+	return localpublisher.StartAliases(ctx, state, project.Project, service, team, parent, base, group, tunnel, output.integrationURLMessage)
 }
 
 func runAliasChoice(ctx context.Context, flags aliasChoiceCommand, project projectConfiguration, use, force bool, stdout, stderr io.Writer) error {

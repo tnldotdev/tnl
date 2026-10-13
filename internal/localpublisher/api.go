@@ -14,7 +14,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -30,7 +29,6 @@ import (
 type Options = runtimeOptions
 type Endpoint = localPublisherEndpoint
 type Settings = tunnelFlags
-type Services = publisherServices
 type MetadataResolver = projectMetadataResolver
 type DockerResolver = dockerPublishResolver
 
@@ -48,7 +46,6 @@ func OwnerEndpointPath(key string) string            { return runtimeTCPEndpoint
 func AppEndpointPath(key, service string) string     { return runtimeAppEndpointPath(key, service) }
 func AdHocEndpointPath(key string) string            { return runtimeAdHocEndpointPath(key) }
 func ReadEndpoint(key string) (Endpoint, error)      { return readRuntimeTCPEndpoint(key) }
-func ReadDescriptor(path string) (Endpoint, error)   { return readLocalPublisherDescriptor(path) }
 func WriteDescriptor(path string, endpoint Endpoint) error {
 	return writeRuntimeTCPEndpoint(path, endpoint)
 }
@@ -67,12 +64,6 @@ func ReadOwnerCredential(root, selected string) (string, error) {
 }
 func HTTPClient(timeoutDuration time.Duration) *http.Client {
 	return publisherHTTPClient(timeoutDuration)
-}
-func RejectRedirect(request *http.Request, via []*http.Request) error {
-	return rejectPublisherRedirect(request, via)
-}
-func DockerTarget(service string, port int, http bool) string {
-	return dockerTargetInsidePublisher(service, port, http)
 }
 func NormalizeTarget(target string, protocol controlv1.PublicURLServiceProtocol) (string, error) {
 	return normalizePublishTarget(target, protocol)
@@ -105,32 +96,7 @@ func StopAPI(ctx context.Context, server *http.Server, key string) error {
 	return stopRuntimeTCP(ctx, server, key)
 }
 
-type ServiceFacts struct {
-	Authenticated                                       *clientauth.Client
-	State                                               *clientstate.Store
-	Hostname, Namespace, TeamID, MembershipID, DomainID string
-	Scope                                               controlv1.PublicURLScope
-	DomainKind                                          authorityv1.DomainKind
-	CustomDomainAvailable                               bool
-	PolicyRevision                                      uint64
-	Ephemeral                                           bool
-	Control                                             *controlclient.Client
-	Traffic                                             trafficlimits.Selection
-}
-
-func (p publisherServices) Facts() ServiceFacts {
-	return ServiceFacts{Authenticated: p.authenticated, State: p.state, Hostname: p.hostname, Namespace: p.namespace,
-		TeamID: p.teamID, MembershipID: p.membershipID, DomainID: p.domainID, Scope: p.publicURLScope,
-		DomainKind: p.domainKind, CustomDomainAvailable: p.customDomainAvailable, PolicyRevision: p.policyRevision,
-		Ephemeral: p.ephemeral, Control: p.routes, Traffic: p.traffic}
-}
-func ServicesFromFacts(p ServiceFacts) Services {
-	return publisherServices{authenticated: p.Authenticated, state: p.State, hostname: p.Hostname, namespace: p.Namespace,
-		teamID: p.TeamID, membershipID: p.MembershipID, domainID: p.DomainID, publicURLScope: p.Scope,
-		domainKind: p.DomainKind, customDomainAvailable: p.CustomDomainAvailable, policyRevision: p.PolicyRevision,
-		ephemeral: p.Ephemeral, routes: p.Control, traffic: p.Traffic}
-}
-func (p publisherServices) Config(target string, prefixes []string, limits publisher.ApplicationLimits, traffic ...trafficlimits.Selection) publisher.Config {
+func (p Services) Config(target string, prefixes []string, limits publisher.ApplicationLimits, traffic ...trafficlimits.Selection) publisher.Config {
 	return p.config(target, prefixes, limits, traffic...)
 }
 func PrepareServices(ctx context.Context, state *clientstate.Database, server, publicURL, name, domain, team string, ephemeral bool, auth *clientauth.Client) (Services, error) {
@@ -186,20 +152,11 @@ func (s TeamSelection) CurrentMembership(ctx context.Context) (authorityv1.Membe
 func (s TeamSelection) ResolveMembership(ctx context.Context, team string) (authorityv1.Membership, error) {
 	return s.session().resolveMembership(ctx, team)
 }
-func MembershipForTeam(memberships []authorityv1.Membership, teamID string) (authorityv1.Membership, bool) {
-	return membershipForTeam(memberships, teamID)
-}
 func ResolveHostname(url, name, domain string, current TeamFacts) (string, authorityv1.Domain, controlv1.PublicURLScope, error) {
 	return resolvePublishHostname(url, name, domain, teamFromFacts(current))
 }
 func ReadyDomain(current TeamFacts, selected string) (authorityv1.Domain, error) {
 	return readyDomain(teamFromFacts(current), selected)
-}
-func DefaultDomain(current TeamFacts) (authorityv1.Domain, error) {
-	return defaultReadyDomain(teamFromFacts(current))
-}
-func DomainForHostname(domains []authorityv1.Domain, hostname string) (authorityv1.Domain, error) {
-	return readyDomainForHostname(domains, hostname)
 }
 func Namespace(current TeamFacts, domain authorityv1.Domain) (string, bool) {
 	return teamFromFacts(current).namespace(domain)
@@ -259,9 +216,6 @@ func SQLObservation(recorder *clientstate.InspectionRecorder, mode config.Inspec
 	return sqlObservation(recorder, mode)
 }
 
-func IntegrationOrigin(ctx context.Context, state *clientstate.Database, project projectconfig.Project, server, namespace, purpose string) (projectmeta.IntegrationOrigin, error) {
-	return projectIntegrationOrigin(ctx, state, project, server, namespace, purpose)
-}
 func IntegrationGroup(project projectconfig.Project, namespace string) string {
 	return projectIntegrationGroup(project, namespace)
 }
@@ -282,9 +236,6 @@ func ReadyWebhookDelivery(ctx context.Context, state *clientstate.Database, serv
 }
 func PrepareAlias(ctx context.Context, state *clientstate.Database, project projectconfig.Project, name string, alias config.Alias, server, team string, auth *clientauth.Client) (Services, error) {
 	return prepareAliasServices(ctx, state, projectConfiguration{project}, name, alias, server, team, auth)
-}
-func AliasDomain(alias config.Alias, effective config.TNL) string {
-	return aliasDomainName(alias, effective)
 }
 func CheckAliasPolicy(services Services) error { return checkAliasHostnamePolicy(services) }
 func AliasScope(project projectconfig.Project, name string, services Services) clientstate.AliasScope {

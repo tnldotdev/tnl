@@ -365,21 +365,21 @@ func reservePublishCredentialURL(ctx context.Context, session *teamSession, flag
 	if err != nil {
 		return controlv1.PublicURL{}, err
 	}
-	route, err := session.authenticated.Control.GetPublicURLByHostname(ctx, services.teamID, services.hostname)
+	route, err := session.authenticated.Control.GetPublicURLByHostname(ctx, services.TeamID, services.Hostname)
 	if errors.Is(err, controlclient.ErrNotFound) {
 		key, keyErr := opaqueid.New(opaqueid.IdempotencyPrefix)
 		if keyErr != nil {
 			return controlv1.PublicURL{}, keyErr
 		}
 		request := controlv1.CreatePublicURLRequest{
-			TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: services.hostname,
-			Target: target, PublicUrlScope: services.publicURLScope, Purpose: controlv1.App,
+			TeamId: services.TeamID, DomainId: services.DomainID, CanonicalHostname: services.Hostname,
+			Target: target, PublicUrlScope: services.PublicURLScope, Purpose: controlv1.App,
 		}
 		if protocol != controlv1.Http {
 			request.ServiceProtocol = &protocol
 		}
-		if services.publicURLScope == controlv1.Member {
-			request.MembershipId = &services.membershipID
+		if services.PublicURLScope == controlv1.Member {
+			request.MembershipId = &services.MembershipID
 		}
 		if policy.prefixes != nil {
 			copy := slices.Clone(policy.prefixes)
@@ -396,7 +396,7 @@ func reservePublishCredentialURL(ctx context.Context, session *teamSession, flag
 	}
 	if target != "" && route.Target != target || route.ServiceProtocol != protocol ||
 		protocol != controlv1.Http && (route.Target != "" || route.PublicPort == nil) ||
-		route.CanonicalHostname != services.hostname || route.Purpose != controlv1.App ||
+		route.CanonicalHostname != services.Hostname || route.Purpose != controlv1.App ||
 		route.Ephemeral || !slices.Equal(currentPolicy, policy.prefixes) {
 		return controlv1.PublicURL{}, failure.Wrap("reserve public URL for credential", failure.PublishCredentialMismatch,
 			fmt.Errorf("public URL %s already exists with a different target or visitor policy", route.Id))

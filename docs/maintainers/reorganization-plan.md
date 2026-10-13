@@ -119,29 +119,34 @@ journal remain owned by `internal/clientruntime`; publish-run and visitor behavi
 remain owned by `internal/publisher` and `internal/adhoc`.
 
 The extraction also introduced an exported forwarding layer in
-`internal/localpublisher/api.go` and retained command-side copies of publication,
-team, and settings models. some values now travel through conversion round trips
-without establishing a new invariant or crossing a distinct representation
-boundary. this scaffolding added complexity beyond the ownership move.
+`internal/localpublisher/api.go` and command-side copies of publication, team,
+and settings models. the command and local publisher now share one publication
+services value: the `ServiceFacts` conversion round trip is gone. command callers
+use the Docker resolver directly, and the metadata resolver no longer needs a
+wrapper type. unused exported forwarding methods have been removed. generation,
+formatting, Go lint, routine Go tests, focused race tests, the publisher image
+and scoped Compose app integration, and the Go build passed.
 
-The package also contains reusable project and publication operations. their
-eventual owners should follow their consumers and dependencies as we investigate
-them.
+The CLI parser still has its own settings structure because its Kong tags and
+flag-source information belong at the command boundary. team selection and
+project metadata still use projections, and `api.go` still exposes reusable
+operations from a package that also owns the process. their eventual owners
+should follow their consumers and dependencies as we investigate them.
 
 ## next step
 
-Simplify the boundary of the local publisher extraction.
+Investigate the remaining team and settings projections at the command boundary.
 
-Inspect the exported API and its command consumers, especially publication setup,
-team context, metadata resolution, and settings adaptation. reuse owned types
-directly where the representations mean the same thing. remove unnecessary
-forwarders, duplicate models, and unused exports; retain conversions that serve
-real parser, wire, storage, or trust boundaries.
+Trace the consumers of `teamContext`, `TeamFacts`, `TeamSelection`, and the CLI's
+`tunnelFlags` and publisher `Settings`. choose the smallest change that removes
+identity conversions without losing interactive authentication, Kong flag
+provenance, configuration precedence, or noninteractive runtime behavior. check
+whether shared team and project operations need their own owner before moving
+more packages.
 
-The result should keep the publisher lifecycle traceable outside command code,
-reduce the code needed to follow shared operations, and preserve the contracts
-established by the existing tests. after verification, reassess the remaining
-coupling before choosing further work.
+The result should reduce the code needed to follow shared operations while
+preserving the existing tests and the local publisher's independent lifecycle.
+reassess the remaining coupling afterward.
 
 ## decisions made
 
@@ -149,6 +154,9 @@ coupling before choosing further work.
   process. choose scope and order from the code as we learn.
 - Address the unnecessary scaffolding in the local publisher extraction before
   choosing broader package moves.
+- Share publication services directly across the command and process boundary;
+  preserve CLI-specific parsing settings where Kong and source precedence need
+  them. remove unused forwarding methods instead of keeping an API façade.
 
 ## verification
 
