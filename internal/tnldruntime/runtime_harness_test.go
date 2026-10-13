@@ -307,7 +307,7 @@ func unusedUDPAddress(t *testing.T) string {
 }
 
 func splitTestConfig(role tnldconfig.Role, metricsAddress string) tnldconfig.Config {
-	return tnldconfig.Config{
+	cfg := tnldconfig.Config{
 		Role: role, MetricsListen: metricsAddress,
 		PublicURLCertificateWorkers: 4,
 		ClientHelloConnectionLimit:  1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
@@ -318,6 +318,19 @@ func splitTestConfig(role tnldconfig.Role, metricsAddress string) tnldconfig.Con
 		RelayLeaseDuration:   2 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond,
 		ControlRetryInterval: 50 * time.Millisecond, RoutingTableWait: time.Second, DrainTimeout: time.Second,
 	}
+	setTestTrafficDefaults(&cfg)
+	return cfg
+}
+
+func setTestTrafficDefaults(cfg *tnldconfig.Config) {
+	cfg.TrafficDefaultConnections, cfg.TrafficMaxConnections = 32, 128
+	cfg.TrafficDefaultRate, cfg.TrafficDefaultBurst = 20, 40
+	cfg.TrafficMaxRate, cfg.TrafficMaxBurst = 100, 200
+	cfg.TrafficDefaultUploadBytes, cfg.TrafficDefaultDownloadBytes = 8<<20, 16<<20
+	cfg.TrafficMaxUploadBytes, cfg.TrafficMaxDownloadBytes = 64<<20, 128<<20
+	cfg.TrafficSourceRate, cfg.TrafficSourceBurst = 30, 60
+	cfg.TrafficProcessRate, cfg.TrafficProcessBurst = 200, 400
+	cfg.TrafficProcessUploadBytes, cfg.TrafficProcessDownloadBytes = 256<<20, 256<<20
 }
 
 func splitTestRelayConfig(t *testing.T, controlHostname, relayServiceID, relayID, certificateFile, privateKeyFile string) tnldconfig.Config {
