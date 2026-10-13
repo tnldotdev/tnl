@@ -28,6 +28,78 @@ around generated code, generators, separate tooling modules, and their affected
 documentation, fixtures, and checks. package count, abstraction count, and the
 number of primitive types replaced are not measures of success.
 
+## organizing structure
+
+Use the existing runtime roles as the main organizing structure. a reader should
+be able to distinguish client-owned behavior, control-owned operations, ingress
+and relay, shared transport, and process composition without learning every
+helper package first.
+
+This is an illustrative layout, not a directory-move checklist:
+
+```text
+cmd/
+  tnl/                  # client command input and presentation
+  tnld/                 # daemon command input
+  tnlbench/             # benchmark command input
+
+pkg/
+  tnl/                  # public go sdk
+  api/                  # generated http contracts
+  protocol/tunnelv1/    # public tunnel protocol
+
+internal/
+  client/
+    app/                # local publisher process and app coordination
+    localapi/           # scoped local publisher http requests
+    publish/            # publisher connections and visitor serving
+    project/            # discovery, effective configuration, project metadata
+    state/              # client persistence and local ownership
+    auth/               # client authentication
+    integrations/       # aliases, oauth callbacks, webhooks
+
+  control/
+    api/                # public and private http serving
+    authority/          # identity, team, and domain operations
+    state/              # cohesive database operations
+    certificates/
+    dns/
+    usage/
+    email/
+
+  ingress/              # visitor acceptance and one-time forwarding
+  relay/                # publisher connections and visitor streams
+  transport/            # multiplexing, metadata, duplex copying
+  daemon/               # role construction, supervision, shutdown
+
+  config/               # versioned configuration input
+  publication/          # shared publication concepts and pure rules
+  credentials/
+  naming/
+  observability/
+  failure/
+```
+
+The actual names and moves should follow a dependency review. a parent directory
+can group ordinary Go packages without becoming an exported facade. within an
+owner, use operation-oriented files first; split a package when that establishes
+independent ownership, limits dependencies, or enables meaningful reuse.
+
+Commands parse input, call the component that owns the operation, and present
+its result. composition wires concrete dependencies on the outside. operations
+depend on domain rules and storage or transport boundaries, not on commands.
+
+In control, public URL, publish run, connection assignment, placement, and
+routing-table changes can form one transactionally coupled operation. keep its
+locking, stale-state checks, and routing publication together rather than
+introducing an interface per table. group other control work by its actual
+operation and transaction boundary.
+
+Give concepts shared across roles a small, dependency-light owner. configuration
+and generated API models describe input or output contracts; use validated
+operational values when they establish facts an operation can rely on. conversions
+belong at real boundaries, not between equivalent in-memory models.
+
 ## design principles
 
 Put behavior on the value or component that owns it. constructors, validation,
