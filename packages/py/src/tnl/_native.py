@@ -133,6 +133,16 @@ class NativeRuntime:
     ) -> object:
         if operation not in {"register", "renew", "status", "unregister"}:
             raise InvalidResponse()
+        return await self._request(endpoint_path, f"/v1/ad-hoc/{operation}", payload)
+
+    async def app_request(
+        self, endpoint_path: str, operation: str, payload: dict[str, object]
+    ) -> object:
+        if operation not in {"prepare", "register", "renew", "unregister"}:
+            raise InvalidResponse()
+        return await self._request(endpoint_path, f"/v1/{operation}", payload)
+
+    async def _request(self, endpoint_path: str, route: str, payload: dict[str, object]) -> object:
         try:
             url, credential = self._endpoint(endpoint_path)
             async with httpx.AsyncClient(
@@ -140,7 +150,7 @@ class NativeRuntime:
             ) as client:
                 async with client.stream(
                     "POST",
-                    f"{url}/v1/ad-hoc/{operation}",
+                    url + route,
                     json=payload,
                     headers={"Authorization": "Bearer " + credential},
                 ) as response:
@@ -171,9 +181,7 @@ class NativeRuntime:
                             "sdk.credential_rejected", "the ad-hoc credential was rejected"
                         )
                     if code == "runtime.owner_conflict":
-                        raise TnlError(
-                            "sdk.owner_conflict", "another live app owns this invocation"
-                        )
+                        raise TnlError("sdk.owner_conflict", "another live app owns this service")
                     if code == "runtime.authentication_required":
                         raise TnlError(
                             "sdk.authentication_required",
