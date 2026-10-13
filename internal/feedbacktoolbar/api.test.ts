@@ -38,6 +38,24 @@ test("access and conflict errors have actionable text without leaking server res
   }
 });
 
+test("sign-in is required for writes without changing read access errors", async () => {
+  const api = createFeedbackAPI(
+    vi.fn<typeof fetch>().mockResolvedValue(new Response("private response", { status: 401 })),
+  );
+  await expect(api.list("/", undefined, new AbortController().signal)).rejects.toThrow(
+    "preview access expired",
+  );
+  await expect(
+    api.append(
+      "fb_0123456789abcdefghijkl",
+      "reply",
+      "message",
+      "retry-key",
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("sign in to leave feedback");
+});
+
 test("browser mutations use same-origin cookies, an idempotency key, and an optional note", async () => {
   const id = "fb_0123456789abcdefghijkl";
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(

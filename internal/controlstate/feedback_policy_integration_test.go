@@ -97,14 +97,6 @@ func TestIntegrationFeedbackPolicyAllReviewerActions(t *testing.T) {
 				} else if required && actor.IdentityID == "" {
 					want = ErrFeedbackSignInRequired
 				}
-				access, err := f.database.ReviewerFeedbackAccess(t.Context(), f.authentication(), preview.ID, actor, f.now)
-				if denied {
-					if !errors.Is(err, ErrFeedbackAccess) {
-						t.Fatalf("denied metadata = %+v, %v", access, err)
-					}
-				} else if err != nil || access.RequireSignIn != required {
-					t.Fatalf("live metadata = %+v, %v", access, err)
-				}
 				if _, _, err := f.database.ReviewerFeedbackScope(t.Context(), f.authentication(), preview.ID, actor, f.now); (denied && !errors.Is(err, ErrFeedbackAccess)) || (!denied && err != nil) {
 					t.Fatalf("policy changed read access: %v", err)
 				}
@@ -137,9 +129,8 @@ func TestIntegrationFeedbackPolicyAllReviewerActions(t *testing.T) {
 	}
 }
 
-func TestIntegrationFeedbackPolicyPermissionsAndMetadataScope(t *testing.T) {
+func TestIntegrationFeedbackPolicyPermissions(t *testing.T) {
 	f := newPublishRunFixture(t)
-	preview := browserFeedbackPreview(t, f)
 	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.teams SET kind = 'organization' WHERE id = $1`, f.request.TeamID); err != nil {
 		t.Fatal(err)
 	}
@@ -169,21 +160,6 @@ func TestIntegrationFeedbackPolicyPermissionsAndMetadataScope(t *testing.T) {
 	}
 	if _, err := f.database.GetTeamFeedbackPolicy(t.Context(), member.IdentityID, f.request.TeamID); !errors.Is(err, ErrTeamNotFound) {
 		t.Fatalf("removed membership read = %v", err)
-	}
-	actor := FeedbackActor{Kind: "reviewer", AllowedIP: true}
-	for _, change := range []string{"preview", "URL", "run number"} {
-		auth, previewID := f.authentication(), preview.ID
-		switch change {
-		case "preview":
-			previewID = "pv_0123456789abcdefghijkl"
-		case "URL":
-			auth.PublicURLID = "url_other"
-		case "run number":
-			auth.PublishRunNumber++
-		}
-		if _, err := f.database.ReviewerFeedbackAccess(t.Context(), auth, previewID, actor, f.now); !errors.Is(err, ErrFeedbackAccess) {
-			t.Fatalf("cross-%s metadata = %v", change, err)
-		}
 	}
 }
 
@@ -275,9 +251,6 @@ func TestIntegrationFeedbackPolicyAppliesToReadyRunAndRetries(t *testing.T) {
 	if _, err := f.database.AppendFeedback(t.Context(), reply, f.now); !errors.Is(err, ErrFeedbackSignInRequired) {
 		t.Fatalf("anonymous reply retry bypassed policy: %v", err)
 	}
-	if access, err := f.database.ReviewerFeedbackAccess(t.Context(), f.authentication(), preview.ID, actor, f.now); err != nil || !access.RequireSignIn {
-		t.Fatalf("ready run metadata=%+v, %v", access, err)
-	}
 	implementer := FeedbackActor{Kind: "implementer", IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2}
 	if _, err := f.database.AppendFeedback(t.Context(), AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackUpdate, Text: "Fixed", SourceState: feedbackTestSource(t), Actor: implementer, IdempotencyKey: "update"}, f.now); err != nil {
 		t.Fatalf("authenticated implementer update=%v", err)
@@ -319,6 +292,29 @@ func TestIntegrationFeedbackPolicyMutationWaitsForReviewerGuard(t *testing.T) {
 	}
 	if policy, err := f.database.GetTeamFeedbackPolicy(ctx, f.request.ActingIdentityID, f.request.TeamID); err != nil || !policy.RequireSignIn {
 		t.Fatalf("queued policy=%+v, %v", policy, err)
+	}
+}
+
+func TestIntegrationFeedbackRetryCannotSwitchAuthors(t *testing.T) {
+	f := newPublishRunFixture(t)
+	preview := browserFeedbackPreview(t, f)
+	actor := FeedbackActor{Kind: "reviewer", AllowedIP: true}
+	thread, err := f.database.CreateFeedback(t.Context(), f.authentication(), browserFeedbackReport(t, preview.ID, actor, "initial"), f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply, Text: "check this", Actor: actor, IdempotencyKey: "same-key"}
+	first, err := f.database.AppendFeedback(t.Context(), request, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Actor = feedbackPolicyShare(t, f, preview)
+	if _, err := f.database.AppendFeedback(t.Context(), request, f.now); !errors.Is(err, ErrFeedbackIdempotency) {
+		t.Fatalf("replaying a reply under another author = %v", err)
+	}
+	request.Actor = actor
+	if again, err := f.database.AppendFeedback(t.Context(), request, f.now); err != nil || again.Cursor != first.Cursor {
+		t.Fatalf("same-author retry = %+v, %v", again, err)
 	}
 }
 
@@ -368,9 +364,6 @@ func TestIntegrationFeedbackPolicyGuestDefaultAndMissingTeam(t *testing.T) {
 	}
 	if _, err := f.database.AppendFeedback(t.Context(), AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply, Text: "More detail", Actor: actor, IdempotencyKey: "guest-reply"}, f.now); err != nil {
 		t.Fatal(err)
-	}
-	if access, err := f.database.ReviewerFeedbackAccess(t.Context(), auth, preview.ID, actor, f.now); err != nil || access.RequireSignIn {
-		t.Fatalf("guest metadata=%+v, %v", access, err)
 	}
 	if err := requireFeedbackIdentity(t.Context(), controlstatedb.New(f.database.pool), "missing-team", actor); !errors.Is(err, ErrFeedbackAccess) {
 		t.Fatalf("missing team policy=%v", err)

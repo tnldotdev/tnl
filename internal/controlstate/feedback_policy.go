@@ -8,16 +8,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 var ErrFeedbackSignInRequired = errors.New("feedback requires sign-in")
 
 type TeamFeedbackPolicy struct {
-	RequireSignIn bool
-}
-
-type FeedbackAccess struct {
 	RequireSignIn bool
 }
 
@@ -85,52 +80,4 @@ func requireFeedbackIdentity(ctx context.Context, queries *controlstatedb.Querie
 		return ErrFeedbackSignInRequired
 	}
 	return nil
-}
-
-// ReviewerFeedbackAccess reads live policy for an existing preview and public
-// URL. sign-in policy controls writes only; ordinary reviewer access is required.
-func (d *Database) ReviewerFeedbackAccess(ctx context.Context, auth PublishRunAuthentication, previewID string, actor FeedbackActor, now time.Time) (result FeedbackAccess, retErr error) {
-	if err := validatePublishRunAuthentication(auth); err != nil {
-		return FeedbackAccess{}, err
-	}
-	if !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) {
-		return FeedbackAccess{}, ErrFeedbackInvalid
-	}
-	if err := d.requireOpen(); err != nil {
-		return FeedbackAccess{}, err
-	}
-	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-	if err != nil {
-		return FeedbackAccess{}, fmt.Errorf("read feedback access: begin transaction: %w", err)
-	}
-	defer rollback(ctx, tx, "read feedback access", &retErr)()
-	queries := controlstatedb.New(tx)
-	publicURL, err := lockReviewerPublicURL(ctx, queries, auth.PublicURLID)
-	if err != nil {
-		return FeedbackAccess{}, err
-	}
-	scope, err := queries.FeedbackRunScope(ctx, controlstatedb.FeedbackRunScopeParams{
-		PublishRunID: auth.PublishRunID, PublicURLID: publicURL.ID, PreviewID: previewID,
-		PublishRunNumber: int64(auth.PublishRunNumber), Now: timestamptz(now),
-	})
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && (scope.PublicURLID != publicURL.ID || scope.TeamID != publicURL.TeamID) {
-		return FeedbackAccess{}, ErrFeedbackAccess
-	}
-	if err != nil {
-		return FeedbackAccess{}, fmt.Errorf("read feedback access scope: %w", err)
-	}
-	if _, _, err := d.reviewerAccess(ctx, queries, publicURL, previewID, actor, now); err != nil {
-		return FeedbackAccess{}, err
-	}
-	required, err := queries.GetReviewerFeedbackPolicy(ctx, scope.TeamID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return FeedbackAccess{}, ErrFeedbackAccess
-	}
-	if err != nil {
-		return FeedbackAccess{}, fmt.Errorf("read feedback access policy: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return FeedbackAccess{}, fmt.Errorf("commit feedback access: %w", err)
-	}
-	return FeedbackAccess{RequireSignIn: required}, nil
 }

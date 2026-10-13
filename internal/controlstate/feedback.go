@@ -322,12 +322,12 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 	if err != nil {
 		return FeedbackEvent{}, fmt.Errorf("controlstate: lock feedback thread: %w", err)
 	}
-	existing, err := queries.GetFeedbackEventByActorKey(ctx, controlstatedb.GetFeedbackEventByActorKeyParams{
-		FeedbackID: thread.ID, ActorKind: request.Actor.Kind, ActorReference: actorRef,
+	existing, err := queries.GetFeedbackEventByKey(ctx, controlstatedb.GetFeedbackEventByKeyParams{
+		FeedbackID:     thread.ID,
 		IdempotencyKey: request.IdempotencyKey,
 	})
 	if err == nil {
-		if subtle.ConstantTimeCompare(existing.RequestDigest, digest[:]) != 1 {
+		if existing.ActorKind != request.Actor.Kind || existing.ActorReference != actorRef || subtle.ConstantTimeCompare(existing.RequestDigest, digest[:]) != 1 {
 			return FeedbackEvent{}, ErrFeedbackIdempotency
 		}
 		return feedbackEventFromRow(existing), nil

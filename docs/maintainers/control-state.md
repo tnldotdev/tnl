@@ -193,12 +193,11 @@ nonmembers admitted by IP policy or a share can write when sign-in is required;
 an anonymous admitted visitor receives `feedback_sign_in_required` (HTTP 401).
 Denied access remains HTTP 403; unavailable browser authentication remains HTTP 503. Reads retain their existing admission requirements independently of policy.
 
-Publishers read current policy with `POST
-/v1/publish-runs/{publish_run_id}/feedback/access` and a publish run token. The
-`FeedbackAccessRequest` includes the existing preview ID, publish run number,
-and reviewer access; `FeedbackAccess` returns `require_sign_in`. Control checks
-that preview's inclusion of the authenticated public URL and current reviewer
-access, without creating a preview or public URL.
+The publisher returns HTTP 401 when control requires sign-in for a feedback
+write. The toolbar offers sign-in in a new tab, leaving the original draft in
+place; after authentication, the reviewer sends it again. It does not replay
+the write automatically. Control rejects a reused event idempotency key under
+a different author so an uncertain retry cannot become a second event.
 
 ## coordinate publisher connections
 

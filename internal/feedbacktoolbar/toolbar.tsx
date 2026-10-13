@@ -20,6 +20,7 @@ import { Placement, SelectionHint } from "./placement.tsx";
 import { FeedbackList, type ListFilters } from "./list.tsx";
 import type { FeedbackAPI } from "./api.ts";
 import { FeedbackError, safeFeedbackMessage } from "./errors.ts";
+import { SignInLink } from "./sign-in.tsx";
 
 async function fetchAccount(
   document: Document,
@@ -155,9 +156,7 @@ function FeedbackLayer({
             </button>
           </>
         ) : browserStatus.data ? (
-          <a class="account-link" href={"/__tnl/team/login?return=" + encodeURIComponent(path)}>
-            [ sign in ]
-          </a>
+          <SignInLink path={path} />
         ) : null}
         {signOut.error && <small role="status">{safeFeedbackMessage(signOut.error)}</small>}
         <button
@@ -299,7 +298,7 @@ function FeedbackLayer({
               the element is no longer on this page; the conversation is still here
             </p>
           )}
-          <ThreadView key={current.id} api={api} id={current.id} />
+          <ThreadView key={current.id} api={api} id={current.id} path={path} />
         </Popover>
       )}
       {listOpen && (

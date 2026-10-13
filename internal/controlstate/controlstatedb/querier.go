@@ -138,7 +138,8 @@ type Querier interface {
 	GetDNSChallengeChange(ctx context.Context, arg GetDNSChallengeChangeParams) (GetDNSChallengeChangeRow, error)
 	GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error)
 	GetEphemeralPublicURLAllocation(ctx context.Context, publicUrlID string) (ControlEphemeralPublicUrlAllocation, error)
-	GetFeedbackEventByActorKey(ctx context.Context, arg GetFeedbackEventByActorKeyParams) (ControlFeedbackEvent, error)
+	// one idempotency key cannot create events under different authors.
+	GetFeedbackEventByKey(ctx context.Context, arg GetFeedbackEventByKeyParams) (ControlFeedbackEvent, error)
 	GetFeedbackPublicURL(ctx context.Context, id string) (ControlPublicUrl, error)
 	GetFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error)
 	GetGuestTrialByCredentialID(ctx context.Context, credentialID pgtype.Text) (ControlGuestTrial, error)

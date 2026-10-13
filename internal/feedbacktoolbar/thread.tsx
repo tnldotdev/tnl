@@ -5,6 +5,8 @@ import type { BrowserEvent } from "./model.ts";
 import { supportedAnchor } from "./anchors.ts";
 import { useConversation } from "./queries.ts";
 import { EvidenceView } from "./evidence-view.tsx";
+import { FeedbackError, safeFeedbackMessage } from "./errors.ts";
+import { SignInLink } from "./sign-in.tsx";
 
 const eventLabels = {
   "thread.created": "reported",
@@ -14,7 +16,7 @@ const eventLabels = {
   "thread.reopened": "reopened",
 };
 
-export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
+export function ThreadView({ api, id, path }: { api: FeedbackAPI; id: string; path: string }) {
   const [text, setText] = useState("");
   const keys = useRef(mutationKey());
   const { query, append, history } = useConversation(api, id);
@@ -35,6 +37,9 @@ export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
   return (
     <section aria-label="Feedback thread">
       {error && <p role="status">{safeFeedbackMessage(error)}</p>}
+      {append.error instanceof FeedbackError && append.error.code === "sign_in_required" && (
+        <SignInLink path={path} />
+      )}
       {!data ? (
         <p role="status">{query.isPending ? "Loading feedback…" : "Feedback is unavailable."}</p>
       ) : (
@@ -121,4 +126,3 @@ export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
     </section>
   );
 }
-import { safeFeedbackMessage } from "./errors.ts";

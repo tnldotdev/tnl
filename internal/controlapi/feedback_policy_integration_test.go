@@ -159,13 +159,6 @@ func TestIntegrationFeedbackPolicyDirectAPIEnforcement(t *testing.T) {
 		call("POST", runPath+"/"+thread.Id+"/events", body, setup.PublishRunToken.String(), action+"-required", 401)
 	}
 	metadata := fmt.Sprintf(`{"publish_run_number":1,"preview_id":%q,"access":{"allowed_ip":true}}`, preview.ID)
-	current := call("POST", runPath+"/access", metadata, setup.PublishRunToken.String(), "", 200)
-	if !strings.Contains(current.Body.String(), `"require_sign_in":true`) {
-		t.Fatalf("live metadata=%s", current.Body.String())
-	}
-	call("POST", runPath+"/access", metadata, "", "", 401)
-	call("POST", runPath+"/access", strings.Replace(metadata, `"allowed_ip":true`, `"allowed_ip":false`, 1), setup.PublishRunToken.String(), "", 403)
-	call("POST", runPath+"/access", strings.Replace(metadata, preview.ID, "pv_0123456789abcdefghijkl", 1), setup.PublishRunToken.String(), "", 403)
 	// shared reads keep their original access requirements with sign-in required.
 	call("POST", runPath+"/query", metadata, setup.PublishRunToken.String(), "", 200)
 	call("POST", runPath+"/"+thread.Id+"/query", metadata, setup.PublishRunToken.String(), "", 200)
