@@ -255,6 +255,9 @@ func runNamedPublish(ctx context.Context, flags publishCommand, stdout, stderr i
 	for ctx.Err() == nil {
 		client, stop, err := localPublisherForCLI(ctx, flags)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			reason, known := failure.ReasonOf(err)
 			if recoveryUntil.IsZero() || time.Now().After(recoveryUntil) || !(known && reason == failure.ClientStateUnavailable || namedPublisherConnectionLost(err)) {
 				return err
@@ -267,7 +270,10 @@ func runNamedPublish(ctx context.Context, flags publishCommand, stdout, stderr i
 		recoveryUntil = time.Time{}
 		err = followNamedPublication(ctx, flags, client, owner, output, telemetry, serverKind)
 		stop()
-		if ctx.Err() != nil || !namedPublisherConnectionLost(err) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if !namedPublisherConnectionLost(err) {
 			return err
 		}
 		recoveryUntil = time.Now().Add(30 * time.Second)
