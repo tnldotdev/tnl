@@ -800,8 +800,8 @@ func TestNamedHTTPServiceChecksConfiguredHTTPReadiness(t *testing.T) {
 	defer service.Close()
 	address := config.Target(service.URL)
 	a.project.Config.Services["orders"] = config.Service{
-		Target: &config.ServiceTarget{Type: "address", Address: &address},
-		HTTP:   &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}},
+		Target:    &config.ServiceTarget{Type: "address", Address: &address},
+		Readiness: &config.Readiness{Path: "/health"},
 	}
 	a.project.RelativeServiceDirectories["orders"] = "."
 	if err := a.manager.Configure(configuredRuntimeServices(a.project)); err != nil {

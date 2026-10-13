@@ -20,10 +20,10 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
   server: env.TNL_SERVER === undefined ? "https://control.example.com" : "leaked",
   feedback: true,
   inspection: {mode: "none", retention: "168h", maxBytes: "64MiB"},
-  tunnel: {domain: "routes.example.test", limits: {requests: 20, rate: {requests: 5, per: "1m"}, concurrency: 750}},
+  tunnel: {domain: "routes.example.test", limits: {http: {total: 20, rate: {count: 5, per: "1m"}, concurrency: 750}}},
   services: {
-    api: {target: {type: "app"}, inspection: {mode: "summary"}, tunnel: {name: worktree.label.fullLabel}, http: {readiness: {path: "/status"}}},
-    site: {target: {type: "app"}, tunnel: {publicURL: "https://site.example.test", open: true}, http: {paths: {"/api": "api", "/v1": {service: "api", stripPrefix: true}}}},
+    api: {target: {type: "app"}, inspection: {mode: "summary"}, tunnel: {name: worktree.label.fullLabel}, readiness: {path: "/status"}},
+    site: {target: {type: "app"}, tunnel: {publicURL: "https://site.example.test"}, http: {open: true, paths: {"/api": "api", "/v1": {service: "api", stripPrefix: true}}}},
   },
 });`
 	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
@@ -44,14 +44,14 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 		value.Services["api"].Tunnel.Name == nil || *value.Services["api"].Tunnel.Name != worktree.Label.FullLabel ||
 		value.Services["site"].Tunnel == nil || value.Services["site"].Tunnel.PublicURL == nil ||
 		*value.Services["site"].Tunnel.PublicURL != "https://site.example.test" ||
-		value.Services["site"].Tunnel.Open == nil || !*value.Services["site"].Tunnel.Open ||
+		value.Services["site"].HTTP.Open == nil || !*value.Services["site"].HTTP.Open ||
 		config.ServicePaths(value.Services["site"])["/api"].Service != "api" || !config.ServicePaths(value.Services["site"])["/v1"].StripPrefix ||
-		value.Tunnel.Limits == nil || value.Tunnel.Limits.Concurrency == nil || *value.Tunnel.Limits.Concurrency != 750 ||
-		value.Tunnel.Limits.Requests == nil || *value.Tunnel.Limits.Requests != 20 ||
-		value.Tunnel.Limits.Rate == nil || value.Tunnel.Limits.Rate.Requests == nil || *value.Tunnel.Limits.Rate.Requests != 5 ||
-		value.Tunnel.Limits.Rate.Per == nil || value.Tunnel.Limits.Rate.Per.Value() != time.Minute ||
+		value.Tunnel.Limits == nil || value.Tunnel.Limits.HTTP == nil || value.Tunnel.Limits.HTTP.Concurrency == nil || *value.Tunnel.Limits.HTTP.Concurrency != 750 ||
+		value.Tunnel.Limits.HTTP.Total == nil || *value.Tunnel.Limits.HTTP.Total != 20 ||
+		value.Tunnel.Limits.HTTP.Rate == nil || value.Tunnel.Limits.HTTP.Rate.Count == nil || *value.Tunnel.Limits.HTTP.Rate.Count != 5 ||
+		value.Tunnel.Limits.HTTP.Rate.Per == nil || value.Tunnel.Limits.HTTP.Rate.Per.Value() != time.Minute ||
 		value.Services["api"].Target == nil || value.Services["api"].Target.Type != "app" ||
-		value.Services["api"].HTTP == nil || value.Services["api"].HTTP.Readiness.Path != "/status" {
+		value.Services["api"].Readiness == nil || value.Services["api"].Readiness.Path != "/status" {
 		t.Fatalf("config = %#v", value)
 	}
 }
@@ -62,9 +62,9 @@ func TestResolveTypedServiceTargetAndHTTPOptions(t *testing.T) {
 	source := `export default {
   publisher: {type: "url", url: "https://publisher.example.test", ownerCredentialFile: ".tnl/owner-token"},
   services: {
-    web: {target: {type: "app"}, http: {readiness: {path: "/health"}, paths: {"/api": "api"}}},
+    web: {target: {type: "app"}, readiness: {path: "/health"}, http: {paths: {"/api": "api"}}},
     api: {target: {type: "address", address: 3000}},
-    orders: {protocol: "postgres", target: {type: "address", address: "db.internal:5432"}, tunnel: {visitorTLS: "passthrough"}},
+    orders: {protocol: "postgres", target: {type: "address", address: "db.internal:5432"}, tcp: {visitorTLS: "passthrough"}},
   },
 };`
 	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
@@ -80,7 +80,7 @@ func TestResolveTypedServiceTargetAndHTTPOptions(t *testing.T) {
 	web, err := project.EffectiveService("web")
 	if err != nil || web.Readiness == nil || web.Readiness.Path != "/health" ||
 		config.ServicePaths(project.Config.Services["web"])["/api"].Service != "api" ||
-		project.Config.Services["orders"].Tunnel.VisitorTLS == nil || *project.Config.Services["orders"].Tunnel.VisitorTLS != "passthrough" {
+		project.Config.Services["orders"].TCP.VisitorTLS == nil || *project.Config.Services["orders"].TCP.VisitorTLS != "passthrough" {
 		t.Fatalf("typed TypeScript service settings = %+v, %+v, %v", web, project.Config.Services, err)
 	}
 	orders, err := project.EffectiveService("orders")
@@ -252,7 +252,7 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 	for name, test := range map[string]struct{ source, category string }{
 		"service server":    {`export default {services: {api: {server: "https://control.example"}}};`, `unknown TypeScript configuration field "server"`},
 		"service team":      {`export default {services: {api: {team: "studio"}}};`, `unknown TypeScript configuration field "team"`},
-		"concurrency":       {`export default {services: {api: {tunnel: {limits: {concurrency: 0}}}}};`, "services.api: tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
+		"concurrency":       {`export default {services: {api: {tunnel: {limits: {http: {concurrency: 0}}}}}};`, "services.api: tunnel.limits.http total and concurrency must be positive"},
 		"old request limit": {`export default {services: {api: {tunnel: {requestLimit: 2}}}};`, "unknown TypeScript configuration field"},
 		"inspection":        {`export default {services: {api: {inspection: {mode: "all"}}}};`, "services.api.inspection: mode must be none or summary"},
 		"retired dev":       {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "dev"},
@@ -422,14 +422,14 @@ func TestLoadPreservesParentDeadline(t *testing.T) {
 func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 	value, err := unmarshalTypeScriptTNL([]byte(`{
   "team":"Team One",
-   "services":{"web":{"target":{"type":"app"},"tunnel":{"allowIP":["192.0.2.1"],"ephemeral":true},"http":{"readiness":{"path":"/health"}}}}
+    "services":{"web":{"target":{"type":"app"},"tunnel":{"allowIP":["192.0.2.1"],"ephemeral":true},"readiness":{"path":"/health"}}}
 }`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	service := value.Services["web"]
 	if service.Tunnel == nil || len(service.Tunnel.AllowIP) != 1 || service.Tunnel.Ephemeral == nil || !*service.Tunnel.Ephemeral ||
-		service.HTTP == nil || service.HTTP.Readiness.Path != "/health" {
+		service.Readiness == nil || service.Readiness.Path != "/health" {
 		t.Fatalf("service = %#v", service)
 	}
 	if _, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{"dev":{"startup_timeout":"30s"}}}}`)); err == nil {
@@ -438,7 +438,7 @@ func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 }
 
 func TestTypeScriptDatabasePublishUsesTargetTLSNames(t *testing.T) {
-	value, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"address","address":"db.internal:5432","targetTLS":true,"targetTLSName":"db.internal","targetCAFile":"./ca.pem"}}}}`))
+	value, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"address","address":"db.internal:5432","tls":{"serverName":"db.internal","caFile":"./ca.pem"}}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,9 +448,8 @@ func TestTypeScriptDatabasePublishUsesTargetTLSNames(t *testing.T) {
 	options := value.Services["orders"].Target
 	if options == nil || value.Services["orders"].Protocol == nil || *value.Services["orders"].Protocol != "postgres" ||
 		options.Address == nil || string(*options.Address) != "db.internal:5432" ||
-		options.TargetTLS == nil || !*options.TargetTLS ||
-		options.TargetTLSName == nil || *options.TargetTLSName != "db.internal" ||
-		options.TargetCAFile == nil || *options.TargetCAFile != "./ca.pem" {
+		options.TLS == nil || options.TLS.ServerName == nil || *options.TLS.ServerName != "db.internal" ||
+		options.TLS.CAFile == nil || *options.TLS.CAFile != "./ca.pem" {
 		t.Fatalf("database publication = %#v", options)
 	}
 	for _, field := range []string{"ca_file", "target_ca_file"} {

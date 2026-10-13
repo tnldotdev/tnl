@@ -128,14 +128,14 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		flags.TargetTLS = *effective.Publish.TargetTLS
 	}
 	if flags.PublishCredential == "" {
-		applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
-	} else if effective.Tunnel != nil {
+		applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel, flags.Protocol)
+	} else if effective.Tunnel != nil && flags.Protocol != "" {
 		// a saved URL supplies hostname and visitor policy; local admission is still configurable.
-		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
+		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits, flags.Protocol)
 	}
 	applyInspection(&flags.tunnelFlags, effective)
-	if effective.Tunnel != nil && effective.Tunnel.VisitorTLS != nil && !flags.visitorTLSFromCLI {
-		flags.VisitorTLSPassthrough = *effective.Tunnel.VisitorTLS == "passthrough"
+	if service != "" && c.Config.Services[service].TCP != nil && c.Config.Services[service].TCP.VisitorTLS != nil && !flags.visitorTLSFromCLI {
+		flags.VisitorTLSPassthrough = *c.Config.Services[service].TCP.VisitorTLS == "passthrough"
 	}
 	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
 	if flags.PublishCredential == "" {
@@ -153,8 +153,10 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		return failure.Wrap("select target", failure.MissingTarget,
 			errors.New("target is required as an argument or publish.target in project configuration"))
 	}
-	if err := validateTunnelFlags(flags.tunnelFlags); err != nil {
-		return failure.Wrap("validate tunnel options", failure.InvalidTunnelFlags, err)
+	if flags.PublishCredential == "" || flags.Protocol != "" {
+		if err := validateTunnelFlags(flags.tunnelFlags); err != nil {
+			return failure.Wrap("validate tunnel options", failure.InvalidTunnelFlags, err)
+		}
 	}
 	return nil
 }
@@ -187,11 +189,11 @@ func applyOpenConfiguration(flags *openOptions, tunnel *config.Tunnel) {
 	}
 }
 
-func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
+func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel, protocol ...string) {
 	if tunnel == nil {
 		return
 	}
-	applyTunnelLimits(flags, tunnel.Limits)
+	applyTunnelLimits(flags, tunnel.Limits, protocol...)
 	if flags.Domain == "" && tunnel.Domain != nil {
 		flags.Domain = *tunnel.Domain
 	}
@@ -218,22 +220,32 @@ func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 	}
 }
 
-func applyTunnelLimits(flags *tunnelFlags, limits *config.Limits) {
+func applyTunnelLimits(flags *tunnelFlags, limits *config.Limits, protocol ...string) {
 	if limits == nil {
 		return
 	}
+	selected := limits.HTTP
+	if len(protocol) != 0 && protocol[0] != "" && protocol[0] != "http" {
+		selected = limits.TCP
+	}
+	if selected == nil {
+		return
+	}
 	if flags.Requests == nil {
-		flags.Requests = limits.Requests
+		flags.Requests = selected.Total
 	}
 	if flags.Concurrency == nil {
-		flags.Concurrency = limits.Concurrency
+		flags.Concurrency = selected.Concurrency
 	}
-	if limits.Rate != nil {
+	if selected.Rate != nil {
 		if flags.RateRequests == nil {
-			flags.RateRequests = limits.Rate.Requests
+			flags.RateRequests = selected.Rate.Count
 		}
-		if flags.RatePer == "" && limits.Rate.Per != nil {
-			flags.RatePer = limits.Rate.Per.Value().String()
+		if flags.RatePer == "" && selected.Rate.Per != nil {
+			flags.RatePer = selected.Rate.Per.Value().String()
+		}
+		if flags.RateBurst == nil {
+			flags.RateBurst = selected.Rate.Burst
 		}
 	}
 }
@@ -274,16 +286,19 @@ func validateTunnelFlags(flags tunnelFlags) error {
 		}
 	}
 	if flags.Requests != nil && *flags.Requests <= 0 || flags.Concurrency != nil && *flags.Concurrency <= 0 {
-		return errors.New("--requests and --concurrency must be greater than zero")
+		return errors.New("--total and --concurrency must be greater than zero")
 	}
 	if (flags.RateRequests == nil) != (flags.RatePer == "") {
-		return errors.New("--rate-requests and --rate-per must be supplied together")
+		return errors.New("--rate-count and --rate-per must be supplied together")
 	}
 	if flags.RateRequests != nil {
 		period, err := time.ParseDuration(flags.RatePer)
 		if *flags.RateRequests <= 0 || err != nil || period <= 0 {
-			return errors.New("--rate-requests and --rate-per must be positive")
+			return errors.New("--rate-count and --rate-per must be positive")
 		}
+	}
+	if flags.RateBurst != nil && (*flags.RateBurst <= 0 || flags.RateRequests == nil) {
+		return errors.New("--rate-burst requires a positive rate")
 	}
 	if flags.PublicURL != "" && flags.Name != "" {
 		return errors.New("--public-url and --name are mutually exclusive")

@@ -87,6 +87,7 @@ type AdHocLimits struct {
 type AdHocRateLimit struct {
 	Requests int    `json:"requests"`
 	Per      string `json:"per"`
+	Burst    int    `json:"burst,omitempty"`
 }
 
 type AdHocState string

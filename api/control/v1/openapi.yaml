@@ -1819,6 +1819,9 @@ components:
               minimum: 1
             per:
               type: string
+            burst:
+              type: integer
+              minimum: 1
     IssuedEphemeralPublishCredential:
       type: object
       additionalProperties: false

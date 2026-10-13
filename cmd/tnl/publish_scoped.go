@@ -106,6 +106,18 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		return failure.Wrap("read scoped publish protocol", failure.ServerResponseInvalid,
 			errors.New("control returned an invalid service protocol"))
 	}
+	if flags.Protocol == "" {
+		effective, err := flags.project.EffectiveService(flags.Service)
+		if err != nil {
+			return err
+		}
+		if effective.Tunnel != nil {
+			applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits, string(protocol))
+		}
+		if err := validateTunnelFlags(flags.tunnelFlags); err != nil {
+			return failure.Wrap("validate tunnel options", failure.InvalidTunnelFlags, err)
+		}
+	}
 	if err := selectPublishInspection(&flags, protocol); err != nil {
 		return err
 	}

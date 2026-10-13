@@ -8,13 +8,15 @@ import {
 } from "@tnldotdev/tnl/config";
 import type { OpenOptions } from "@tnldotdev/tnl";
 
-({ limits: { rate: { requests: 2, per: "1h30m" } } }) satisfies OpenOptions;
+({ limits: { http: { rate: { count: 2, per: "1h30m" } } } }) satisfies OpenOptions;
 ({
   limits: {
-    rate: {
-      requests: 2,
-      // @ts-expect-error ad-hoc rate periods use the generated duration-literal type.
-      per: "minute",
+    http: {
+      rate: {
+        count: 2,
+        // @ts-expect-error ad-hoc rate periods use the generated duration-literal type.
+        per: "minute",
+      },
     },
   },
 }) satisfies OpenOptions;
@@ -24,7 +26,7 @@ const staticConfig = {
   tunnel: {
     allowIP: ["192.0.2.0/24"],
     domain: "example.test",
-    limits: { requests: 20, rate: { requests: 5, per: "1m" }, concurrency: 750 },
+    limits: { http: { total: 20, rate: { count: 5, per: "1m" }, concurrency: 750 } },
   },
 } satisfies TnlConfigInput;
 
@@ -32,16 +34,41 @@ const namedTargets = defineConfig({
   services: {
     web: {
       target: { type: "app" },
-      http: { readiness: { path: "/health" }, paths: { "/api": "api" } },
+      readiness: { path: "/health" },
+      http: { paths: { "/api": "api" } },
     },
     api: { target: { type: "address", address: 3000 } },
     orders: {
       protocol: "postgres",
       target: { type: "address", address: "db.internal:5432" },
-      tunnel: { visitorTLS: "passthrough" },
+      tcp: { visitorTLS: "passthrough" },
     },
   },
 });
+defineConfig({
+  // @ts-expect-error TCP service limits cannot be configured on an HTTP service.
+  services: { web: { protocol: "http", tunnel: { limits: { tcp: { concurrency: 2 } } } } },
+});
+defineConfig({
+  // @ts-expect-error HTTP request limits cannot be configured on a TCP service.
+  services: {
+    db: {
+      protocol: "postgres",
+      target: { type: "address", address: "db:5432" },
+      tunnel: { limits: { http: { concurrency: 2 } } },
+    },
+  },
+});
+({
+  services: {
+    shell: {
+      protocol: "ssh",
+      target: { type: "address", address: "sshd:22" },
+      // @ts-expect-error SSH does not have visitor TLS to terminate.
+      tcp: { visitorTLS: "passthrough" },
+    },
+  },
+}) satisfies TnlConfig;
 ({
   services: {
     web: {
@@ -56,8 +83,8 @@ namedTargets.services.orders.protocol satisfies "postgres";
   services: {
     web: {
       target: {
-        type: "app",
         // @ts-expect-error the app reports its own bound address.
+        type: "app",
         address: 3000,
       },
     },
@@ -79,9 +106,7 @@ defineConfig({
       target: {
         type: "address",
         address: "db.internal:5432",
-        targetTLS: true,
-        targetTLSName: "db.internal",
-        targetCAFile: "./ca.pem",
+        tls: { serverName: "db.internal", caFile: "./ca.pem" },
       },
     },
   },
@@ -109,12 +134,15 @@ defineConfig({
 ({
   services: {
     api: {
+      protocol: "http",
       tunnel: {
         limits: {
-          rate: {
-            requests: 1,
-            // @ts-expect-error service limits use the same rate period type.
-            per: "minute",
+          http: {
+            rate: {
+              count: 1,
+              // @ts-expect-error service limits use the same rate period type.
+              per: "minute",
+            },
           },
         },
       },
@@ -152,7 +180,7 @@ const projectScopedSettings = {
   team: "studio",
   feedback: true,
   services: {
-    web: { target: { type: "app" }, http: { readiness: { path: "/health" } } },
+    web: { target: { type: "app" }, readiness: { path: "/health" } },
   },
 } satisfies TnlConfig;
 const composeProject = defineConfig(({ worktree }) => ({
@@ -305,9 +333,9 @@ defineConfig(() => ({
 
 const literalConfig = defineConfig({
   tunnel: { name: "api" },
-  services: { api: { target: { type: "app" }, http: { readiness: { path: "/health" } } } },
+  services: { api: { target: { type: "app" }, readiness: { path: "/health" } } },
 } as const);
-literalConfig.services.api.http.readiness.path satisfies "/health";
+literalConfig.services.api.readiness.path satisfies "/health";
 literalConfig.tunnel.name satisfies "api";
 
 const exactConfig = defineConfig({ tunnel: { publicURL: "https://api.example.test" } } as const);

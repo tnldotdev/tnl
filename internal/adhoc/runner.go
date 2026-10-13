@@ -71,9 +71,13 @@ func Run(ctx context.Context, options Options) (result error) {
 		}
 		if options.Limits.RateRequests != 0 {
 			limits.Rate = &struct {
+				Burst    *int   `json:"burst,omitempty"`
 				Per      string `json:"per"`
 				Requests int    `json:"requests"`
 			}{Per: options.Limits.RatePer.String(), Requests: options.Limits.RateRequests}
+			if options.Limits.RateBurst != 0 {
+				limits.Rate.Burst = &options.Limits.RateBurst
+			}
 		}
 		body.Limits = limits
 	}

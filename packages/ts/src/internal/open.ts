@@ -16,9 +16,15 @@ export interface OpenOptions {
   readonly allowIP?: readonly string[];
   readonly allowAllIPs?: boolean;
   readonly limits?: {
-    readonly requests?: number;
-    readonly rate?: { readonly requests: number; readonly per: TnlRatePeriod };
-    readonly concurrency?: number;
+    readonly http?: {
+      readonly total?: number;
+      readonly rate?: {
+        readonly count: number;
+        readonly per: TnlRatePeriod;
+        readonly burst?: number;
+      };
+      readonly concurrency?: number;
+    };
   };
   readonly signal?: AbortSignal;
 }
@@ -91,7 +97,29 @@ export async function openServer(
     credential,
     ...(options.allowIP === undefined ? {} : { allow_ip: [...options.allowIP] }),
     ...(options.allowAllIPs === undefined ? {} : { allow_all_ips: options.allowAllIPs }),
-    ...(options.limits === undefined ? {} : { limits: options.limits }),
+    ...(options.limits?.http === undefined
+      ? {}
+      : {
+          limits: {
+            ...(options.limits.http.total === undefined
+              ? {}
+              : { requests: options.limits.http.total }),
+            ...(options.limits.http.concurrency === undefined
+              ? {}
+              : { concurrency: options.limits.http.concurrency }),
+            ...(options.limits.http.rate === undefined
+              ? {}
+              : {
+                  rate: {
+                    requests: options.limits.http.rate.count,
+                    per: options.limits.http.rate.per,
+                    ...(options.limits.http.rate.burst === undefined
+                      ? {}
+                      : { burst: options.limits.http.rate.burst }),
+                  },
+                }),
+          },
+        }),
   };
   let socket = await runtime.start(directory);
   if (options.signal?.aborted) throw aborted();
@@ -182,7 +210,8 @@ export async function openServer(
   options.signal?.addEventListener("abort", onAbort, { once: true });
   process.once("beforeExit", beforeExit);
   if (options.signal?.aborted) onAbort();
-  const strictBudget = options.limits?.requests !== undefined || options.limits?.rate !== undefined;
+  const strictBudget =
+    options.limits?.http?.total !== undefined || options.limits?.http?.rate !== undefined;
   let lastRenew = Date.now();
 
   const observe = (status: Status) => {
@@ -379,24 +408,31 @@ function validateOptions(options: OpenOptions): void {
   )
     throw new TnlError("sdk.configuration_invalid");
   const limits = options.limits;
+  const http = limits?.http;
   if (
     limits !== undefined &&
     (limits === null ||
       typeof limits !== "object" ||
       Array.isArray(limits) ||
-      Object.keys(limits).some((key) => !["requests", "rate", "concurrency"].includes(key)) ||
-      (limits.requests !== undefined &&
-        (!Number.isSafeInteger(limits.requests) || limits.requests < 1)) ||
-      (limits.concurrency !== undefined &&
-        (!Number.isSafeInteger(limits.concurrency) || limits.concurrency < 1)) ||
-      (limits.rate !== undefined &&
-        (limits.rate === null ||
-          !Number.isSafeInteger(limits.rate.requests) ||
-          limits.rate.requests < 1 ||
-          typeof limits.rate.per !== "string" ||
-          !/^([0-9]+(\.[0-9]+)?|\.[0-9]+)(ns|us|µs|ms|s|m|h)([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))*$/.test(
-            limits.rate.per,
-          ))))
+      Object.keys(limits).some((key) => key !== "http") ||
+      (http !== undefined &&
+        (http === null ||
+          typeof http !== "object" ||
+          Array.isArray(http) ||
+          Object.keys(http).some((key) => !["total", "rate", "concurrency"].includes(key)) ||
+          (http.total !== undefined && (!Number.isSafeInteger(http.total) || http.total < 1)) ||
+          (http.concurrency !== undefined &&
+            (!Number.isSafeInteger(http.concurrency) || http.concurrency < 1)) ||
+          (http.rate !== undefined &&
+            (http.rate === null ||
+              !Number.isSafeInteger(http.rate.count) ||
+              http.rate.count < 1 ||
+              (http.rate.burst !== undefined &&
+                (!Number.isSafeInteger(http.rate.burst) || http.rate.burst < 1)) ||
+              typeof http.rate.per !== "string" ||
+              !/^([0-9]+(\.[0-9]+)?|\.[0-9]+)(ns|us|µs|ms|s|m|h)([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))*$/.test(
+                http.rate.per,
+              ))))))
   )
     throw new TnlError("sdk.configuration_invalid");
 }

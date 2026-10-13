@@ -23,14 +23,19 @@ import (
 )
 
 type RateLimit struct {
-	Requests int
-	Per      time.Duration
+	Count int
+	Per   time.Duration
+	Burst int
+}
+
+type WorkLimits struct {
+	Total       int
+	Rate        RateLimit
+	Concurrency int
 }
 
 type Limits struct {
-	Requests    int
-	Rate        RateLimit
-	Concurrency int
+	HTTP WorkLimits
 }
 
 type Options struct {
@@ -66,8 +71,8 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	if _, _, _, err := credentials.ParseEphemeralCredential(credentials.EphemeralCredential(credential)); err != nil {
 		return nil, err
 	}
-	limits := publisher.ApplicationLimits{Requests: options.Limits.Requests, RateRequests: options.Limits.Rate.Requests,
-		RatePer: options.Limits.Rate.Per, Concurrency: options.Limits.Concurrency}
+	limits := publisher.ApplicationLimits{Requests: options.Limits.HTTP.Total, RateRequests: options.Limits.HTTP.Rate.Count,
+		RatePer: options.Limits.HTTP.Rate.Per, RateBurst: options.Limits.HTTP.Rate.Burst, Concurrency: options.Limits.HTTP.Concurrency}
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}

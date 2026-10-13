@@ -16,15 +16,15 @@ func TestPublisherLimitsMergeAndFlagPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parser.Parse([]string{"publish", "web", "--rate-requests=3"}); err != nil {
+	if _, err := parser.Parse([]string{"publish", "web", "--rate-count=3"}); err != nil {
 		t.Fatal(err)
 	}
 	requests, rateRequests, concurrency := 20, 2, 7
 	period := config.Duration(time.Minute)
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		Tunnel:   &config.Tunnel{Limits: &config.Limits{Requests: &requests, Rate: &config.Rate{Requests: &rateRequests, Per: &period}}},
-		Services: config.Services{"web": {Tunnel: &config.Tunnel{Limits: &config.Limits{Concurrency: &concurrency}}, Publish: &config.Publish{Target: &target}}},
+		Tunnel:   &config.Tunnel{Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &requests, Rate: &config.Rate{Count: &rateRequests, Per: &period}}}},
+		Services: config.Services{"web": {Tunnel: &config.Tunnel{Limits: &config.Limits{HTTP: &config.WorkLimits{Concurrency: &concurrency}}}, Publish: &config.Publish{Target: &target}}},
 	}}}
 	if err := project.applyPublish(&flags.Publish); err != nil {
 		t.Fatal(err)
@@ -37,11 +37,11 @@ func TestPublisherLimitsMergeAndFlagPrecedence(t *testing.T) {
 
 func TestPublisherLimitsRequirePositivePairedRate(t *testing.T) {
 	for _, args := range [][]string{
-		{"publish", "3000", "--requests=0"},
+		{"publish", "3000", "--total=0"},
 		{"publish", "3000", "--concurrency=-1"},
-		{"publish", "3000", "--rate-requests=1"},
+		{"publish", "3000", "--rate-count=1"},
 		{"publish", "3000", "--rate-per=1m"},
-		{"publish", "3000", "--rate-requests=1", "--rate-per=0s"},
+		{"publish", "3000", "--rate-count=1", "--rate-per=0s"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)

@@ -1464,6 +1464,7 @@ type PublishRunVersionRequest struct {
 type PublisherApplicationLimits struct {
 	Concurrency *int `json:"concurrency,omitempty"`
 	Rate        *struct {
+		Burst    *int   `json:"burst,omitempty"`
 		Per      string `json:"per"`
 		Requests int    `json:"requests"`
 	} `json:"rate,omitempty"`

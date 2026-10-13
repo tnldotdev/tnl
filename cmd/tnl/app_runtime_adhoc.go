@@ -32,6 +32,7 @@ func (a *appRuntime) publishAdHoc(ctx context.Context, request privateprotocol.A
 		limits.Requests, limits.Concurrency = request.Limits.Requests, request.Limits.Concurrency
 		if request.Limits.Rate != nil {
 			limits.RateRequests = request.Limits.Rate.Requests
+			limits.RateBurst = request.Limits.Rate.Burst
 			limits.RatePer, err = time.ParseDuration(request.Limits.Rate.Per)
 			if err != nil {
 				return errors.New("invalid ad-hoc rate period")
