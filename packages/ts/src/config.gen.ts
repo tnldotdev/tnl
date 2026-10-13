@@ -86,15 +86,9 @@ export interface TnlConfig {
         type: "local";
       }
     | {
-        type: "url";
-        url: string;
-        ownerCredentialFile?: string;
-      }
-    | {
         type: "docker";
         container: string;
         containerPort: number;
-        ownerCredentialFile?: string;
       }
     | {
         type: "docker";
@@ -102,7 +96,6 @@ export interface TnlConfig {
           [k: string]: string | undefined;
         };
         containerPort: number;
-        ownerCredentialFile?: string;
       }
     | {
         type: "docker";
@@ -112,7 +105,6 @@ export interface TnlConfig {
           service: string;
         };
         containerPort: number;
-        ownerCredentialFile?: string;
       };
   /**
    * Named local services with a private target, public URL settings, and optional HTTP settings.

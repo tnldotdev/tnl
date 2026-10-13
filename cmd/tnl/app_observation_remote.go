@@ -16,7 +16,7 @@ import (
 )
 
 func remoteProjectStatus(ctx context.Context, project projectConfiguration, probe string) (localpublisherv1.ProjectSnapshot, error) {
-	endpoint, err := selectedPublisherEndpoint(ctx, project)
+	client, err := selectedPublisherClient(ctx, project, 5*time.Second)
 	if err != nil {
 		return localpublisherv1.ProjectSnapshot{}, err
 	}
@@ -24,7 +24,6 @@ func remoteProjectStatus(ctx context.Context, project projectConfiguration, prob
 	if probe != "" {
 		path += "?probe=" + url.QueryEscape(probe)
 	}
-	client := namedPublisherClient{endpoint: endpoint, http: publisherHTTPClient(5 * time.Second)}
 	var snapshot localpublisherv1.ProjectSnapshot
 	if err := client.request(ctx, http.MethodGet, path, "", nil, &snapshot); err != nil {
 		return localpublisherv1.ProjectSnapshot{}, err
@@ -111,11 +110,10 @@ func runRemoteAppWatch(ctx context.Context, project projectConfiguration, flags 
 	if _, err := clientruntime.ParseCursor(cursor); err != nil {
 		return failure.Wrap("resume local events", failure.InvalidCommand, err)
 	}
-	endpoint, err := selectedPublisherEndpoint(ctx, project)
+	client, err := selectedPublisherClient(ctx, project, 5*time.Second)
 	if err != nil {
 		return err
 	}
-	client := namedPublisherClient{endpoint: endpoint, http: publisherHTTPClient(5 * time.Second)}
 	for ctx.Err() == nil {
 		var page localpublisherv1.ProjectEventPage
 		if err := client.request(ctx, http.MethodGet, "/v1/events?after="+url.QueryEscape(cursor), "", nil, &page); err != nil {

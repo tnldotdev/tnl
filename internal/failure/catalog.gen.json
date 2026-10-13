@@ -412,7 +412,7 @@
       "slug": "publisher-credential-missing",
       "class": "unavailable",
       "message": "the project publisher owner credential file is missing",
-      "action": "run tnl project publisher credential create, then start the publisher again"
+      "action": "start the Docker publisher and check its private client state"
     },
     {
       "code": "TNL_CLIENT_PUBLISH_CREDENTIAL_MISMATCH",
