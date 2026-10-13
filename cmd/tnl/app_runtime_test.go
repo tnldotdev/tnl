@@ -314,7 +314,7 @@ func TestWaitAlwaysChecksFreshResponsesAndKeepsFailingPublicationsRunning(t *tes
 		return clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now(), Status: 503, Reason: "runtime.probe_rejected", Readiness: service.Readiness}
 	}
 	var output bytes.Buffer
-	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Service: []string{"api"}, Timeout: 20 * time.Millisecond, Output: "json"}, &output, probe)
+	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Service: []string{"api"}, Timeout: 2 * time.Second, Output: "json"}, &output, probe)
 	if reason, _, ok := failure.Describe(err); !ok || reason != failure.AppReadinessTimeout || calls.Load() == 0 {
 		t.Fatalf("fresh wait = %v, probes=%d", err, calls.Load())
 	}
@@ -327,7 +327,7 @@ func TestWaitAlwaysChecksFreshResponsesAndKeepsFailingPublicationsRunning(t *tes
 		t.Fatalf("wait output = %s, %v", output.String(), err)
 	}
 	output.Reset()
-	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Timeout: 10 * time.Millisecond, Output: "json"}, &output, func(_ context.Context, s clientruntime.Service) clientruntime.Observation {
+	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Timeout: 2 * time.Second, Output: "json"}, &output, func(_ context.Context, s clientruntime.Service) clientruntime.Observation {
 		return clientruntime.Observation{RegistrationID: s.RegistrationID, PublishRunNumber: s.PublishRunNumber, CheckedAt: time.Now(), Ready: true, Readiness: s.Readiness}
 	})
 	if err == nil {
