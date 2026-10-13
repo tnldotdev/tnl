@@ -45,6 +45,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		RelayLeaseDuration:   3 * time.Second, LeaseRenewalInterval: time.Second,
 		ControlRetryInterval: 10 * time.Millisecond, RoutingTableWait: time.Second, DrainTimeout: 2 * time.Second,
 	}
+	setTestTrafficDefaults(&cfg)
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
