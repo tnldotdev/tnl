@@ -2,11 +2,12 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -15,9 +16,11 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientruntime"
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/tcptarget"
 )
 
 type waitCommand struct {
@@ -72,11 +75,72 @@ func readAppSnapshot(ctx context.Context, project projectConfiguration, state st
 	return snapshot, nil
 }
 
+func readProjectServicesSnapshot(ctx context.Context, project projectConfiguration, state string) (clientruntime.Snapshot, error) {
+	snapshot, err := readAppSnapshot(ctx, project, state)
+	if err != nil {
+		return snapshot, err
+	}
+	if len(project.Config.Services) == len(configuredRuntimeServices(project)) {
+		return snapshot, nil
+	}
+	database, err := clientstate.Open(ctx, state)
+	if err != nil {
+		return snapshot, err
+	}
+	defer database.Close()
+	tunnels, err := database.SnapshotProject(ctx, project.Root)
+	if err != nil {
+		return snapshot, err
+	}
+	return mergeTCPServices(snapshot, project, tunnels.Tunnels), nil
+}
+
+func mergeTCPServices(snapshot clientruntime.Snapshot, project projectConfiguration, tunnels []clientstate.TunnelInfo) clientruntime.Snapshot {
+	for name := range project.Config.Services {
+		effective, _ := project.EffectiveService(name)
+		protocol := config.ServiceProtocol(effective.Publish)
+		if protocol == "http" {
+			continue
+		}
+		service := clientruntime.Service{Name: name, Directory: project.RelativeServiceDirectories[name], ServiceProtocol: protocol}
+		if effective.Publish != nil && effective.Publish.Target != nil {
+			service.Target = string(*effective.Publish.Target)
+		}
+		var selected *clientstate.TunnelInfo
+		for index := range tunnels {
+			tunnel := &tunnels[index]
+			if tunnel.Service != name || string(tunnel.ServiceProtocol) != protocol {
+				continue
+			}
+			if selected == nil || (selected.State != clientstate.TunnelStateReady && tunnel.State == clientstate.TunnelStateReady) ||
+				(selected.State == tunnel.State && tunnel.StartedAt.After(selected.StartedAt)) {
+				selected = tunnel
+			}
+		}
+		if selected != nil {
+			service.TunnelID = selected.ID
+			service.Registered = selected.State != clientstate.TunnelStateStale && selected.State != clientstate.TunnelStateDraining
+			service.Routable = selected.State == clientstate.TunnelStateReady
+			service.PublicURL, service.Target = selected.PublicURL, selected.Target
+			service.PublishRunNumber = selected.PublishRunNumber
+		}
+		snapshot.Services = append(snapshot.Services, service)
+	}
+	slices.SortFunc(snapshot.Services, func(a, b clientruntime.Service) int { return cmp.Compare(a.Name, b.Name) })
+	return snapshot
+}
+
 func appServiceBlocks(snapshot clientruntime.Snapshot) []clioutput.Block {
 	blocks := make([]clioutput.Block, 0, len(snapshot.Services))
 	for _, service := range snapshot.Services {
 		state := "not registered"
-		if service.Registered {
+		if service.ServiceProtocol != "" {
+			state = "not publishing"
+			if service.Registered {
+				state = "publishing"
+			}
+		}
+		if service.Registered && service.ServiceProtocol == "" {
 			state = "registered"
 		}
 		if service.Routable {
@@ -86,6 +150,9 @@ func appServiceBlocks(snapshot clientruntime.Snapshot) []clioutput.Block {
 			state = "ready"
 		}
 		fields := []clioutput.Field{{Label: "service", Value: service.Name}, {Label: "directory", Value: service.Directory}}
+		if service.ServiceProtocol != "" {
+			fields = append(fields, clioutput.Field{Label: "protocol", Value: service.ServiceProtocol})
+		}
 		if service.Project != "" {
 			fields = append(fields, clioutput.Field{Label: "project", Value: service.Project})
 		}
@@ -131,8 +198,8 @@ func runAppObservation(ctx context.Context, flags cli, command string, output io
 	if err != nil {
 		return err
 	}
-	if !project.Found() || len(configuredRuntimeServices(project)) == 0 {
-		return failure.Wrap("observe apps", failure.ProjectConfigMissing, errors.New("configured HTTP app services are required; TCP services use tnl publish"))
+	if !project.Found() || len(project.Config.Services) == 0 {
+		return failure.Wrap("observe services", failure.ProjectConfigMissing, errors.New("configured services are required"))
 	}
 	if canonical, err := filepath.EvalSymlinks(root); err == nil {
 		root = canonical
@@ -157,16 +224,12 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 		if _, found := project.Config.Services[name]; !found {
 			return failure.Wrap("wait for service", failure.ServiceNotConfigured, errors.New("service is not configured"))
 		}
-		effective, _ := project.EffectiveService(name)
-		if config.ServiceProtocol(effective.Publish) != "http" {
-			return failure.Wrap("wait for service", failure.InvalidCommand, fmt.Errorf("TCP service %q uses tnl publish; check tnl status instead", name))
-		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, flags.Timeout)
 	defer cancel()
 	var latest clientruntime.Snapshot
 	for attempt := 0; ; attempt++ {
-		snapshot, err := readAppSnapshot(ctx, project, state)
+		snapshot, err := readProjectServicesSnapshot(ctx, project, state)
 		if err != nil {
 			return err
 		}
@@ -183,6 +246,10 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
+				if service.ServiceProtocol != "" {
+					service.Ready = probeTCPTarget(ctx, service.Target)
+					return
+				}
 				observation := probe(ctx, *service)
 				service.Ready, service.Observation = observation.Ready, &observation
 			}()
@@ -190,7 +257,7 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 		workers.Wait()
 		// a successful response is valid only for the registration and publish run
 		// that were still current after its headers arrived.
-		current, err := readAppSnapshot(ctx, project, state)
+		current, err := readProjectServicesSnapshot(ctx, project, state)
 		if err != nil {
 			return err
 		}
@@ -199,13 +266,13 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 			service := &snapshot.Services[index]
 			matched := false
 			for _, now := range current.Services {
-				if now.Name == service.Name && now.Registered && now.Routable && now.RegistrationID == service.RegistrationID && now.PublishRunNumber == service.PublishRunNumber {
+				if now.Name == service.Name && now.Registered && now.Routable && now.RegistrationID == service.RegistrationID && now.TunnelID == service.TunnelID && now.PublishRunNumber == service.PublishRunNumber {
 					matched = true
 					break
 				}
 			}
 			service.Ready = service.Ready && matched
-			if matched && service.Observation != nil {
+			if matched && service.ServiceProtocol == "" && service.Observation != nil {
 				data, err := json.Marshal(service.Observation)
 				if err != nil {
 					return err
@@ -252,6 +319,20 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 		return err
 	}
 	return failure.Wrap("wait for public readiness", failure.AppReadinessTimeout, ctx.Err())
+}
+
+func probeTCPTarget(ctx context.Context, target string) bool {
+	if _, err := tcptarget.Host(target); err != nil {
+		return false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	connection, err := (&net.Dialer{}).DialContext(probeCtx, "tcp", target)
+	if err != nil {
+		return false
+	}
+	connection.Close()
+	return true
 }
 
 func writeAppWait(output io.Writer, mode string, snapshot clientruntime.Snapshot, state string) error {

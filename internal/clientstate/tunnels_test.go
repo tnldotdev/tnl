@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestFinishedTunnelPersistsReasonInsteadOfCause(t *testing.T) {
@@ -123,6 +124,97 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	}
 	if snapshot.Summary.Total != 0 || len(snapshot.Tunnels) != 0 {
 		t.Fatalf("finished snapshot = %#v", snapshot)
+	}
+}
+
+func TestDatabaseTunnelReadyPersistsPublicPort(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	database, err := Open(t.Context(), stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
+		Command: TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:5432",
+		Project: t.TempDir(), Service: "orders", ServiceProtocol: controlv1.Postgres,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "orders.example"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := database.Snapshot(t.Context())
+	if err != nil || len(before.Tunnels) != 1 || before.Tunnels[0].PublicURL != "" {
+		t.Fatalf("unassigned database port snapshot = %#v, %v", before, err)
+	}
+	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range []string{"orders.example:0", "orders.example:65536", "https://orders.example:15432"} {
+		if err := tunnel.SetReady(t.Context(), address, 1); err == nil {
+			t.Fatalf("accepted invalid public address %q", address)
+		}
+	}
+	if err := tunnel.SetReady(t.Context(), "orders.example:15432", 1); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := Open(t.Context(), stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	snapshot, err := reader.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Tunnels) != 1 || snapshot.Tunnels[0].PublicURL != "orders.example:15432" ||
+		snapshot.Tunnels[0].PublicPort != 15432 || snapshot.Tunnels[0].Service != "orders" ||
+		snapshot.Tunnels[0].ServiceProtocol != controlv1.Postgres || snapshot.Tunnels[0].Target != "127.0.0.1:5432" ||
+		snapshot.Tunnels[0].State != TunnelStateReady {
+		t.Fatalf("database tunnel snapshot = %#v", snapshot)
+	}
+}
+
+func TestNamedTCPServicesPersistTheirProtocolAndPublicPort(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		protocol controlv1.PublicURLServiceProtocol
+		target   string
+		want     string
+		address  string
+	}{
+		{"cache", controlv1.Redis, "6379", "127.0.0.1:6379", "cache.example:16379"},
+		{"shell", controlv1.Ssh, "127.0.0.1:22", "127.0.0.1:22", "shell.example:10022"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			project := t.TempDir()
+			tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
+				Command: TunnelCommandPublish, Server: "https://server.example", Target: test.target,
+				Project: project, Service: test.name, ServiceProtocol: test.protocol,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tunnel.Finish(context.Background(), nil)
+			if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, test.name+".example"); err != nil {
+				t.Fatal(err)
+			}
+			if err := tunnel.SetReady(t.Context(), test.address, 1); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := database.SnapshotProject(t.Context(), project)
+			if err != nil || len(snapshot.Tunnels) != 1 || snapshot.Tunnels[0].PublicURL != test.address ||
+				snapshot.Tunnels[0].ServiceProtocol != test.protocol || snapshot.Tunnels[0].Target != test.want {
+				t.Fatalf("%s snapshot = %#v, %v", test.name, snapshot, err)
+			}
+		})
 	}
 }
 
