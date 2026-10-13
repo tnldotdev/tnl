@@ -55,6 +55,9 @@ type dockerPublishTarget struct {
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	if flags.Service != "" && flags.PublishCredential == "" {
 		if target := flags.project.Config.Services[flags.Service].Target; target != nil && target.Type != "app" {
+			if invocation, ok := optionalTelemetryReporter(reporters).(*telemetryInvocation); ok {
+				invocation.SetEntryMode(telemetryNamed)
+			}
 			return runNamedPublish(ctx, flags, stdout, stderr, reporters...)
 		}
 	}
