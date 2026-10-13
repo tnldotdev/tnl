@@ -237,26 +237,18 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime ./internal/publisher -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
 
-  go:test:integration:database-clients:
-    desc: Verify real database clients with disposable private servers
+  go:test:integration:tcp-clients:
+    desc: Verify real TCP clients with disposable targets
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgres(Login|Inspection)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
       - go -C tools/testharness run . mysql -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientMySQLLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . redis -- go test -race -v ./internal/publisher -run='^TestIntegrationRedisClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . ssh -- go test -race -v ./internal/publisher -run='^TestIntegrationSSHClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:mysql-oracle:
     desc: Check bounded MySQL result observations against the test-only Vitess decoder
     cmds:
       - GOWORK="$(pwd)/tools/inspectionoracle/go.work" go test -race -tags=inspectororacle -v ./internal/publisher -run='^TestOracleMySQL' -count=1 -timeout=5m
-
-  go:test:integration:redis:
-    desc: Verify Redis authentication and commands through a TLS public URL to a disposable plaintext Redis
-    cmds:
-      - go -C tools/testharness run . redis -- go test -race -v ./internal/publisher -run='^TestIntegrationRedisClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
-
-  go:test:integration:ssh:
-    desc: Verify SSH authentication and host-key checking through a disposable sshd
-    cmds:
-      - go -C tools/testharness run . ssh -- go test -race -v ./internal/publisher -run='^TestIntegrationSSHClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:binary:
     desc: Run Linux binary integration tests

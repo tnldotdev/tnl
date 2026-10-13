@@ -3,6 +3,7 @@ module github.com/tnldotdev/tnl/tools/testharness
 go 1.27.2
 
 require (
+	github.com/alecthomas/kong v1.16.1
 	github.com/moby/moby/api v1.55.0
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/compose v0.44.0
