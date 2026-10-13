@@ -16,7 +16,7 @@ import (
 )
 
 type inspectCommand struct {
-	List inspectListCommand `cmd:"" help:"List recent local HTTP and database activity for this project."`
+	List inspectListCommand `cmd:"" help:"List recent local HTTP and supported TCP activity for this project."`
 	Show inspectShowCommand `cmd:"" help:"Show one locally recorded inspection."`
 }
 

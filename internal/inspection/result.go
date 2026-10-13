@@ -1,6 +1,6 @@
 package inspection
 
-// Result is the outcome shared by HTTP and database inspections.
+// Result is the outcome shared by HTTP and supported TCP inspections.
 type Result string
 
 const (
