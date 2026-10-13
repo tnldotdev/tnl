@@ -175,14 +175,14 @@ func runRuntimeEndpoint(ctx context.Context, options runtimeOptions, output io.W
 	if err != nil {
 		return err
 	}
-	socket, err := runtimeSocket(project.Root, state)
+	key, err := runtimeKey(project.Root, state)
 	if err != nil {
 		return err
 	}
 	return json.NewEncoder(output).Encode(struct {
 		Version int    `json:"version"`
 		Path    string `json:"path"`
-	}{privateprotocol.Version, runtimeTCPEndpointPath(socket)})
+	}{privateprotocol.Version, runtimeTCPEndpointPath(key)})
 }
 
 type appPreparation struct {

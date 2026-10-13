@@ -218,9 +218,18 @@ listener. Node and Bun applications call `await tnl.prepare({service: "api"})`
 before startup and `await publication.register(server)` after binding, including
 listeners that request port 0. directory inference requires a unique configured
 service. builds and production previews do not prepare registrations.
+Python's `tnl.uvicorn.run("app:app", service="web", port=0, reload=True)` prepares
+in the serving worker before ASGI lifespan, registers Uvicorn's bound socket
+after startup, and unregisters before lifespan shutdown. the reload parent
+only holds the listener; each worktree resolves its own project and client state.
+`tnl.open(app)` remains a separate ad-hoc publication with its own credential.
 
 `internal/clientruntime` owns registration leases, publisher observations,
-readiness, and a bounded durable local event journal. the private native command
+readiness, and a bounded durable local event journal. `internal/clientstate`
+stores each project's snapshot and ordered events in client SQLite; one write
+transaction advances the cursor and appends an event, retaining at most 2048
+events and 8 MiB of event data. watch cursors survive publisher restarts until
+their event falls outside the retained history. the private native command
 `tnl runtime address` locates one Unix socket per canonical
 project/worktree/client-state identity. the app starts `tnl runtime serve` to
 maintain it. the socket is user-owned
