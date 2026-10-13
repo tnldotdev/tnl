@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alecthomas/kong"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
@@ -33,6 +34,34 @@ const (
 	redisImage    = "mirror.gcr.io/library/redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
 )
 
+type harnessArguments struct {
+	Service string   `arg:"" enum:"postgres,mysql,redis,dns,runtime" help:"Disposable service for the test command."`
+	Command []string `arg:"" optional:"" passthrough:"" sep:"none" help:"Test command and arguments after --."`
+}
+
+func parseHarnessArguments(arguments []string) (harnessArguments, error) {
+	var parsed harnessArguments
+	parser, err := kong.New(&parsed, kong.Name("testharness"), kong.Writers(os.Stdout, os.Stderr))
+	if err != nil {
+		return parsed, err
+	}
+	if _, err := parser.Parse(arguments); err != nil {
+		return parsed, err
+	}
+	if parsed.Service == "dns" || parsed.Service == "runtime" {
+		if len(arguments) != 1 {
+			return parsed, errors.New("dns and runtime do not take a test command")
+		}
+	} else if len(arguments) < 3 || arguments[1] != "--" || len(parsed.Command) == 0 {
+		return parsed, errors.New("usage: testharness postgres|mysql|redis -- go test [arguments...], or testharness dns|runtime")
+	} else {
+		// kong's passthrough includes the separator; only the child command
+		// and its arguments belong in the process we launch.
+		parsed.Command = parsed.Command[1:]
+	}
+	return parsed, nil
+}
+
 func main() {
 	tclog.SetDefault(tclog.NewNoopLogger())
 	if err := run(); err != nil {
@@ -44,28 +73,22 @@ func main() {
 func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if len(os.Args) == 2 && os.Args[1] == "dns" {
-		return runDNS(ctx)
+	arguments, err := parseHarnessArguments(os.Args[1:])
+	if err != nil {
+		return err
 	}
-	if len(os.Args) == 2 && os.Args[1] == "runtime" {
-		return runRuntime(ctx)
-	}
-	separator := -1
-	for index, argument := range os.Args {
-		if argument == "--" {
-			separator = index
-			break
-		}
-	}
-	if separator != 2 || separator == len(os.Args)-1 {
-		return errors.New("usage: testharness postgres|mysql|redis -- go test [arguments...], or testharness dns|runtime")
-	}
-	command := os.Args[separator+1:]
 	root, err := repositoryRoot()
 	if err != nil {
 		return err
 	}
-	switch os.Args[1] {
+	if arguments.Service == "dns" {
+		return runDNS(ctx, root)
+	}
+	if arguments.Service == "runtime" {
+		return runRuntime(ctx, root)
+	}
+	command := arguments.Command
+	switch arguments.Service {
 	case "postgres":
 		container, err := postgres.Run(ctx, postgresImage, postgres.BasicWaitStrategies(), loopbackPort("5432"))
 		if err != nil {
@@ -154,11 +177,7 @@ func run() error {
 	return nil
 }
 
-func runDNS(ctx context.Context) error {
-	root, err := repositoryRoot()
-	if err != nil {
-		return err
-	}
+func runDNS(ctx context.Context, root string) error {
 	stack, err := compose.NewDockerComposeWith(compose.WithStackFiles(
 		filepath.Join(root, "internal/tnldruntime/testdata/dns-integration.compose.yaml")))
 	if err != nil {
