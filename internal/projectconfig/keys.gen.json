@@ -1,14 +1,13 @@
 {
   "allow_all_ips": "allowAllIPs",
   "allow_ip": "allowIP",
+  "ca_file": "caFile",
   "container_port": "containerPort",
   "max_bytes": "maxBytes",
   "owner_credential_file": "ownerCredentialFile",
   "public_url": "publicURL",
+  "server_name": "serverName",
   "source_ips": "sourceIPs",
   "strip_prefix": "stripPrefix",
-  "target_ca_file": "targetCAFile",
-  "target_tls": "targetTLS",
-  "target_tls_name": "targetTLSName",
   "visitor_tls": "visitorTLS"
 }

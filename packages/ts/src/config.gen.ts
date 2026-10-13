@@ -42,26 +42,28 @@ export interface TnlConfig {
      */
     name?: string;
     /**
-     * Open the public URL in a browser once ready.
-     */
-    open?: boolean;
-    /**
      * Remove the public URL when this tunnel stops.
      */
     ephemeral?: boolean;
     limits?: {
-      /**
-       * Total admitted application requests for this tunnel.
-       */
-      requests?: number;
-      rate?: {
-        requests: number;
-        per: TnlRatePeriod;
+      http?: {
+        total?: number;
+        rate?: {
+          count: number;
+          per: TnlRatePeriod;
+          burst?: number;
+        };
+        concurrency?: number;
       };
-      /**
-       * Maximum simultaneous application requests, streams, and upgrades.
-       */
-      concurrency?: number;
+      tcp?: {
+        total?: number;
+        rate?: {
+          count: number;
+          per: TnlRatePeriod;
+          burst?: number;
+        };
+        concurrency?: number;
+      };
     };
     /**
      * Allow visitors from every IP address.
@@ -75,10 +77,6 @@ export interface TnlConfig {
      * Exact public URL hostname or HTTPS origin to publish.
      */
     publicURL?: string;
-    /**
-     * How PostgreSQL or MySQL visitor TLS reaches the private database.
-     */
-    visitorTLS?: "terminate" | "passthrough";
   };
   /**
    * Publisher selected for this project; omitted uses the local host publisher.
@@ -123,10 +121,6 @@ export interface TnlConfig {
     [k: string]:
       | {
           inspection?: Inspection1;
-          /**
-           * Local service protocol; defaults to http.
-           */
-          protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh";
           target?:
             | {
                 type: "app";
@@ -134,27 +128,30 @@ export interface TnlConfig {
             | {
                 type: "address";
                 address: string | number;
-                targetCAFile?: string;
-                targetTLS?: boolean;
-                targetTLSName?: string;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
               }
             | {
                 type: "docker";
                 container: string;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
                 containerPort: number;
-                targetCAFile?: string;
-                targetTLS?: boolean;
-                targetTLSName?: string;
               }
             | {
                 type: "docker";
                 labels: {
                   [k: string]: string | undefined;
                 };
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
                 containerPort: number;
-                targetCAFile?: string;
-                targetTLS?: boolean;
-                targetTLSName?: string;
               }
             | {
                 type: "docker";
@@ -163,14 +160,31 @@ export interface TnlConfig {
                   project: string;
                   service: string;
                 };
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
                 containerPort: number;
-                targetCAFile?: string;
-                targetTLS?: boolean;
-                targetTLSName?: string;
               };
-          /**
-           * PublicURL and tunnel overrides for this service.
-           */
+          protocol?: "http";
+          readiness?: {
+            path: string;
+          };
+          http?: {
+            /**
+             * Mount another configured service at a path on this service's public URL.
+             */
+            paths?: {
+              [k: string]:
+                | string
+                | {
+                    service: string;
+                    stripPrefix?: boolean;
+                  }
+                | undefined;
+            };
+            open?: boolean;
+          };
           tunnel?: {
             /**
              * Ready team domain used for generated public URL hostnames.
@@ -181,26 +195,19 @@ export interface TnlConfig {
              */
             name?: string;
             /**
-             * Open the public URL in a browser once ready.
-             */
-            open?: boolean;
-            /**
              * Remove the public URL when this tunnel stops.
              */
             ephemeral?: boolean;
             limits?: {
-              /**
-               * Total admitted application requests for this tunnel.
-               */
-              requests?: number;
-              rate?: {
-                requests: number;
-                per: TnlRatePeriod;
+              http?: {
+                total?: number;
+                rate?: {
+                  count: number;
+                  per: TnlRatePeriod;
+                  burst?: number;
+                };
+                concurrency?: number;
               };
-              /**
-               * Maximum simultaneous application requests, streams, and upgrades.
-               */
-              concurrency?: number;
             };
             /**
              * Allow visitors from every IP address.
@@ -214,27 +221,344 @@ export interface TnlConfig {
              * Exact public URL hostname or HTTPS origin to publish.
              */
             publicURL?: string;
-            /**
-             * How PostgreSQL or MySQL visitor TLS reaches the private database.
-             */
+          };
+        }
+      | {
+          inspection?: Inspection1;
+          target:
+            | {
+                type: "address";
+                address: string | number;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+              }
+            | {
+                type: "docker";
+                container: string;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+                containerPort: number;
+              }
+            | {
+                type: "docker";
+                labels: {
+                  [k: string]: string | undefined;
+                };
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+                containerPort: number;
+              }
+            | {
+                type: "docker";
+                compose: {
+                  file: string;
+                  project: string;
+                  service: string;
+                };
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+                containerPort: number;
+              };
+          protocol: "postgres";
+          tcp?: {
             visitorTLS?: "terminate" | "passthrough";
           };
-          http?: {
-            readiness?: {
-              path: string;
+          tunnel?: {
+            /**
+             * Ready team domain used for generated public URL hostnames.
+             */
+            domain?: string;
+            /**
+             * One DNS label beneath the member namespace.
+             */
+            name?: string;
+            /**
+             * Remove the public URL when this tunnel stops.
+             */
+            ephemeral?: boolean;
+            limits?: {
+              tcp?: {
+                total?: number;
+                rate?: {
+                  count: number;
+                  per: TnlRatePeriod;
+                  burst?: number;
+                };
+                concurrency?: number;
+              };
             };
             /**
-             * Mount another configured service at a path on this service's public URL.
+             * Allow visitors from every IP address.
              */
-            paths?: {
-              [k: string]:
-                | string
-                | {
-                    service: string;
-                    stripPrefix?: boolean;
-                  }
-                | undefined;
+            allowAllIPs?: boolean;
+            /**
+             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+             */
+            allowIP?: string[];
+            /**
+             * Exact public URL hostname or HTTPS origin to publish.
+             */
+            publicURL?: string;
+          };
+        }
+      | {
+          inspection?: Inspection1;
+          target:
+            | {
+                type: "address";
+                address: string | number;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+              }
+            | {
+                type: "docker";
+                container: string;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+                containerPort: number;
+              }
+            | {
+                type: "docker";
+                labels: {
+                  [k: string]: string | undefined;
+                };
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+                containerPort: number;
+              }
+            | {
+                type: "docker";
+                compose: {
+                  file: string;
+                  project: string;
+                  service: string;
+                };
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+                containerPort: number;
+              };
+          protocol: "mysql";
+          tcp?: {
+            visitorTLS?: "terminate" | "passthrough";
+          };
+          tunnel?: {
+            /**
+             * Ready team domain used for generated public URL hostnames.
+             */
+            domain?: string;
+            /**
+             * One DNS label beneath the member namespace.
+             */
+            name?: string;
+            /**
+             * Remove the public URL when this tunnel stops.
+             */
+            ephemeral?: boolean;
+            limits?: {
+              tcp?: {
+                total?: number;
+                rate?: {
+                  count: number;
+                  per: TnlRatePeriod;
+                  burst?: number;
+                };
+                concurrency?: number;
+              };
             };
+            /**
+             * Allow visitors from every IP address.
+             */
+            allowAllIPs?: boolean;
+            /**
+             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+             */
+            allowIP?: string[];
+            /**
+             * Exact public URL hostname or HTTPS origin to publish.
+             */
+            publicURL?: string;
+          };
+        }
+      | {
+          inspection?: Inspection1;
+          target:
+            | {
+                type: "address";
+                address: string | number;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+              }
+            | {
+                type: "docker";
+                container: string;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+                containerPort: number;
+              }
+            | {
+                type: "docker";
+                labels: {
+                  [k: string]: string | undefined;
+                };
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+                containerPort: number;
+              }
+            | {
+                type: "docker";
+                compose: {
+                  file: string;
+                  project: string;
+                  service: string;
+                };
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+                containerPort: number;
+              };
+          protocol: "redis";
+          tunnel?: {
+            /**
+             * Ready team domain used for generated public URL hostnames.
+             */
+            domain?: string;
+            /**
+             * One DNS label beneath the member namespace.
+             */
+            name?: string;
+            /**
+             * Remove the public URL when this tunnel stops.
+             */
+            ephemeral?: boolean;
+            limits?: {
+              tcp?: {
+                total?: number;
+                rate?: {
+                  count: number;
+                  per: TnlRatePeriod;
+                  burst?: number;
+                };
+                concurrency?: number;
+              };
+            };
+            /**
+             * Allow visitors from every IP address.
+             */
+            allowAllIPs?: boolean;
+            /**
+             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+             */
+            allowIP?: string[];
+            /**
+             * Exact public URL hostname or HTTPS origin to publish.
+             */
+            publicURL?: string;
+          };
+        }
+      | {
+          inspection?: Inspection1;
+          target:
+            | {
+                type: "address";
+                address: string | number;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+              }
+            | {
+                type: "docker";
+                container: string;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+                containerPort: number;
+              }
+            | {
+                type: "docker";
+                labels: {
+                  [k: string]: string | undefined;
+                };
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+                containerPort: number;
+              }
+            | {
+                type: "docker";
+                compose: {
+                  file: string;
+                  project: string;
+                  service: string;
+                };
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+                containerPort: number;
+              };
+          protocol: "ssh";
+          tunnel?: {
+            /**
+             * Ready team domain used for generated public URL hostnames.
+             */
+            domain?: string;
+            /**
+             * One DNS label beneath the member namespace.
+             */
+            name?: string;
+            /**
+             * Remove the public URL when this tunnel stops.
+             */
+            ephemeral?: boolean;
+            limits?: {
+              tcp?: {
+                total?: number;
+                rate?: {
+                  count: number;
+                  per: TnlRatePeriod;
+                  burst?: number;
+                };
+                concurrency?: number;
+              };
+            };
+            /**
+             * Allow visitors from every IP address.
+             */
+            allowAllIPs?: boolean;
+            /**
+             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+             */
+            allowIP?: string[];
+            /**
+             * Exact public URL hostname or HTTPS origin to publish.
+             */
+            publicURL?: string;
           };
         }
       | undefined;

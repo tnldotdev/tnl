@@ -28,7 +28,10 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 		services.PropertyNames.Pattern == "" || services.AdditionalProperties == nil {
 		t.Fatalf("services schema = %#v", services)
 	}
-	serviceSchema := services.AdditionalProperties
+	if len(services.AdditionalProperties.OneOf) != 5 {
+		t.Fatalf("service union = %#v", services.AdditionalProperties)
+	}
+	serviceSchema := services.AdditionalProperties.OneOf[0]
 	if _, found := serviceSchema.Properties.Get("directory"); found {
 		t.Fatal("retired service directory property is still present")
 	}
@@ -48,8 +51,10 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	}
 	if limits, found := tunnel.Properties.Get("limits"); !found || limits.Properties == nil {
 		t.Fatalf("tunnel limits schema = %#v", limits)
-	} else if concurrency, found := limits.Properties.Get("concurrency"); !found || concurrency.Minimum != "1" || concurrency.Default != 500 {
-		t.Fatalf("tunnel concurrency schema = %#v", concurrency)
+	} else if http, found := limits.Properties.Get("http"); !found || http.Properties == nil {
+		t.Fatalf("tunnel HTTP schema = %#v", http)
+	} else if concurrency, found := http.Properties.Get("concurrency"); !found || concurrency.Minimum != "1" {
+		t.Fatalf("tunnel HTTP concurrency schema = %#v", concurrency)
 	}
 	if _, found := tunnel.Properties.Get("allow_providers"); found {
 		t.Fatal("tunnel-wide provider grants must not be generated")

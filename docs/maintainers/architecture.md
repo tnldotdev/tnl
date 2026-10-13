@@ -186,8 +186,18 @@ worktree label as the Compose project name. the discovery result must be one
 loopback or wildcard binding; missing or ambiguous bindings stop forwarding to
 the old target. a cached lookup expires after one second, and the next visitor
 can use a replacement binding without changing the saved public URL or publish
-run. a private TCP target with verified TLS needs `target_tls_name` when its
+run. a private TCP target with verified TLS needs `target.tls.server_name` when its
 certificate names the Compose service rather than the mapped loopback address.
+
+`services.NAME.protocol` selects the project service's configuration variant:
+HTTP by default, or one of the supported TCP protocols. a root
+`tunnel.limits` can provide both HTTP request and TCP session defaults; a
+service may override only its own protocol's limits. `target.tls` describes
+the publisher's private target TLS; PostgreSQL and MySQL `tcp.visitor_tls`
+describes the separate visitor TLS boundary. `readiness` on an HTTP service
+checks its public URL, not the private target, while `http.open` is a local
+browser action. the publisher refills request or session rate tokens within
+one publish run; an optional total drains that run after admitted work ends.
 
 project alias declarations name one configured entry service. relative alias
 names can contain several DNS labels; ordinary tunnel names remain one label.

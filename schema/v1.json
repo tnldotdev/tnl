@@ -82,10 +82,6 @@
               "type": "string",
               "description": "Exact public URL hostname or HTTPS origin to publish."
             },
-            "open": {
-              "type": "boolean",
-              "description": "Open the public URL in a browser once ready."
-            },
             "allow_ip": {
               "items": {
                 "type": "string"
@@ -102,38 +98,73 @@
               "type": "boolean",
               "description": "Remove the public URL when this tunnel stops."
             },
-            "visitor_tls": {
-              "type": "string",
-              "enum": ["terminate", "passthrough"],
-              "description": "How PostgreSQL or MySQL visitor TLS reaches the private database."
-            },
             "limits": {
               "properties": {
-                "requests": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "description": "Total admitted application requests for this tunnel."
-                },
-                "rate": {
+                "http": {
                   "properties": {
-                    "requests": {
+                    "total": {
                       "type": "integer",
                       "minimum": 1
                     },
-                    "per": {
-                      "type": "string",
-                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                    "rate": {
+                      "properties": {
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "per": {
+                          "type": "string",
+                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                        },
+                        "burst": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": ["count", "per"]
+                    },
+                    "concurrency": {
+                      "type": "integer",
+                      "minimum": 1
                     }
                   },
                   "additionalProperties": false,
-                  "type": "object",
-                  "required": ["requests", "per"]
+                  "type": "object"
                 },
-                "concurrency": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "description": "Maximum simultaneous application requests, streams, and upgrades.",
-                  "default": 500
+                "tcp": {
+                  "properties": {
+                    "total": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "rate": {
+                      "properties": {
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "per": {
+                          "type": "string",
+                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                        },
+                        "burst": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": ["count", "per"]
+                    },
+                    "concurrency": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object"
                 }
               },
               "additionalProperties": false,
@@ -268,269 +299,177 @@
         },
         "services": {
           "additionalProperties": {
-            "properties": {
-              "inspection": {
-                "$ref": "#/$defs/Inspection"
-              },
-              "protocol": {
-                "type": "string",
-                "enum": ["http", "postgres", "mysql", "redis", "ssh"],
-                "description": "Local service protocol; defaults to http."
-              },
-              "target": {
-                "oneOf": [
-                  {
-                    "properties": {
-                      "type": {
-                        "const": "app"
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object",
-                    "required": ["type"]
+            "oneOf": [
+              {
+                "properties": {
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
                   },
-                  {
-                    "properties": {
-                      "type": {
-                        "const": "address"
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "app"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type"]
                       },
-                      "address": {
-                        "oneOf": [
-                          {
-                            "type": "string",
-                            "minLength": 1
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "address"
                           },
-                          {
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
                             "type": "integer",
                             "maximum": 65535,
                             "minimum": 1
-                          }
-                        ]
-                      },
-                      "target_tls": {
-                        "type": "boolean"
-                      },
-                      "target_tls_name": {
-                        "type": "string"
-                      },
-                      "target_ca_file": {
-                        "type": "string"
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object",
-                    "required": ["type", "address"]
-                  },
-                  {
-                    "properties": {
-                      "type": {
-                        "const": "docker"
-                      },
-                      "container_port": {
-                        "type": "integer",
-                        "maximum": 65535,
-                        "minimum": 1
-                      },
-                      "container": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "target_tls": {
-                        "type": "boolean"
-                      },
-                      "target_tls_name": {
-                        "type": "string"
-                      },
-                      "target_ca_file": {
-                        "type": "string"
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object",
-                    "required": ["type", "container_port", "container"]
-                  },
-                  {
-                    "properties": {
-                      "type": {
-                        "const": "docker"
-                      },
-                      "container_port": {
-                        "type": "integer",
-                        "maximum": 65535,
-                        "minimum": 1
-                      },
-                      "labels": {
-                        "additionalProperties": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "type": "object",
-                        "maxProperties": 8,
-                        "minProperties": 1
-                      },
-                      "target_tls": {
-                        "type": "boolean"
-                      },
-                      "target_tls_name": {
-                        "type": "string"
-                      },
-                      "target_ca_file": {
-                        "type": "string"
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object",
-                    "required": ["type", "container_port", "labels"]
-                  },
-                  {
-                    "properties": {
-                      "type": {
-                        "const": "docker"
-                      },
-                      "container_port": {
-                        "type": "integer",
-                        "maximum": 65535,
-                        "minimum": 1
-                      },
-                      "compose": {
-                        "properties": {
-                          "file": {
+                          },
+                          "container": {
                             "type": "string",
                             "minLength": 1
                           },
-                          "project": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "service": {
-                            "type": "string",
-                            "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
                           }
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["file", "project", "service"]
+                        "required": ["type", "container_port", "container"]
                       },
-                      "target_tls": {
-                        "type": "boolean"
-                      },
-                      "target_tls_name": {
-                        "type": "string"
-                      },
-                      "target_ca_file": {
-                        "type": "string"
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object",
-                    "required": ["type", "container_port", "compose"]
-                  }
-                ]
-              },
-              "tunnel": {
-                "allOf": [
-                  {
-                    "not": {
-                      "required": ["name", "public_url"]
-                    }
-                  },
-                  {
-                    "if": {
-                      "properties": {
-                        "allow_all_ips": {
-                          "const": true
-                        }
-                      },
-                      "required": ["allow_all_ips"]
-                    },
-                    "then": {
-                      "not": {
-                        "anyOf": [
-                          {
-                            "required": ["allow_ip"]
-                          }
-                        ]
-                      }
-                    }
-                  }
-                ],
-                "properties": {
-                  "domain": {
-                    "type": "string",
-                    "description": "Ready team domain used for generated public URL hostnames."
-                  },
-                  "name": {
-                    "type": "string",
-                    "description": "One DNS label beneath the member namespace."
-                  },
-                  "public_url": {
-                    "type": "string",
-                    "description": "Exact public URL hostname or HTTPS origin to publish."
-                  },
-                  "open": {
-                    "type": "boolean",
-                    "description": "Open the public URL in a browser once ready."
-                  },
-                  "allow_ip": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array",
-                    "uniqueItems": true,
-                    "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
-                  },
-                  "allow_all_ips": {
-                    "type": "boolean",
-                    "description": "Allow visitors from every IP address."
-                  },
-                  "ephemeral": {
-                    "type": "boolean",
-                    "description": "Remove the public URL when this tunnel stops."
-                  },
-                  "visitor_tls": {
-                    "type": "string",
-                    "enum": ["terminate", "passthrough"],
-                    "description": "How PostgreSQL or MySQL visitor TLS reaches the private database."
-                  },
-                  "limits": {
-                    "properties": {
-                      "requests": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "Total admitted application requests for this tunnel."
-                      },
-                      "rate": {
+                      {
                         "properties": {
-                          "requests": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
                             "type": "integer",
+                            "maximum": 65535,
                             "minimum": 1
                           },
-                          "per": {
-                            "type": "string",
-                            "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                          "labels": {
+                            "additionalProperties": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "type": "object",
+                            "maxProperties": 8,
+                            "minProperties": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
                           }
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["requests", "per"]
+                        "required": ["type", "container_port", "labels"]
                       },
-                      "concurrency": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "Maximum simultaneous application requests, streams, and upgrades.",
-                        "default": 500
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "compose": {
+                            "properties": {
+                              "file": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "project": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "service": {
+                                "type": "string",
+                                "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["file", "project", "service"]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "compose"]
                       }
-                    },
-                    "additionalProperties": false,
-                    "type": "object"
-                  }
-                },
-                "additionalProperties": false,
-                "type": "object",
-                "description": "PublicURL and tunnel overrides for this service."
-              },
-              "http": {
-                "properties": {
+                    ]
+                  },
+                  "protocol": {
+                    "const": "http"
+                  },
                   "readiness": {
                     "properties": {
                       "path": {
@@ -541,40 +480,1222 @@
                     "type": "object",
                     "required": ["path"]
                   },
-                  "paths": {
-                    "additionalProperties": {
-                      "oneOf": [
-                        {
-                          "type": "string",
-                          "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
-                        },
-                        {
-                          "properties": {
-                            "service": {
+                  "http": {
+                    "properties": {
+                      "paths": {
+                        "additionalProperties": {
+                          "oneOf": [
+                            {
                               "type": "string",
                               "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
                             },
-                            "strip_prefix": {
-                              "type": "boolean"
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                },
+                                "strip_prefix": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            }
+                          ]
+                        },
+                        "type": "object",
+                        "maxProperties": 32,
+                        "description": "Mount another configured service at a path on this service's public URL."
+                      },
+                      "open": {
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  "tunnel": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": ["name", "public_url"]
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "allow_all_ips": {
+                              "const": true
                             }
                           },
-                          "additionalProperties": false,
-                          "type": "object",
-                          "required": ["service"]
+                          "required": ["allow_all_ips"]
+                        },
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": ["allow_ip"]
+                              }
+                            ]
+                          }
                         }
-                      ]
+                      }
+                    ],
+                    "properties": {
+                      "domain": {
+                        "type": "string",
+                        "description": "Ready team domain used for generated public URL hostnames."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "One DNS label beneath the member namespace."
+                      },
+                      "public_url": {
+                        "type": "string",
+                        "description": "Exact public URL hostname or HTTPS origin to publish."
+                      },
+                      "allow_ip": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true,
+                        "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+                      },
+                      "allow_all_ips": {
+                        "type": "boolean",
+                        "description": "Allow visitors from every IP address."
+                      },
+                      "ephemeral": {
+                        "type": "boolean",
+                        "description": "Remove the public URL when this tunnel stops."
+                      },
+                      "limits": {
+                        "properties": {
+                          "http": {
+                            "properties": {
+                              "total": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["count", "per"]
+                              },
+                              "concurrency": {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
+                      }
                     },
-                    "type": "object",
-                    "maxProperties": 32,
-                    "description": "Mount another configured service at a path on this service's public URL."
+                    "additionalProperties": false,
+                    "type": "object"
                   }
                 },
                 "additionalProperties": false,
                 "type": "object"
+              },
+              {
+                "properties": {
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "container": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "container"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "labels": {
+                            "additionalProperties": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "type": "object",
+                            "maxProperties": 8,
+                            "minProperties": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "labels"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "compose": {
+                            "properties": {
+                              "file": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "project": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "service": {
+                                "type": "string",
+                                "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["file", "project", "service"]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "compose"]
+                      }
+                    ]
+                  },
+                  "protocol": {
+                    "const": "postgres"
+                  },
+                  "tcp": {
+                    "properties": {
+                      "visitor_tls": {
+                        "type": "string",
+                        "enum": ["terminate", "passthrough"]
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  "tunnel": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": ["name", "public_url"]
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "allow_all_ips": {
+                              "const": true
+                            }
+                          },
+                          "required": ["allow_all_ips"]
+                        },
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": ["allow_ip"]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "domain": {
+                        "type": "string",
+                        "description": "Ready team domain used for generated public URL hostnames."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "One DNS label beneath the member namespace."
+                      },
+                      "public_url": {
+                        "type": "string",
+                        "description": "Exact public URL hostname or HTTPS origin to publish."
+                      },
+                      "allow_ip": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true,
+                        "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+                      },
+                      "allow_all_ips": {
+                        "type": "boolean",
+                        "description": "Allow visitors from every IP address."
+                      },
+                      "ephemeral": {
+                        "type": "boolean",
+                        "description": "Remove the public URL when this tunnel stops."
+                      },
+                      "limits": {
+                        "properties": {
+                          "tcp": {
+                            "properties": {
+                              "total": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["count", "per"]
+                              },
+                              "concurrency": {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["protocol", "target"]
+              },
+              {
+                "properties": {
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "container": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "container"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "labels": {
+                            "additionalProperties": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "type": "object",
+                            "maxProperties": 8,
+                            "minProperties": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "labels"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "compose": {
+                            "properties": {
+                              "file": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "project": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "service": {
+                                "type": "string",
+                                "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["file", "project", "service"]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "compose"]
+                      }
+                    ]
+                  },
+                  "protocol": {
+                    "const": "mysql"
+                  },
+                  "tcp": {
+                    "properties": {
+                      "visitor_tls": {
+                        "type": "string",
+                        "enum": ["terminate", "passthrough"]
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  "tunnel": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": ["name", "public_url"]
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "allow_all_ips": {
+                              "const": true
+                            }
+                          },
+                          "required": ["allow_all_ips"]
+                        },
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": ["allow_ip"]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "domain": {
+                        "type": "string",
+                        "description": "Ready team domain used for generated public URL hostnames."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "One DNS label beneath the member namespace."
+                      },
+                      "public_url": {
+                        "type": "string",
+                        "description": "Exact public URL hostname or HTTPS origin to publish."
+                      },
+                      "allow_ip": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true,
+                        "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+                      },
+                      "allow_all_ips": {
+                        "type": "boolean",
+                        "description": "Allow visitors from every IP address."
+                      },
+                      "ephemeral": {
+                        "type": "boolean",
+                        "description": "Remove the public URL when this tunnel stops."
+                      },
+                      "limits": {
+                        "properties": {
+                          "tcp": {
+                            "properties": {
+                              "total": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["count", "per"]
+                              },
+                              "concurrency": {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["protocol", "target"]
+              },
+              {
+                "properties": {
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "container": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "container"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "labels": {
+                            "additionalProperties": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "type": "object",
+                            "maxProperties": 8,
+                            "minProperties": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "labels"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "compose": {
+                            "properties": {
+                              "file": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "project": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "service": {
+                                "type": "string",
+                                "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["file", "project", "service"]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "compose"]
+                      }
+                    ]
+                  },
+                  "protocol": {
+                    "const": "redis"
+                  },
+                  "tunnel": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": ["name", "public_url"]
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "allow_all_ips": {
+                              "const": true
+                            }
+                          },
+                          "required": ["allow_all_ips"]
+                        },
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": ["allow_ip"]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "domain": {
+                        "type": "string",
+                        "description": "Ready team domain used for generated public URL hostnames."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "One DNS label beneath the member namespace."
+                      },
+                      "public_url": {
+                        "type": "string",
+                        "description": "Exact public URL hostname or HTTPS origin to publish."
+                      },
+                      "allow_ip": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true,
+                        "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+                      },
+                      "allow_all_ips": {
+                        "type": "boolean",
+                        "description": "Allow visitors from every IP address."
+                      },
+                      "ephemeral": {
+                        "type": "boolean",
+                        "description": "Remove the public URL when this tunnel stops."
+                      },
+                      "limits": {
+                        "properties": {
+                          "tcp": {
+                            "properties": {
+                              "total": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["count", "per"]
+                              },
+                              "concurrency": {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["protocol", "target"]
+              },
+              {
+                "properties": {
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "container": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "container"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "labels": {
+                            "additionalProperties": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "type": "object",
+                            "maxProperties": 8,
+                            "minProperties": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "labels"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container_port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "compose": {
+                            "properties": {
+                              "file": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "project": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "service": {
+                                "type": "string",
+                                "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["file", "project", "service"]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string"
+                              },
+                              "ca_file": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container_port", "compose"]
+                      }
+                    ]
+                  },
+                  "protocol": {
+                    "const": "ssh"
+                  },
+                  "tunnel": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": ["name", "public_url"]
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "allow_all_ips": {
+                              "const": true
+                            }
+                          },
+                          "required": ["allow_all_ips"]
+                        },
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": ["allow_ip"]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "domain": {
+                        "type": "string",
+                        "description": "Ready team domain used for generated public URL hostnames."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "One DNS label beneath the member namespace."
+                      },
+                      "public_url": {
+                        "type": "string",
+                        "description": "Exact public URL hostname or HTTPS origin to publish."
+                      },
+                      "allow_ip": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true,
+                        "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+                      },
+                      "allow_all_ips": {
+                        "type": "boolean",
+                        "description": "Allow visitors from every IP address."
+                      },
+                      "ephemeral": {
+                        "type": "boolean",
+                        "description": "Remove the public URL when this tunnel stops."
+                      },
+                      "limits": {
+                        "properties": {
+                          "tcp": {
+                            "properties": {
+                              "total": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["count", "per"]
+                              },
+                              "concurrency": {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["protocol", "target"]
               }
-            },
-            "additionalProperties": false,
-            "type": "object"
+            ]
           },
           "propertyNames": {
             "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"

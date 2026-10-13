@@ -60,7 +60,7 @@ func (a *appRuntime) startNamed(ctx context.Context, request localpublisherv1.Pu
 		return localpublisherv1.PublicationLease{}, err
 	}
 	flags := tunnelFlags{InspectionMode: config.InspectionSummary}
-	applyTunnelConfiguration(&flags, effective.Tunnel)
+	applyTunnelConfiguration(&flags, effective.Tunnel, config.ServiceProtocol(effective.Publish))
 	applyInspection(&flags, effective)
 	flags.Ephemeral = false
 	services, err := preparePublisherServices(ctx, a.state, server, selected.Hostname, "", flags.Domain, valueOrEmpty(effective.Team), false, authenticated)

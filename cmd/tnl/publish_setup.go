@@ -292,6 +292,9 @@ func (flags tunnelFlags) limits() publisher.ApplicationLimits {
 		limits.RateRequests = *flags.RateRequests
 		limits.RatePer, _ = time.ParseDuration(flags.RatePer)
 	}
+	if flags.RateBurst != nil {
+		limits.RateBurst = *flags.RateBurst
+	}
 	return limits
 }
 

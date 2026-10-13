@@ -153,7 +153,7 @@ func ValidateTNL(config TNL) error {
 	if err := validateServiceValues(config.Tunnel, config.Publish); err != nil {
 		return err
 	}
-	if err := validateRatePair(config.Tunnel, nil); err != nil {
+	if err := validateRatePairs(config.Tunnel, nil); err != nil {
 		return err
 	}
 	if len(config.Services) != 0 && config.Tunnel != nil {
@@ -177,17 +177,28 @@ func ValidateTNL(config TNL) error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := config.Services[name]
+		if service.Protocol != nil && *service.Protocol != "http" && service.Target == nil && service.Publish == nil {
+			return fmt.Errorf("services.%s: TCP service requires an address or Docker target", name)
+		}
 		if config.Publisher != nil && config.Publisher.Type == "url" && service.Target != nil && service.Target.Type == "docker" {
 			return fmt.Errorf("services.%s: a url publisher cannot use a host Docker mapping; select an address it can reach", name)
 		}
 		effectivePublish := ServicePublish(config.Publish, service)
 		if service.Target != nil {
+			if service.Target.TLS != nil {
+				if service.Target.TLS.ServerName != nil && (*service.Target.TLS.ServerName == "" || strings.TrimSpace(*service.Target.TLS.ServerName) != *service.Target.TLS.ServerName) {
+					return fmt.Errorf("services.%s.target.tls.server_name must be a hostname", name)
+				}
+				if service.Target.TLS.CAFile != nil && (*service.Target.TLS.CAFile == "" || strings.TrimSpace(*service.Target.TLS.CAFile) != *service.Target.TLS.CAFile) {
+					return fmt.Errorf("services.%s.target.tls.ca_file must be a nonempty path", name)
+				}
+			}
 			if service.Publish != nil {
 				return fmt.Errorf("services.%s: target and publish cannot be combined", name)
 			}
 			switch service.Target.Type {
 			case "app":
-				if service.Target.Address != nil || !emptyDockerSelection(service.Target.DockerSelection) || service.Target.TargetTLS != nil || service.Target.TargetTLSName != nil || service.Target.TargetCAFile != nil || ServiceProtocol(effectivePublish) != "http" {
+				if service.Target.Address != nil || !emptyDockerSelection(service.Target.DockerSelection) || service.Target.TLS != nil || ServiceProtocol(effectivePublish) != "http" {
 					return fmt.Errorf("services.%s.target: app requires HTTP and no private address or TLS settings", name)
 				}
 			case "address":
@@ -208,13 +219,8 @@ func ValidateTNL(config TNL) error {
 				return fmt.Errorf("services.%s.target: type must be app, address, or docker", name)
 			}
 		}
-		if service.HTTP != nil && (service.Readiness != nil || len(service.Paths) != 0) {
-			return fmt.Errorf("services.%s: http cannot be combined with readiness or paths", name)
-		}
-		if service.HTTP != nil {
-			if err := validateReadiness(service.HTTP.Readiness); err != nil {
-				return fmt.Errorf("services.%s.http: %w", name, err)
-			}
+		if service.HTTP != nil && len(service.Paths) != 0 {
+			return fmt.Errorf("services.%s: http.paths cannot be combined with paths", name)
 		}
 		if err := validateReadiness(service.Readiness); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
@@ -233,15 +239,22 @@ func ValidateTNL(config TNL) error {
 		}
 		protocol := ServiceProtocol(effectivePublish)
 		visitorTLS := (*string)(nil)
-		if config.Tunnel != nil {
-			visitorTLS = config.Tunnel.VisitorTLS
+		if service.TCP != nil {
+			visitorTLS = service.TCP.VisitorTLS
 		}
-		if service.Tunnel != nil && service.Tunnel.VisitorTLS != nil {
-			visitorTLS = service.Tunnel.VisitorTLS
+		if protocol == "http" && service.TCP != nil || protocol != "http" && service.HTTP != nil {
+			return fmt.Errorf("services.%s: http and tcp settings must match the service protocol", name)
+		}
+		if service.TCP != nil && protocol != "postgres" && protocol != "mysql" {
+			return fmt.Errorf("services.%s: tcp.visitor_tls is available only for PostgreSQL and MySQL", name)
+		}
+		if service.Tunnel != nil && service.Tunnel.Limits != nil &&
+			(protocol == "http" && service.Tunnel.Limits.TCP != nil || protocol != "http" && service.Tunnel.Limits.HTTP != nil) {
+			return fmt.Errorf("services.%s.tunnel.limits: select only the service protocol's limits", name)
 		}
 		if visitorTLS != nil {
-			if protocol != "postgres" && protocol != "mysql" {
-				return fmt.Errorf("services.%s: tunnel.visitor_tls requires PostgreSQL or MySQL", name)
+			if *visitorTLS != "terminate" && *visitorTLS != "passthrough" || protocol != "postgres" && protocol != "mysql" {
+				return fmt.Errorf("services.%s: tcp.visitor_tls requires PostgreSQL or MySQL and must be terminate or passthrough", name)
 			}
 			if *visitorTLS == "passthrough" && effectivePublish != nil &&
 				(effectivePublish.TargetTLS != nil && *effectivePublish.TargetTLS || effectivePublish.TargetTLSName != nil || effectivePublish.TargetCAFile != nil) {
@@ -253,9 +266,7 @@ func ValidateTNL(config TNL) error {
 			paths = service.HTTP.Paths
 		}
 		if protocol != "http" {
-			if service.HTTP != nil || service.Readiness != nil || config.Readiness != nil || len(paths) != 0 ||
-				service.Tunnel != nil && service.Tunnel.Open != nil && *service.Tunnel.Open ||
-				config.Tunnel != nil && config.Tunnel.Open != nil && *config.Tunnel.Open {
+			if service.HTTP != nil || service.Readiness != nil || len(paths) != 0 {
 				return fmt.Errorf("services.%s: database services cannot use HTTP readiness, path mounts, or browser opening", name)
 			}
 			selected := MergeInspection(config.Inspection, service.Inspection)
@@ -285,7 +296,7 @@ func ValidateTNL(config TNL) error {
 				}
 			}
 		}
-		if err := validateRatePair(service.Tunnel, config.Tunnel); err != nil {
+		if err := validateRatePairs(service.Tunnel, config.Tunnel); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 		if len(paths) > 32 {
@@ -455,15 +466,21 @@ func validateServerAndTeam(server, team *string) error {
 
 func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	if tunnel != nil {
-		if tunnel.VisitorTLS != nil && *tunnel.VisitorTLS != "terminate" && *tunnel.VisitorTLS != "passthrough" {
-			return errors.New("tunnel.visitor_tls must be terminate or passthrough")
-		}
 		if limits := tunnel.Limits; limits != nil {
-			if limits.Requests != nil && *limits.Requests <= 0 || limits.Concurrency != nil && *limits.Concurrency <= 0 {
-				return errors.New("tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero")
-			}
-			if limits.Rate != nil && (limits.Rate.Requests != nil && *limits.Rate.Requests <= 0 || limits.Rate.Per != nil && limits.Rate.Per.Value() <= 0) {
-				return errors.New("tunnel.limits.rate requests and per must be positive")
+			for _, selected := range []struct {
+				name string
+				work *WorkLimits
+			}{{"http", limits.HTTP}, {"tcp", limits.TCP}} {
+				if selected.work == nil {
+					continue
+				}
+				if selected.work.Total != nil && *selected.work.Total <= 0 || selected.work.Concurrency != nil && *selected.work.Concurrency <= 0 {
+					return fmt.Errorf("tunnel.limits.%s total and concurrency must be positive", selected.name)
+				}
+				if rate := selected.work.Rate; rate != nil &&
+					(rate.Count != nil && *rate.Count <= 0 || rate.Per != nil && rate.Per.Value() <= 0 || rate.Burst != nil && *rate.Burst <= 0) {
+					return fmt.Errorf("tunnel.limits.%s.rate count, per, and burst must be positive", selected.name)
+				}
 			}
 		}
 		if tunnel.Name != nil && tunnel.PublicURL != nil {
@@ -535,22 +552,37 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	return nil
 }
 
-func validateRatePair(tunnel, base *Tunnel) error {
-	if tunnel == nil || tunnel.Limits == nil || tunnel.Limits.Rate == nil {
+func validateRatePairs(tunnel, base *Tunnel) error {
+	if tunnel == nil || tunnel.Limits == nil {
 		return nil
 	}
-	rate := tunnel.Limits.Rate
-	requests, per := rate.Requests, rate.Per
-	if base != nil && base.Limits != nil && base.Limits.Rate != nil {
-		if requests == nil {
-			requests = base.Limits.Rate.Requests
+	for _, selected := range []struct {
+		name string
+		work *WorkLimits
+		base *WorkLimits
+	}{{name: "http", work: tunnel.Limits.HTTP}, {name: "tcp", work: tunnel.Limits.TCP}} {
+		if selected.work == nil || selected.work.Rate == nil {
+			continue
 		}
-		if per == nil {
-			per = base.Limits.Rate.Per
+		if base != nil && base.Limits != nil {
+			if selected.name == "http" {
+				selected.base = base.Limits.HTTP
+			} else {
+				selected.base = base.Limits.TCP
+			}
 		}
-	}
-	if requests == nil || per == nil {
-		return errors.New("tunnel.limits.rate requires positive requests and per")
+		count, per := selected.work.Rate.Count, selected.work.Rate.Per
+		if selected.base != nil && selected.base.Rate != nil {
+			if count == nil {
+				count = selected.base.Rate.Count
+			}
+			if per == nil {
+				per = selected.base.Rate.Per
+			}
+		}
+		if count == nil || per == nil {
+			return fmt.Errorf("tunnel.limits.%s.rate requires positive count and per", selected.name)
+		}
 	}
 	return nil
 }

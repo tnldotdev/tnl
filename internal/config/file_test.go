@@ -80,14 +80,14 @@ tnl:
     allow_ip: [192.0.2.1]
     allow_all_ips: false
     limits:
-      requests: 20
-      rate: {requests: 5, per: 1m}
-      concurrency: 750
+      http:
+        total: 20
+        rate: {count: 5, per: 1m}
+        concurrency: 750
   services:
     app:
       target: {type: address, address: 3000}
-      http:
-        readiness: {path: /health}
+      readiness: {path: /health}
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -99,12 +99,12 @@ tnl:
 	if document.TNL == nil || document.TNL.Server == nil || *document.TNL.Server != "https://control.example.com" ||
 		document.TNL.Feedback == nil || !*document.TNL.Feedback || !document.TNL.OAuth ||
 		document.TNL.Services["app"].Target == nil || string(*document.TNL.Services["app"].Target.Address) != "3000" ||
-		document.TNL.Services["app"].HTTP == nil || document.TNL.Services["app"].HTTP.Readiness.Path != "/health" ||
+		document.TNL.Services["app"].Readiness == nil || document.TNL.Services["app"].Readiness.Path != "/health" ||
 		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs ||
-		document.TNL.Tunnel.Limits == nil || document.TNL.Tunnel.Limits.Concurrency == nil || *document.TNL.Tunnel.Limits.Concurrency != 750 ||
-		document.TNL.Tunnel.Limits.Requests == nil || *document.TNL.Tunnel.Limits.Requests != 20 ||
-		document.TNL.Tunnel.Limits.Rate == nil || document.TNL.Tunnel.Limits.Rate.Requests == nil || *document.TNL.Tunnel.Limits.Rate.Requests != 5 ||
-		document.TNL.Tunnel.Limits.Rate.Per == nil || document.TNL.Tunnel.Limits.Rate.Per.Value() != time.Minute {
+		document.TNL.Tunnel.Limits == nil || document.TNL.Tunnel.Limits.HTTP == nil || document.TNL.Tunnel.Limits.HTTP.Concurrency == nil || *document.TNL.Tunnel.Limits.HTTP.Concurrency != 750 ||
+		document.TNL.Tunnel.Limits.HTTP.Total == nil || *document.TNL.Tunnel.Limits.HTTP.Total != 20 ||
+		document.TNL.Tunnel.Limits.HTTP.Rate == nil || document.TNL.Tunnel.Limits.HTTP.Rate.Count == nil || *document.TNL.Tunnel.Limits.HTTP.Rate.Count != 5 ||
+		document.TNL.Tunnel.Limits.HTTP.Rate.Per == nil || document.TNL.Tunnel.Limits.HTTP.Rate.Per.Value() != time.Minute {
 		t.Fatalf("document = %#v", document)
 	}
 }
@@ -203,8 +203,8 @@ func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
 
 func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 	for filename, source := range map[string]string{
-		"tnl.json": `{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"},"http":{"readiness":{"path":"/health"},"paths":{"/api":"api"}}},"api":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"docker","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"database"},"container_port":5432},"tunnel":{"visitor_tls":"passthrough"}}}}}`,
-		"tnl.yml":  "version: 1\ntnl:\n  services:\n    web:\n      target: {type: app}\n      http:\n        readiness: {path: /health}\n        paths: {/api: api}\n    api:\n      target: {type: address, address: 3000}\n    orders:\n      protocol: postgres\n      target: {type: docker, compose: {file: compose.yaml, project: shop-k7n2p9, service: database}, container_port: 5432}\n      tunnel: {visitor_tls: passthrough}\n",
+		"tnl.json": `{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"},"readiness":{"path":"/health"},"http":{"paths":{"/api":"api"}}},"api":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"docker","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"database"},"container_port":5432},"tcp":{"visitor_tls":"passthrough"}}}}}`,
+		"tnl.yml":  "version: 1\ntnl:\n  services:\n    web:\n      target: {type: app}\n      readiness: {path: /health}\n      http:\n        paths: {/api: api}\n    api:\n      target: {type: address, address: 3000}\n    orders:\n      protocol: postgres\n      target: {type: docker, compose: {file: compose.yaml, project: shop-k7n2p9, service: database}, container_port: 5432}\n      tcp: {visitor_tls: passthrough}\n",
 	} {
 		path := filepath.Join(t.TempDir(), filename)
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
@@ -215,14 +215,20 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 			t.Fatalf("%s: %v", filename, err)
 		}
 		web, api, orders := document.TNL.Services["web"], document.TNL.Services["api"], document.TNL.Services["orders"]
-		if web.Target.Type != "app" || web.HTTP.Readiness.Path != "/health" || ServicePaths(web)["/api"].Service != "api" ||
+		if web.Target.Type != "app" || web.Readiness.Path != "/health" || ServicePaths(web)["/api"].Service != "api" ||
 			api.Target.Type != "address" || string(*api.Target.Address) != "3000" ||
 			orders.Protocol == nil || *orders.Protocol != "postgres" || orders.Target.Type != "docker" || orders.Target.Compose == nil || orders.Target.Compose.Service != "database" || *orders.Target.ContainerPort != 5432 ||
-			*orders.Tunnel.VisitorTLS != "passthrough" {
+			*orders.TCP.VisitorTLS != "passthrough" {
 			t.Fatalf("%s: services = %#v", filename, document.TNL.Services)
 		}
 	}
 	for _, test := range []struct{ source, detail string }{
+		{`{"tunnel":{"limits":{"requests":20}}}`, "requests"},
+		{`{"tunnel":{"visitor_tls":"passthrough"}}`, "visitor_tls"},
+		{`{"services":{"web":{"http":{"readiness":{"path":"/"}}}}}`, "readiness"},
+		{`{"services":{"web":{"target":{"type":"address","address":"3000","target_tls":true}}}}`, "target_tls"},
+		{`{"services":{"web":{"tunnel":{"limits":{"tcp":{"concurrency":2}}}}}}`, "select only the service protocol"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"tunnel":{"limits":{"http":{"concurrency":2}}}}}}`, "select only the service protocol"},
 		{`{"services":{"web":{"target":{"type":"app","address":3000}}}}`, "app requires"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"app"}}}}`, "app requires"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address"}}}}`, "address is required"},
@@ -232,9 +238,9 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","container":"db","container_port":5432,"address":"db:5432"}}}}`, "docker cannot use address"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","container":"db","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"db"},"container_port":5432}}}}`, "exactly one"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432","container_port":5432}}}}`, "address cannot"},
-		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"http":{"readiness":{"path":"/"}}}}}`, "cannot use HTTP"},
-		{`{"services":{"web":{"target":{"type":"app"},"tunnel":{"visitor_tls":"passthrough"}}}}`, "requires PostgreSQL or MySQL"},
-		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432","target_tls":true},"tunnel":{"visitor_tls":"passthrough"}}}}`, "cannot use private target TLS"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"http":{"paths":{}}}}}`, "http and tcp settings"},
+		{`{"services":{"web":{"target":{"type":"app"},"tcp":{"visitor_tls":"passthrough"}}}}`, "http and tcp settings"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432","tls":{}},"tcp":{"visitor_tls":"passthrough"}}}}`, "cannot use private target TLS"},
 	} {
 		path := filepath.Join(t.TempDir(), "tnl.json")
 		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":`+test.source+`}`), 0o600); err != nil {
@@ -435,8 +441,8 @@ func TestDetailedInspectionRejectsOpaqueServiceProtocols(t *testing.T) {
 
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"inspection":{"mode":"detailed","retention":"168h","max_bytes":"64MiB"},"services":{"web":{"inspection":{"mode":"summary"},"target":{"type":"address","address":3000},"http":{"readiness":{"path":"/health"}}}},"tunnel":{"allow_ip":["192.0.2.1"]}}}`,
-		"yml":  "version: 1\ntnl:\n  inspection: {mode: detailed, retention: 168h, max_bytes: 64MiB}\n  services:\n    web:\n      inspection: {mode: summary}\n      target: {type: address, address: 3000}\n      http:\n        readiness: {path: /health}\n  tunnel:\n    allow_ip: [192.0.2.1]\n",
+		"json": `{"version":1,"tnl":{"inspection":{"mode":"detailed","retention":"168h","max_bytes":"64MiB"},"services":{"web":{"inspection":{"mode":"summary"},"target":{"type":"address","address":3000},"readiness":{"path":"/health"}}},"tunnel":{"allow_ip":["192.0.2.1"]}}}`,
+		"yml":  "version: 1\ntnl:\n  inspection: {mode: detailed, retention: 168h, max_bytes: 64MiB}\n  services:\n    web:\n      inspection: {mode: summary}\n      target: {type: address, address: 3000}\n      readiness: {path: /health}\n  tunnel:\n    allow_ip: [192.0.2.1]\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -449,9 +455,9 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		})
 	}
 	for name, test := range map[string]struct{ json, yaml, category string }{
-		"zero concurrency":           {`{"version":1,"tnl":{"tunnel":{"limits":{"concurrency":0}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      concurrency: 0\n", "tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
-		"negative total":             {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"limits":{"requests":-1}}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        limits:\n          requests: -1\n", "services.web: tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
-		"missing rate period":        {`{"version":1,"tnl":{"tunnel":{"limits":{"rate":{"requests":2}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      rate: {requests: 2}\n", "tunnel.limits.rate requires positive requests and per"},
+		"zero concurrency":           {`{"version":1,"tnl":{"tunnel":{"limits":{"http":{"concurrency":0}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      http: {concurrency: 0}\n", "tunnel.limits.http total and concurrency must be positive"},
+		"negative total":             {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"limits":{"http":{"total":-1}}}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        limits:\n          http: {total: -1}\n", "services.web: tunnel.limits.http total and concurrency must be positive"},
+		"missing rate period":        {`{"version":1,"tnl":{"tunnel":{"limits":{"http":{"rate":{"count":2}}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      http:\n        rate: {count: 2}\n", "tunnel.limits.http.rate requires positive count and per"},
 		"retired request limit":      {`{"version":1,"tnl":{"tunnel":{"request_limit":2}}}`, "version: 1\ntnl:\n  tunnel:\n    request_limit: 2\n", "request_limit"},
 		"invalid inspection":         {`{"version":1,"tnl":{"inspection":{"mode":"all"}}}`, "version: 1\ntnl:\n  inspection: {mode: all}\n", "inspection: mode must be summary or detailed"},
 		"invalid service inspection": {`{"version":1,"tnl":{"services":{"web":{"inspection":{"mode":"all"}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      inspection: {mode: all}\n", "services.web.inspection: mode must be summary or detailed"},

@@ -32,8 +32,26 @@ type TargetReferences<Config> = {
 };
 
 type Service = NonNullable<NonNullable<TnlConfig["services"]>[string]>;
+type HTTPService = Extract<Service, { protocol?: "http" }>;
 type Alias = NonNullable<NonNullable<TnlConfig["aliases"]>[string]>;
 type Webhook = NonNullable<NonNullable<TnlConfig["webhooks"]>[string]>;
+
+type NamedService<Names extends string, Name extends string> = Service extends infer Variant
+  ? Variant extends { protocol?: "http" }
+    ? Omit<Variant, "http"> & {
+        http?: Omit<NonNullable<HTTPService["http"]>, "paths"> & {
+          paths?: Record<
+            string,
+            | Exclude<NoInfer<Names>, Name>
+            | {
+                service: Exclude<NoInfer<Names>, Name>;
+                stripPrefix?: boolean;
+              }
+          >;
+        };
+      }
+    : Variant
+  : never;
 
 /**
  * project configuration whose service references are restricted to Names.
@@ -45,18 +63,7 @@ export type TnlConfigForServices<Names extends string> = Omit<
   "services" | "aliases" | "webhooks"
 > & {
   services?: {
-    [Name in Names]: Omit<Service, "http"> & {
-      http?: Omit<NonNullable<Service["http"]>, "paths"> & {
-        paths?: Record<
-          string,
-          | Exclude<NoInfer<Names>, Name>
-          | {
-              service: Exclude<NoInfer<Names>, Name>;
-              stripPrefix?: boolean;
-            }
-        >;
-      };
-    };
+    [Name in Names]: NamedService<Names, Name>;
   };
   aliases?: Record<string, Omit<Alias, "service"> & { service: NoInfer<Names> }>;
   webhooks?: Record<string, Omit<Webhook, "service"> & { service: NoInfer<WebhookService<Names>> }>;

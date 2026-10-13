@@ -255,6 +255,8 @@ var typeScriptKeyMappings = map[string]string{
 	"startup_timeout":       "startupTimeout",
 	"max_bytes":             "maxBytes",
 	"target_ca_file":        "targetCAFile",
+	"server_name":           "serverName",
+	"ca_file":               "caFile",
 	"owner_credential_file": "ownerCredentialFile",
 	"container_port":        "containerPort",
 	"target_tls":            "targetTLS",

@@ -131,15 +131,19 @@ func TestCredentialPublishDoesNotInheritProjectVisitorPolicy(t *testing.T) {
 	ephemeral := true
 	limit := 20
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		Tunnel:   &config.Tunnel{Name: &name, AllowAllIPs: &allowAllIPs, Ephemeral: &ephemeral, Limits: &config.Limits{Concurrency: &limit}},
+		Tunnel:   &config.Tunnel{Name: &name, AllowAllIPs: &allowAllIPs, Ephemeral: &ephemeral, Limits: &config.Limits{HTTP: &config.WorkLimits{Concurrency: &limit}}},
 		Services: config.Services{"api": {}, "web": {}},
 	}}}
 	flags := publishCommand{PublishCredential: "tnl_publish_example"}
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	if flags.Service != "" || flags.Target != "" || flags.Name != "" || flags.PublicURL != "" || flags.AllowAllIPs || flags.Ephemeral || flags.Concurrency == nil || *flags.Concurrency != limit {
+	if flags.Service != "" || flags.Target != "" || flags.Name != "" || flags.PublicURL != "" || flags.AllowAllIPs || flags.Ephemeral || flags.Concurrency != nil {
 		t.Fatalf("credential publish inherited a project URL or visitor policy: %#v", flags)
+	}
+	applyTunnelLimits(&flags.tunnelFlags, project.Config.Tunnel.Limits, "http")
+	if flags.Concurrency == nil || *flags.Concurrency != limit {
+		t.Fatalf("credential publish did not inherit HTTP admission after selecting the saved protocol: %#v", flags)
 	}
 }
 
@@ -574,12 +578,12 @@ func TestProjectDatabaseServiceAppliesProtocolAndTargetTLS(t *testing.T) {
 }
 
 func TestProjectServiceTargetAppliesAddressAndVisitorTLS(t *testing.T) {
-	protocol, mode, tlsName, caFile, targetTLS := "postgres", "terminate", "db.internal", "./ca.pem", true
+	protocol, mode, tlsName, caFile := "postgres", "terminate", "db.internal", "./ca.pem"
 	target := config.Target("db.internal:5432")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
 		"orders": {
-			Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target, TargetTLS: &targetTLS, TargetTLSName: &tlsName, TargetCAFile: &caFile},
-			Tunnel: &config.Tunnel{VisitorTLS: &mode},
+			Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{ServerName: &tlsName, CAFile: &caFile}},
+			TCP: &config.TCPService{VisitorTLS: &mode},
 		},
 	}}}}
 	flags := publishCommand{Target: "orders"}
@@ -588,7 +592,7 @@ func TestProjectServiceTargetAppliesAddressAndVisitorTLS(t *testing.T) {
 		t.Fatalf("named target = %+v, %v", flags, err)
 	}
 	mode = "passthrough"
-	project.Config.Services["orders"] = config.Service{Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}, Tunnel: &config.Tunnel{VisitorTLS: &mode}}
+	project.Config.Services["orders"] = config.Service{Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}, TCP: &config.TCPService{VisitorTLS: &mode}}
 	flags = publishCommand{Target: "orders"}
 	if err := project.applyPublish(&flags); err != nil || !flags.VisitorTLSPassthrough {
 		t.Fatalf("passthrough = %+v, %v", flags, err)
@@ -607,11 +611,11 @@ func TestPublishExplainsAppOwnedService(t *testing.T) {
 
 func TestPublishUsesDockerServiceAndPrivatePortFromSelectedWorktree(t *testing.T) {
 	protocol, dockerService, privateTLSName := "postgres", "database", "db.internal"
-	privatePort, targetTLS := 5432, true
+	privatePort := 5432
 	project := projectConfiguration{Project: projectconfig.Project{
 		Root: t.TempDir(), Worktree: projectconfig.Worktree{Label: projectconfig.WorktreeLabel{FullLabel: "shop-perf-k7n2p9"}},
 		Config: config.TNL{Services: config.Services{"orders": {Protocol: &protocol, Target: &config.ServiceTarget{
-			Type: "docker", DockerSelection: config.DockerSelection{Compose: &config.ComposeSelection{File: "compose.yaml", Project: "shop-perf-k7n2p9", Service: dockerService}, ContainerPort: &privatePort}, TargetTLS: &targetTLS, TargetTLSName: &privateTLSName,
+			Type: "docker", DockerSelection: config.DockerSelection{Compose: &config.ComposeSelection{File: "compose.yaml", Project: "shop-perf-k7n2p9", Service: dockerService}, ContainerPort: &privatePort}, TLS: &config.TargetTLS{ServerName: &privateTLSName},
 		}}}},
 	}}
 	flags := publishCommand{Target: "orders"}

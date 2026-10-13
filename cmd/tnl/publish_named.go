@@ -47,7 +47,7 @@ func namedPublishOverrides(parsed *kong.Context) []string {
 		}
 		if !flag.Set || !slices.Contains([]string{
 			"server", "access-token", "team", "domain", "name", "public-url", "allow-ip", "allow-all-ips",
-			"ephemeral", "requests", "rate-requests", "rate-per", "concurrency", "protocol", "target-ca-file",
+			"ephemeral", "total", "rate-count", "rate-per", "rate-burst", "concurrency", "protocol", "target-ca-file",
 			"target-tls-name", "target-tls", "visitor-tls-passthrough", "inspection-mode",
 			"inspection-retention", "inspection-max-bytes",
 		}, flag.Name) {

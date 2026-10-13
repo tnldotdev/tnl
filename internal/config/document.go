@@ -86,10 +86,11 @@ type Service struct {
 	Directory  *string              `json:"-" yaml:"-"`
 	Protocol   *string              `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh" jsonschema_description:"Local service protocol; defaults to http."`
 	Target     *ServiceTarget       `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"How the publisher finds this service."`
-	HTTP       *HTTPService         `json:"http,omitempty" yaml:"http,omitempty" jsonschema_description:"HTTP readiness and path mounts."`
+	HTTP       *HTTPService         `json:"http,omitempty" yaml:"http,omitempty" jsonschema_description:"HTTP path mounts and browser opening."`
+	TCP        *TCPService          `json:"tcp,omitempty" yaml:"tcp,omitempty"`
 	Tunnel     *Tunnel              `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
 	Publish    *Publish             `json:"-" yaml:"-"`
-	Readiness  *Readiness           `json:"-" yaml:"-"`
+	Readiness  *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty"`
 	Paths      map[string]PathMount `json:"-" yaml:"-"`
 }
 
@@ -98,14 +99,23 @@ type ServiceTarget struct {
 	Type            string  `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=docker"`
 	Address         *Target `json:"address,omitempty" yaml:"address,omitempty" jsonschema_description:"Private HTTP origin, TCP host:port, or local port reached by the publisher."`
 	DockerSelection `yaml:",inline"`
-	TargetTLS       *bool   `json:"target_tls,omitempty" yaml:"target_tls,omitempty"`
-	TargetTLSName   *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty"`
-	TargetCAFile    *string `json:"target_ca_file,omitempty" yaml:"target_ca_file,omitempty"`
+	TLS             *TargetTLS `json:"tls,omitempty" yaml:"tls,omitempty"`
 }
 
 type HTTPService struct {
-	Readiness *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty"`
-	Paths     map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty"`
+	Open  *bool                `json:"open,omitempty" yaml:"open,omitempty"`
+	Paths map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty"`
+}
+
+// TCPService selects visitor TLS behavior for PostgreSQL and MySQL.
+type TCPService struct {
+	VisitorTLS *string `json:"visitor_tls,omitempty" yaml:"visitor_tls,omitempty" jsonschema:"enum=terminate,enum=passthrough"`
+}
+
+// TargetTLS enables verified TLS to a private target.
+type TargetTLS struct {
+	ServerName *string `json:"server_name,omitempty" yaml:"server_name,omitempty"`
+	CAFile     *string `json:"ca_file,omitempty" yaml:"ca_file,omitempty"`
 }
 
 // ServicePaths returns the HTTP mounts for a named service.
@@ -165,24 +175,30 @@ type Tunnel struct {
 	Domain      *string  `json:"domain,omitempty" yaml:"domain,omitempty"`
 	Name        *string  `json:"name,omitempty" yaml:"name,omitempty"`
 	PublicURL   *string  `json:"public_url,omitempty" yaml:"public_url,omitempty"`
-	Open        *bool    `json:"open,omitempty" yaml:"open,omitempty"`
+	Open        *bool    `json:"-" yaml:"-"`
 	AllowIP     []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
 	AllowAllIPs *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
 	Ephemeral   *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
-	VisitorTLS  *string  `json:"visitor_tls,omitempty" yaml:"visitor_tls,omitempty" jsonschema:"enum=terminate,enum=passthrough" jsonschema_description:"How PostgreSQL or MySQL visitor TLS reaches the private database."`
+	VisitorTLS  *string  `json:"-" yaml:"-"`
 	Limits      *Limits  `json:"limits,omitempty" yaml:"limits,omitempty"`
 }
 
-// Limits apply to application requests after visitor access.
+// Limits select protocol-specific application admission after visitor access.
 type Limits struct {
-	Requests    *int  `json:"requests,omitempty" yaml:"requests,omitempty"`
+	HTTP *WorkLimits `json:"http,omitempty" yaml:"http,omitempty"`
+	TCP  *WorkLimits `json:"tcp,omitempty" yaml:"tcp,omitempty"`
+}
+
+type WorkLimits struct {
+	Total       *int  `json:"total,omitempty" yaml:"total,omitempty"`
 	Rate        *Rate `json:"rate,omitempty" yaml:"rate,omitempty"`
 	Concurrency *int  `json:"concurrency,omitempty" yaml:"concurrency,omitempty"`
 }
 
 type Rate struct {
-	Requests *int      `json:"requests,omitempty" yaml:"requests,omitempty"`
-	Per      *Duration `json:"per,omitempty" yaml:"per,omitempty"`
+	Count *int      `json:"count,omitempty" yaml:"count,omitempty"`
+	Per   *Duration `json:"per,omitempty" yaml:"per,omitempty"`
+	Burst *int      `json:"burst,omitempty" yaml:"burst,omitempty"`
 }
 
 type Publish struct {
@@ -222,14 +238,19 @@ func ServicePublish(base *Publish, service Service) *Publish {
 		result.TargetTLS, result.TargetTLSName, result.TargetCAFile = nil, nil, nil
 	} else if service.Target.Type == "address" {
 		result.Target = service.Target.Address
-		result.TargetTLS = service.Target.TargetTLS
-		result.TargetTLSName = service.Target.TargetTLSName
-		result.TargetCAFile = service.Target.TargetCAFile
 	} else {
 		result.Target = nil
-		result.TargetTLS = service.Target.TargetTLS
-		result.TargetTLSName = service.Target.TargetTLSName
-		result.TargetCAFile = service.Target.TargetCAFile
+	}
+	if service.Target.Type != "app" {
+		result.TargetTLS, result.TargetTLSName, result.TargetCAFile = nil, nil, nil
+		if service.Target.TLS != nil {
+			if ServiceProtocol(result) != "http" {
+				enabled := true
+				result.TargetTLS = &enabled
+			}
+			result.TargetTLSName = service.Target.TLS.ServerName
+			result.TargetCAFile = service.Target.TLS.CAFile
+		}
 	}
 	return result
 }

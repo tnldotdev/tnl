@@ -110,7 +110,7 @@ test("a strict total budget fails closed when the native manager disappears", as
   await expect(
     openServer(
       listener,
-      { credential: credential(), limits: { requests: 1 } },
+      { credential: credential(), limits: { http: { total: 1 } } },
       {
         start: async () => {
           starts++;
