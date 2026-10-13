@@ -30,7 +30,7 @@ type cli struct {
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
-	Watch       watchCommand     `cmd:"" help:"Follow ordered local app lifecycle events." group:"start"`
+	Watch       watchCommand     `cmd:"" help:"Follow resumable local app and TCP service events." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
 	Status      statusCommand    `cmd:"" help:"Show configured services and local publications; --all includes other projects." group:"start"`
 	Requests    requestsCommand  `cmd:"" help:"Inspect recent local HTTP requests." group:"manage"`
