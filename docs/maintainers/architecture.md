@@ -252,13 +252,14 @@ when the app registers its bound target; it does not enter snapshots,
 diagnostics, or browser metadata. the native runtime can start without a
 project file for ad-hoc registrations.
 
-the publisher queues one high-level ready telemetry event for an app invocation
-after its first routable publish run. a hash of the app's opaque invocation
+the publisher and the Go ad-hoc SDK queue one high-level ready telemetry event
+for an app invocation after its first routable publish run. a hash of the opaque invocation
 identity deduplicates it across publisher restarts without storing service names,
 paths, targets, hostnames, or credentials. the saved preference and
 `TNL_NO_TELEMETRY` take effect before queueing; hidden runtime commands are not
 reported as CLI commands. named `tnl publish` uses the same first-ready event as
-an explicit target.
+an explicit target. ready events identify only configured, ad-hoc, named, direct,
+or demo entry modes and a coarse framework family when there is one.
 
 the same local publisher accepts several ad-hoc invocations from one app process.
 `internal/clientruntime.AdHocManager` keeps them separate from configured

@@ -364,6 +364,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 							mode := telemetryPublishApp
 							if flags.Publish.Demo {
 								mode = telemetryPublishDemo
+								telemetry.SetEntryMode(telemetryDemo)
 							}
 							telemetry.SetPublishMode(mode)
 						}
