@@ -107,7 +107,7 @@ type boundedOwnerOutput struct {
 
 func (b *boundedOwnerOutput) Write(data []byte) (int, error) {
 	if b.Len()+len(data) > 2*maxOwnerRequestBytes {
-		return 0, errors.New("Docker publisher response exceeds limit")
+		return 0, errors.New("docker publisher response exceeds limit")
 	}
 	return b.Buffer.Write(data)
 }
@@ -121,7 +121,7 @@ func (t dockerOwnerTransport) RoundTrip(request *http.Request) (*http.Response, 
 		var err error
 		body, err = io.ReadAll(io.LimitReader(request.Body, maxOwnerRequestBytes+1))
 		if err != nil || len(body) > maxOwnerRequestBytes {
-			return nil, errors.New("Docker publisher request exceeds limit")
+			return nil, errors.New("docker publisher request exceeds limit")
 		}
 	}
 	encoded, err := json.Marshal(dockerOwnerRequest{Method: request.Method, Path: request.URL.RequestURI(), Owner: request.Header.Get("X-Publication-Owner"), Body: body})
@@ -137,7 +137,7 @@ func (t dockerOwnerTransport) RoundTrip(request *http.Request) (*http.Response, 
 		return nil, fmt.Errorf("request Docker publisher: %w", err)
 	}
 	if output.Len() > 2*maxOwnerRequestBytes {
-		return nil, errors.New("Docker publisher response exceeds limit")
+		return nil, errors.New("docker publisher response exceeds limit")
 	}
 	var result dockerOwnerResponse
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.Status < 100 || result.Status > 599 || len(result.Body) > maxOwnerRequestBytes {

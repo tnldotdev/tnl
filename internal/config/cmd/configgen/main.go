@@ -112,9 +112,7 @@ func projectPublisherSchema() *jsonschema.Schema {
 	variants := []*jsonschema.Schema{
 		{Type: "object", Required: []string{"type"}, Properties: local, AdditionalProperties: jsonschema.FalseSchema},
 	}
-	for _, entry := range dockerSelectorSchemas("docker") {
-		variants = append(variants, entry)
-	}
+	variants = append(variants, dockerSelectorSchemas("docker")...)
 	return &jsonschema.Schema{OneOf: variants}
 }
 
