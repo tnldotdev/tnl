@@ -41,8 +41,10 @@ traffic or make ACME network calls. See the test cases in
 
 ## runtime load
 
-This Task target uses Docker Compose to run separate control, ingress, and
-relay processes with real publishers and visitors, Pebble, and PostgreSQL. The
+This Task target uses Testcontainers for Go to run a disposable Docker Compose
+topology: separate control, ingress, and relay processes with real publishers
+and visitors, Pebble, and PostgreSQL. Go drives faults and captures container
+exit evidence; the workload and measurements run in the Go test binary. The
 default is a four-public-URL smoke with both QUIC and TLS/TCP:
 
 ```console

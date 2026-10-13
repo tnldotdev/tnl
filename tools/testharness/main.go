@@ -34,7 +34,7 @@ const (
 )
 
 type harnessArguments struct {
-	Service string   `arg:"" enum:"postgres,mysql,dns" help:"Disposable service for the test command."`
+	Service string   `arg:"" enum:"postgres,mysql,dns,runtime" help:"Disposable service for the test command."`
 	Command []string `arg:"" optional:"" passthrough:"" sep:"none" help:"Test command and arguments after --."`
 }
 
@@ -47,12 +47,12 @@ func parseHarnessArguments(arguments []string) (harnessArguments, error) {
 	if _, err := parser.Parse(arguments); err != nil {
 		return parsed, err
 	}
-	if parsed.Service == "dns" {
+	if parsed.Service == "dns" || parsed.Service == "runtime" {
 		if len(arguments) != 1 {
-			return parsed, errors.New("dns does not take a test command")
+			return parsed, errors.New("dns and runtime do not take a test command")
 		}
 	} else if len(arguments) < 3 || arguments[1] != "--" || len(parsed.Command) == 0 {
-		return parsed, errors.New("usage: testharness postgres|mysql -- go test [arguments...], or testharness dns")
+		return parsed, errors.New("usage: testharness postgres|mysql -- go test [arguments...], or testharness dns|runtime")
 	} else {
 		// kong's passthrough includes the separator; only the child command
 		// and its arguments belong in the process we launch.
@@ -82,6 +82,9 @@ func run() error {
 	}
 	if arguments.Service == "dns" {
 		return runDNS(ctx, root)
+	}
+	if arguments.Service == "runtime" {
+		return runRuntime(ctx, root)
 	}
 	command := arguments.Command
 	switch arguments.Service {
