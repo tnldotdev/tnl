@@ -109,18 +109,10 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 func projectPublisherSchema() *jsonschema.Schema {
 	local := jsonschema.NewProperties()
 	local.Set("type", &jsonschema.Schema{Const: "local"})
-	url := jsonschema.NewProperties()
-	url.Set("type", &jsonschema.Schema{Const: "url"})
-	url.Set("url", &jsonschema.Schema{Type: "string", Pattern: `^https://[^/?#]+$`})
-	url.Set("owner_credential_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
 	variants := []*jsonschema.Schema{
 		{Type: "object", Required: []string{"type"}, Properties: local, AdditionalProperties: jsonschema.FalseSchema},
-		{Type: "object", Required: []string{"type", "url"}, Properties: url, AdditionalProperties: jsonschema.FalseSchema},
 	}
-	for _, entry := range dockerSelectorSchemas("docker") {
-		entry.Properties.Set("owner_credential_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
-		variants = append(variants, entry)
-	}
+	variants = append(variants, dockerSelectorSchemas("docker")...)
 	return &jsonschema.Schema{OneOf: variants}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientruntime"
+	"github.com/tnldotdev/tnl/internal/config"
 )
 
 func TestLocalPublisherTCPRequiresCredentialOnPrivateOperations(t *testing.T) {
@@ -110,5 +112,87 @@ func TestLocalPublisherRemovesEveryScopedCredentialOnShutdown(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("stale credential descriptor %s: %v", path, err)
 		}
+	}
+}
+
+func TestLocalPublisherRuntimeKeyUsesPrivateClientState(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "client-state")
+	key, err := runtimeKey("/project", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := filepath.EvalSymlinks(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(key) != filepath.Join(canonical, "run") {
+		t.Fatalf("runtime key = %q, want state run directory", key)
+	}
+	if info, err := os.Lstat(filepath.Dir(key)); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("run directory = %v, %v", info, err)
+	}
+	if err := os.Remove(filepath.Dir(key)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Dir(key)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtimeKey("/project", state); err == nil {
+		t.Fatal("accepted a symlink as the private runtime directory")
+	}
+}
+
+func TestComposePublisherWritesOnlyServiceCredentialsToSeparateVolumes(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	key, err := runtimeKey("/project", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(t.TempDir(), "app-volumes")
+	if err := os.Mkdir(appDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, service := range []string{"web", "api"} {
+		if err := os.Mkdir(filepath.Join(appDir, service), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("TNL_PUBLISHER_APP_ENDPOINT_DIR", appDir)
+	port := 3781
+	publisher := &config.ProjectPublisher{Type: "docker", DockerSelection: config.DockerSelection{
+		Compose: &config.ComposeSelection{File: "compose.yaml", Project: "shop-k7n2p9", Service: "publisher"}, ContainerPort: &port,
+	}}
+	server, _, err := startRuntimeTCPWithProjectOptions(key, http.NewServeMux(), "127.0.0.1:0", "", publisher,
+		clientruntime.Service{Name: "web"}, clientruntime.Service{Name: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stopRuntimeTCP(context.Background(), server, key) })
+	owner, err := readRuntimeTCPEndpoint(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials := map[string]string{}
+	for _, service := range []string{"web", "api"} {
+		path := runtimeAppEndpointPath(key, service)
+		if path != filepath.Join(appDir, service, "publisher.endpoint.json") {
+			t.Fatalf("app endpoint outside its volume: %s", path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var app localPublisherEndpoint
+		err = json.Unmarshal(data, &app)
+		if err != nil || app.URL != "http://publisher:3781" || app.Credential == owner.Credential {
+			t.Fatalf("app scope %q was not isolated: %v", service, err)
+		}
+		credentials[service] = app.Credential
+	}
+	if credentials["web"] == credentials["api"] {
+		t.Fatal("sibling apps shared the same publisher credential")
+	}
+	if entries, err := os.ReadDir(appDir); err != nil || len(entries) != 2 {
+		t.Fatalf("app credential mounts = %d, %v", len(entries), err)
 	}
 }

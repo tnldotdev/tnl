@@ -378,8 +378,10 @@ components:
       required: [service, framework, owner]
       properties:
         service: { $ref: "#/components/schemas/ServiceName" }
-        framework: { type: string, enum: [node, bun, vite, next] }
+        framework: { type: string, enum: [node, bun, vite, next, python] }
         owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+        telemetry_disabled:
+          { type: boolean, description: Do not report this app invocation in usage telemetry. }
     AppAssignment:
       type: object
       additionalProperties: false

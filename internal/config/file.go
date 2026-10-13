@@ -7,11 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -19,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -177,9 +176,6 @@ func ValidateTNL(config TNL) error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := config.Services[name]
-		if config.Publisher != nil && config.Publisher.Type == "url" && service.Target != nil && service.Target.Type == "docker" {
-			return fmt.Errorf("services.%s: a url publisher cannot use a host Docker mapping; select an address it can reach", name)
-		}
 		effectivePublish := ServicePublish(config.Publish, service)
 		if service.Target != nil {
 			if service.Publish != nil {
@@ -256,7 +252,7 @@ func ValidateTNL(config TNL) error {
 			if service.HTTP != nil || service.Readiness != nil || config.Readiness != nil || len(paths) != 0 ||
 				service.Tunnel != nil && service.Tunnel.Open != nil && *service.Tunnel.Open ||
 				config.Tunnel != nil && config.Tunnel.Open != nil && *config.Tunnel.Open {
-				return fmt.Errorf("services.%s: database services cannot use HTTP readiness, path mounts, or browser opening", name)
+				return fmt.Errorf("services.%s: TCP services cannot use HTTP readiness, path mounts, or browser opening", name)
 			}
 			selected := MergeInspection(config.Inspection, service.Inspection)
 			if selected != nil && selected.Mode != nil && *selected.Mode == InspectionDetailed &&
@@ -265,12 +261,12 @@ func ValidateTNL(config TNL) error {
 			}
 			for _, definition := range config.Webhooks {
 				if definition.Service == name {
-					return fmt.Errorf("services.%s: database services cannot receive HTTP webhooks", name)
+					return fmt.Errorf("services.%s: TCP services cannot receive HTTP webhooks", name)
 				}
 			}
 			for _, definition := range config.Aliases {
 				if definition.Service == name {
-					return fmt.Errorf("services.%s: database services cannot serve HTTP aliases", name)
+					return fmt.Errorf("services.%s: TCP services cannot serve HTTP aliases", name)
 				}
 			}
 			for _, sibling := range config.Services {
@@ -280,7 +276,7 @@ func ValidateTNL(config TNL) error {
 				}
 				for _, mount := range siblingPaths {
 					if mount.Service == name {
-						return fmt.Errorf("services.%s: database services cannot be used as HTTP path mounts", name)
+						return fmt.Errorf("services.%s: TCP services cannot be used as HTTP path mounts", name)
 					}
 				}
 			}
@@ -313,47 +309,17 @@ func validateProjectPublisher(publisher *ProjectPublisher) error {
 	if publisher == nil {
 		return nil
 	}
-	if publisher.OwnerCredentialFile != nil {
-		file := *publisher.OwnerCredentialFile
-		if file == "" || len(file) > 4096 || strings.TrimSpace(file) != file || strings.ContainsRune(file, 0) {
-			return errors.New("owner_credential_file must be a nonempty path without surrounding whitespace")
-		}
-	}
 	switch publisher.Type {
 	case "local":
-		if publisher.URL != nil || !emptyDockerSelection(publisher.DockerSelection) || publisher.OwnerCredentialFile != nil {
-			return errors.New("local publisher takes no URL, Docker selection, or credential file")
-		}
-	case "url":
-		if publisher.URL == nil || !emptyDockerSelection(publisher.DockerSelection) {
-			return errors.New("url publisher requires an HTTPS origin")
-		}
-		origin, err := url.Parse(*publisher.URL)
-		if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || origin.Opaque != "" || origin.Host != strings.ToLower(origin.Host) {
-			return errors.New("url publisher must use an exact HTTPS origin")
-		}
-		hostname, err := naming.CanonicalizeHostname(origin.Hostname())
-		if err != nil || hostname != origin.Hostname() {
-			return errors.New("url publisher requires a canonical DNS hostname")
-		}
-		if origin.Host != hostname && origin.Port() == "" {
-			return errors.New("url publisher port must be from 1 to 65535")
-		}
-		if origin.Port() != "" {
-			port, err := strconv.Atoi(origin.Port())
-			if err != nil || port < 1 || port > 65535 {
-				return errors.New("url publisher port must be from 1 to 65535")
-			}
+		if !emptyDockerSelection(publisher.DockerSelection) {
+			return errors.New("local publisher takes no Docker selection")
 		}
 	case "docker":
-		if publisher.URL != nil {
-			return errors.New("docker publisher requires a Docker selection")
-		}
 		if err := validateDockerSelection(publisher.DockerSelection); err != nil {
 			return fmt.Errorf("docker publisher: %w", err)
 		}
 	default:
-		return errors.New("type must be local, docker, or url")
+		return errors.New("type must be local or docker")
 	}
 	return nil
 }
@@ -503,11 +469,11 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	}
 	if publish != nil {
 		protocol := ServiceProtocol(publish)
-		if protocol != "http" && protocol != "postgres" && protocol != "mysql" && protocol != "redis" && protocol != "ssh" {
-			return errors.New("publish.protocol must be http, postgres, mysql, redis, or ssh")
+		if !controlv1.PublicURLServiceProtocol(protocol).Valid() {
+			return errors.New("publish.protocol must be a supported service protocol")
 		}
 		if publish.TargetTLS != nil && protocol == "http" {
-			return errors.New("publish.target_tls requires a private TCP protocol")
+			return errors.New("publish.target_tls requires a TCP service protocol")
 		}
 		if publish.Target != nil {
 			target := string(*publish.Target)
@@ -521,12 +487,12 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 		}
 		if publish.TargetTLSName != nil {
 			if protocol == "http" || *publish.TargetTLSName == "" || strings.TrimSpace(*publish.TargetTLSName) != *publish.TargetTLSName {
-				return errors.New("publish.target_tls_name requires a private TCP protocol and a hostname")
+				return errors.New("publish.target_tls_name requires a TCP service protocol and a hostname")
 			}
 		}
 		if protocol != "http" && (publish.TargetTLSName != nil || publish.TargetCAFile != nil) &&
 			(publish.TargetTLS == nil || !*publish.TargetTLS) {
-			return errors.New("publish.target_tls must be true when private target TLS settings are supplied")
+			return errors.New("publish.target_tls must be true when target TLS settings are supplied")
 		}
 		if publish.TargetCAFile != nil && (strings.TrimSpace(*publish.TargetCAFile) != *publish.TargetCAFile || *publish.TargetCAFile == "") {
 			return errors.New("publish.target_ca_file must be a nonempty path without surrounding whitespace")

@@ -17,11 +17,10 @@ import (
 )
 
 func publisherAuthClient(ctx context.Context, project projectConfiguration, selectedServer string, timeout time.Duration) (namedPublisherClient, error) {
-	endpoint, err := remotePublisherScope(ctx, project, false, false, "")
+	client, err := selectedPublisherClient(ctx, project, timeout)
 	if err != nil {
 		return namedPublisherClient{}, err
 	}
-	client := namedPublisherClient{endpoint: endpoint, http: publisherHTTPClient(timeout)}
 	var status clientauth.StatusResult
 	if err := client.request(ctx, http.MethodGet, "/v1/auth/status", "", nil, &status); err != nil {
 		return namedPublisherClient{}, err
