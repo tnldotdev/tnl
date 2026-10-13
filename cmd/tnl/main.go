@@ -80,7 +80,7 @@ type tunnelFlags struct {
 	TrafficRateBurst    *int                  `name:"traffic-rate-burst" env:"TNL_TRAFFIC_RATE_BURST" help:"Maximum new visitor connection burst."`
 	TrafficUpload       string                `name:"traffic-upload" env:"TNL_TRAFFIC_UPLOAD" help:"Visitor upload bandwidth, such as 8MiB/s."`
 	TrafficDownload     string                `name:"traffic-download" env:"TNL_TRAFFIC_DOWNLOAD" help:"Visitor download bandwidth, such as 16MiB/s."`
-	TargetCAFile        string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or private TCP target."`
+	TargetCAFile        string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or TCP target."`
 	InspectionMode      config.InspectionMode `name:"inspection-mode" enum:"summary,detailed" default:"summary" help:"Local HTTP and database inspection: summary (default) or detailed."`
 	InspectionRetention time.Duration         `name:"inspection-retention" help:"Keep this service's local inspections for this long (default 24h)."`
 	InspectionMaxBytes  string                `name:"inspection-max-bytes" help:"Maximum local inspection bytes for this service, such as 64MiB."`
@@ -371,6 +371,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 							mode := telemetryPublishApp
 							if flags.Publish.Demo {
 								mode = telemetryPublishDemo
+								telemetry.SetEntryMode(telemetryDemo)
 							}
 							telemetry.SetPublishMode(mode)
 						}
@@ -396,7 +397,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "runtime endpoint":
 		return runRuntimeEndpoint(ctx, flags.Runtime.Endpoint, stdout)
 	case "runtime serve":
+		flags.Runtime.Serve.NoTelemetry = flags.NoTelemetry
 		return runRuntimeServe(ctx, flags.Runtime.Serve)
+	case "runtime owner":
+		return runRuntimeOwner(ctx, flags.Runtime.Owner, os.Stdin, stdout)
 	case "wait", "watch":
 		return runAppObservation(ctx, flags, parsedCommand, stdout)
 	case "publish <service-or-target>", "config check", "config generate":
@@ -455,10 +459,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runLimitsShow(ctx, flags.Limits.Show, project, stdout)
 	case "project label":
 		return runProjectLabel(ctx, flags, stdout)
-	case "project publisher credential create":
-		return runProjectPublisherCredentialCreate(ctx, flags, stdout)
-	case "project publisher credential export":
-		return runProjectPublisherCredentialExport(ctx, flags, stdout)
 	case "telemetry on":
 		return runTelemetryPreference(ctx, flags.Telemetry.On, "on", stdout)
 	case "telemetry off":

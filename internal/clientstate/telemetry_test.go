@@ -1,9 +1,13 @@
 package clientstate
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T) {
@@ -54,4 +58,57 @@ func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T
 		t.Fatal(err)
 	}
 	read(true)
+}
+
+func TestReadyTelemetryDeduplicatesAcrossPublisherRestartsAndRespectsPreference(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	state, err := Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := strings.Repeat("a", 64)
+	event := json.RawMessage(`{"name":"tunnel.ready"}`)
+	queue := func(db *Database, key string) bool {
+		t.Helper()
+		id, err := opaqueid.New(opaqueid.TelemetryEventPrefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inserted, err := db.QueueReadyTelemetryEvent(t.Context(), key, id, event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return inserted
+	}
+	if !queue(state, key) {
+		t.Fatal("first ready event was not queued")
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	state, err = Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	if queue(state, key) {
+		t.Fatal("publisher restart queued a second ready event")
+	}
+	if err := state.SetTelemetryEnabled(t.Context(), false); err != nil {
+		t.Fatal(err)
+	}
+	other := strings.Repeat("b", 64)
+	if queue(state, other) {
+		t.Fatal("disabled telemetry queued a ready event")
+	}
+	if err := state.SetTelemetryEnabled(t.Context(), true); err != nil {
+		t.Fatal(err)
+	}
+	if !queue(state, other) {
+		t.Fatal("disabled telemetry marked an invocation as sent")
+	}
+	pending, err := state.PendingTelemetryEvents(t.Context(), 25)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending ready events = %d, error=%v", len(pending), err)
+	}
 }

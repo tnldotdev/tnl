@@ -57,6 +57,14 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	if _, err := parser.Parse([]string{"route", "list"}); err == nil {
 		t.Fatal("obsolete route command was accepted")
 	}
+	for _, command := range []string{"project publisher credential create", "project publisher credential export"} {
+		if commands[command] {
+			t.Fatalf("removed credential command %q is still in help", command)
+		}
+		if _, err := parser.Parse(strings.Split(command, " ")); err == nil {
+			t.Fatalf("removed credential command %q was accepted", command)
+		}
+	}
 }
 
 func TestTeamScopedCommandsAcceptExplicitTeam(t *testing.T) {

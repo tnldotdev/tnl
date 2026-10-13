@@ -48,6 +48,7 @@ type telemetryTunnelWirePayload struct {
 	ServerKind  telemetryServerKind     `json:"server_kind"`
 	Framework   telemetryFrameworkName  `json:"framework,omitempty"`
 	PublishMode telemetryPublishMode    `json:"publish_mode,omitempty"`
+	EntryMode   telemetryEntryMode      `json:"entry_mode,omitempty"`
 }
 
 type telemetryDemoWirePayload struct {
@@ -111,7 +112,7 @@ func (payload telemetryPayload) wireEvent(id telemetryEventID) telemetryWireEven
 	case telemetryCommandFailed:
 		return telemetryFailureWireEvent{common, wireCommandFailed, telemetryFailureWirePayload{payload.Command, payload.Action, payload.FailureStage, payload.DiagnosticCode}}
 	case telemetryPublishRunStarted:
-		return telemetryTunnelWireEvent{common, wireTunnelReady, telemetryTunnelWirePayload{payload.Command, payload.ServerKind, payload.Framework, payload.PublishMode}}
+		return telemetryTunnelWireEvent{common, wireTunnelReady, telemetryTunnelWirePayload{payload.Command, payload.ServerKind, payload.Framework, payload.PublishMode, payload.EntryMode}}
 	case telemetryDemoPingReceived:
 		return telemetryDemoWireEvent{common, wireDemoFirstPing, telemetryDemoWirePayload{telemetryPublishDemo}}
 	case telemetryOAuthReady:

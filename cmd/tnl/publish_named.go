@@ -133,11 +133,10 @@ func localPublisherForCLI(ctx context.Context, flags publishCommand) (namedPubli
 				return namedPublisherClient{}, nil, err
 			}
 		}
-		endpoint, err := selectedPublisherEndpoint(ctx, flags.project)
+		client, err := selectedPublisherClient(ctx, flags.project, 10*time.Second)
 		if err != nil {
 			return namedPublisherClient{}, nil, err
 		}
-		client := namedPublisherClient{endpoint: endpoint, http: publisherHTTPClient(10 * time.Second)}
 		var snapshot localpublisherv1.ProjectSnapshot
 		if err := client.request(ctx, http.MethodGet, "/v1/status", "", nil, &snapshot); err != nil {
 			return namedPublisherClient{}, nil, err
@@ -214,7 +213,7 @@ func validateDockerPublisherTarget(ctx context.Context, project projectConfigura
 		errors.New("the target and publisher containers have no shared Compose network"))
 }
 
-func runNamedPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer) (result error) {
+func runNamedPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	if slices.Contains(flags.namedOverrides, "--server") {
 		configured := valueOrEmpty(flags.project.Config.Server)
 		if flags.ServerURL == configured || os.Getenv("TNL_SERVER") != "" && flags.ServerURL == os.Getenv("TNL_SERVER") {
@@ -243,11 +242,23 @@ func runNamedPublish(ctx context.Context, flags publishCommand, stdout, stderr i
 		return err
 	}
 	owner := hex.EncodeToString(ownerBytes)
+	telemetry := optionalTelemetryReporter(reporters)
+	server := flags.ServerURL
+	if server == "" {
+		server = valueOrEmpty(flags.project.Config.Server)
+	}
+	serverKind := telemetrySelfHosted
+	if server == defaultServerURL {
+		serverKind = telemetryHosted
+	}
 	unauthenticated := 0
 	var recoveryUntil time.Time
 	for ctx.Err() == nil {
 		client, stop, err := localPublisherForCLI(ctx, flags)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			reason, known := failure.ReasonOf(err)
 			if recoveryUntil.IsZero() || time.Now().After(recoveryUntil) || !(known && reason == failure.ClientStateUnavailable || namedPublisherConnectionLost(err)) {
 				return err
@@ -258,9 +269,12 @@ func runNamedPublish(ctx context.Context, flags publishCommand, stdout, stderr i
 			continue
 		}
 		recoveryUntil = time.Time{}
-		err = followNamedPublication(ctx, flags, client, owner, output)
+		err = followNamedPublication(ctx, flags, client, owner, output, telemetry, serverKind)
 		stop()
-		if ctx.Err() != nil || !namedPublisherConnectionLost(err) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if !namedPublisherConnectionLost(err) {
 			return err
 		}
 		recoveryUntil = time.Now().Add(30 * time.Second)
@@ -288,7 +302,7 @@ func waitNamedPublisherRetry(ctx context.Context) error {
 	}
 }
 
-func followNamedPublication(ctx context.Context, flags publishCommand, client namedPublisherClient, owner string, output *publishOutput) (result error) {
+func followNamedPublication(ctx context.Context, flags publishCommand, client namedPublisherClient, owner string, output *publishOutput, telemetry telemetryReporter, serverKind telemetryServerKind) (result error) {
 	var lease localpublisherv1.PublicationLease
 	if err := client.request(ctx, http.MethodPost, "/v1/publications", "", localpublisherv1.PublicationRequest{
 		Service: flags.Service, Owner: owner, Pid: os.Getpid(),
@@ -355,6 +369,12 @@ func followNamedPublication(ctx context.Context, flags publishCommand, client na
 			}
 			if err := presentNamedEvent(output, *event.Publication); err != nil {
 				return err
+			}
+			if event.Publication.Type == "ready" && telemetry != nil {
+				telemetry.Report(newTelemetryReady(telemetryPublish, serverKind, ""))
+				if invocation, ok := telemetry.(*telemetryInvocation); ok {
+					invocation.flushReady()
+				}
 			}
 		}
 		position, err := clientruntime.ParseCursor(page.Cursor)

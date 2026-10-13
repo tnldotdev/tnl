@@ -47,7 +47,7 @@ func TestIntegrationComposePublisherAppScopedNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	label := projectconfig.ApplyWorktreeHashSalt(worktree, root, salt).Label
-	config := fmt.Sprintf(`{"version":1,"tnl":{"publisher":{"type":"docker","compose":{"file":"compose.yaml","project":%q,"service":"publisher"},"container_port":3781},"services":{"web":{"target":{"type":"app"}}}}}`, label.FullLabel)
+	config := fmt.Sprintf(`{"version":1,"tnl":{"publisher":{"type":"docker","compose":{"file":"compose.yaml","project":%q,"service":"publisher"},"container_port":3781},"services":{"web":{"target":{"type":"app"}},"api":{"target":{"type":"app"}}}}}`, label.FullLabel)
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -56,16 +56,10 @@ func TestIntegrationComposePublisherAppScopedNetwork(t *testing.T) {
 	if err := projectmeta.Write(t.Context(), root, metadata); err != nil {
 		t.Fatal(err)
 	}
-	owner, err := publisherCredential()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".tnl", "publisher-owner"), []byte(owner), 0600); err != nil {
-		t.Fatal(err)
-	}
-	script := `import {readFileSync,writeFileSync} from "node:fs";
+	script := `import {existsSync,readFileSync,writeFileSync} from "node:fs";
 import http from "node:http";
-const endpoint = JSON.parse(readFileSync("/run/secrets/tnl-web.endpoint.json", "utf8"));
+if (existsSync("/project/.tnl/publisher-owner") || existsSync("/run/tnl-app/api/publisher.endpoint.json")) process.exit(4);
+const endpoint = JSON.parse(readFileSync("/run/tnl-app/publisher.endpoint.json", "utf8"));
 const server = http.createServer((_request, response) => response.end("app from Compose"));
 server.listen(0, "0.0.0.0", async () => {
   try {
@@ -83,6 +77,11 @@ process.on("SIGTERM", () => server.close());
 		t.Fatal(err)
 	}
 	compose := `services:
+  publisher-app-init:
+    image: tnl:publisher-dev-integration
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c", "chown ${TNL_UID}:${TNL_GID} /run/tnl-apps/web /run/tnl-apps/api && chmod 0700 /run/tnl-apps/web /run/tnl-apps/api"]
+    volumes: [web-endpoint:/run/tnl-apps/web, api-endpoint:/run/tnl-apps/api]
   publisher:
     image: tnl:publisher-dev-integration
     user: "${TNL_UID}:${TNL_GID}"
@@ -91,13 +90,18 @@ process.on("SIGTERM", () => server.close());
     environment:
       TNL_PUBLISHER_EXTERNAL: "1"
       TNL_STATE_DIR: /state
+      TNL_PUBLISHER_APP_ENDPOINT_DIR: /run/tnl-apps
       TNL_SERVER: https://control.example.test
     volumes:
       - ${PROJECT_ROOT}:${PROJECT_ROOT}
+      - web-endpoint:/run/tnl-apps/web
+      - api-endpoint:/run/tnl-apps/api
     tmpfs:
       - /state:uid=${TNL_UID},gid=${TNL_GID},mode=0700
     ports:
       - "127.0.0.1::3781"
+    depends_on:
+      publisher-app-init: {condition: service_completed_successfully}
   web:
     image: mirror.gcr.io/library/node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
     user: "${TNL_UID}:${TNL_GID}"
@@ -105,8 +109,15 @@ process.on("SIGTERM", () => server.close());
     command: ["node", "/project/app.mjs"]
     volumes:
       - ${PROJECT_ROOT}:/project
-      - ${PROJECT_ROOT}/.tnl/publisher-web.endpoint.json:/run/secrets/tnl-web.endpoint.json:ro
+      - web-endpoint:/run/tnl-app:ro
     depends_on: [publisher]
+  api:
+    image: mirror.gcr.io/library/node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+    command: ["node", "-e", "setInterval(() => {}, 1000)"]
+    volumes: [api-endpoint:/run/tnl-app:ro]
+volumes:
+  web-endpoint:
+  api-endpoint:
 `
 	if err := os.WriteFile(filepath.Join(root, "compose.yaml"), []byte(compose), 0600); err != nil {
 		t.Fatal(err)
@@ -141,16 +152,17 @@ process.on("SIGTERM", () => server.close());
 	deadline := time.Now().Add(15 * time.Second)
 	var output, diagnostics bytes.Buffer
 	for {
-		output.Reset()
-		diagnostics.Reset()
-		err = run(t.Context(), []string{"project", "publisher", "credential", "export", "--service", "web", "--state-dir", state, "--output", "raw"}, &output, &diagnostics)
+		_, err = command(10*time.Second, "exec", "-T", "publisher", "test", "-f", "/run/tnl-apps/web/publisher.endpoint.json")
 		if err == nil || time.Now().After(deadline) {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if err != nil || strings.TrimSpace(output.String()) != filepath.Join(root, ".tnl", "publisher-web.endpoint.json") {
-		t.Fatalf("export container app credential: %v, output=%q, diagnostics=%q", err, output.String(), diagnostics.String())
+	if err != nil {
+		t.Fatalf("publisher did not write the app credential volume: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".tnl", "publisher-web.endpoint.json")); !os.IsNotExist(err) {
+		t.Fatalf("app descriptor was written into the shared checkout: %v", err)
 	}
 	if output, err := command(90*time.Second, "up", "-d", "web"); err != nil {
 		t.Fatalf("start Compose app: %v (%s)", err, output)
@@ -178,7 +190,8 @@ process.on("SIGTERM", () => server.close());
 	var status struct {
 		Services []clientruntime.Service `json:"services"`
 	}
-	if err := json.Unmarshal(output.Bytes(), &status); err != nil || len(status.Services) != 1 || status.Services[0].Name != "web" {
+	if err := json.Unmarshal(output.Bytes(), &status); err != nil || len(status.Services) != 2 ||
+		status.Services[0].Name != "api" || status.Services[0].Registered || status.Services[1].Name != "web" {
 		t.Fatalf("container publisher status = %s, %v", output.String(), err)
 	}
 	watchContext, stopWatch := context.WithTimeout(t.Context(), 3*time.Second)
@@ -196,13 +209,12 @@ process.on("SIGTERM", () => server.close());
 	if err != nil {
 		t.Fatalf("publisher network could not reach app's dynamic listener port: %v (%s)", err, probeOutput)
 	}
-	endpointPath := filepath.Join(root, ".tnl", "publisher-web.endpoint.json")
-	oldDescriptor, err := os.ReadFile(endpointPath)
+	oldDescriptor, err := command(10*time.Second, "exec", "-T", "publisher", "cat", "/run/tnl-apps/web/publisher.endpoint.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var old localPublisherEndpoint
-	if err := json.Unmarshal(oldDescriptor, &old); err != nil {
+	if err := json.Unmarshal([]byte(oldDescriptor), &old); err != nil {
 		t.Fatal(err)
 	}
 	if output, err := command(30*time.Second, "restart", "publisher"); err != nil {
@@ -210,23 +222,21 @@ process.on("SIGTERM", () => server.close());
 	}
 	deadline = time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		output.Reset()
-		diagnostics.Reset()
-		err = run(t.Context(), []string{"project", "publisher", "credential", "export", "--service", "web", "--state-dir", state, "--output", "raw"}, &output, &diagnostics)
+		_, err = command(10*time.Second, "exec", "-T", "publisher", "test", "-f", "/run/tnl-apps/web/publisher.endpoint.json")
 		if err == nil {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	if err != nil {
-		t.Fatalf("reissue scoped credential after publisher restart: %v (%s)", err, diagnostics.String())
+		t.Fatalf("publisher did not restore its app credential volume: %v", err)
 	}
-	newDescriptor, err := os.ReadFile(endpointPath)
+	newDescriptor, err := command(10*time.Second, "exec", "-T", "publisher", "cat", "/run/tnl-apps/web/publisher.endpoint.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var current localPublisherEndpoint
-	if err := json.Unmarshal(newDescriptor, &current); err != nil || current.Credential == old.Credential {
+	if err := json.Unmarshal([]byte(newDescriptor), &current); err != nil || current.Credential == old.Credential {
 		t.Fatalf("publisher restart reused an old scoped app credential: %v", err)
 	}
 	if err := os.Remove(filepath.Join(root, "ready.json")); err != nil {

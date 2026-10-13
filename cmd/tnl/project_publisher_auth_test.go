@@ -75,10 +75,6 @@ func TestProjectPublisherLoginKeepsAnIndependentContainerSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(projectRoot, "owner-token"), []byte(owner), 0600); err != nil {
-		t.Fatal(err)
-	}
-	selected := "owner-token"
 	project := projectConfiguration{Project: projectconfig.Project{Root: projectRoot,
 		Config: config.TNL{Server: &control.URL}, RelativeServiceDirectories: map[string]string{}}}
 	runtime := &appRuntime{project: project, state: state, authHTTP: control.Client()}
@@ -100,7 +96,8 @@ func TestProjectPublisherLoginKeepsAnIndependentContainerSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project.Config.Publisher = &config.ProjectPublisher{Type: "url", URL: &endpoint.URL, OwnerCredentialFile: &selected}
+	project.Config.Publisher = &config.ProjectPublisher{Type: "docker"}
+	useTestDockerPublisher(t, endpoint)
 	var stdout, stderr bytes.Buffer
 	if err := runPublisherLogin(t.Context(), project, loginCommand{ServerURL: control.URL, Timeout: time.Minute}, strings.NewReader(""), &stdout, &stderr); err != nil {
 		t.Fatal(err)

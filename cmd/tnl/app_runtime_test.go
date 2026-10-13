@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -430,13 +431,8 @@ func TestExternalPublisherMapsOnlyReachableAppListeners(t *testing.T) {
 			t.Fatalf("accepted unreachable or unscoped app target %+v", test)
 		}
 	}
-	url := "https://publisher.example.test"
-	a.project.Config.Publisher = &config.ProjectPublisher{Type: "url", URL: &url}
-	if _, err := a.registeredAppTarget(ctx, "web", "http://127.0.0.1:49152", "0.0.0.0"); err == nil {
-		t.Fatal("remote url publisher accepted developer loopback")
-	}
-	if target, err := a.registeredAppTarget(ctx, "web", "http://web.internal:49152", "0.0.0.0"); err != nil || target != "http://web.internal:49152" {
-		t.Fatalf("directly reachable url publisher target = %q, %v", target, err)
+	if _, err := a.registeredAppTarget(ctx, "web", "http://web.internal:49152", "0.0.0.0"); err == nil {
+		t.Fatal("docker publisher accepted an app-selected private hostname")
 	}
 }
 
@@ -444,7 +440,7 @@ func TestExternalPublisherUsesMountedHostWorktreeLabel(t *testing.T) {
 	t.Setenv("TNL_CONFIG", "")
 	t.Setenv("TNL_PUBLISHER_EXTERNAL", "1")
 	root := t.TempDir()
-	configData := []byte(`{"version":1,"tnl":{"publisher":{"type":"url","url":"https://publisher.example.test","owner_credential_file":"owner-token"},"services":{"web":{"target":{"type":"app"}}}}}`)
+	configData := []byte(`{"version":1,"tnl":{"publisher":{"type":"docker","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"publisher"},"container_port":8765},"services":{"web":{"target":{"type":"app"}}}}}`)
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), configData, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -465,19 +461,18 @@ func TestExternalPublisherUsesMountedHostWorktreeLabel(t *testing.T) {
 	}
 }
 
-func TestExternalPublisherServesTheOwnerCredentialFromMountedProject(t *testing.T) {
+func TestDockerPublisherGeneratesOwnerCredentialInPrivateClientState(t *testing.T) {
 	t.Setenv("TNL_CONFIG", "")
 	t.Setenv("TNL_PUBLISHER_EXTERNAL", "1")
 	root := t.TempDir()
-	configData := []byte(`{"version":1,"tnl":{"publisher":{"type":"url","url":"https://publisher.example.test","owner_credential_file":"owner-token"},"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"127.0.0.1:5432"}}}}}`)
-	if err := os.WriteFile(filepath.Join(root, "tnl.json"), configData, 0600); err != nil {
-		t.Fatal(err)
-	}
-	owner, err := publisherCredential()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "owner-token"), []byte(owner), 0600); err != nil {
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+	configData := []byte(fmt.Sprintf(`{"version":1,"tnl":{"publisher":{"type":"docker","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"publisher"},"container_port":%d},"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"127.0.0.1:5432"}}}}}`, port))
+	if err := os.WriteFile(filepath.Join(root, "tnl.json"), configData, 0600); err != nil {
 		t.Fatal(err)
 	}
 	metadata := projectmeta.Metadata{Version: projectmeta.Version, Namespace: "shop.example.test",
@@ -495,7 +490,7 @@ func TestExternalPublisherServesTheOwnerCredentialFromMountedProject(t *testing.
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- runRuntimeServe(ctx, runtimeOptions{Directory: root, StateDir: state, Listen: "127.0.0.1:0"})
+		done <- runRuntimeServe(ctx, runtimeOptions{Directory: root, StateDir: state})
 	}()
 	project, canonicalState, err := runtimeProject(t.Context(), runtimeOptions{Directory: root, StateDir: state})
 	if err != nil {
@@ -514,14 +509,17 @@ func TestExternalPublisherServesTheOwnerCredentialFromMountedProject(t *testing.
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	if err != nil || endpoint.Credential != owner {
-		t.Fatalf("external publisher owner credential was not installed: %v", err)
+	if err != nil || endpoint.Credential == "" {
+		t.Fatalf("Docker publisher owner credential was not generated: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".tnl", "publisher-owner")); !os.IsNotExist(err) {
+		t.Fatalf("owner credential was saved in the shared checkout: %v", err)
 	}
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, endpoint.URL+"/v1/status", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Header.Set("Authorization", "Bearer "+owner)
+	request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
 	response, err := (&http.Client{Timeout: time.Second}).Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -537,7 +535,7 @@ func TestExternalPublisherServesTheOwnerCredentialFromMountedProject(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Header.Set("Authorization", "Bearer "+owner)
+	request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
 	response, err = (&http.Client{Timeout: time.Second}).Do(request)
 	if err != nil {
 		t.Fatalf("idle external publisher stopped: %v", err)
@@ -554,9 +552,6 @@ func TestExternalPublisherServesTheOwnerCredentialFromMountedProject(t *testing.
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("external publisher did not stop with its owner")
-	}
-	if err := runRuntimeServe(t.Context(), runtimeOptions{Directory: root, StateDir: state, Listen: "0.0.0.0:0"}); err == nil {
-		t.Fatal("url publisher exposed its plaintext API on all interfaces")
 	}
 }
 
@@ -882,7 +877,7 @@ func TestWaitAlwaysChecksFreshResponsesAndKeepsFailingPublicationsRunning(t *tes
 		return clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now(), Status: 503, Reason: "runtime.probe_rejected", Readiness: service.Readiness}
 	}
 	var output bytes.Buffer
-	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Service: []string{"api"}, Timeout: 20 * time.Millisecond, Output: "json"}, &output, probe)
+	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Service: []string{"api"}, Timeout: 250 * time.Millisecond, Output: "json"}, &output, probe)
 	if reason, _, ok := failure.Describe(err); !ok || reason != failure.AppReadinessTimeout || calls.Load() == 0 {
 		t.Fatalf("fresh wait = %v, probes=%d", err, calls.Load())
 	}

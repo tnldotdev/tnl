@@ -48,21 +48,10 @@ type TNL struct {
 
 type Services map[string]Service
 
-const DefaultPublisherOwnerCredentialFile = ".tnl/publisher-owner"
-
-func (p ProjectPublisher) CredentialFile() string {
-	if p.OwnerCredentialFile == nil {
-		return DefaultPublisherOwnerCredentialFile
-	}
-	return *p.OwnerCredentialFile
-}
-
-// ProjectPublisher selects the project publisher's local or external API.
+// ProjectPublisher selects the host or colocated Docker project publisher.
 type ProjectPublisher struct {
-	Type                string  `json:"type" yaml:"type" jsonschema:"required,enum=local,enum=docker,enum=url"`
-	URL                 *string `json:"url,omitempty" yaml:"url,omitempty" jsonschema_description:"HTTPS origin of an external publisher API."`
-	DockerSelection     `yaml:",inline"`
-	OwnerCredentialFile *string `json:"owner_credential_file,omitempty" yaml:"owner_credential_file,omitempty" jsonschema_description:"Private file containing the project publisher owner credential; never browser metadata."`
+	Type            string `json:"type" yaml:"type" jsonschema:"required,enum=local,enum=docker"`
+	DockerSelection `yaml:",inline"`
 }
 
 // DockerSelection selects one private container port by an explicit Docker
@@ -97,7 +86,7 @@ type Service struct {
 // ServiceTarget chooses an app listener, private address, or Compose service.
 type ServiceTarget struct {
 	Type            string  `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=docker"`
-	Address         *Target `json:"address,omitempty" yaml:"address,omitempty" jsonschema_description:"Private HTTP origin, TCP host:port, or local port reached by the publisher."`
+	Address         *Target `json:"address,omitempty" yaml:"address,omitempty" jsonschema_description:"HTTP origin, TCP host:port, or local port reached by the publisher."`
 	DockerSelection `yaml:",inline"`
 	TLS             *TargetTLS `json:"tls,omitempty" yaml:"tls,omitempty"`
 }
@@ -219,10 +208,10 @@ type Rate struct {
 }
 
 type Publish struct {
-	Protocol      *string `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh" jsonschema_description:"Local service protocol: http (default), postgres, mysql, redis, or ssh."`
-	Target        *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher."`
-	TargetTLSName *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty" jsonschema_description:"Hostname expected in the private target TLS certificate; defaults to the target host."`
-	TargetTLS     *bool   `json:"target_tls,omitempty" yaml:"target_tls,omitempty" jsonschema_description:"Use verified TLS for the private TCP target."`
+	Protocol      *string `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh" jsonschema_description:"Service protocol for the public URL; defaults to http."`
+	Target        *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher."`
+	TargetTLSName *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty" jsonschema_description:"Hostname expected in the target's TLS certificate; defaults to the target host."`
+	TargetTLS     *bool   `json:"target_tls,omitempty" yaml:"target_tls,omitempty" jsonschema_description:"Use verified TLS for the TCP target."`
 	TargetCAFile  *string `json:"target_ca_file,omitempty" yaml:"target_ca_file,omitempty" jsonschema_description:"Additional PEM certificate authorities for the target; relative paths are resolved from the project root."`
 }
 

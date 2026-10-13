@@ -169,7 +169,7 @@ func Run(ctx context.Context, config Config) (result error) {
 	}
 	if config.ServiceProtocol == controlv1.Http {
 		if config.TargetTLSName != "" || config.TargetTLS || config.VisitorTLSPassthrough {
-			return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("private target TLS settings require a private TCP service protocol"))
+			return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("TCP settings require a TCP service protocol"))
 		}
 		config.Target, err = localproxy.NormalizeTarget(config.Target)
 		if err != nil {
@@ -191,7 +191,7 @@ func Run(ctx context.Context, config Config) (result error) {
 			if err == nil {
 				err = connection.Close()
 			} else {
-				err = diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("connect private TCP target: %w", err))
+				err = diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("connect TCP target: %w", err))
 			}
 		}
 	}
@@ -360,10 +360,10 @@ func validateRouteIdentity(route controlv1.PublicURL, config Config) error {
 	}
 	if supportsTCPForwarding(config.ServiceProtocol) {
 		if route.ServiceProtocol != config.ServiceProtocol || route.PublicPort == nil || !tcpport.Valid(*route.PublicPort) || route.Target != "" {
-			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested private TCP endpoint"))
+			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested TCP endpoint"))
 		}
 	} else if route.ServiceProtocol != "" && route.ServiceProtocol != controlv1.Http || route.PublicPort != nil {
-		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested private TCP endpoint"))
+		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested TCP endpoint"))
 	}
 	if config.PublicURLScope == controlv1.Member {
 		if route.MembershipId == nil || *route.MembershipId != config.MembershipID {
