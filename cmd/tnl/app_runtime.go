@@ -38,8 +38,9 @@ type runtimeCommand struct {
 	Serve    runtimeOptions `cmd:"" hidden:""`
 }
 type runtimeOptions struct {
-	Directory string `name:"directory" required:"" type:"path"`
-	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	Directory   string `name:"directory" required:"" type:"path"`
+	StateDir    string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	NoTelemetry bool   `kong:"-"`
 }
 
 func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfiguration, string, error) {
@@ -97,29 +98,11 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 }
 
 func runtimeKey(project, state string) (string, error) {
-	// a stable private directory keeps one identity across app environments.
-	directory, err := privateRuntimeDirectoryAt("/tmp")
+	directory, err := clientstate.RuntimeDir(state)
 	if err != nil {
-		return "", err
+		return "", failure.Wrap("open local publisher runtime directory", failure.ClientStateUnavailable, err)
 	}
-	return filepath.Join(directory, "app-"+clientruntime.Identity(project, state)), nil
-}
-
-func privateRuntimeDirectoryAt(base string) (string, error) {
-	directory := filepath.Join(base, fmt.Sprintf("tnl-%d", os.Getuid()))
-	if err := os.Mkdir(directory, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return "", failure.Wrap("create local publisher runtime directory", failure.ClientStateUnavailable, err)
-	}
-	info, err := os.Lstat(directory)
-	if err != nil {
-		return "", failure.Wrap("inspect local publisher runtime directory", failure.ClientStateUnavailable, err)
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.IsDir() || info.Mode().Perm() != 0o700 || stat.Uid != uint32(os.Getuid()) {
-		return "", failure.Wrap("validate local publisher runtime directory", failure.ClientStateUnavailable,
-			errors.New("local publisher runtime directory must be user-owned with mode 0700"))
-	}
-	return directory, nil
+	return filepath.Join(directory, "app-"+clientruntime.Identity(project, filepath.Dir(directory))), nil
 }
 
 func runtimeAvailable(ctx context.Context, key string) bool {
@@ -161,19 +144,21 @@ type appPreparation struct {
 	policy     resolvedIPPolicy
 	flags      tunnelFlags
 	framework  privateprotocol.Framework
+	telemetry  string
 	project    projectConfiguration
 	named      bool
 	resolve    func() string
 }
 
 type appRuntime struct {
-	manager   *clientruntime.Manager
-	adhoc     *clientruntime.AdHocManager
-	project   projectConfiguration
-	state     *clientstate.Database
-	mu        sync.Mutex
-	prepareMu sync.Mutex
-	prepared  map[string]appPreparation
+	manager     *clientruntime.Manager
+	adhoc       *clientruntime.AdHocManager
+	project     projectConfiguration
+	state       *clientstate.Database
+	noTelemetry bool
+	mu          sync.Mutex
+	prepareMu   sync.Mutex
+	prepared    map[string]appPreparation
 }
 
 func authenticateRuntime(ctx context.Context, state *clientstate.Database, server string) (*clientauth.Client, error) {
@@ -240,7 +225,7 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		return err
 	}
 	defer state.Close()
-	runtime := &appRuntime{project: project, state: state, prepared: map[string]appPreparation{}}
+	runtime := &appRuntime{project: project, state: state, noTelemetry: options.NoTelemetry, prepared: map[string]appPreparation{}}
 	runtime.manager, err = clientruntime.New(ctx, project.Root, root, configuredRuntimeServices(project), runtime.publish)
 	if err != nil {
 		return err
@@ -399,7 +384,7 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	}
 	assignment.RegistrationID = id
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{assignment: assignment, services: services, policy: policy, flags: flags, framework: request.Framework, project: project}
+	a.prepared[id] = appPreparation{assignment: assignment, services: services, policy: policy, flags: flags, framework: request.Framework, telemetry: request.Owner + "\x00" + name, project: project}
 	a.mu.Unlock()
 	return assignment, nil
 }
@@ -713,6 +698,9 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		case publisher.EventReady:
 			if err := observe(event.PublishRunNumber, true); err != nil {
 				return err
+			}
+			if !a.noTelemetry {
+				queueSDKReady(ctx, a.state, preparation.telemetry, "dev", server, service.Framework)
 			}
 			copy := service
 			copy.PublicURL, copy.PublishRunNumber, copy.Routable = event.PublicURL, event.PublishRunNumber, true

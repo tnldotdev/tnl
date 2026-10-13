@@ -400,7 +400,7 @@ export async function startRuntime(
   try {
     const { stdout } = await promisify(execFile)(
       binary,
-      ["--no-telemetry", "runtime", "endpoint", "--directory", directory],
+      ["runtime", "endpoint", "--directory", directory],
       { timeout: 30_000, maxBuffer: 64 * 1024, encoding: "utf8" },
     );
     const value: unknown = JSON.parse(stdout);
@@ -417,14 +417,10 @@ export async function startRuntime(
     if (!(await runtimeHealthy(object.path))) {
       // the app process owns the local publisher's lifetime. a second service
       // can race this spawn: the runtime's hostname lock elects one owner.
-      const process_ = spawn(
-        binary,
-        ["--no-telemetry", "runtime", "serve", "--directory", directory],
-        {
-          cwd: directory,
-          stdio: "ignore",
-        },
-      );
+      const process_ = spawn(binary, ["runtime", "serve", "--directory", directory], {
+        cwd: directory,
+        stdio: "ignore",
+      });
       process_.once("error", () => {
         // an available sibling runtime may still win the publisher lock.
       });
