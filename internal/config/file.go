@@ -7,11 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -177,9 +175,6 @@ func ValidateTNL(config TNL) error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := config.Services[name]
-		if config.Publisher != nil && config.Publisher.Type == "url" && service.Target != nil && service.Target.Type == "docker" {
-			return fmt.Errorf("services.%s: a url publisher cannot use a host Docker mapping; select an address it can reach", name)
-		}
 		effectivePublish := ServicePublish(config.Publish, service)
 		if service.Target != nil {
 			if service.Publish != nil {
@@ -313,47 +308,17 @@ func validateProjectPublisher(publisher *ProjectPublisher) error {
 	if publisher == nil {
 		return nil
 	}
-	if publisher.OwnerCredentialFile != nil {
-		file := *publisher.OwnerCredentialFile
-		if file == "" || len(file) > 4096 || strings.TrimSpace(file) != file || strings.ContainsRune(file, 0) {
-			return errors.New("owner_credential_file must be a nonempty path without surrounding whitespace")
-		}
-	}
 	switch publisher.Type {
 	case "local":
-		if publisher.URL != nil || !emptyDockerSelection(publisher.DockerSelection) || publisher.OwnerCredentialFile != nil {
-			return errors.New("local publisher takes no URL, Docker selection, or credential file")
-		}
-	case "url":
-		if publisher.URL == nil || !emptyDockerSelection(publisher.DockerSelection) {
-			return errors.New("url publisher requires an HTTPS origin")
-		}
-		origin, err := url.Parse(*publisher.URL)
-		if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || origin.Opaque != "" || origin.Host != strings.ToLower(origin.Host) {
-			return errors.New("url publisher must use an exact HTTPS origin")
-		}
-		hostname, err := naming.CanonicalizeHostname(origin.Hostname())
-		if err != nil || hostname != origin.Hostname() {
-			return errors.New("url publisher requires a canonical DNS hostname")
-		}
-		if origin.Host != hostname && origin.Port() == "" {
-			return errors.New("url publisher port must be from 1 to 65535")
-		}
-		if origin.Port() != "" {
-			port, err := strconv.Atoi(origin.Port())
-			if err != nil || port < 1 || port > 65535 {
-				return errors.New("url publisher port must be from 1 to 65535")
-			}
+		if !emptyDockerSelection(publisher.DockerSelection) {
+			return errors.New("local publisher takes no Docker selection")
 		}
 	case "docker":
-		if publisher.URL != nil {
-			return errors.New("docker publisher requires a Docker selection")
-		}
 		if err := validateDockerSelection(publisher.DockerSelection); err != nil {
 			return fmt.Errorf("docker publisher: %w", err)
 		}
 	default:
-		return errors.New("type must be local, docker, or url")
+		return errors.New("type must be local or docker")
 	}
 	return nil
 }
