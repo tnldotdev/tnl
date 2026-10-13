@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -130,6 +133,9 @@ func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, e
 }
 
 func (i *telemetryInvocation) Report(payload telemetryPayload) {
+	if payload.Event == telemetryPublishRunStarted && !i.ready.CompareAndSwap(false, true) {
+		return
+	}
 	var once *atomic.Bool
 	switch payload.Event {
 	case telemetryOAuthReady:
@@ -150,9 +156,6 @@ func (i *telemetryInvocation) Report(payload telemetryPayload) {
 		i.modeMu.RLock()
 		payload.PublishMode = i.mode
 		i.modeMu.RUnlock()
-	}
-	if payload.Event == telemetryPublishRunStarted {
-		i.ready.Store(true)
 	}
 	i.reporter.Report(payload)
 }
@@ -349,6 +352,38 @@ func newTelemetryReady(command telemetryTrackedCommand, kind telemetryServerKind
 	return payload
 }
 
+func queueSDKReady(ctx context.Context, state *clientstate.Database, invocation string, command telemetryTrackedCommand, serverURL, framework string) {
+	if disabled, _ := strconv.ParseBool(os.Getenv("TNL_NO_TELEMETRY")); disabled || invocation == "" {
+		return
+	}
+	kind := telemetrySelfHosted
+	if serverURL == defaultServerURL {
+		kind = telemetryHosted
+	}
+	payload := newTelemetryReady(command, kind, telemetryFramework(framework))
+	if command == telemetryPublish {
+		payload.PublishMode = telemetryPublishApp
+	}
+	payload.InvocationID, _ = opaqueid.New(opaqueid.InvocationPrefix)
+	if payload.InvocationID == "" {
+		return
+	}
+	id, err := opaqueid.New(opaqueid.TelemetryEventPrefix)
+	if err != nil {
+		return
+	}
+	event := payload.wireEvent(telemetryEventID(id))
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	digest := sha256.Sum256([]byte(invocation))
+	queued, err := state.QueueReadyTelemetryEvent(ctx, hex.EncodeToString(digest[:]), id, encoded)
+	if err == nil && queued {
+		newTelemetryReporter(state.Root()).flushReady()
+	}
+}
+
 func newTelemetryDemoPing() telemetryPayload {
 	payload := newTelemetryBase(telemetryPublish)
 	payload.Event = telemetryDemoPingReceived
@@ -367,7 +402,7 @@ func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, te
 			command = append(command, element.Command.Name)
 		}
 	}
-	if len(command) == 0 || command[0] == "telemetry" || command[0] == "version" {
+	if len(command) == 0 || command[0] == "telemetry" || command[0] == "version" || command[0] == "runtime" {
 		return "", "", false
 	}
 	if len(command) == 1 {

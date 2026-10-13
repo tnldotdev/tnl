@@ -13,11 +13,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientruntime"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
@@ -31,6 +34,9 @@ type localPublisherEndpoint struct {
 
 func runtimeTCPEndpointPath(key string) string { return key + ".endpoint.json" }
 func runtimeAppEndpointPath(key, service string) string {
+	if directory := os.Getenv("TNL_PUBLISHER_APP_ENDPOINT_DIR"); directory != "" {
+		return filepath.Join(directory, service, "publisher.endpoint.json")
+	}
 	return key + ".app." + service + ".endpoint.json"
 }
 func runtimeAdHocEndpointPath(key string) string { return key + ".ad-hoc.endpoint.json" }
@@ -55,6 +61,7 @@ type localPublisherAuthorization struct {
 	key             string
 	endpoint        localPublisherEndpoint
 	handler         http.Handler
+	publisher       *config.ProjectPublisher
 	scoped          map[string]localPublisherScope
 	apps            map[string]string
 	adHocCredential string
@@ -81,6 +88,10 @@ func startRuntimeTCP(key string, handler http.Handler, services ...clientruntime
 }
 
 func startRuntimeTCPWithOptions(key string, handler http.Handler, listen, ownerCredential string, services ...clientruntime.Service) (*http.Server, <-chan error, error) {
+	return startRuntimeTCPWithProjectOptions(key, handler, listen, ownerCredential, nil, services...)
+}
+
+func startRuntimeTCPWithProjectOptions(key string, handler http.Handler, listen, ownerCredential string, publisher *config.ProjectPublisher, services ...clientruntime.Service) (*http.Server, <-chan error, error) {
 	listener, err := net.Listen("tcp", listen)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen for local publisher requests: %w", err)
@@ -94,7 +105,15 @@ func startRuntimeTCPWithOptions(key string, handler http.Handler, listen, ownerC
 		}
 	}
 	endpoint := localPublisherEndpoint{Version: privateprotocol.Version, URL: "http://" + listener.Addr().String(), Credential: credential}
-	auth := &localPublisherAuthorization{key: key, endpoint: endpoint, handler: handler,
+	if publisher != nil && publisher.Type == "docker" {
+		_, port, err := net.SplitHostPort(listener.Addr().String())
+		if err != nil {
+			listener.Close()
+			return nil, nil, err
+		}
+		endpoint.URL = "http://" + net.JoinHostPort("127.0.0.1", port)
+	}
+	auth := &localPublisherAuthorization{key: key, endpoint: endpoint, handler: handler, publisher: publisher,
 		scoped: map[string]localPublisherScope{}, apps: map[string]string{},
 		paths: []string{runtimeAdHocEndpointPath(key)},
 	}
@@ -147,7 +166,26 @@ func (a *localPublisherAuthorization) issueApp(service string) error {
 		}
 	}
 	path := runtimeAppEndpointPath(a.key, service)
-	if err := writeRuntimeTCPEndpoint(path, localPublisherEndpoint{Version: privateprotocol.Version, URL: a.endpoint.URL, Credential: token}); err != nil {
+	endpoint := localPublisherEndpoint{Version: privateprotocol.Version, URL: a.endpoint.URL, Credential: token}
+	if a.publisher != nil && a.publisher.Type == "docker" {
+		var err error
+		endpoint, err = containerAppEndpoint(*a.publisher, endpoint)
+		if err != nil {
+			return err
+		}
+	}
+	if os.Getenv("TNL_PUBLISHER_APP_ENDPOINT_DIR") != "" {
+		info, err := os.Lstat(filepath.Dir(path))
+		if err != nil {
+			return failure.Wrap("open app credential volume", failure.ClientStateUnavailable, err)
+		}
+		owner, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || !info.IsDir() || info.Mode().Perm() != 0o700 || owner.Uid != uint32(os.Geteuid()) {
+			return failure.Wrap("open app credential volume", failure.ClientStateUnavailable,
+				errors.New("service credential volume must be user-owned with mode 0700"))
+		}
+	}
+	if err := writeRuntimeTCPEndpoint(path, endpoint); err != nil {
 		return failure.Wrap("write app credential", failure.ClientStateUnavailable, err)
 	}
 	if a.apps[service] == "" {
@@ -156,6 +194,15 @@ func (a *localPublisherAuthorization) issueApp(service string) error {
 		a.scoped[token] = localPublisherScope{kind: localScopeApp, service: service}
 	}
 	return nil
+}
+
+func containerAppEndpoint(publisher config.ProjectPublisher, endpoint localPublisherEndpoint) (localPublisherEndpoint, error) {
+	if publisher.Compose == nil || publisher.ContainerPort == nil || !naming.ValidServiceName(publisher.Compose.Service) {
+		return localPublisherEndpoint{}, failure.Wrap("attach Compose app", failure.ProjectConfigInvalid,
+			errors.New("container apps require a Compose publisher service on their network"))
+	}
+	endpoint.URL = "http://" + net.JoinHostPort(publisher.Compose.Service, strconv.Itoa(*publisher.ContainerPort))
+	return endpoint, nil
 }
 
 func (a *localPublisherAuthorization) ServeHTTP(w http.ResponseWriter, r *http.Request) {

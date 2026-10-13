@@ -249,19 +249,18 @@ type ProjectContext struct {
 }
 
 var typeScriptKeyMappings = map[string]string{
-	"allow_ip":              "allowIP",
-	"source_ips":            "sourceIPs",
-	"allow_all_ips":         "allowAllIPs",
-	"startup_timeout":       "startupTimeout",
-	"max_bytes":             "maxBytes",
-	"target_ca_file":        "targetCAFile",
-	"owner_credential_file": "ownerCredentialFile",
-	"container_port":        "containerPort",
-	"target_tls":            "targetTLS",
-	"target_tls_name":       "targetTLSName",
-	"visitor_tls":           "visitorTLS",
-	"strip_prefix":          "stripPrefix",
-	"public_url":            "publicURL",
+	"allow_ip":        "allowIP",
+	"source_ips":      "sourceIPs",
+	"allow_all_ips":   "allowAllIPs",
+	"startup_timeout": "startupTimeout",
+	"max_bytes":       "maxBytes",
+	"target_ca_file":  "targetCAFile",
+	"container_port":  "containerPort",
+	"target_tls":      "targetTLS",
+	"target_tls_name": "targetTLSName",
+	"visitor_tls":     "visitorTLS",
+	"strip_prefix":    "stripPrefix",
+	"public_url":      "publicURL",
 }
 
 // TypeScriptKeyMappings returns the static-to-TypeScript property mappings

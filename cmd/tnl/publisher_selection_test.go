@@ -3,13 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,40 +22,13 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/localpublisherv1"
 )
 
-func TestPublisherOwnerCredentialMustBePrivateAndIsNeverInErrors(t *testing.T) {
-	root := t.TempDir()
-	if _, err := readPublisherOwnerCredential(root, ".tnl/publisher-owner"); err == nil {
-		t.Fatal("missing publisher owner credential was accepted")
-	} else if reason, _, ok := failure.Describe(err); !ok || reason != failure.PublisherOwnerCredentialMissing {
-		t.Fatalf("missing credential did not suggest the creation command: %v", err)
+func useTestDockerPublisher(t *testing.T, endpoint localPublisherEndpoint) {
+	t.Helper()
+	previous := selectDockerPublisher
+	selectDockerPublisher = func(context.Context, projectConfiguration, time.Duration) (namedPublisherClient, error) {
+		return namedPublisherClient{endpoint: endpoint, http: publisherHTTPClient(time.Second)}, nil
 	}
-	secret, err := publisherCredential()
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(root, "owner-token")
-	if err := os.WriteFile(path, []byte(secret+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := readPublisherOwnerCredential(root, "owner-token"); err != nil || got != secret {
-		t.Fatalf("owner credential = %q, %v", got, err)
-	}
-	if err := os.Chmod(path, 0644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readPublisherOwnerCredential(root, "owner-token"); err == nil || strings.Contains(err.Error(), secret) {
-		t.Fatalf("publicly readable owner credential accepted or exposed: %v", err)
-	}
-	if err := os.Chmod(path, 0600); err != nil {
-		t.Fatal(err)
-	}
-	other := filepath.Join(root, "owner-link")
-	if err := os.Symlink(path, other); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readPublisherOwnerCredential(root, "owner-link"); err == nil {
-		t.Fatal("followed symlink to owner credential")
-	}
+	t.Cleanup(func() { selectDockerPublisher = previous })
 }
 
 func TestExternalPublisherIssuesOnlyScopedCredentialForSelectedProject(t *testing.T) {
@@ -66,9 +39,6 @@ func TestExternalPublisherIssuesOnlyScopedCredentialForSelectedProject(t *testin
 	}
 	app, err := publisherCredential()
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "owner-token"), []byte(owner), 0600); err != nil {
 		t.Fatal(err)
 	}
 	issued := 0
@@ -89,11 +59,8 @@ func TestExternalPublisherIssuesOnlyScopedCredentialForSelectedProject(t *testin
 		}
 	}))
 	defer server.Close()
-	file := "owner-token"
-	address := server.URL
-	project := projectConfiguration{Project: projectconfig.Project{Root: root, Config: config.TNL{Publisher: &config.ProjectPublisher{
-		Type: "url", URL: &address, OwnerCredentialFile: &file,
-	}}}}
+	useTestDockerPublisher(t, localPublisherEndpoint{URL: server.URL, Credential: owner})
+	project := projectConfiguration{Project: projectconfig.Project{Root: root, Config: config.TNL{Publisher: &config.ProjectPublisher{Type: "docker"}}}}
 	endpoint, err := remotePublisherScope(t.Context(), project, true, false, "web")
 	if err != nil || issued != 1 || endpoint.URL != server.URL || endpoint.Credential != app {
 		t.Fatalf("scoped external endpoint = %+v, issued=%d, %v", endpoint, issued, err)
@@ -137,9 +104,6 @@ func TestRemoteStatusChecksPrivateTCPReachabilityAtThePublisher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "owner-token"), []byte(owner), 0600); err != nil {
-		t.Fatal(err)
-	}
 	privateTarget := "database:5432"
 	publicURL := "orders.example:15432"
 	publicationID := "reg_0123456789abcdef0123456789abcdef"
@@ -163,11 +127,10 @@ func TestRemoteStatusChecksPrivateTCPReachabilityAtThePublisher(t *testing.T) {
 		}}})
 	}))
 	defer server.Close()
-	credentialFile := "owner-token"
-	url := server.URL
+	useTestDockerPublisher(t, localPublisherEndpoint{URL: server.URL, Credential: owner})
 	protocol := "postgres"
 	project := projectConfiguration{Project: projectconfig.Project{Root: root,
-		Config: config.TNL{Publisher: &config.ProjectPublisher{Type: "url", URL: &url, OwnerCredentialFile: &credentialFile},
+		Config: config.TNL{Publisher: &config.ProjectPublisher{Type: "docker"},
 			Services: config.Services{"orders": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address"}}}},
 		RelativeServiceDirectories: map[string]string{"orders": "."},
 	}}
@@ -204,18 +167,26 @@ func TestDockerPublisherAttachmentUsesWorktreeComposeBinding(t *testing.T) {
 	port := address.Port()
 	commands := t.TempDir()
 	script := "#!/bin/sh\nif [ \"$1\" = inspect ]; then printf '%s\\n' '[{\"Name\":\"/publisher\",\"State\":{\"Running\":true},\"Config\":{\"Labels\":{\"tnl.worktree\":\"shop-perf-k7n2p9\"}},\"NetworkSettings\":{\"Ports\":{\"8765/tcp\":[{\"HostIp\":\"127.0.0.1\",\"HostPort\":\"" + port + "\"}]},\"Networks\":{\"bridge\":{}}}}]'; fi\n"
+	snapshot, err := json.Marshal(localpublisherv1.ProjectSnapshot{Project: root, Cursor: "0", Services: []localpublisherv1.ServiceStatus{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	script += "if [ \"$1\" = exec ]; then printf '%s\\n' '{\"status\":200,\"content_type\":\"application/json\",\"body\":\"" + base64.StdEncoding.EncodeToString(snapshot) + "\"}'; fi\n"
 	if err := os.WriteFile(filepath.Join(commands, "docker"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", commands+string(os.PathListSeparator)+os.Getenv("PATH"))
-	service, file := "publisher", "owner-token"
+	if err := os.Remove(filepath.Join(root, "owner-token")); err != nil {
+		t.Fatal(err)
+	}
+	service := "publisher"
 	privatePort := 8765
 	project := projectConfiguration{Project: projectconfig.Project{Root: root,
 		Worktree: projectconfig.Worktree{Label: projectconfig.WorktreeLabel{FullLabel: "shop-perf-k7n2p9"}},
-		Config:   config.TNL{Publisher: &config.ProjectPublisher{Type: "docker", DockerSelection: config.DockerSelection{Container: &service, ContainerPort: &privatePort}, OwnerCredentialFile: &file}},
+		Config:   config.TNL{Publisher: &config.ProjectPublisher{Type: "docker", DockerSelection: config.DockerSelection{Container: &service, ContainerPort: &privatePort}}},
 	}}
 	client, stop, err := localPublisherForCLI(t.Context(), publishCommand{projectRoot: root, project: project})
-	if err != nil || client.endpoint.URL != server.URL {
+	if err != nil || client.endpoint.URL != server.URL || client.endpoint.Credential != "" {
 		t.Fatalf("Docker owner attachment = %+v, %v", client.endpoint, err)
 	}
 	stop()
@@ -236,9 +207,6 @@ func TestExternalPublisherWatchFollowsPublisherEvents(t *testing.T) {
 	root := t.TempDir()
 	owner, err := publisherCredential()
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "owner-token"), []byte(owner), 0600); err != nil {
 		t.Fatal(err)
 	}
 	publication := "reg_0123456789abcdef0123456789abcdef"
@@ -265,9 +233,10 @@ func TestExternalPublisherWatchFollowsPublisherEvents(t *testing.T) {
 		}}})
 	}))
 	defer server.Close()
-	credentialFile, endpoint, protocol := "owner-token", server.URL, "postgres"
+	useTestDockerPublisher(t, localPublisherEndpoint{URL: server.URL, Credential: owner})
+	protocol := "postgres"
 	project := projectConfiguration{Project: projectconfig.Project{Root: root,
-		Config: config.TNL{Publisher: &config.ProjectPublisher{Type: "url", URL: &endpoint, OwnerCredentialFile: &credentialFile},
+		Config: config.TNL{Publisher: &config.ProjectPublisher{Type: "docker"},
 			Services: config.Services{"orders": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address"}}}},
 		RelativeServiceDirectories: map[string]string{"orders": "."},
 	}}
@@ -291,9 +260,6 @@ func TestExternalPublisherWaitRecordsHTTPReadinessOnTheSelectedOwner(t *testing.
 	root := t.TempDir()
 	owner, err := publisherCredential()
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "owner-token"), []byte(owner), 0600); err != nil {
 		t.Fatal(err)
 	}
 	publication := "reg_0123456789abcdef0123456789abcdef"
@@ -324,14 +290,14 @@ func TestExternalPublisherWaitRecordsHTTPReadinessOnTheSelectedOwner(t *testing.
 		}
 	}))
 	defer server.Close()
-	credentialFile, endpoint := "owner-token", server.URL
+	useTestDockerPublisher(t, localPublisherEndpoint{URL: server.URL, Credential: owner})
 	project := projectConfiguration{Project: projectconfig.Project{Root: root,
-		Config: config.TNL{Publisher: &config.ProjectPublisher{Type: "url", URL: &endpoint, OwnerCredentialFile: &credentialFile},
+		Config: config.TNL{Publisher: &config.ProjectPublisher{Type: "docker"},
 			Services: config.Services{"web": {Target: &config.ServiceTarget{Type: "app"}}}},
 		RelativeServiceDirectories: map[string]string{"web": "."},
 	}}
 	var output bytes.Buffer
-	err = runAppWaitWithProbe(t.Context(), project, t.TempDir(), waitCommand{Timeout: time.Second, Output: "json"}, &output,
+	err = runAppWaitWithProbe(t.Context(), project, filepath.Join(t.TempDir(), "state"), waitCommand{Timeout: time.Second, Output: "json"}, &output,
 		func(_ context.Context, service clientruntime.Service) clientruntime.Observation {
 			return clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber,
 				Readiness: service.Readiness, Ready: true, CheckedAt: time.Now()}

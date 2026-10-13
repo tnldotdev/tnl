@@ -282,7 +282,7 @@ var definitions = map[Reason]Definition{
 	},
 	PublisherOwnerCredentialMissing: {
 		Class: Unavailable, Message: "the project publisher owner credential file is missing",
-		Action: "run tnl project publisher credential create, then start the publisher again", Retry: RetryAfterChange,
+		Action: "start the Docker publisher and check its private client state", Retry: RetryAfterChange,
 	},
 	AliasOwned: {
 		Class: Conflict, Message: "another live worktree owns this alias",
