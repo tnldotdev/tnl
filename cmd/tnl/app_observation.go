@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -331,38 +330,22 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 			}
 			service.Ready = service.Ready && matched
 			if matched && (service.ServiceProtocol == "" || service.ServiceProtocol == "http") && service.Observation != nil {
-				data, err := json.Marshal(service.Observation)
-				if err != nil {
-					return err
-				}
-				key, err := runtimeKey(project.Root, state)
-				if err != nil {
-					return err
-				}
-				var endpoint localPublisherEndpoint
+				var client namedPublisherClient
+				var err error
 				if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
-					endpoint, err = selectedPublisherEndpoint(ctx, project)
+					client, err = selectedPublisherClient(ctx, project, 10*time.Second)
 				} else {
-					endpoint, err = readRuntimeTCPEndpoint(key)
+					var key string
+					key, err = runtimeKey(project.Root, state)
+					if err == nil {
+						client.endpoint, err = readRuntimeTCPEndpoint(key)
+						client.http = publisherHTTPClient(10 * time.Second)
+					}
 				}
 				if err != nil {
 					service.Ready = false
-				} else {
-					request, err := http.NewRequestWithContext(ctx, "POST", endpoint.URL+"/v1/observe", bytes.NewReader(data))
-					if err != nil {
-						return err
-					}
-					request.Header.Set("Content-Type", "application/json")
-					request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
-					response, err := publisherHTTPClient(10 * time.Second).Do(request)
-					if err == nil {
-						response.Body.Close()
-						if response.StatusCode != http.StatusNoContent {
-							service.Ready = false
-						}
-					} else {
-						service.Ready = false
-					}
+				} else if err := client.request(ctx, http.MethodPost, "/v1/observe", "", service.Observation, nil); err != nil {
+					service.Ready = false
 				}
 			}
 			ready = ready && service.Ready

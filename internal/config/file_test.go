@@ -254,27 +254,24 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 
 func TestProjectPublisherSelectsOneOwnerWithoutPuttingCredentialsInConfig(t *testing.T) {
 	for filename, source := range map[string]string{
-		"tnl.json": `{"version":1,"tnl":{"publisher":{"type":"url","url":"https://publisher.example.test:8443","owner_credential_file":".tnl/owner-token"},"services":{"web":{"target":{"type":"app"}}}}}`,
-		"tnl.yml":  "version: 1\ntnl:\n  publisher:\n    type: docker\n    compose: {file: compose.yaml, project: shop-k7n2p9, service: publisher}\n    container_port: 8765\n    owner_credential_file: .tnl/owner-token\n  services:\n    orders:\n      protocol: postgres\n      target: {type: docker, compose: {file: compose.yaml, project: shop-k7n2p9, service: database}, container_port: 5432}\n",
+		"tnl.json": `{"version":1,"tnl":{"publisher":{"type":"docker","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"publisher"},"container_port":8765},"services":{"web":{"target":{"type":"app"}}}}}`,
+		"tnl.yml":  "version: 1\ntnl:\n  publisher:\n    type: docker\n    compose: {file: compose.yaml, project: shop-k7n2p9, service: publisher}\n    container_port: 8765\n  services:\n    orders:\n      protocol: postgres\n      target: {type: docker, compose: {file: compose.yaml, project: shop-k7n2p9, service: database}, container_port: 5432}\n",
 	} {
 		path := filepath.Join(t.TempDir(), filename)
 		if err := os.WriteFile(path, []byte(source), 0600); err != nil {
 			t.Fatal(err)
 		}
 		value, err := LoadDocument(path)
-		if err != nil || value.TNL.Publisher == nil || value.TNL.Publisher.OwnerCredentialFile == nil || *value.TNL.Publisher.OwnerCredentialFile != ".tnl/owner-token" {
+		if err != nil || value.TNL.Publisher == nil || value.TNL.Publisher.Type != "docker" {
 			t.Fatalf("publisher in %s = %+v, %v", filename, value.TNL, err)
 		}
 	}
 	for _, test := range []struct{ publisher, detail string }{
-		{`{"type":"local","url":"https://publisher.example"}`, "local publisher"},
-		{`{"type":"url","url":"http://publisher.example","owner_credential_file":"owner"}`, "HTTPS origin"},
-		{`{"type":"url","url":"https://publisher.example/path","owner_credential_file":"owner"}`, "HTTPS origin"},
-		{`{"type":"url","url":"https://publisher.example:0","owner_credential_file":"owner"}`, "port must be"},
-		{`{"type":"url"}`, "requires an HTTPS origin"},
-		{`{"type":"docker","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"--other"},"container_port":8765,"owner_credential_file":"owner"}`, "docker compose requires"},
-		{`{"type":"docker","container":"publisher","container_port":0,"owner_credential_file":"owner"}`, "container_port"},
-		{`{"type":"docker","container":"publisher","container_port":8765,"owner_credential_file":"  "}`, "owner_credential_file"},
+		{`{"type":"local","container":"publisher"}`, "local publisher"},
+		{`{"type":"url"}`, "local or docker"},
+		{`{"type":"docker","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"--other"},"container_port":8765}`, "docker compose requires"},
+		{`{"type":"docker","container":"publisher","container_port":0}`, "container_port"},
+		{`{"type":"docker","container":"publisher","container_port":8765,"owner_credential_file":"owner"}`, "owner_credential_file"},
 	} {
 		path := filepath.Join(t.TempDir(), "tnl.json")
 		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"publisher":`+test.publisher+`}}`), 0600); err != nil {
@@ -284,16 +281,11 @@ func TestProjectPublisherSelectsOneOwnerWithoutPuttingCredentialsInConfig(t *tes
 			t.Fatalf("invalid publisher %s: %v; want %q", test.publisher, err, test.detail)
 		}
 	}
-	service, credential := "publisher", "owner-token"
+	service := "publisher"
 	port := 8765
-	if err := ValidateTNL(TNL{Publisher: &ProjectPublisher{Type: "docker", DockerSelection: DockerSelection{Container: &service, ContainerPort: &port}, OwnerCredentialFile: &credential},
+	if err := ValidateTNL(TNL{Publisher: &ProjectPublisher{Type: "docker", DockerSelection: DockerSelection{Container: &service, ContainerPort: &port}},
 		Services: Services{"web": {Target: &ServiceTarget{Type: "app"}}}}); err != nil {
 		t.Fatalf("docker publisher rejected an app on its network: %v", err)
-	}
-	endpoint := "https://publisher.example.test"
-	if err := ValidateTNL(TNL{Publisher: &ProjectPublisher{Type: "url", URL: &endpoint},
-		Services: Services{"orders": {Target: &ServiceTarget{Type: "docker", DockerSelection: DockerSelection{Container: &service, ContainerPort: &port}}}}}); err == nil || !strings.Contains(err.Error(), "select an address it can reach") {
-		t.Fatalf("url publisher accepted a host-only Docker mapping: %v", err)
 	}
 }
 

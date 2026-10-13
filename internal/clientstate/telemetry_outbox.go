@@ -3,6 +3,7 @@ package clientstate
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +39,46 @@ func (d *Database) QueueTelemetryEvent(ctx context.Context, id string, event jso
 		return fmt.Errorf("clientstate: prune telemetry queue: %w", err)
 	}
 	return tx.Commit()
+}
+
+// QueueReadyTelemetryEvent atomically queues only the first ready event for an
+// app invocation, even if its local publisher restarts after sending the event.
+func (d *Database) QueueReadyTelemetryEvent(ctx context.Context, key, id string, event json.RawMessage) (bool, error) {
+	if len(key) != 64 || !opaqueid.Valid(id, opaqueid.TelemetryEventPrefix) || !json.Valid(event) || len(event) > 2048 {
+		return false, errors.New("clientstate: invalid ready telemetry event")
+	}
+	if _, err := hex.DecodeString(key); err != nil {
+		return false, errors.New("clientstate: invalid ready telemetry key")
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	queries := clientstatedb.New(tx)
+	enabled, err := queries.GetTelemetryEnabled(ctx)
+	if err != nil || enabled != 1 {
+		return false, err
+	}
+	now := d.now().UTC().UnixNano()
+	inserted, err := queries.InsertReadyTelemetryMarker(ctx, clientstatedb.InsertReadyTelemetryMarkerParams{
+		InvocationKey: key, CreatedAt: now,
+	})
+	if err != nil || inserted == 0 {
+		return false, err
+	}
+	if err := queries.InsertTelemetryEvent(ctx, clientstatedb.InsertTelemetryEventParams{
+		EventID: id, CreatedAt: now, EventJson: string(event),
+	}); err != nil {
+		return false, err
+	}
+	if err := d.pruneTelemetryOutbox(ctx, tx); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (d *Database) PruneTelemetryOutbox(ctx context.Context) error {

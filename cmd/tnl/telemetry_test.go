@@ -60,6 +60,31 @@ func TestOptionalTelemetryReporterDoesNotWrapDisabledInvocation(t *testing.T) {
 	}
 }
 
+func TestReadyTelemetryUsesOnlyCoarseEntryAndFrameworkFields(t *testing.T) {
+	for _, test := range []struct {
+		command   telemetryTrackedCommand
+		framework string
+		mode      telemetryEntryMode
+		family    telemetryFrameworkName
+	}{
+		{"dev", "python", telemetryConfigured, telemetryPython},
+		{"dev", "node", telemetryConfigured, telemetryNode},
+		{"dev", "bun", telemetryConfigured, telemetryBun},
+		{telemetryPublish, "", telemetryDirect, ""},
+	} {
+		payload := newTelemetryReady(test.command, telemetryHosted, telemetryFramework(test.framework))
+		if payload.EntryMode != test.mode || payload.Framework != test.family {
+			t.Fatalf("ready event = %+v, want mode=%s framework=%s", payload, test.mode, test.family)
+		}
+		payload.InvocationID = "ivk_0123456789abcdefghijkl"
+		encoded, err := json.Marshal(payload.wireEvent("tev_0123456789abcdefghijkl"))
+		if err != nil || bytes.Contains(encoded, []byte("service")) || bytes.Contains(encoded, []byte("target")) ||
+			bytes.Contains(encoded, []byte("hostname")) || bytes.Contains(encoded, []byte("credential")) {
+			t.Fatalf("ready telemetry leaked private context: %s, %v", encoded, err)
+		}
+	}
+}
+
 func TestDemoTelemetryUsesBoundedModesAndReportsOnlyFirstPing(t *testing.T) {
 	var events []telemetryPayload
 	invocation, err := newTelemetryInvocation(telemetryReporterFunc(func(event telemetryPayload) {
@@ -69,6 +94,7 @@ func TestDemoTelemetryUsesBoundedModesAndReportsOnlyFirstPing(t *testing.T) {
 		t.Fatal(err)
 	}
 	invocation.SetPublishMode(telemetryPublishDemo)
+	invocation.SetEntryMode(telemetryDemo)
 	invocation.Report(newTelemetryStarted(telemetryPublish))
 	invocation.Report(newTelemetryReady(telemetryPublish, telemetryHosted, ""))
 	output, err := newPublishOutput(publishOutputHuman, "tnl publish", io.Discard, io.Discard, nil)
@@ -83,6 +109,7 @@ func TestDemoTelemetryUsesBoundedModesAndReportsOnlyFirstPing(t *testing.T) {
 	}
 	if len(events) != 3 || events[0].PublishMode != telemetryPublishDemo ||
 		events[1].PublishMode != telemetryPublishDemo ||
+		events[1].EntryMode != telemetryDemo ||
 		events[2].Event != telemetryDemoPingReceived || events[2].PublishMode != telemetryPublishDemo {
 		t.Fatalf("demo telemetry = %+v", events)
 	}

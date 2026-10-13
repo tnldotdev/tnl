@@ -232,24 +232,6 @@
             {
               "properties": {
                 "type": {
-                  "const": "url"
-                },
-                "url": {
-                  "type": "string",
-                  "pattern": "^https://[^/?#]+$"
-                },
-                "owner_credential_file": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "additionalProperties": false,
-              "type": "object",
-              "required": ["type", "url"]
-            },
-            {
-              "properties": {
-                "type": {
                   "const": "docker"
                 },
                 "container_port": {
@@ -258,10 +240,6 @@
                   "minimum": 1
                 },
                 "container": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "owner_credential_file": {
                   "type": "string",
                   "minLength": 1
                 }
@@ -288,10 +266,6 @@
                   "type": "object",
                   "maxProperties": 8,
                   "minProperties": 1
-                },
-                "owner_credential_file": {
-                  "type": "string",
-                  "minLength": 1
                 }
               },
               "additionalProperties": false,
@@ -326,10 +300,6 @@
                   "additionalProperties": false,
                   "type": "object",
                   "required": ["file", "project", "service"]
-                },
-                "owner_credential_file": {
-                  "type": "string",
-                  "minLength": 1
                 }
               },
               "additionalProperties": false,
