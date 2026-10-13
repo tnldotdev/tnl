@@ -161,6 +161,8 @@ The Go ad-hoc SDK owns its own publisher instead of using the app runtime.
 The native integration fixture also uses the authenticated endpoint. Registration
 wire shapes still use the private protocol and will move to the local publisher
 contract as the new ownership model is implemented.
+the host lock and TCP credential descriptor live in the verified private `run/`
+directory under canonical client state.
 
 ## resolve project configuration
 
@@ -225,13 +227,22 @@ listener. Node and Bun applications call `await tnl.prepare({service: "api"})`
 before startup and `await publication.register(server)` after binding, including
 listeners that request port 0. directory inference requires a unique configured
 service. builds and production previews do not prepare registrations.
+Python's `tnl.uvicorn.run("app:app", service="web", port=0, reload=True)` prepares
+in the serving worker before ASGI lifespan, registers Uvicorn's bound socket
+after startup, and unregisters before lifespan shutdown. the reload parent
+only holds the listener; each worktree resolves its own project and client state.
+`tnl.open(app)` remains a separate ad-hoc publication with its own credential.
 
 `internal/clientruntime` owns registration leases, publisher observations,
-readiness, and a bounded durable local event journal. the private native command
+readiness, and a bounded durable local event journal. `internal/clientstate`
+stores each project's snapshot and ordered events in client SQLite; one write
+transaction advances the cursor and appends an event, retaining at most 2048
+events and 8 MiB of event data. watch cursors survive publisher restarts until
+their event falls outside the retained history. the private native command
 `tnl runtime endpoint` locates one private endpoint descriptor per canonical
 project/worktree/client-state identity. the app starts `tnl runtime serve` to
 maintain its loopback HTTP listener. the descriptor holds its credential in a
-user-owned mode-0600 file beneath a mode-0700 directory under `/tmp`.
+user-owned mode-0600 file beneath the private `run/` directory in client state.
 `internal/privateprotocol` bounds and validates requests; golden fixtures
 describe the wire shape. configured-service control sessions remain in the
 native process. an ad-hoc credential crosses only this authenticated local API
