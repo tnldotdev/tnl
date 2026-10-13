@@ -23,6 +23,8 @@ type separatedAdmissionLimits struct {
 	RelayStreamCapacity              int64 `json:"relay_stream_capacity"`
 	QUICMaxIncomingStreams           int64 `json:"quic_max_incoming_streams"`
 	PublisherConcurrency             int   `json:"publisher_concurrency"`
+	PublisherRate                    int   `json:"publisher_rate"`
+	PublisherBurst                   int   `json:"publisher_burst"`
 }
 
 type separatedIngressAdmissionLimits struct {
@@ -49,6 +51,8 @@ func init() {
 	flag.Int64Var(&runtimeLoadAdmission.RelayStreamCapacity, "tnl-runtime-load-relay-stream-capacity", -1, "maximum visitor streams per relay process (-1: automatic)")
 	flag.Int64Var(&runtimeLoadAdmission.QUICMaxIncomingStreams, "tnl-runtime-load-quic-max-incoming-streams", -1, "maximum incoming QUIC streams per publisher connection (-1: automatic)")
 	flag.IntVar(&runtimeLoadAdmission.PublisherConcurrency, "tnl-runtime-load-publisher-concurrency", 500, "maximum concurrent requests handled by each publisher route")
+	flag.IntVar(&runtimeLoadAdmission.PublisherRate, "tnl-runtime-load-publisher-rate", 200, "application requests per second per public URL during the opt-in runtime workload")
+	flag.IntVar(&runtimeLoadAdmission.PublisherBurst, "tnl-runtime-load-publisher-burst", 400, "initial application request burst during the opt-in runtime workload")
 }
 
 func (limits separatedAdmissionLimits) apply(cfg *tnldconfig.Config) {
