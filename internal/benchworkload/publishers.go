@@ -50,6 +50,9 @@ type PublisherConfig struct {
 	QUICKeepAlive               time.Duration
 	Parallel                    int
 	Concurrency                 int
+	RateRequests                int
+	RatePer                     time.Duration
+	RateBurst                   int
 	// StartParallel overrides Parallel only during activation; shutdown has its own bound.
 	StartParallel             int
 	ReadyTimeout, StopTimeout time.Duration
@@ -100,6 +103,11 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	}
 	if !config.Transport.Valid() {
 		return nil, errors.New("publisher transport must be auto, mixed, quic, or tcp")
+	}
+	limits := publisher.ApplicationLimits{Concurrency: config.Concurrency, RateRequests: config.RateRequests,
+		RatePer: config.RatePer, RateBurst: config.RateBurst}
+	if err := limits.Validate(); err != nil {
+		return nil, err
 	}
 	database, err := clientstate.Open(ctx, config.StateRoot)
 	if err != nil {
@@ -194,7 +202,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	return &Publishers{config: config, database: database, ctx: groupCtx, cancel: cancel,
 		namespace: membership.ManagedLabel + "." + domain.CanonicalDomain, failures: make(chan error, 1), run: publisher.Run,
 		base: publisher.Config{Control: auth.Control, State: store, Target: config.Target, DrainTime: config.DrainTime,
-			Limits:    publisher.ApplicationLimits{Concurrency: config.Concurrency},
+			Limits:    limits,
 			Ephemeral: config.Ephemeral,
 			TeamID:    team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,
 			PolicyRevision: uint64(team.PolicyRevision), AllowedIPPrefixes: config.AllowedIPPrefixes,

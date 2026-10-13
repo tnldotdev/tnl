@@ -322,6 +322,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, shard int)
 		HTTPClient: client, RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
 		Transport: transport, Parallel: 4, StartParallel: max(1, *runtimeLoadStartParallel/len(separatedPublisherComponents())),
 		Concurrency:  runtimeLoadAdmission.PublisherConcurrency,
+		RateRequests: runtimeLoadAdmission.PublisherRate, RatePer: time.Second, RateBurst: runtimeLoadAdmission.PublisherBurst,
 		ReadyTimeout: *runtimeLoadReadyTimeout, StopTimeout: 10 * time.Second, DrainTime: time.Second,
 		OnActivationFailure: func(index int) {
 			if err := captureSeparatedPublisherFailure(inspect, index); err != nil {
