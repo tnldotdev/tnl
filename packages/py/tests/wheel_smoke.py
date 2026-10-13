@@ -18,7 +18,8 @@ class NativeStub(NativeRuntime):
         self.events: list[str] = []
         self.target = ""
 
-    async def start(self, directory: str) -> str:
+    async def start(self, directory: str, service: str | None = None) -> str:
+        assert service is None
         return "/unused/native.sock"
 
     async def request(self, socket: str, operation: str, payload: dict[str, object]) -> object:
