@@ -156,6 +156,80 @@ func TestDatabaseForwardingRejectsWrongTargetCertificate(t *testing.T) {
 	}
 }
 
+func TestVisitorTLSPassthroughKeepsTargetCertificateWithoutTargetTLSFlag(t *testing.T) {
+	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql} {
+		t.Run(string(protocol), func(t *testing.T) {
+			backendCertificate := publicURLTestCertificate(t, "route.example")
+			publicCertificate := publicURLTestCertificate(t, "route.example")
+			roots := rootsForCertificate(t, backendCertificate)
+			port := uint16(5432)
+			if protocol == controlv1.Mysql {
+				port = 3306
+			}
+			address, received := startDatabaseTarget(t, protocol, backendCertificate)
+			route, err := NewPublicURLServer(PublicURLServerConfig{
+				Hostname: "route.example", ServiceProtocol: protocol, PublicPort: port,
+				Target: address, VisitorTLSPassthrough: true, Certificate: publicCertificate,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = route.Close() })
+			visitor := openDatabaseVisitor(t, route, port)
+			if protocol == controlv1.Postgres {
+				if _, err := visitor.Write(postgresSSLRequest[:]); err != nil {
+					t.Fatal(err)
+				}
+				readDatabaseByte(t, visitor, 'S')
+			} else {
+				if greeting := readDatabasePacket(t, visitor, 8); greeting != "greeting" {
+					t.Fatalf("MySQL greeting = %q", greeting)
+				}
+				if _, err := visitor.Write(mysqlTestSSLRequest()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			secured := tls.Client(visitor, &tls.Config{ServerName: "route.example", RootCAs: roots, MinVersion: tls.VersionTLS12})
+			if err := secured.Handshake(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := secured.Write([]byte("startup!")); err != nil {
+				t.Fatal(err)
+			}
+			var response [5]byte
+			if _, err := io.ReadFull(secured, response[:]); err != nil || string(response[:]) != "ready" {
+				t.Fatalf("passthrough response = %q, %v", response, err)
+			}
+			if got := awaitPublisherTest(t, received); got != "startup!" {
+				t.Fatalf("private target received %q", got)
+			}
+			_ = secured.Close()
+		})
+	}
+}
+
+func TestVisitorTLSPassthroughRejectsWrongSNI(t *testing.T) {
+	backendCertificate := publicURLTestCertificate(t, "route.example")
+	address, _ := startDatabaseTarget(t, controlv1.Postgres, backendCertificate, true)
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", ServiceProtocol: controlv1.Postgres, PublicPort: 5432,
+		Target: address, VisitorTLSPassthrough: true, Certificate: publicURLTestCertificate(t, "route.example"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+	visitor := openDatabaseVisitor(t, route, 5432)
+	if _, err := visitor.Write(postgresSSLRequest[:]); err != nil {
+		t.Fatal(err)
+	}
+	readDatabaseByte(t, visitor, 'S')
+	secured := tls.Client(visitor, &tls.Config{ServerName: "other.example", InsecureSkipVerify: true}) // reject before the target TLS handshake.
+	if err := secured.Handshake(); err == nil {
+		t.Fatal("mismatched SNI reached the private database")
+	}
+}
+
 func TestDatabaseVisitorCountsTowardApplicationLimits(t *testing.T) {
 	publicCertificate := publicURLTestCertificate(t, "route.example")
 	backendCertificate := publicURLTestCertificate(t, "db.internal")
