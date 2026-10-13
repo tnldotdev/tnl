@@ -7,7 +7,7 @@
         "protocol": {
           "type": "string",
           "enum": ["http", "postgres", "mysql", "redis", "ssh"],
-          "description": "Local service protocol: http (default), postgres, mysql, redis, or ssh."
+          "description": "Service protocol for the public URL; defaults to http."
         },
         "target": {
           "oneOf": [
@@ -21,15 +21,15 @@
               "minimum": 1
             }
           ],
-          "description": "HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher."
+          "description": "HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher."
         },
         "target_tls_name": {
           "type": "string",
-          "description": "Hostname expected in the private target TLS certificate; defaults to the target host."
+          "description": "Hostname expected in the target's TLS certificate; defaults to the target host."
         },
         "target_tls": {
           "type": "boolean",
-          "description": "Use verified TLS for the private TCP target."
+          "description": "Use verified TLS for the TCP target."
         },
         "target_ca_file": {
           "type": "string",

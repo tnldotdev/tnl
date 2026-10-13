@@ -46,14 +46,8 @@ jobs:
       - name: Run integration tests
         run: task go:test:integration
 
-      - name: Verify database clients
-        run: task go:test:integration:database-clients
-
-      - name: Verify Redis publishing
-        run: task go:test:integration:redis
-
-      - name: Verify SSH publishing
-        run: task go:test:integration:ssh
+      - name: Verify TCP clients
+        run: task go:test:integration:tcp-clients
 
   binary:
     name: Binary integration
