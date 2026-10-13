@@ -119,8 +119,14 @@ def test_reload_registers_the_serving_worker_in_each_worktree(tmp_path: Path) ->
                 return
 """)
             (directory / "dev.py").write_text(
-                "from tnl.uvicorn import run\n"
-                'run("app:app", service="web", port=0, reload=True, reload_dirs=["."])\n'
+                "import os\n"
+                "from tnl import uvicorn as publication\n"
+                "from tnl._native import NativeRuntime\n"
+                "class NativeFixture(NativeRuntime):\n"
+                "    async def start(self, directory, service=None):\n"
+                '        return os.environ["TNL_PUBLISHER_ENDPOINT_FILE"]\n'
+                "publication._native = NativeFixture()\n"
+                'publication.run("app:app", service="web", port=0, reload=True)\n'
             )
             log = (directory / "server.log").open("wb")
             logs.append(log)
