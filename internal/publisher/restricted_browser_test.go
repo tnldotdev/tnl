@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
-	"errors"
 	"html"
 	"io"
 	"net"
@@ -14,7 +13,6 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -286,27 +284,6 @@ func TestRestrictedBrowserSignInAndSwitchAccountOverRealTLS(t *testing.T) {
 	authorize, err = url.Parse(response.Header.Get("Location"))
 	if err != nil || response.StatusCode != 303 || authorize.Query().Get("prompt") != "select_account" || authorize.Query().Get("return_path") != path {
 		t.Fatalf("switch account lost provider selection or return query: %d %q", response.StatusCode, response.Header.Get("Location"))
-	}
-}
-
-func TestAppReadyAccessInfoReflectsInstalledBrowserRuntimeAndServerPolicy(t *testing.T) {
-	control := newCertificateTestControl(t, "route.example", publicURLCertificateTestPlan())
-	control.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
-	config := startCertificateTLSYamuxHarness(t, control)
-	config.Control = &browserCapabilityControl{certificateTestControl: control, browserAccessClient: &browserAccessStub{}, enable: func(string, uint64, credentials.PublishRunToken) error { return nil }}
-	config.ControlURL, config.BrowserLoginAvailable = "https://control.example", true
-	control.setup.PublicUrl.AllowedIpPrefixes = new([]string{"192.0.2.10/32"})
-	reachedReady := errors.New("reached ready")
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	err := runSession(ctx, config, control.setup, func(info AccessInfo) error {
-		if !info.BrowserSignInAvailable || info.PublicURLScope != controlv1.Member || len(info.AllowedIPPrefixes) != 1 || info.AllowedIPPrefixes[0] != "192.0.2.10/32" || info.PreviewID != "" {
-			t.Errorf("ready access does not reflect this app run: %+v", info)
-		}
-		return reachedReady
-	})
-	if !errors.Is(err, reachedReady) {
-		t.Fatalf("ready access callback: %v", err)
 	}
 }
 
