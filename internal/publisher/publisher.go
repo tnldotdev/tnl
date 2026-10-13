@@ -204,7 +204,7 @@ func Run(ctx context.Context, config Config) (result error) {
 		return err
 	}
 	defer hostLock.Close()
-	route, createdPublicURL, err := createOrLoadPublicURL(ctx, config)
+	route, createdPublicURL, err := createOrLoadPublicURLWhenAvailable(ctx, config)
 	if err != nil {
 		return err
 	}
@@ -325,6 +325,27 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 	}
 	route, err := config.Control.CreatePublicURL(ctx, body, idempotencyKey)
 	return route, err == nil, classifyPublicURLConflict(err)
+}
+
+func createOrLoadPublicURLWhenAvailable(ctx context.Context, config Config) (controlv1.PublicURL, bool, error) {
+	var openUntil time.Time
+	for {
+		route, created, err := createOrLoadPublicURL(ctx, config)
+		if err == nil || !errors.Is(err, controlclient.ErrPublishRunOpen) {
+			return route, created, err
+		}
+		if openUntil.IsZero() {
+			openUntil = time.Now().Add(publishRunOpenRetryWindow)
+		}
+		if time.Now().After(openUntil) {
+			return route, created, err
+		}
+		select {
+		case <-ctx.Done():
+			return controlv1.PublicURL{}, false, context.Cause(ctx)
+		case <-time.After(activationRetry):
+		}
+	}
 }
 
 // ReservePublicURL saves a configured public URL without starting a publish run.
