@@ -388,6 +388,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "runtime endpoint":
 		return runRuntimeEndpoint(ctx, flags.Runtime.Endpoint, stdout)
 	case "runtime serve":
+		flags.Runtime.Serve.NoTelemetry = flags.NoTelemetry
 		return runRuntimeServe(ctx, flags.Runtime.Serve)
 	case "wait", "watch":
 		return runAppObservation(ctx, flags, parsedCommand, stdout)

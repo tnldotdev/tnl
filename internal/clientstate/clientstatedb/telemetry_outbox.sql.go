@@ -37,6 +37,24 @@ func (q *Queries) DeleteExpiredTelemetryEvents(ctx context.Context, before int64
 	return err
 }
 
+const insertReadyTelemetryMarker = `-- name: InsertReadyTelemetryMarker :execrows
+INSERT OR IGNORE INTO local_ready_telemetry (invocation_key, created_at)
+VALUES (?1, ?2)
+`
+
+type InsertReadyTelemetryMarkerParams struct {
+	InvocationKey string
+	CreatedAt     int64
+}
+
+func (q *Queries) InsertReadyTelemetryMarker(ctx context.Context, arg InsertReadyTelemetryMarkerParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertReadyTelemetryMarker, arg.InvocationKey, arg.CreatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const insertTelemetryEvent = `-- name: InsertTelemetryEvent :exec
 INSERT INTO telemetry_outbox (event_id, created_at, event_json)
 VALUES (?1, ?2, ?3)

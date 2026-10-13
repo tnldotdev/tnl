@@ -20,6 +20,8 @@ func TestTelemetryCommandsUseOnlyParsedCommandNodes(t *testing.T) {
 		{[]string{"feedback", "inspect", "fb_secret"}, "feedback", "inspect", true},
 		{[]string{"version"}, "", "", false},
 		{[]string{"telemetry", "on"}, "", "", false},
+		{[]string{"runtime", "endpoint", "--directory", "/private/project"}, "", "", false},
+		{[]string{"runtime", "serve", "--directory", "/private/project"}, "", "", false},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)

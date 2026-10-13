@@ -2,6 +2,10 @@
 INSERT INTO telemetry_outbox (event_id, created_at, event_json)
 VALUES (sqlc.arg(event_id), sqlc.arg(created_at), sqlc.arg(event_json));
 
+-- name: InsertReadyTelemetryMarker :execrows
+INSERT OR IGNORE INTO local_ready_telemetry (invocation_key, created_at)
+VALUES (sqlc.arg(invocation_key), sqlc.arg(created_at));
+
 -- name: DeleteExpiredTelemetryEvents :exec
 DELETE FROM telemetry_outbox WHERE created_at < sqlc.arg(before);
 
