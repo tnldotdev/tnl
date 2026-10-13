@@ -157,6 +157,9 @@ visitor bytes or expose the control session to an app. The host publisher now
 also binds an OS-assigned loopback TCP port with a private, bearer-protected
 endpoint descriptor. Existing SDK calls still use the Unix socket while their
 registration and ad-hoc clients move to the local publisher API.
+the host lock and TCP credential descriptor live in the verified private `run/`
+directory under canonical client state. the temporary Unix socket stays under
+`/tmp` to fit macOS socket path limits until the Unix transport is retired.
 
 ## resolve project configuration
 
