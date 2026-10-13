@@ -128,6 +128,24 @@ func (e ControlDiscoveryManagedUrlMode) Valid() bool {
 	}
 }
 
+// Defines values for CreatePublisherEnrollmentRequestKind.
+const (
+	CreatePublisherEnrollmentRequestKindAutomation CreatePublisherEnrollmentRequestKind = "automation"
+	CreatePublisherEnrollmentRequestKindInstalled  CreatePublisherEnrollmentRequestKind = "installed"
+)
+
+// Valid indicates whether the value is a known member of the CreatePublisherEnrollmentRequestKind enum.
+func (e CreatePublisherEnrollmentRequestKind) Valid() bool {
+	switch e {
+	case CreatePublisherEnrollmentRequestKindAutomation:
+		return true
+	case CreatePublisherEnrollmentRequestKindInstalled:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for FeedbackEventActor.
 const (
 	Implementer FeedbackEventActor = "implementer"
@@ -236,6 +254,24 @@ const (
 func (e IssuedEphemeralPublishCredentialKind) Valid() bool {
 	switch e {
 	case IssuedEphemeralPublishCredentialKindEphemeral:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IssuedPublisherEnrollmentKind.
+const (
+	IssuedPublisherEnrollmentKindNamespace IssuedPublisherEnrollmentKind = "namespace"
+	IssuedPublisherEnrollmentKindSavedUrl  IssuedPublisherEnrollmentKind = "saved_url"
+)
+
+// Valid indicates whether the value is a known member of the IssuedPublisherEnrollmentKind enum.
+func (e IssuedPublisherEnrollmentKind) Valid() bool {
+	switch e {
+	case IssuedPublisherEnrollmentKindNamespace:
+		return true
+	case IssuedPublisherEnrollmentKindSavedUrl:
 		return true
 	default:
 		return false
@@ -509,6 +545,24 @@ func (e PublisherConnectionState) Valid() bool {
 	case PublisherConnectionStateReady:
 		return true
 	case PublisherConnectionStateReplacing:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherGrantKind.
+const (
+	PublisherGrantKindNamespace PublisherGrantKind = "namespace"
+	PublisherGrantKindSavedUrl  PublisherGrantKind = "saved_url"
+)
+
+// Valid indicates whether the value is a known member of the PublisherGrantKind enum.
+func (e PublisherGrantKind) Valid() bool {
+	switch e {
+	case PublisherGrantKindNamespace:
+		return true
+	case PublisherGrantKindSavedUrl:
 		return true
 	default:
 		return false
@@ -1055,6 +1109,28 @@ type CreatePublishRunRequest struct {
 	Traffic *PublishRunTrafficSelection `json:"traffic,omitempty"`
 }
 
+// CreatePublisherEnrollmentRequest defines model for CreatePublisherEnrollmentRequest.
+type CreatePublisherEnrollmentRequest struct {
+	DomainId       *DomainID                            `json:"domain_id,omitempty"`
+	Kind           CreatePublisherEnrollmentRequestKind `json:"kind"`
+	Name           string                               `json:"name"`
+	PublicUrlId    *PublicURLID                         `json:"public_url_id,omitempty"`
+	PublicUrlScope *PublicURLScope                      `json:"public_url_scope,omitempty"`
+	TeamId         TeamID                               `json:"team_id"`
+}
+
+// CreatePublisherEnrollmentRequestKind defines model for CreatePublisherEnrollmentRequest.Kind.
+type CreatePublisherEnrollmentRequestKind string
+
+// CreatePublisherGrantRequest defines model for CreatePublisherGrantRequest.
+type CreatePublisherGrantRequest struct {
+	DomainId       *DomainID       `json:"domain_id,omitempty"`
+	ExpiresAt      *time.Time      `json:"expires_at,omitempty"`
+	PublicUrlId    *PublicURLID    `json:"public_url_id,omitempty"`
+	PublicUrlScope *PublicURLScope `json:"public_url_scope,omitempty"`
+	TeamId         TeamID          `json:"team_id"`
+}
+
 // CreateShareRequest defines model for CreateShareRequest.
 type CreateShareRequest struct {
 	ExpiresAt         time.Time     `json:"expires_at"`
@@ -1298,6 +1374,22 @@ type IssuedPublicURLPublishCredential struct {
 	PublicUrlId PublicURLID `json:"public_url_id"`
 }
 
+// IssuedPublisherEnrollment defines model for IssuedPublisherEnrollment.
+type IssuedPublisherEnrollment struct {
+	DomainId      *DomainID                     `json:"domain_id,omitempty"`
+	EnrollmentKey string                        `json:"enrollment_key"`
+	ExpiresAt     time.Time                     `json:"expires_at"`
+	Id            ResourceID                    `json:"id"`
+	Kind          IssuedPublisherEnrollmentKind `json:"kind"`
+	Name          string                        `json:"name"`
+	Namespace     *string                       `json:"namespace,omitempty"`
+	PublicUrlId   *PublicURLID                  `json:"public_url_id,omitempty"`
+	TeamId        TeamID                        `json:"team_id"`
+}
+
+// IssuedPublisherEnrollmentKind defines model for IssuedPublisherEnrollment.Kind.
+type IssuedPublisherEnrollmentKind string
+
 // MaintenanceControl defines model for MaintenanceControl.
 type MaintenanceControl struct {
 	Allowed   bool                   `json:"allowed"`
@@ -1524,6 +1616,20 @@ type PublisherConnectionID = ResourceID
 
 // PublisherConnectionState defines model for PublisherConnectionState.
 type PublisherConnectionState string
+
+// PublisherGrant defines model for PublisherGrant.
+type PublisherGrant struct {
+	DomainId    *DomainID          `json:"domain_id,omitempty"`
+	ExpiresAt   *time.Time         `json:"expires_at,omitempty"`
+	Id          ResourceID         `json:"id"`
+	Kind        PublisherGrantKind `json:"kind"`
+	Namespace   *string            `json:"namespace,omitempty"`
+	PublicUrlId *PublicURLID       `json:"public_url_id,omitempty"`
+	TeamId      TeamID             `json:"team_id"`
+}
+
+// PublisherGrantKind defines model for PublisherGrant.Kind.
+type PublisherGrantKind string
 
 // PublisherShare defines model for PublisherShare.
 type PublisherShare struct {
@@ -1849,6 +1955,16 @@ type AppendReviewerFeedbackEventParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// RevokePublisherIdentityParams defines parameters for RevokePublisherIdentity.
+type RevokePublisherIdentityParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
+// RevokePublisherGrantParams defines parameters for RevokePublisherGrant.
+type RevokePublisherGrantParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
 // ListTeamSharesParams defines parameters for ListTeamShares.
 type ListTeamSharesParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
@@ -1944,6 +2060,12 @@ type RedeemPublishRunShareJSONRequestBody = RedeemShareRequest
 
 // GetPublishRunShareStateJSONRequestBody defines body for GetPublishRunShareState for application/json ContentType.
 type GetPublishRunShareStateJSONRequestBody = PublishRunVersionRequest
+
+// CreatePublisherGrantJSONRequestBody defines body for CreatePublisherGrant for application/json ContentType.
+type CreatePublisherGrantJSONRequestBody = CreatePublisherGrantRequest
+
+// CreatePublisherEnrollmentJSONRequestBody defines body for CreatePublisherEnrollment for application/json ContentType.
+type CreatePublisherEnrollmentJSONRequestBody = CreatePublisherEnrollmentRequest
 
 // AsWebhookProviderSourceResponseSource0 returns the union data inside the WebhookProviderSourceResponse_Source as a WebhookProviderSourceResponseSource0
 func (t WebhookProviderSourceResponse_Source) AsWebhookProviderSourceResponseSource0() (WebhookProviderSourceResponseSource0, error) {
@@ -2645,6 +2767,44 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
 	GetPublishRunShareState(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokePublisherIdentity Revoke one enrolled publisher identity
+	//
+	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id} (the `RevokePublisherIdentity` operationId).
+	RevokePublisherIdentity(ctx context.Context, publisherIdentityId ResourceID, params *RevokePublisherIdentityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublisherGrantWithBody Add one separately revocable publisher grant
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
+	CreatePublisherGrantWithBody(ctx context.Context, publisherIdentityId ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublisherGrant Add one separately revocable publisher grant
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
+	CreatePublisherGrant(ctx context.Context, publisherIdentityId ResourceID, body CreatePublisherGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokePublisherGrant Revoke one publisher grant
+	//
+	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId).
+	RevokePublisherGrant(ctx context.Context, publisherIdentityId ResourceID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublisherEnrollmentWithBody Issue a one-use enrollment key for one authorized publisher grant
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher/enrollments (the `CreatePublisherEnrollment` operationId).
+	CreatePublisherEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublisherEnrollment Issue a one-use enrollment key for one authorized publisher grant
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher/enrollments (the `CreatePublisherEnrollment` operationId).
+	CreatePublisherEnrollment(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReadiness Confirm that the tnld role is ready to serve
 	//
@@ -4117,6 +4277,104 @@ func (c *Client) GetPublishRunShareStateWithBody(ctx context.Context, publishRun
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
 func (c *Client) GetPublishRunShareState(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPublishRunShareStateRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokePublisherIdentity Revoke one enrolled publisher identity
+//
+// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id} (the `RevokePublisherIdentity` operationId).
+func (c *Client) RevokePublisherIdentity(ctx context.Context, publisherIdentityId ResourceID, params *RevokePublisherIdentityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokePublisherIdentityRequest(c.Server, publisherIdentityId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublisherGrantWithBody Add one separately revocable publisher grant
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
+func (c *Client) CreatePublisherGrantWithBody(ctx context.Context, publisherIdentityId ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublisherGrantRequestWithBody(c.Server, publisherIdentityId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublisherGrant Add one separately revocable publisher grant
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
+func (c *Client) CreatePublisherGrant(ctx context.Context, publisherIdentityId ResourceID, body CreatePublisherGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublisherGrantRequest(c.Server, publisherIdentityId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokePublisherGrant Revoke one publisher grant
+//
+// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId).
+func (c *Client) RevokePublisherGrant(ctx context.Context, publisherIdentityId ResourceID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokePublisherGrantRequest(c.Server, publisherIdentityId, grantId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublisherEnrollmentWithBody Issue a one-use enrollment key for one authorized publisher grant
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/enrollments (the `CreatePublisherEnrollment` operationId).
+func (c *Client) CreatePublisherEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublisherEnrollmentRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublisherEnrollment Issue a one-use enrollment key for one authorized publisher grant
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher/enrollments (the `CreatePublisherEnrollment` operationId).
+func (c *Client) CreatePublisherEnrollment(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublisherEnrollmentRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6939,6 +7197,214 @@ func NewGetPublishRunShareStateRequestWithBody(server string, publishRunId Publi
 	return req, nil
 }
 
+// NewRevokePublisherIdentityRequest constructs an http.Request for the RevokePublisherIdentity method
+func NewRevokePublisherIdentityRequest(server string, publisherIdentityId ResourceID, params *RevokePublisherIdentityParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher-identities/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreatePublisherGrantRequest calls the generic CreatePublisherGrant builder with application/json body
+func NewCreatePublisherGrantRequest(server string, publisherIdentityId ResourceID, body CreatePublisherGrantJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePublisherGrantRequestWithBody(server, publisherIdentityId, "application/json", bodyReader)
+}
+
+// NewCreatePublisherGrantRequestWithBody constructs an http.Request for the CreatePublisherGrant method, with any body, and a specified content type
+func NewCreatePublisherGrantRequestWithBody(server string, publisherIdentityId ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher-identities/%s/grants", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokePublisherGrantRequest constructs an http.Request for the RevokePublisherGrant method
+func NewRevokePublisherGrantRequest(server string, publisherIdentityId ResourceID, grantId ResourceID, params *RevokePublisherGrantParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_identity_id", publisherIdentityId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "grant_id", grantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher-identities/%s/grants/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreatePublisherEnrollmentRequest calls the generic CreatePublisherEnrollment builder with application/json body
+func NewCreatePublisherEnrollmentRequest(server string, body CreatePublisherEnrollmentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePublisherEnrollmentRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreatePublisherEnrollmentRequestWithBody constructs an http.Request for the CreatePublisherEnrollment method, with any body, and a specified content type
+func NewCreatePublisherEnrollmentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/enrollments")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetReadinessRequest constructs an http.Request for the GetReadiness method
 func NewGetReadinessRequest(server string) (*http.Request, error) {
 	var err error
@@ -7796,6 +8262,48 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
 	GetPublishRunShareStateWithResponse(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*GetPublishRunShareStateResponse, error)
+
+	// RevokePublisherIdentityWithResponse Revoke one enrolled publisher identity
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id} (the `RevokePublisherIdentity` operationId).
+	RevokePublisherIdentityWithResponse(ctx context.Context, publisherIdentityId ResourceID, params *RevokePublisherIdentityParams, reqEditors ...RequestEditorFn) (*RevokePublisherIdentityResponse, error)
+
+	// CreatePublisherGrantWithBodyWithResponse Add one separately revocable publisher grant
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
+	CreatePublisherGrantWithBodyWithResponse(ctx context.Context, publisherIdentityId ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGrantResponse, error)
+
+	// CreatePublisherGrantWithResponse Add one separately revocable publisher grant
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
+	CreatePublisherGrantWithResponse(ctx context.Context, publisherIdentityId ResourceID, body CreatePublisherGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGrantResponse, error)
+
+	// RevokePublisherGrantWithResponse Revoke one publisher grant
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId).
+	RevokePublisherGrantWithResponse(ctx context.Context, publisherIdentityId ResourceID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*RevokePublisherGrantResponse, error)
+
+	// CreatePublisherEnrollmentWithBodyWithResponse Issue a one-use enrollment key for one authorized publisher grant
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/enrollments (the `CreatePublisherEnrollment` operationId).
+	CreatePublisherEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherEnrollmentResponse, error)
+
+	// CreatePublisherEnrollmentWithResponse Issue a one-use enrollment key for one authorized publisher grant
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/enrollments (the `CreatePublisherEnrollment` operationId).
+	CreatePublisherEnrollmentWithResponse(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherEnrollmentResponse, error)
 
 	// GetReadinessWithResponse Confirm that the tnld role is ready to serve
 	//
@@ -10606,6 +11114,184 @@ func (r GetPublishRunShareStateResponse) ContentType() string {
 	return ""
 }
 
+type RevokePublisherIdentityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokePublisherIdentityResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokePublisherIdentityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokePublisherIdentityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokePublisherIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokePublisherIdentityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreatePublisherGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PublisherGrant
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePublisherGrantResponse) GetJSON201() *PublisherGrant {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePublisherGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePublisherGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePublisherGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePublisherGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePublisherGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokePublisherGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokePublisherGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokePublisherGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokePublisherGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokePublisherGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokePublisherGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreatePublisherEnrollmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *IssuedPublisherEnrollment
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePublisherEnrollmentResponse) GetJSON201() *IssuedPublisherEnrollment {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePublisherEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePublisherEnrollmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePublisherEnrollmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePublisherEnrollmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePublisherEnrollmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetReadinessResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12016,6 +12702,84 @@ func (c *ClientWithResponses) GetPublishRunShareStateWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseGetPublishRunShareStateResponse(rsp)
+}
+
+// RevokePublisherIdentityWithResponse Revoke one enrolled publisher identity
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id} (the `RevokePublisherIdentity` operationId).
+func (c *ClientWithResponses) RevokePublisherIdentityWithResponse(ctx context.Context, publisherIdentityId ResourceID, params *RevokePublisherIdentityParams, reqEditors ...RequestEditorFn) (*RevokePublisherIdentityResponse, error) {
+	rsp, err := c.RevokePublisherIdentity(ctx, publisherIdentityId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokePublisherIdentityResponse(rsp)
+}
+
+// CreatePublisherGrantWithBodyWithResponse Add one separately revocable publisher grant
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
+func (c *ClientWithResponses) CreatePublisherGrantWithBodyWithResponse(ctx context.Context, publisherIdentityId ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGrantResponse, error) {
+	rsp, err := c.CreatePublisherGrantWithBody(ctx, publisherIdentityId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublisherGrantResponse(rsp)
+}
+
+// CreatePublisherGrantWithResponse Add one separately revocable publisher grant
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher-identities/{publisher_identity_id}/grants (the `CreatePublisherGrant` operationId).
+func (c *ClientWithResponses) CreatePublisherGrantWithResponse(ctx context.Context, publisherIdentityId ResourceID, body CreatePublisherGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGrantResponse, error) {
+	rsp, err := c.CreatePublisherGrant(ctx, publisherIdentityId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublisherGrantResponse(rsp)
+}
+
+// RevokePublisherGrantWithResponse Revoke one publisher grant
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId).
+func (c *ClientWithResponses) RevokePublisherGrantWithResponse(ctx context.Context, publisherIdentityId ResourceID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*RevokePublisherGrantResponse, error) {
+	rsp, err := c.RevokePublisherGrant(ctx, publisherIdentityId, grantId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokePublisherGrantResponse(rsp)
+}
+
+// CreatePublisherEnrollmentWithBodyWithResponse Issue a one-use enrollment key for one authorized publisher grant
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/enrollments (the `CreatePublisherEnrollment` operationId).
+func (c *ClientWithResponses) CreatePublisherEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherEnrollmentResponse, error) {
+	rsp, err := c.CreatePublisherEnrollmentWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublisherEnrollmentResponse(rsp)
+}
+
+// CreatePublisherEnrollmentWithResponse Issue a one-use enrollment key for one authorized publisher grant
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/enrollments (the `CreatePublisherEnrollment` operationId).
+func (c *ClientWithResponses) CreatePublisherEnrollmentWithResponse(ctx context.Context, body CreatePublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherEnrollmentResponse, error) {
+	rsp, err := c.CreatePublisherEnrollment(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublisherEnrollmentResponse(rsp)
 }
 
 // GetReadinessWithResponse Confirm that the tnld role is ready to serve
@@ -13996,6 +14760,130 @@ func ParseGetPublishRunShareStateResponse(rsp *http.Response) (*GetPublishRunSha
 	return response, nil
 }
 
+// ParseRevokePublisherIdentityResponse parses an HTTP response from a RevokePublisherIdentityWithResponse call
+func ParseRevokePublisherIdentityResponse(rsp *http.Response) (*RevokePublisherIdentityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokePublisherIdentityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePublisherGrantResponse parses an HTTP response from a CreatePublisherGrantWithResponse call
+func ParseCreatePublisherGrantResponse(rsp *http.Response) (*CreatePublisherGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePublisherGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PublisherGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokePublisherGrantResponse parses an HTTP response from a RevokePublisherGrantWithResponse call
+func ParseRevokePublisherGrantResponse(rsp *http.Response) (*RevokePublisherGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokePublisherGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePublisherEnrollmentResponse parses an HTTP response from a CreatePublisherEnrollmentWithResponse call
+func ParseCreatePublisherEnrollmentResponse(rsp *http.Response) (*CreatePublisherEnrollmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePublisherEnrollmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest IssuedPublisherEnrollment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetReadinessResponse parses an HTTP response from a GetReadinessWithResponse call
 func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -14370,6 +15258,18 @@ type ServerInterface interface {
 	// GetPublishRunShareState Read short-lived share access state for this publisher
 	// (POST /v1/publish-runs/{publish_run_id}/share-state)
 	GetPublishRunShareState(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// RevokePublisherIdentity Revoke one enrolled publisher identity
+	// (DELETE /v1/publisher-identities/{publisher_identity_id})
+	RevokePublisherIdentity(w http.ResponseWriter, r *http.Request, publisherIdentityId ResourceID, params RevokePublisherIdentityParams)
+	// CreatePublisherGrant Add one separately revocable publisher grant
+	// (POST /v1/publisher-identities/{publisher_identity_id}/grants)
+	CreatePublisherGrant(w http.ResponseWriter, r *http.Request, publisherIdentityId ResourceID)
+	// RevokePublisherGrant Revoke one publisher grant
+	// (DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id})
+	RevokePublisherGrant(w http.ResponseWriter, r *http.Request, publisherIdentityId ResourceID, grantId ResourceID, params RevokePublisherGrantParams)
+	// CreatePublisherEnrollment Issue a one-use enrollment key for one authorized publisher grant
+	// (POST /v1/publisher/enrollments)
+	CreatePublisherEnrollment(w http.ResponseWriter, r *http.Request)
 	// GetReadiness Confirm that the tnld role is ready to serve
 	// (GET /v1/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
@@ -16266,6 +17166,139 @@ func (siw *ServerInterfaceWrapper) GetPublishRunShareState(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// RevokePublisherIdentity operation middleware
+func (siw *ServerInterfaceWrapper) RevokePublisherIdentity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publisher_identity_id" -------------
+	var publisherIdentityId ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RevokePublisherIdentityParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokePublisherIdentity(w, r, publisherIdentityId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePublisherGrant operation middleware
+func (siw *ServerInterfaceWrapper) CreatePublisherGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publisher_identity_id" -------------
+	var publisherIdentityId ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePublisherGrant(w, r, publisherIdentityId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokePublisherGrant operation middleware
+func (siw *ServerInterfaceWrapper) RevokePublisherGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publisher_identity_id" -------------
+	var publisherIdentityId ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_identity_id", r.PathValue("publisher_identity_id"), &publisherIdentityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_identity_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "grant_id" -------------
+	var grantId ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "grant_id", r.PathValue("grant_id"), &grantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "grant_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RevokePublisherGrantParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokePublisherGrant(w, r, publisherIdentityId, grantId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePublisherEnrollment operation middleware
+func (siw *ServerInterfaceWrapper) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePublisherEnrollment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetReadiness operation middleware
 func (siw *ServerInterfaceWrapper) GetReadiness(w http.ResponseWriter, r *http.Request) {
 
@@ -16554,6 +17587,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/feedback/{feedback_id}/events", wrapper.AppendFeedbackEvent)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls", wrapper.ListPublicURLs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls", wrapper.CreatePublicURL)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/enrollments", wrapper.CreatePublisherEnrollment)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publisher-identities/{publisher_identity_id}", wrapper.RevokePublisherIdentity)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-identities/{publisher_identity_id}/grants", wrapper.CreatePublisherGrant)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publisher-identities/{publisher_identity_id}/grants/{grant_id}", wrapper.RevokePublisherGrant)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.DeletePublicURL)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.GetPublicURL)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.UpdatePublicURL)

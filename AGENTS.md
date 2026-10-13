@@ -158,6 +158,11 @@ not _inbox_, for the collection of threads.
 | **connected relay**                 | The specific relay process that claimed and holds a publisher connection for a publish run.        |
 | **ready publisher connection**      | An authenticated, current publisher connection that can carry visitor streams.                     |
 | **publisher connection credential** | A secret that lets one publisher establish one assigned publisher connection.                      |
+| **publisher identity**              | Control's registered identity for a native publisher, distinct from a person's control session.    |
+| **publisher grant**                 | One revocable permission for an identity to publish an exact saved URL or allocate in a namespace. |
+| **publisher signing key**           | A publisher-held private key for JWT client assertions; control stores its public key.             |
+| **publisher access token**          | A short-lived control token restricted to one publisher identity and one current grant.            |
+| **enrollment key**                  | A short-lived, one-use secret for registering a publisher signing key and initial grant.           |
 | **transport**                       | The mechanism carrying a publisher connection: QUIC or TLS/TCP with yamux.                         |
 | **publish run token**               | A credential authorizing the publisher to update one publish run.                                  |
 | **public URL publish credential**   | A revocable credential to publish one saved public URL.                                            |
@@ -257,6 +262,8 @@ not _inbox_, for the collection of threads.
 | Connection slot                 | `connection_slot`                 |
 | Connection assignment revision  | `connection_assignment_revision`  |
 | Publisher connection credential | `publisher_connection_credential` |
+| Publisher identity              | `publisher_identity_id`           |
+| Publisher grant                 | `publisher_grant_id`              |
 | Visitor connection ID           | `visitor_connection_id`           |
 | Ingress identity                | `ingress_id`                      |
 | Ingress process run ID          | `ingress_run_id`                  |

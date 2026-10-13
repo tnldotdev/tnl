@@ -2,6 +2,7 @@ package authorityapi
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"net/http"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 // Config contains settings for the built-in authority API.
 type Config struct {
+	ControlURL           string
 	OIDCIssuer           string
 	WebServiceSecret     string
 	ManagedDomain        string
@@ -56,9 +58,16 @@ type Store interface {
 	ReleaseTeamDomain(context.Context, string, string, string, time.Time) error
 }
 
+type PublisherStore interface {
+	RedeemPublisherEnrollment(context.Context, string, ed25519.PublicKey, time.Time) (controlstate.PublisherIdentity, error)
+	ExchangePublisherAssertion(context.Context, string, string, string, string, time.Time) (controlstate.PublisherAccess, error)
+	RotatePublisherKey(context.Context, string, string, string, ed25519.PublicKey, string, time.Time) error
+}
+
 type handler struct {
 	config              Config
 	store               Store
+	publisher           PublisherStore
 	loginVerifier       credentials.LoginVerifier
 	loginSourceRevision int64
 	webSecret           serviceapi.BearerSecrets
@@ -88,6 +97,9 @@ func (r routeRegistrar) HandleFunc(pattern string, handler func(http.ResponseWri
 // Register adds the built-in authority API routes to mux and returns their patterns.
 func Register(mux *http.ServeMux, cfg Config, store Store) (Routes, error) {
 	h := &handler{config: cfg, store: store}
+	if publisher, ok := store.(PublisherStore); ok {
+		h.publisher = publisher
+	}
 	if cfg.WebServiceSecret != "" {
 		if cfg.OIDCIssuer == "" {
 			return nil, fmt.Errorf("authorityapi: website identity requires an OIDC issuer")

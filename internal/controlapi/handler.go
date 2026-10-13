@@ -90,6 +90,14 @@ type PublicURLPublishCredentialStore interface {
 	RevokePublicURLPublishCredential(context.Context, string, string, time.Time) (controlstate.PublicURLPublishCredential, error)
 }
 
+type PublisherIdentityStore interface {
+	IssuePublisherEnrollment(context.Context, controlstate.CreatePublisherEnrollmentRequest) (controlstate.PublisherEnrollment, error)
+	CreatePublisherGrant(context.Context, controlstate.CreatePublisherGrantRequest) (string, error)
+	PublisherManagementGrants(context.Context, string, string) ([]controlstate.PublisherManagementGrant, error)
+	RevokePublisherIdentity(context.Context, string, string, time.Time) error
+	RevokePublisherGrant(context.Context, string, string, string, time.Time) error
+}
+
 // CertificateStore owns publish run certificate issuance state.
 type CertificateStore interface {
 	CreateCertificateIssuance(context.Context, controlstate.CreateCertificateIssuanceRequest, time.Time) (controlstate.CertificateIssuance, error)
@@ -174,20 +182,21 @@ type AuthorizationStore interface {
 }
 
 type handler struct {
-	config             Config
-	store              PublicURLStore
-	publishCredentials PublicURLPublishCredentialStore
-	certificates       CertificateStore
-	admin              AdminStore
-	previews           PreviewStore
-	previewTeamAccess  PreviewTeamAccessStore
-	browserAccess      BrowserAccessStore
-	browserVerifier    oidcauth.Verifier
-	browserAuthority   *authorityclient.Client
-	shares             ShareStore
-	shareAccess        ShareAccessStore
-	feedback           FeedbackStore
-	guests             interface {
+	config              Config
+	store               PublicURLStore
+	publishCredentials  PublicURLPublishCredentialStore
+	publisherIdentities PublisherIdentityStore
+	certificates        CertificateStore
+	admin               AdminStore
+	previews            PreviewStore
+	previewTeamAccess   PreviewTeamAccessStore
+	browserAccess       BrowserAccessStore
+	browserVerifier     oidcauth.Verifier
+	browserAuthority    *authorityclient.Client
+	shares              ShareStore
+	shareAccess         ShareAccessStore
+	feedback            FeedbackStore
+	guests              interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
@@ -218,6 +227,9 @@ func NewHandler(
 	}
 	if credentials, ok := store.(PublicURLPublishCredentialStore); ok {
 		h.publishCredentials = credentials
+	}
+	if identities, ok := store.(PublisherIdentityStore); ok {
+		h.publisherIdentities = identities
 	}
 	h.webhookCatalog = cfg.WebhookCatalog
 	if h.webhookCatalog == nil {

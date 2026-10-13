@@ -212,6 +212,69 @@ func (e PublicURLScope) Valid() bool {
 	}
 }
 
+// Defines values for PublisherEnrollmentResultKind.
+const (
+	Namespace PublisherEnrollmentResultKind = "namespace"
+	SavedUrl  PublisherEnrollmentResultKind = "saved_url"
+)
+
+// Valid indicates whether the value is a known member of the PublisherEnrollmentResultKind enum.
+func (e PublisherEnrollmentResultKind) Valid() bool {
+	switch e {
+	case Namespace:
+		return true
+	case SavedUrl:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherTokenRequestClientAssertionType.
+const (
+	UrnIetfParamsOauthClientAssertionTypeJwtBearer PublisherTokenRequestClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+)
+
+// Valid indicates whether the value is a known member of the PublisherTokenRequestClientAssertionType enum.
+func (e PublisherTokenRequestClientAssertionType) Valid() bool {
+	switch e {
+	case UrnIetfParamsOauthClientAssertionTypeJwtBearer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherTokenRequestGrantType.
+const (
+	ClientCredentials PublisherTokenRequestGrantType = "client_credentials"
+)
+
+// Valid indicates whether the value is a known member of the PublisherTokenRequestGrantType enum.
+func (e PublisherTokenRequestGrantType) Valid() bool {
+	switch e {
+	case ClientCredentials:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherTokenResponseTokenType.
+const (
+	Bearer PublisherTokenResponseTokenType = "Bearer"
+)
+
+// Valid indicates whether the value is a known member of the PublisherTokenResponseTokenType enum.
+func (e PublisherTokenResponseTokenType) Valid() bool {
+	switch e {
+	case Bearer:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TeamKind.
 const (
 	Organization TeamKind = "organization"
@@ -465,6 +528,56 @@ type PublicURLID = ResourceID
 // PublicURLScope defines model for PublicURLScope.
 type PublicURLScope string
 
+// PublisherEnrollmentResult defines model for PublisherEnrollmentResult.
+type PublisherEnrollmentResult struct {
+	ClientId    string                        `json:"client_id"`
+	GrantId     string                        `json:"grant_id"`
+	KeyId       string                        `json:"key_id"`
+	Kind        PublisherEnrollmentResultKind `json:"kind"`
+	Namespace   *string                       `json:"namespace,omitempty"`
+	PublicUrlId *string                       `json:"public_url_id,omitempty"`
+	TeamId      string                        `json:"team_id"`
+}
+
+// PublisherEnrollmentResultKind defines model for PublisherEnrollmentResult.Kind.
+type PublisherEnrollmentResultKind string
+
+// PublisherTokenRequest defines model for PublisherTokenRequest.
+type PublisherTokenRequest struct {
+	ClientAssertion     string                                   `json:"client_assertion"`
+	ClientAssertionType PublisherTokenRequestClientAssertionType `json:"client_assertion_type"`
+	ClientId            string                                   `json:"client_id"`
+	GrantType           PublisherTokenRequestGrantType           `json:"grant_type"`
+
+	// Scope Exactly one publisher grant ID.
+	Scope string `json:"scope"`
+}
+
+// PublisherTokenRequestClientAssertionType defines model for PublisherTokenRequest.ClientAssertionType.
+type PublisherTokenRequestClientAssertionType string
+
+// PublisherTokenRequestGrantType defines model for PublisherTokenRequest.GrantType.
+type PublisherTokenRequestGrantType string
+
+// PublisherTokenResponse defines model for PublisherTokenResponse.
+type PublisherTokenResponse struct {
+	AccessToken string                          `json:"access_token"`
+	ExpiresIn   int                             `json:"expires_in"`
+	Scope       string                          `json:"scope"`
+	TokenType   PublisherTokenResponseTokenType `json:"token_type"`
+}
+
+// PublisherTokenResponseTokenType defines model for PublisherTokenResponse.TokenType.
+type PublisherTokenResponseTokenType string
+
+// RedeemPublisherEnrollmentRequest defines model for RedeemPublisherEnrollmentRequest.
+type RedeemPublisherEnrollmentRequest struct {
+	EnrollmentKey string `json:"enrollment_key"`
+
+	// PublicKey Base64url-encoded Ed25519 public key, without padding.
+	PublicKey string `json:"public_key"`
+}
+
 // RefreshControlSessionRequest defines model for RefreshControlSessionRequest.
 type RefreshControlSessionRequest struct {
 	RefreshToken string `json:"refresh_token"`
@@ -472,6 +585,17 @@ type RefreshControlSessionRequest struct {
 
 // ResourceID defines model for ResourceID.
 type ResourceID = string
+
+// RotatePublisherKeyRequest defines model for RotatePublisherKeyRequest.
+type RotatePublisherKeyRequest struct {
+	KeyId string `json:"key_id"`
+
+	// Proof Short-lived JWT client assertion signed by the replacement key.
+	Proof string `json:"proof"`
+
+	// PublicKey Base64url-encoded Ed25519 public key, without padding.
+	PublicKey string `json:"public_key"`
+}
 
 // ServiceIdentity defines model for ServiceIdentity.
 type ServiceIdentity struct {
@@ -565,6 +689,15 @@ type ExchangeLoginTokenJSONRequestBody = LoginTokenExchangeRequest
 
 // AcceptInvitationJSONRequestBody defines body for AcceptInvitation for application/json ContentType.
 type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
+
+// RedeemPublisherEnrollmentJSONRequestBody defines body for RedeemPublisherEnrollment for application/json ContentType.
+type RedeemPublisherEnrollmentJSONRequestBody = RedeemPublisherEnrollmentRequest
+
+// RotatePublisherKeyJSONRequestBody defines body for RotatePublisherKey for application/json ContentType.
+type RotatePublisherKeyJSONRequestBody = RotatePublisherKeyRequest
+
+// ExchangePublisherAssertionFormdataRequestBody defines body for ExchangePublisherAssertion for application/x-www-form-urlencoded ContentType.
+type ExchangePublisherAssertionFormdataRequestBody = PublisherTokenRequest
 
 // ResolveServiceIdentityJSONRequestBody defines body for ResolveServiceIdentity for application/json ContentType.
 type ResolveServiceIdentityJSONRequestBody = ServiceIdentity
@@ -743,6 +876,48 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemPublisherEnrollmentWithBody Register a publisher key using a one-use enrollment key
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher/enrollments/redeem (the `RedeemPublisherEnrollment` operationId).
+	RedeemPublisherEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemPublisherEnrollment Register a publisher key using a one-use enrollment key
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher/enrollments/redeem (the `RedeemPublisherEnrollment` operationId).
+	RedeemPublisherEnrollment(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotatePublisherKeyWithBody Replace the registered publisher signing key
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher/keys/rotate (the `RotatePublisherKey` operationId).
+	RotatePublisherKeyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotatePublisherKey Replace the registered publisher signing key
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher/keys/rotate (the `RotatePublisherKey` operationId).
+	RotatePublisherKey(ctx context.Context, body RotatePublisherKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangePublisherAssertionWithBody Exchange a signed client assertion for a scoped publisher access token
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher/token (the `ExchangePublisherAssertion` operationId).
+	ExchangePublisherAssertionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangePublisherAssertionWithFormdataBody Exchange a signed client assertion for a scoped publisher access token
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /v1/publisher/token (the `ExchangePublisherAssertion` operationId).
+	ExchangePublisherAssertionWithFormdataBody(ctx context.Context, body ExchangePublisherAssertionFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ResolveServiceIdentityWithBody Read current memberships for the signed-in website identity
 	//
@@ -1103,6 +1278,108 @@ func (c *Client) AcceptInvitationWithBody(ctx context.Context, contentType strin
 // Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 func (c *Client) AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcceptInvitationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemPublisherEnrollmentWithBody Register a publisher key using a one-use enrollment key
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/enrollments/redeem (the `RedeemPublisherEnrollment` operationId).
+func (c *Client) RedeemPublisherEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemPublisherEnrollmentRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemPublisherEnrollment Register a publisher key using a one-use enrollment key
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher/enrollments/redeem (the `RedeemPublisherEnrollment` operationId).
+func (c *Client) RedeemPublisherEnrollment(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemPublisherEnrollmentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotatePublisherKeyWithBody Replace the registered publisher signing key
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/keys/rotate (the `RotatePublisherKey` operationId).
+func (c *Client) RotatePublisherKeyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotatePublisherKeyRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotatePublisherKey Replace the registered publisher signing key
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher/keys/rotate (the `RotatePublisherKey` operationId).
+func (c *Client) RotatePublisherKey(ctx context.Context, body RotatePublisherKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotatePublisherKeyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangePublisherAssertionWithBody Exchange a signed client assertion for a scoped publisher access token
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/token (the `ExchangePublisherAssertion` operationId).
+func (c *Client) ExchangePublisherAssertionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangePublisherAssertionRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangePublisherAssertionWithFormdataBody Exchange a signed client assertion for a scoped publisher access token
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /v1/publisher/token (the `ExchangePublisherAssertion` operationId).
+func (c *Client) ExchangePublisherAssertionWithFormdataBody(ctx context.Context, body ExchangePublisherAssertionFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangePublisherAssertionRequestWithFormdataBody(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1776,6 +2053,126 @@ func NewAcceptInvitationRequestWithBody(server string, contentType string, body 
 	}
 
 	operationPath := fmt.Sprintf("/v1/invitations/accept")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRedeemPublisherEnrollmentRequest calls the generic RedeemPublisherEnrollment builder with application/json body
+func NewRedeemPublisherEnrollmentRequest(server string, body RedeemPublisherEnrollmentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRedeemPublisherEnrollmentRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRedeemPublisherEnrollmentRequestWithBody constructs an http.Request for the RedeemPublisherEnrollment method, with any body, and a specified content type
+func NewRedeemPublisherEnrollmentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/enrollments/redeem")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRotatePublisherKeyRequest calls the generic RotatePublisherKey builder with application/json body
+func NewRotatePublisherKeyRequest(server string, body RotatePublisherKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRotatePublisherKeyRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRotatePublisherKeyRequestWithBody constructs an http.Request for the RotatePublisherKey method, with any body, and a specified content type
+func NewRotatePublisherKeyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/keys/rotate")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewExchangePublisherAssertionRequestWithFormdataBody calls the generic ExchangePublisherAssertion builder with application/x-www-form-urlencoded body
+func NewExchangePublisherAssertionRequestWithFormdataBody(server string, body ExchangePublisherAssertionFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewExchangePublisherAssertionRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
+}
+
+// NewExchangePublisherAssertionRequestWithBody constructs an http.Request for the ExchangePublisherAssertion method, with any body, and a specified content type
+func NewExchangePublisherAssertionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/token")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2678,6 +3075,48 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithResponse(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error)
 
+	// RedeemPublisherEnrollmentWithBodyWithResponse Register a publisher key using a one-use enrollment key
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/enrollments/redeem (the `RedeemPublisherEnrollment` operationId).
+	RedeemPublisherEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherEnrollmentResponse, error)
+
+	// RedeemPublisherEnrollmentWithResponse Register a publisher key using a one-use enrollment key
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/enrollments/redeem (the `RedeemPublisherEnrollment` operationId).
+	RedeemPublisherEnrollmentWithResponse(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherEnrollmentResponse, error)
+
+	// RotatePublisherKeyWithBodyWithResponse Replace the registered publisher signing key
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/keys/rotate (the `RotatePublisherKey` operationId).
+	RotatePublisherKeyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotatePublisherKeyResponse, error)
+
+	// RotatePublisherKeyWithResponse Replace the registered publisher signing key
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/keys/rotate (the `RotatePublisherKey` operationId).
+	RotatePublisherKeyWithResponse(ctx context.Context, body RotatePublisherKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*RotatePublisherKeyResponse, error)
+
+	// ExchangePublisherAssertionWithBodyWithResponse Exchange a signed client assertion for a scoped publisher access token
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/token (the `ExchangePublisherAssertion` operationId).
+	ExchangePublisherAssertionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangePublisherAssertionResponse, error)
+
+	// ExchangePublisherAssertionWithFormdataBodyWithResponse Exchange a signed client assertion for a scoped publisher access token
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/token (the `ExchangePublisherAssertion` operationId).
+	ExchangePublisherAssertionWithFormdataBodyWithResponse(ctx context.Context, body ExchangePublisherAssertionFormdataRequestBody, reqEditors ...RequestEditorFn) (*ExchangePublisherAssertionResponse, error)
+
 	// ResolveServiceIdentityWithBodyWithResponse Read current memberships for the signed-in website identity
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -3204,6 +3643,143 @@ func (r AcceptInvitationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AcceptInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RedeemPublisherEnrollmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherEnrollmentResult
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RedeemPublisherEnrollmentResponse) GetJSON200() *PublisherEnrollmentResult {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RedeemPublisherEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RedeemPublisherEnrollmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RedeemPublisherEnrollmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RedeemPublisherEnrollmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RedeemPublisherEnrollmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RotatePublisherKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RotatePublisherKeyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RotatePublisherKeyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RotatePublisherKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RotatePublisherKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RotatePublisherKeyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExchangePublisherAssertionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherTokenResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExchangePublisherAssertionResponse) GetJSON200() *PublisherTokenResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExchangePublisherAssertionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExchangePublisherAssertionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExchangePublisherAssertionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExchangePublisherAssertionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExchangePublisherAssertionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4216,6 +4792,84 @@ func (c *ClientWithResponses) AcceptInvitationWithResponse(ctx context.Context, 
 	return ParseAcceptInvitationResponse(rsp)
 }
 
+// RedeemPublisherEnrollmentWithBodyWithResponse Register a publisher key using a one-use enrollment key
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/enrollments/redeem (the `RedeemPublisherEnrollment` operationId).
+func (c *ClientWithResponses) RedeemPublisherEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherEnrollmentResponse, error) {
+	rsp, err := c.RedeemPublisherEnrollmentWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemPublisherEnrollmentResponse(rsp)
+}
+
+// RedeemPublisherEnrollmentWithResponse Register a publisher key using a one-use enrollment key
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/enrollments/redeem (the `RedeemPublisherEnrollment` operationId).
+func (c *ClientWithResponses) RedeemPublisherEnrollmentWithResponse(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherEnrollmentResponse, error) {
+	rsp, err := c.RedeemPublisherEnrollment(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemPublisherEnrollmentResponse(rsp)
+}
+
+// RotatePublisherKeyWithBodyWithResponse Replace the registered publisher signing key
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/keys/rotate (the `RotatePublisherKey` operationId).
+func (c *ClientWithResponses) RotatePublisherKeyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotatePublisherKeyResponse, error) {
+	rsp, err := c.RotatePublisherKeyWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotatePublisherKeyResponse(rsp)
+}
+
+// RotatePublisherKeyWithResponse Replace the registered publisher signing key
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/keys/rotate (the `RotatePublisherKey` operationId).
+func (c *ClientWithResponses) RotatePublisherKeyWithResponse(ctx context.Context, body RotatePublisherKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*RotatePublisherKeyResponse, error) {
+	rsp, err := c.RotatePublisherKey(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotatePublisherKeyResponse(rsp)
+}
+
+// ExchangePublisherAssertionWithBodyWithResponse Exchange a signed client assertion for a scoped publisher access token
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/token (the `ExchangePublisherAssertion` operationId).
+func (c *ClientWithResponses) ExchangePublisherAssertionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangePublisherAssertionResponse, error) {
+	rsp, err := c.ExchangePublisherAssertionWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangePublisherAssertionResponse(rsp)
+}
+
+// ExchangePublisherAssertionWithFormdataBodyWithResponse Exchange a signed client assertion for a scoped publisher access token
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/token (the `ExchangePublisherAssertion` operationId).
+func (c *ClientWithResponses) ExchangePublisherAssertionWithFormdataBodyWithResponse(ctx context.Context, body ExchangePublisherAssertionFormdataRequestBody, reqEditors ...RequestEditorFn) (*ExchangePublisherAssertionResponse, error) {
+	rsp, err := c.ExchangePublisherAssertionWithFormdataBody(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangePublisherAssertionResponse(rsp)
+}
+
 // ResolveServiceIdentityWithBodyWithResponse Read current memberships for the signed-in website identity
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -4796,6 +5450,101 @@ func ParseAcceptInvitationResponse(rsp *http.Response) (*AcceptInvitationRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Membership
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRedeemPublisherEnrollmentResponse parses an HTTP response from a RedeemPublisherEnrollmentWithResponse call
+func ParseRedeemPublisherEnrollmentResponse(rsp *http.Response) (*RedeemPublisherEnrollmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RedeemPublisherEnrollmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherEnrollmentResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRotatePublisherKeyResponse parses an HTTP response from a RotatePublisherKeyWithResponse call
+func ParseRotatePublisherKeyResponse(rsp *http.Response) (*RotatePublisherKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RotatePublisherKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExchangePublisherAssertionResponse parses an HTTP response from a ExchangePublisherAssertionWithResponse call
+func ParseExchangePublisherAssertionResponse(rsp *http.Response) (*ExchangePublisherAssertionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExchangePublisherAssertionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherTokenResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -5431,6 +6180,15 @@ type ServerInterface interface {
 	// AcceptInvitation Accept an invitation with its secret
 	// (POST /v1/invitations/accept)
 	AcceptInvitation(w http.ResponseWriter, r *http.Request)
+	// RedeemPublisherEnrollment Register a publisher key using a one-use enrollment key
+	// (POST /v1/publisher/enrollments/redeem)
+	RedeemPublisherEnrollment(w http.ResponseWriter, r *http.Request)
+	// RotatePublisherKey Replace the registered publisher signing key
+	// (POST /v1/publisher/keys/rotate)
+	RotatePublisherKey(w http.ResponseWriter, r *http.Request)
+	// ExchangePublisherAssertion Exchange a signed client assertion for a scoped publisher access token
+	// (POST /v1/publisher/token)
+	ExchangePublisherAssertion(w http.ResponseWriter, r *http.Request)
 	// ResolveServiceIdentity Read current memberships for the signed-in website identity
 	// (POST /v1/service/identity-context)
 	ResolveServiceIdentity(w http.ResponseWriter, r *http.Request)
@@ -5585,6 +6343,48 @@ func (siw *ServerInterfaceWrapper) AcceptInvitation(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AcceptInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RedeemPublisherEnrollment operation middleware
+func (siw *ServerInterfaceWrapper) RedeemPublisherEnrollment(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RedeemPublisherEnrollment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RotatePublisherKey operation middleware
+func (siw *ServerInterfaceWrapper) RotatePublisherKey(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RotatePublisherKey(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExchangePublisherAssertion operation middleware
+func (siw *ServerInterfaceWrapper) ExchangePublisherAssertion(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExchangePublisherAssertion(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6258,6 +7058,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/invitations/preview", wrapper.PreviewServiceInvitation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/invitations/accept", wrapper.AcceptServiceInvitation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/token", wrapper.ExchangeLoginToken)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/enrollments/redeem", wrapper.RedeemPublisherEnrollment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/token", wrapper.ExchangePublisherAssertion)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/keys/rotate", wrapper.RotatePublisherKey)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/oidc", wrapper.ExchangeOIDCToken)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/refresh", wrapper.RefreshControlSession)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/browser", wrapper.ExchangeBrowserOIDCToken)

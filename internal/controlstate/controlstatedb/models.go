@@ -690,9 +690,83 @@ type ControlPublishRunPublishCredential struct {
 	CredentialID string
 }
 
+type ControlPublishRunPublisherIdentity struct {
+	PublishRunID        string
+	PublicURLID         string
+	PublisherIdentityID string
+	PublisherGrantID    string
+	CreatedAt           pgtype.Timestamptz
+}
+
 type ControlPublishRunTrafficLimit struct {
 	PublishRunID string
 	Limits       []byte
+}
+
+type ControlPublisherAccessToken struct {
+	Digest              []byte
+	PublisherIdentityID string
+	GrantID             string
+	KeyID               string
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+}
+
+type ControlPublisherAssertion struct {
+	PublisherIdentityID string
+	AssertionID         string
+	ExpiresAt           pgtype.Timestamptz
+}
+
+type ControlPublisherEnrollmentKey struct {
+	ID                  string
+	TokenDigest         []byte
+	TeamID              string
+	Name                string
+	IdentityKind        string
+	GrantKind           string
+	PublicURLID         pgtype.Text
+	DomainID            pgtype.Text
+	Namespace           pgtype.Text
+	CreatedByIdentityID string
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	RedeemedIdentityID  pgtype.Text
+	RedeemedKeyID       pgtype.Text
+	RedeemedGrantID     pgtype.Text
+	RedeemedPublicKey   []byte
+	RedeemedAt          pgtype.Timestamptz
+}
+
+type ControlPublisherIdentity struct {
+	ID                  string
+	TeamID              string
+	Name                string
+	Kind                string
+	CreatedByIdentityID pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+}
+
+type ControlPublisherIdentityGrant struct {
+	ID                  string
+	PublisherIdentityID string
+	Kind                string
+	PublicURLID         pgtype.Text
+	DomainID            pgtype.Text
+	Namespace           pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+}
+
+type ControlPublisherIdentityKey struct {
+	ID                  string
+	PublisherIdentityID string
+	Revision            int64
+	PublicKey           []byte
+	CreatedAt           pgtype.Timestamptz
+	RetiredAt           pgtype.Timestamptz
 }
 
 type ControlRelayCertificateOrder struct {

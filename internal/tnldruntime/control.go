@@ -52,6 +52,7 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 
 func authorityAPIConfigFrom(cfg tnldconfig.Config, verifier, browserVerifier oidcauth.Verifier) authorityapi.Config {
 	return authorityapi.Config{
+		ControlURL: cfg.ControlOrigin(),
 		OIDCIssuer: cfg.OIDCIssuer, WebServiceSecret: cfg.WebServiceSecret,
 		ManagedDomain:        cfg.ManagedDomain,
 		CustomDomainsEnabled: cfg.CustomDomainsEnabled,
