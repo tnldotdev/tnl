@@ -206,11 +206,17 @@ func runNamedPublish(ctx context.Context, flags publishCommand, stdout, stderr i
 	for ctx.Err() == nil {
 		client, stop, err := localPublisherForCLI(ctx, flags)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return err
 		}
 		err = followNamedPublication(ctx, flags, client, owner, output, telemetry, serverKind)
 		stop()
-		if ctx.Err() != nil || !namedPublisherConnectionLost(err) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if !namedPublisherConnectionLost(err) {
 			return err
 		}
 		if errors.Is(err, errNamedPublisherUnauthenticated) {
