@@ -92,6 +92,63 @@ paths:
                 $ref: "#/components/schemas/ControlSessionResponse"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/publisher/enrollments/redeem:
+    post:
+      operationId: redeemPublisherEnrollment
+      summary: Register a publisher key using a one-use enrollment key
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedeemPublisherEnrollmentRequest"
+      responses:
+        "200":
+          description: Enrolled publisher identity and grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublisherEnrollmentResult"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publisher/token:
+    post:
+      operationId: exchangePublisherAssertion
+      summary: Exchange a signed client assertion for a scoped publisher access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/PublisherTokenRequest"
+      responses:
+        "200":
+          description: Short-lived token for one publisher grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublisherTokenResponse"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publisher/keys/rotate:
+    post:
+      operationId: rotatePublisherKey
+      summary: Replace the registered publisher signing key
+      security:
+        - publisherAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotatePublisherKeyRequest"
+      responses:
+        "204":
+          description: New key registered and previous key retired
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/auth/oidc:
     post:
       operationId: exchangeOIDCToken
@@ -484,6 +541,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: OAuth access token
+    publisherAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: scoped publisher access token
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -537,6 +598,84 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    RotatePublisherKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [key_id, public_key, proof]
+      properties:
+        key_id:
+          type: string
+        public_key:
+          type: string
+          description: Base64url-encoded Ed25519 public key, without padding.
+        proof:
+          type: string
+          description: Short-lived JWT client assertion signed by the replacement key.
+    RedeemPublisherEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [enrollment_key, public_key]
+      properties:
+        enrollment_key:
+          type: string
+          minLength: 1
+          maxLength: 256
+        public_key:
+          type: string
+          description: Base64url-encoded Ed25519 public key, without padding.
+    PublisherEnrollmentResult:
+      type: object
+      additionalProperties: false
+      required: [client_id, key_id, grant_id, team_id, kind]
+      properties:
+        client_id:
+          type: string
+        key_id:
+          type: string
+        grant_id:
+          type: string
+        team_id:
+          type: string
+        kind:
+          type: string
+          enum: [saved_url, namespace]
+        public_url_id:
+          type: string
+        namespace:
+          type: string
+    PublisherTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [grant_type, client_id, client_assertion_type, client_assertion, scope]
+      properties:
+        grant_type:
+          type: string
+          enum: [client_credentials]
+        client_id:
+          type: string
+        client_assertion_type:
+          type: string
+          enum: ["urn:ietf:params:oauth:client-assertion-type:jwt-bearer"]
+        client_assertion:
+          type: string
+        scope:
+          type: string
+          description: Exactly one publisher grant ID.
+    PublisherTokenResponse:
+      type: object
+      additionalProperties: false
+      required: [access_token, token_type, expires_in, scope]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          minimum: 1
+        scope:
+          type: string
     EmailDeliveryRequest:
       description: Invitation email sent by control to POST /api/internal/tnl/emails on the configured mailer. HTTP 204 means the mailer sent it or already recorded that delivery_id.
       type: object

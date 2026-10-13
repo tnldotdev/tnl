@@ -607,6 +607,95 @@ paths:
                 $ref: "#/components/schemas/PublicURL"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/publisher/enrollments:
+    post:
+      operationId: createPublisherEnrollment
+      summary: Issue a one-use enrollment key for one authorized publisher grant
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePublisherEnrollmentRequest"
+      responses:
+        "201":
+          description: One-use enrollment key and selected scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedPublisherEnrollment"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publisher-identities/{publisher_identity_id}:
+    delete:
+      operationId: revokePublisherIdentity
+      summary: Revoke one enrolled publisher identity
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: publisher_identity_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ResourceID"
+        - $ref: "#/components/parameters/TeamIDQuery"
+      responses:
+        "204":
+          description: Publisher identity revoked
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publisher-identities/{publisher_identity_id}/grants:
+    post:
+      operationId: createPublisherGrant
+      summary: Add one separately revocable publisher grant
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: publisher_identity_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePublisherGrantRequest"
+      responses:
+        "201":
+          description: Publisher grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublisherGrant"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id}:
+    delete:
+      operationId: revokePublisherGrant
+      summary: Revoke one publisher grant
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: publisher_identity_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ResourceID"
+        - name: grant_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ResourceID"
+        - $ref: "#/components/parameters/TeamIDQuery"
+      responses:
+        "204":
+          description: Publisher grant revoked
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/public-urls/{public_url_id}:
     get:
       operationId: getPublicURL
@@ -1405,6 +1494,88 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    CreatePublisherGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        public_url_scope:
+          $ref: "#/components/schemas/PublicURLScope"
+        expires_at:
+          type: string
+          format: date-time
+    PublisherGrant:
+      type: object
+      additionalProperties: false
+      required: [id, team_id, kind]
+      properties:
+        id:
+          $ref: "#/components/schemas/ResourceID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        kind:
+          type: string
+          enum: [saved_url, namespace]
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        namespace:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+    CreatePublisherEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, name, kind]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 32
+        kind:
+          type: string
+          enum: [installed, automation]
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        public_url_scope:
+          $ref: "#/components/schemas/PublicURLScope"
+    IssuedPublisherEnrollment:
+      type: object
+      additionalProperties: false
+      required: [id, team_id, name, kind, enrollment_key, expires_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ResourceID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [saved_url, namespace]
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        namespace:
+          type: string
+        enrollment_key:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
     WebhookProvider:
       type: string
       enum:

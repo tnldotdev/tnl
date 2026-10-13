@@ -605,6 +605,8 @@ only a new assignment identity does.
 | ------------------------------- | --------------------------------- | ----------------------------------------------------- |
 | Access and refresh tokens       | `tnl` client                      | Authenticate a control session.                       |
 | Publish run token               | Publisher                         | Update one publish run.                               |
+| Publisher signing key           | Native publisher                  | Sign short-lived client assertions to control.        |
+| Publisher access token          | Native publisher                  | Act under one current saved-URL or namespace grant.   |
 | Publisher connection credential | Publisher and assigned relay      | Authenticate one publisher connection.                |
 | Cluster secret                  | Split control, ingress, and relay | Authenticate private process coordination.            |
 | Login token                     | Built-in authority control        | Recover the built-in administrator identity.          |
@@ -620,6 +622,16 @@ is valid, and keeps them only in memory.
 Split ingress and relay authenticate to control with the cluster secret. Control
 also checks the configured process identity, process run ID, and lease revision.
 A restarted or expired process cannot continue using stale authorization.
+
+control keeps publisher identities and their public signing keys separate from
+people's control sessions. an editor can issue a one-use enrollment key for an
+exact saved URL or an authorized namespace. redeeming it registers the
+publisher's own key and initial grant; expiration of that key does not revoke
+the identity. the publisher exchanges a signed JWT client assertion for an
+OAuth client-credentials token scoped to one current grant. control records the
+assertion ID to reject replay, checks the current identity and grant on token
+exchange, and closes a linked publish run on heartbeat after revocation. a
+publisher grant does not confer team administration or visitor access.
 
 Visitor TLS is separate from relay transport TLS. Visitor TLS passes through ingress
 and relay unchanged and terminates in the publisher.

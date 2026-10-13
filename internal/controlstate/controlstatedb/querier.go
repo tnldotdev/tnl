@@ -27,6 +27,7 @@ type Querier interface {
 	// roll back the whole page.
 	ApplyIngressUsageReport(ctx context.Context, arg ApplyIngressUsageReportParams) (ApplyIngressUsageReportRow, error)
 	AttachPublishRunCredential(ctx context.Context, arg AttachPublishRunCredentialParams) (int64, error)
+	AttachPublishRunIdentity(ctx context.Context, arg AttachPublishRunIdentityParams) (int64, error)
 	BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayDrainParams) (BeginAdminRelayDrainRow, error)
 	BeginDNSAuthorityRelease(ctx context.Context, arg BeginDNSAuthorityReleaseParams) (ControlDnsAuthority, error)
 	BeginGuestPublishRun(ctx context.Context, arg BeginGuestPublishRunParams) (int64, error)
@@ -47,6 +48,7 @@ type Querier interface {
 	ClaimDNSPublicURLWork(ctx context.Context, arg ClaimDNSPublicURLWorkParams) (ControlPublicUrl, error)
 	ClaimInvitationEmail(ctx context.Context, arg ClaimInvitationEmailParams) (ControlEmailDelivery, error)
 	ClaimPublicURLUsageDeliveries(ctx context.Context, arg ClaimPublicURLUsageDeliveriesParams) ([]ControlPublicUrlUsageDelivery, error)
+	ClaimPublisherAssertion(ctx context.Context, arg ClaimPublisherAssertionParams) (int64, error)
 	// require the exact publish run, assignment revision, and relay service. only
 	// the same process and claim ID may repeat a connected or ready claim.
 	ClaimPublisherConnection(ctx context.Context, arg ClaimPublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
@@ -84,12 +86,15 @@ type Querier interface {
 	CreatePersonalTeam(ctx context.Context, arg CreatePersonalTeamParams) error
 	CreatePreview(ctx context.Context, arg CreatePreviewParams) (CreatePreviewRow, error)
 	CreatePublishRunPreview(ctx context.Context, arg CreatePublishRunPreviewParams) (ControlPreview, error)
+	CreatePublisherEnrollment(ctx context.Context, arg CreatePublisherEnrollmentParams) (ControlPublisherEnrollmentKey, error)
 	CreateShare(ctx context.Context, arg CreateShareParams) (ControlShare, error)
 	CreateTeamInvitation(ctx context.Context, arg CreateTeamInvitationParams) (ControlTeamInvitation, error)
 	CreateTeamMembership(ctx context.Context, arg CreateTeamMembershipParams) error
 	DNSAuthorityReleaseReady(ctx context.Context, arg DNSAuthorityReleaseReadyParams) (pgtype.Bool, error)
 	DeleteControlTLSCacheEntry(ctx context.Context, arg DeleteControlTLSCacheEntryParams) error
 	DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error
+	DeleteExpiredPublisherAccessTokens(ctx context.Context, now pgtype.Timestamptz) error
+	DeleteExpiredPublisherAssertions(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteExpiredShareCookies(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteFinishedShareHandoffs(ctx context.Context, now pgtype.Timestamptz) error
 	DeletePublicURL(ctx context.Context, arg DeletePublicURLParams) (int64, error)
@@ -168,8 +173,13 @@ type Querier interface {
 	GetPublishRunByIdempotency(ctx context.Context, arg GetPublishRunByIdempotencyParams) (ControlPublishRun, error)
 	GetPublishRunByTokenID(ctx context.Context, publishRunTokenID string) (ControlPublishRun, error)
 	GetPublishRunCredentialState(ctx context.Context, publishRunID string) (GetPublishRunCredentialStateRow, error)
+	GetPublishRunPublisherIdentity(ctx context.Context, publishRunID string) (GetPublishRunPublisherIdentityRow, error)
 	GetPublishRunTrafficLimits(ctx context.Context, publishRunID string) ([]byte, error)
+	GetPublisherAccessToken(ctx context.Context, digest []byte) (GetPublisherAccessTokenRow, error)
 	GetPublisherConnectionForClaim(ctx context.Context, publisherConnectionID string) (ControlPublishRunConnectionSlot, error)
+	GetPublisherGrantURL(ctx context.Context, publicUrlID string) (GetPublisherGrantURLRow, error)
+	GetPublisherIdentityGrant(ctx context.Context, arg GetPublisherIdentityGrantParams) (GetPublisherIdentityGrantRow, error)
+	GetPublisherIdentityKey(ctx context.Context, arg GetPublisherIdentityKeyParams) (GetPublisherIdentityKeyRow, error)
 	GetReadyEphemeralCredentialDomain(ctx context.Context, arg GetReadyEphemeralCredentialDomainParams) (GetReadyEphemeralCredentialDomainRow, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)
 	// claims and readiness share the relay-service guard across processes.
@@ -222,6 +232,10 @@ type Querier interface {
 	InsertPublishRunAuditEvent(ctx context.Context, arg InsertPublishRunAuditEventParams) error
 	InsertPublishRunConnections(ctx context.Context, arg InsertPublishRunConnectionsParams) ([]ControlPublishRunConnectionSlot, error)
 	InsertPublishRunTrafficLimits(ctx context.Context, arg InsertPublishRunTrafficLimitsParams) error
+	InsertPublisherAccessToken(ctx context.Context, arg InsertPublisherAccessTokenParams) error
+	InsertPublisherIdentity(ctx context.Context, arg InsertPublisherIdentityParams) (ControlPublisherIdentity, error)
+	InsertPublisherIdentityGrant(ctx context.Context, arg InsertPublisherIdentityGrantParams) (ControlPublisherIdentityGrant, error)
+	InsertPublisherIdentityKey(ctx context.Context, arg InsertPublisherIdentityKeyParams) (ControlPublisherIdentityKey, error)
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
 	InsertShareCookie(ctx context.Context, arg InsertShareCookieParams) ([]byte, error)
 	InsertShareHandoff(ctx context.Context, arg InsertShareHandoffParams) ([]byte, error)
@@ -253,6 +267,7 @@ type Querier interface {
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
 	ListPublicURLPublishCredentials(ctx context.Context, publicUrlID pgtype.Text) ([]ControlPublicUrlPublishCredential, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
+	ListPublisherIdentityManagementGrants(ctx context.Context, arg ListPublisherIdentityManagementGrantsParams) ([]ListPublisherIdentityManagementGrantsRow, error)
 	ListReadyPreviewBrowserHostnames(ctx context.Context, arg ListReadyPreviewBrowserHostnamesParams) ([]ListReadyPreviewBrowserHostnamesRow, error)
 	ListReadyShareHostnames(ctx context.Context, arg ListReadyShareHostnamesParams) ([]ListReadyShareHostnamesRow, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
@@ -320,6 +335,9 @@ type Querier interface {
 	// read the bucket later: another ingress may create it while this statement
 	// waits for the publish run lock, after this statement's snapshot was taken.
 	LockPublishRunForUsage(ctx context.Context, arg LockPublishRunForUsageParams) (ControlPublishRun, error)
+	LockPublisherEnrollment(ctx context.Context, id string) (ControlPublisherEnrollmentKey, error)
+	LockPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error)
+	LockPublisherIdentityForRotation(ctx context.Context, id string) (ControlPublisherIdentity, error)
 	LockRelayServiceForCertificate(ctx context.Context, relayServiceID string) (string, error)
 	// callers hold affected public URL rows and any existing publish run rows.
 	// take the assignment-total guard before relay-service guards and lease rows;
@@ -348,6 +366,7 @@ type Querier interface {
 	MarkPublishRunReady(ctx context.Context, arg MarkPublishRunReadyParams) (ControlPublishRun, error)
 	// ready is idempotent for the exact claim; a replaced assignment cannot revive.
 	MarkPublisherConnectionReady(ctx context.Context, arg MarkPublisherConnectionReadyParams) (ControlPublishRunConnectionSlot, error)
+	NextPublisherIdentityKeyRevision(ctx context.Context, publisherIdentityID string) (int32, error)
 	ObservePublicURLRecoveryEpisode(ctx context.Context, arg ObservePublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	OpenPublicURLRecoveryEpisode(ctx context.Context, arg OpenPublicURLRecoveryEpisodeParams) error
 	OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error)
@@ -364,6 +383,7 @@ type Querier interface {
 	ReadIngressRoutingTableClock(ctx context.Context) (ControlIngressRoutingTableClock, error)
 	RecentGuestTrialStats(ctx context.Context, since pgtype.Timestamptz) (RecentGuestTrialStatsRow, error)
 	RecordFeedbackActivity(ctx context.Context, arg RecordFeedbackActivityParams) error
+	RedeemPublisherEnrollment(ctx context.Context, arg RedeemPublisherEnrollmentParams) (int64, error)
 	RegisterIngress(ctx context.Context, arg RegisterIngressParams) (ControlIngressLease, error)
 	// blocking relay-service operations take the transaction advisory guard before
 	// service and lease rows. row readers can bypass a waiting writer without this
@@ -391,12 +411,15 @@ type Querier interface {
 	ReserveInvitedMemberSlug(ctx context.Context, arg ReserveInvitedMemberSlugParams) (string, error)
 	ReserveManagedDirectName(ctx context.Context, arg ReserveManagedDirectNameParams) (string, error)
 	ReserveManagedLabel(ctx context.Context, arg ReserveManagedLabelParams) (string, error)
+	RetirePublisherIdentityKey(ctx context.Context, arg RetirePublisherIdentityKeyParams) (int64, error)
 	RetryPublicURLUsageDelivery(ctx context.Context, arg RetryPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (string, error)
 	RevokeBrowserAccessSession(ctx context.Context, arg RevokeBrowserAccessSessionParams) error
 	RevokeControlSession(ctx context.Context, arg RevokeControlSessionParams) (int64, error)
 	RevokeEphemeralPublishCredential(ctx context.Context, arg RevokeEphemeralPublishCredentialParams) (ControlPublicUrlPublishCredential, error)
 	RevokePublicURLPublishCredential(ctx context.Context, arg RevokePublicURLPublishCredentialParams) (ControlPublicUrlPublishCredential, error)
+	RevokePublisherIdentity(ctx context.Context, arg RevokePublisherIdentityParams) (ControlPublisherIdentity, error)
+	RevokePublisherIdentityGrant(ctx context.Context, arg RevokePublisherIdentityGrantParams) (int64, error)
 	RevokeShare(ctx context.Context, arg RevokeShareParams) (ControlShare, error)
 	RevokeTeamInvitation(ctx context.Context, arg RevokeTeamInvitationParams) (int64, error)
 	RotateACMEAccountKey(ctx context.Context, arg RotateACMEAccountKeyParams) error

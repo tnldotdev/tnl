@@ -343,6 +343,33 @@ func (d *Database) HeartbeatPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
+	linked, linkErr := queries.GetPublishRunPublisherIdentity(ctx, session.ID)
+	if linkErr != nil && !errors.Is(linkErr, pgx.ErrNoRows) {
+		return PublishRunSetup{}, fmt.Errorf("controlstate: read publisher identity state: %w", linkErr)
+	}
+	if linkErr == nil {
+		invalid := linked.TeamID != route.TeamID || linked.RevokedAt.Valid || linked.GrantRevokedAt.Valid ||
+			linked.GrantExpiresAt.Valid && !linked.GrantExpiresAt.Time.After(now)
+		if linked.Kind == "saved_url" {
+			invalid = invalid || !linked.PublicURLID.Valid || linked.PublicURLID.String != route.ID
+		} else if linked.Kind == "namespace" {
+			invalid = invalid || !route.Ephemeral || linked.DomainID.String != route.DomainID || linked.Namespace.String != route.Namespace
+		} else {
+			invalid = true
+		}
+		if invalid {
+			if err := closePublishRun(ctx, queries, &pendingEvents, route, session, PublishRunClosed, now, "publisher_identity_revoked"); err != nil {
+				return PublishRunSetup{}, err
+			}
+			if err := pendingEvents.publish(ctx, queries); err != nil {
+				return PublishRunSetup{}, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return PublishRunSetup{}, err
+			}
+			return PublishRunSetup{}, ErrPublicURLCredential
+		}
+	}
 	credential, credentialErr := queries.GetPublishRunCredentialState(ctx, session.ID)
 	if credentialErr != nil && !errors.Is(credentialErr, pgx.ErrNoRows) {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: read publish credential state: %w", credentialErr)
