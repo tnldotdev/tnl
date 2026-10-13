@@ -1,11 +1,13 @@
 package publisher
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"testing"
 	"time"
@@ -14,6 +16,37 @@ import (
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+func TestMySQLPublicPortSelectsCertificateWithoutVisitorSNI(t *testing.T) {
+	certificate := publicURLTestCertificate(t, "route.example")
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", ServiceProtocol: controlv1.Mysql, PublicPort: 3306,
+		Target: "127.0.0.1:3306", Certificate: certificate,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+	for _, name := range []string{"", "route.example"} {
+		selected, err := route.getCertificate(&tls.ClientHelloInfo{ServerName: name})
+		if err != nil || selected == nil || !bytes.Equal(selected.Certificate[0], certificate.Certificate[0]) {
+			t.Fatalf("MySQL certificate for SNI %q = %#v, %v", name, selected, err)
+		}
+	}
+	if _, err := route.getCertificate(&tls.ClientHelloInfo{ServerName: "other.example"}); err == nil {
+		t.Fatal("accepted a MySQL visitor with mismatched SNI")
+	}
+	httpRoute, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", Handler: http.NotFoundHandler(), Certificate: certificate,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer httpRoute.Close()
+	if _, err := httpRoute.getCertificate(&tls.ClientHelloInfo{}); err == nil {
+		t.Fatal("accepted an HTTP visitor without SNI")
+	}
+}
 
 func TestDatabaseForwardingRequiresVisitorAndTargetTLS(t *testing.T) {
 	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql} {
