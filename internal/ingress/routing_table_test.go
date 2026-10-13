@@ -102,6 +102,8 @@ func TestRoutingTablePortClaimsStayAtomicAcrossPages(t *testing.T) {
 		entry.IpPolicy = ingressv1.AllowAll
 		id, protocol := ingressv1.Identifier(pool), ingressv1.Postgres
 		entry.IngressPoolId, entry.ServiceProtocol, entry.PublicPort = &id, &protocol, &port
+		entry.Traffic = &ingressv1.PublishRunTrafficLimits{Connections: 12, Rate: 5, RatePerNs: int64(2 * time.Second),
+			Burst: 9, UploadBytes: 2 << 20, DownloadBytes: 4 << 20}
 		return ingressv1.IngressRoutingTableEvent{
 			RoutingTableRevision: revision, Kind: ingressv1.PublicUrlUpsert,
 			PublicUrlId: entry.PublicUrlId, PublishRunNumber: entry.PublishRunNumber,
@@ -115,8 +117,15 @@ func TestRoutingTablePortClaimsStayAtomicAcrossPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	*first.Entry.PublicPort = 9999
-	if got, reason := table.LookupPortWithReason("ingress-a", 5432, now); reason != "" || *got.PublicPort != 5432 {
+	first.Entry.Traffic.Connections = 99
+	if got, reason := table.LookupPortWithReason("ingress-a", 5432, now); reason != "" || *got.PublicPort != 5432 || got.Traffic.Connections != 12 {
 		t.Fatalf("retained port = %+v, reason %q", got, reason)
+	}
+	if got, _ := table.LookupPortWithReason("ingress-a", 5432, now); got.Traffic != nil {
+		got.Traffic.Connections = 99
+	}
+	if got, _ := table.LookupPortWithReason("ingress-a", 5432, now); got.Traffic.Connections != 12 {
+		t.Fatalf("lookup mutated retained traffic = %+v", got.Traffic)
 	}
 	if _, reason := table.LookupPortWithReason("ingress-b", 5432, now); reason != "missing" {
 		t.Fatalf("wrong pool lookup reason = %q", reason)
@@ -135,6 +144,9 @@ func TestRoutingTablePortClaimsStayAtomicAcrossPages(t *testing.T) {
 		{name: "unknown protocol with public port", port: 15432, change: func(entry *ingressv1.IngressRoutingTableEntry) {
 			protocol := ingressv1.IngressRoutingTableEntryServiceProtocol("unknown")
 			entry.ServiceProtocol = &protocol
+		}},
+		{name: "invalid traffic", port: 15432, change: func(entry *ingressv1.IngressRoutingTableEntry) {
+			entry.Traffic.RatePerNs = 0
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

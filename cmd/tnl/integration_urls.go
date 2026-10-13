@@ -55,12 +55,20 @@ func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, pro
 	if err != nil {
 		return projectmeta.IntegrationOrigin{}, publisherServices{}, err
 	}
+	if project.Config.Tunnel != nil {
+		flags := tunnelFlags{}
+		applyTunnelLimits(&flags, project.Config.Tunnel.Limits, "http")
+		services.traffic, err = flags.traffic()
+		if err != nil {
+			return projectmeta.IntegrationOrigin{}, publisherServices{}, err
+		}
+	}
 	origin, err := projectIntegrationOrigin(ctx, state, project, server, services.namespace, "oauth")
 	return origin, services, err
 }
 
 func integrationURLConfig(services publisherServices, hostname string, purpose controlv1.PublicURLPurpose) publisher.Config {
-	config := services.config(integrationURLTarget, []string{}, publisher.ApplicationLimits{Concurrency: 32})
+	config := services.config(integrationURLTarget, []string{}, publisher.ApplicationLimits{Concurrency: 32}, services.traffic)
 	config.Hostname, config.PublicURLScope, config.Ephemeral = hostname, services.publicURLScope, false
 	config.Purpose = purpose
 	return config

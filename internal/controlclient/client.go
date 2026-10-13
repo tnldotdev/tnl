@@ -24,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -393,22 +394,49 @@ func (c *Client) CreatePublishRunWithCredential(ctx context.Context, publicURLID
 	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String())
 }
 
+func (c *Client) CreatePublishRunWithCredentialTraffic(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.PublicURLPublishCredential, traffic trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String(), traffic)
+}
+
 func (c *Client) CreatePublishRunWithEphemeralCredential(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.EphemeralCredential) (controlv1.PublishRunSetup, error) {
 	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String())
 }
 
-func (c *Client) createPublishRunWithBearer(ctx context.Context, publicURLID, idempotencyKey, bearer string) (controlv1.PublishRunSetup, error) {
+func (c *Client) CreatePublishRunWithEphemeralCredentialTraffic(ctx context.Context, publicURLID, idempotencyKey string, credential credentials.EphemeralCredential, traffic trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+	return c.createPublishRunWithBearer(ctx, publicURLID, idempotencyKey, credential.String(), traffic)
+}
+
+func (c *Client) createPublishRunWithBearer(ctx context.Context, publicURLID, idempotencyKey, bearer string, traffic ...trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
 	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
+	body := createPublishRunBody(traffic)
 	return request[controlv1.PublishRunSetup](ctx, c, bearer, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublishRun(ctx, publicURLID, params, editors...)
+		return c.api.CreatePublishRun(ctx, publicURLID, params, body, editors...)
 	})
 }
 
 func (c *Client) CreatePublishRun(ctx context.Context, publicURLID, idempotencyKey string) (controlv1.PublishRunSetup, error) {
 	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
 	return requestWithAccess[controlv1.PublishRunSetup](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublishRun(ctx, publicURLID, params, editors...)
+		return c.api.CreatePublishRun(ctx, publicURLID, params, controlv1.CreatePublishRunJSONRequestBody{}, editors...)
 	})
+}
+
+func (c *Client) CreatePublishRunWithTraffic(ctx context.Context, publicURLID, idempotencyKey string, traffic trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+	params := &controlv1.CreatePublishRunParams{IdempotencyKey: idempotencyKey}
+	return requestWithAccess[controlv1.PublishRunSetup](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreatePublishRun(ctx, publicURLID, params, createPublishRunBody([]trafficlimits.Selection{traffic}), editors...)
+	})
+}
+
+func createPublishRunBody(traffic []trafficlimits.Selection) controlv1.CreatePublishRunJSONRequestBody {
+	if len(traffic) == 0 {
+		return controlv1.CreatePublishRunJSONRequestBody{}
+	}
+	selection := traffic[0]
+	return controlv1.CreatePublishRunJSONRequestBody{Traffic: &controlv1.PublishRunTrafficSelection{
+		Connections: selection.Connections, Rate: selection.Rate, RatePer: selection.RatePer,
+		Burst: selection.Burst, UploadBytes: selection.UploadBytes, DownloadBytes: selection.DownloadBytes,
+	}}
 }
 
 func (c *Client) MarkPublishRunReady(ctx context.Context, publishRunID string, publishRunNumber uint64, token credentials.PublishRunToken) error {

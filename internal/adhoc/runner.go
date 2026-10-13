@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -30,6 +31,7 @@ type Options struct {
 	AllowIP      []string
 	AllowAllIPs  bool
 	Limits       publisher.ApplicationLimits
+	Traffic      trafficlimits.Selection
 	OnAllocated  func(controlv1.PublicURL) error
 	Observe      func(publisher.Event) error
 }
@@ -44,6 +46,9 @@ func Run(ctx context.Context, options Options) (result error) {
 		return err
 	}
 	if err := options.Limits.Validate(); err != nil {
+		return err
+	}
+	if err := options.Traffic.Validate(); err != nil {
 		return err
 	}
 	target, err := localproxy.NormalizeTarget(options.Target)
@@ -116,7 +121,7 @@ func Run(ctx context.Context, options Options) (result error) {
 		TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membershipID,
 		PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: route.PublicUrlScope,
 		Purpose: controlv1.App, Hostname: route.CanonicalHostname, Target: target,
-		AllowedIPPrefixes: allowed, Limits: options.Limits, Ephemeral: true, AllocatedPublicURL: &route,
+		AllowedIPPrefixes: allowed, Limits: options.Limits, Traffic: options.Traffic, Ephemeral: true, AllocatedPublicURL: &route,
 		QUICConnector: muxsession.QUICConnector{TLSConfig: tlsConfig},
 		TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: tlsConfig},
 		Observe:       options.Observe,

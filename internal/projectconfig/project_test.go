@@ -88,15 +88,20 @@ func TestServiceIPOverridesAndAllowAllIPs(t *testing.T) {
 func TestServiceLimitsOverrideEachFieldWithoutChangingRoot(t *testing.T) {
 	requests, rateRequests, concurrency := 20, 5, 3
 	tcpCount, tcpConcurrency := 10, 8
+	trafficConnections, trafficRate, overriddenConnections := 32, 20, 16
+	upload, download := config.ByteRate("8MiB/s"), config.ByteRate("16MiB/s")
 	address := config.Target("db.internal:5432")
 	period := config.Duration(time.Minute)
 	override := config.Duration(2 * time.Minute)
 	project := Project{Config: config.TNL{
-		Tunnel: &config.Tunnel{Limits: &config.Limits{HTTP: &config.WorkLimits{
+		Tunnel: &config.Tunnel{Limits: &config.Limits{Traffic: &config.TrafficLimits{
+			Connections: &trafficConnections, Rate: &config.Rate{Count: &trafficRate},
+			Bandwidth: &config.Bandwidth{Upload: &upload, Download: &download}}, HTTP: &config.WorkLimits{
 			Total: &requests, Rate: &config.Rate{Count: &rateRequests, Per: &period}, Concurrency: &concurrency,
 		}, TCP: &config.WorkLimits{Rate: &config.Rate{Count: &tcpCount, Per: &period}, Concurrency: &tcpConcurrency}}},
 		Services: config.Services{"api": {Tunnel: &config.Tunnel{Limits: &config.Limits{
-			HTTP: &config.WorkLimits{Rate: &config.Rate{Per: &override}},
+			Traffic: &config.TrafficLimits{Connections: &overriddenConnections},
+			HTTP:    &config.WorkLimits{Rate: &config.Rate{Per: &override}},
 		}}}, "orders": {Protocol: new("postgres"), Target: &config.ServiceTarget{Type: "address", Address: &address}, Tunnel: &config.Tunnel{Limits: &config.Limits{
 			TCP: &config.WorkLimits{Rate: &config.Rate{Per: &override}},
 		}}}},
@@ -114,6 +119,11 @@ func TestServiceLimitsOverrideEachFieldWithoutChangingRoot(t *testing.T) {
 	}
 	if project.Config.Tunnel.Limits.HTTP.Rate.Per != &period {
 		t.Fatal("service override changed root rate period")
+	}
+	if selected := service.Tunnel.Limits.Traffic; selected.Connections != &overriddenConnections ||
+		selected.Rate.Count != &trafficRate || selected.Bandwidth.Upload != &upload || selected.Bandwidth.Download != &download ||
+		project.Config.Tunnel.Limits.Traffic.Connections != &trafficConnections {
+		t.Fatalf("traffic did not inherit field by field: %+v", selected)
 	}
 	tcp, err := project.EffectiveService("orders")
 	if err != nil || tcp.Tunnel.Limits.TCP.Rate.Count != &tcpCount || tcp.Tunnel.Limits.TCP.Rate.Per != &override || tcp.Tunnel.Limits.TCP.Concurrency != &tcpConcurrency ||

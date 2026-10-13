@@ -185,9 +185,26 @@ type Tunnel struct {
 
 // Limits select protocol-specific application admission after visitor access.
 type Limits struct {
-	HTTP *WorkLimits `json:"http,omitempty" yaml:"http,omitempty"`
-	TCP  *WorkLimits `json:"tcp,omitempty" yaml:"tcp,omitempty"`
+	Traffic *TrafficLimits `json:"traffic,omitempty" yaml:"traffic,omitempty"`
+	HTTP    *WorkLimits    `json:"http,omitempty" yaml:"http,omitempty"`
+	TCP     *WorkLimits    `json:"tcp,omitempty" yaml:"tcp,omitempty"`
 }
+
+// TrafficLimits selects ingress admission for one publish run, independently
+// of the HTTP request or TCP session budget in the local publisher.
+type TrafficLimits struct {
+	Connections *int       `json:"connections,omitempty" yaml:"connections,omitempty"`
+	Rate        *Rate      `json:"rate,omitempty" yaml:"rate,omitempty"`
+	Bandwidth   *Bandwidth `json:"bandwidth,omitempty" yaml:"bandwidth,omitempty"`
+}
+
+type Bandwidth struct {
+	Upload   *ByteRate `json:"upload,omitempty" yaml:"upload,omitempty"`
+	Download *ByteRate `json:"download,omitempty" yaml:"download,omitempty"`
+}
+
+// ByteRate is a positive, binary byte count per second.
+type ByteRate string
 
 type WorkLimits struct {
 	Total       *int  `json:"total,omitempty" yaml:"total,omitempty"`

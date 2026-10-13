@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/readiness"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 )
 
 var (
@@ -220,6 +221,7 @@ type IngressRoutingTableProjection struct {
 	IPPolicyKey          [32]byte                                 `json:"-"`
 	PublicUrlExpiresAt   time.Time                                `json:"public_url_expires_at"`
 	RecoveryEpisodeID    *uint64                                  `json:"recovery_episode_id,omitempty"`
+	Traffic              *trafficlimits.Limits                    `json:"traffic,omitempty"`
 	PublisherConnections []IngressRoutingTablePublisherConnection `json:"publisher_connections"`
 }
 
@@ -848,6 +850,11 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 	if route.PublicPort.Valid {
 		port := uint16(route.PublicPort.Int32)
 		projection.PublicPort = &port
+	}
+	var trafficErr error
+	projection.Traffic, trafficErr = readPublishRunTrafficLimits(ctx, queries, session.ID)
+	if trafficErr != nil {
+		return nil, trafficErr
 	}
 	var policyCiphertext []byte
 	policyStorageKeyID := ""

@@ -47,11 +47,18 @@ func publishRunSetupResponse(
 	setup controlstate.PublishRunSetup,
 	certificatePlan controlv1.CertificatePlan,
 ) controlv1.PublishRunSetup {
-	return controlv1.PublishRunSetup{
+	response := controlv1.PublishRunSetup{
 		PublicUrl: publicURLResponse(route), PublishRun: publishRunResponse(setup),
 		PublishRunToken: setup.PublishRunToken.String(), CertificatePlan: certificatePlan,
 		PublisherConnections: connectionAssignmentResponses(setup.PublisherConnections),
 	}
+	if limits := setup.Traffic; limits != nil {
+		response.Traffic = &controlv1.PublishRunTrafficLimits{
+			Connections: limits.Connections, Rate: limits.Rate, RatePerNs: int64(limits.RatePer),
+			Burst: limits.Burst, UploadBytes: limits.UploadBytes, DownloadBytes: limits.DownloadBytes,
+		}
+	}
+	return response
 }
 
 func publishRunResponse(setup controlstate.PublishRunSetup) controlv1.PublishRun {

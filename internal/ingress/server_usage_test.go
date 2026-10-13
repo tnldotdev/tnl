@@ -56,8 +56,13 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 func TestIngressHTTPConnectionRateRejectsBeforeRelay(t *testing.T) {
 	backend := newTLSBackend(t)
 	config := publicURLConfig(backend)
-	config.Traffic.Default = TrafficLimits{Connections: 4, Rate: 1, Burst: 1,
-		UploadBytes: 64 << 10, DownloadBytes: 64 << 10}
+	lookup := config.Lookup
+	config.Lookup = func(host string) (PublicURL, LookupReason) {
+		route, reason := lookup(host)
+		route.Traffic = &TrafficLimits{Connections: 4, Rate: 1, RatePer: time.Second, Burst: 1,
+			UploadBytes: 64 << 10, DownloadBytes: 64 << 10}
+		return route, reason
+	}
 	_, address := startIngress(t, config)
 	first := ingressClient(t, address, "route.example", "")
 	exchangePing(t, first)

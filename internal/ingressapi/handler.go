@@ -351,6 +351,12 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		value := int(*projection.PublicPort)
 		publicPort = &value
 	}
+	var traffic *ingressv1.PublishRunTrafficLimits
+	if limits := projection.Traffic; limits != nil {
+		traffic = &ingressv1.PublishRunTrafficLimits{Connections: limits.Connections, Rate: limits.Rate,
+			RatePerNs: int64(limits.RatePer), Burst: limits.Burst,
+			UploadBytes: limits.UploadBytes, DownloadBytes: limits.DownloadBytes}
+	}
 	return ingressv1.IngressRoutingTableEntry{
 		PublishRunId: projection.PublishRunID, PublicUrlId: projection.PublicURLID,
 		PublishRunNumber: int64(projection.PublishRunNumber), CanonicalHostname: projection.CanonicalHostname,
@@ -360,5 +366,6 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		AllowedIpHashes: hashed, IpPolicyKey: verifier,
 		PublicUrlExpiresAt: projection.PublicUrlExpiresAt,
 		RecoveryEpisodeId:  recoveryEpisodeID, PublisherConnections: connections,
+		Traffic: traffic,
 	}
 }

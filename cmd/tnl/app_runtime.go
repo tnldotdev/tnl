@@ -782,7 +782,12 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 			return err
 		}
 	}
-	configuration := services.config(service.Target, preparation.policy.prefixes, flags.limits())
+	traffic, err := flags.traffic()
+	if err != nil {
+		return failure.Wrap("validate traffic limits", failure.InvalidTunnelFlags, err)
+	}
+	services.traffic = traffic
+	configuration := services.config(service.Target, preparation.policy.prefixes, flags.limits(), traffic)
 	configuration.ServiceProtocol = controlv1.PublicURLServiceProtocol(service.ServiceProtocol)
 	configuration.ResolveTarget = preparation.resolve
 	effective, err := project.EffectiveService(service.Name)

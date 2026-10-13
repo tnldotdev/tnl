@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -43,6 +44,7 @@ func TestOpenWaitsForRoutabilityAndCleansUpOnCancellation(t *testing.T) {
 				PublicUrlScope: controlv1.Shared, PolicyRevision: 1})
 		case "POST /v1/public-urls/url_allocated/publish-runs":
 			publishRuns.Add(1)
+			_, _ = io.Copy(io.Discard, r.Body)
 			<-r.Context().Done()
 		case "DELETE /v1/ephemeral-public-urls/url_allocated":
 			deletions.Add(1)

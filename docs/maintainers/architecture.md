@@ -77,14 +77,21 @@ untrusted forwarding headers before proxying an allowed HTTP request.
 
 ingress bounds new connections by the trusted visitor source and per-process
 rate before routing; standalone control and relay handoffs on the same public
-listener also pass this early budget. after selecting a public URL and applying IP policy, it
-also bounds concurrent and new connections per public URL. byte budgets count
+listener also pass this early budget. after selecting a public URL and applying
+IP policy, it also bounds concurrent and new connections per public URL. byte budgets count
 encrypted bytes in both directions before each write to the forwarding stream
 or visitor; a bounded wait paces compliant streams before a saturated transfer
 is closed. tokens belong to one public URL and publish run on each ingress
 process, not to a connected relay. denied HTTPS visitors and certificate
 challenges retain their separate admission classes. these limits are process
 local: replicas behind one ingress address do not share a token bucket.
+control checks the project's optional `tunnel.limits.traffic` selection against
+operator ceilings when a publish run starts, stores the normalized budget on
+that run, and includes it in every routing projection. a later routing refresh
+or relay assignment replacement cannot reset its ingress tokens. an old run
+without a stored budget uses ingress defaults. if split control and ingress
+have different ceilings, ingress rejects a projected value above its own
+ceiling rather than silently accepting a weaker policy.
 
 For a database public URL, ingress uses the original destination port in the
 trusted outer PROXY v2 header instead of inspecting a ClientHello. A routing

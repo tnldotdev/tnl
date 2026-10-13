@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/tcpport"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
@@ -249,6 +250,14 @@ func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {
 		len(entry.PublisherConnections) > 2 {
 		return ErrRoutingTableEvent
 	}
+	if selected := entry.Traffic; selected != nil {
+		limits := trafficlimits.Limits{Connections: selected.Connections, Rate: selected.Rate,
+			RatePer: time.Duration(selected.RatePerNs), Burst: selected.Burst,
+			UploadBytes: selected.UploadBytes, DownloadBytes: selected.DownloadBytes}
+		if selected.RatePerNs <= 0 || !limits.Valid() {
+			return ErrRoutingTableEvent
+		}
+	}
 	if entry.PublicPort != nil {
 		if !tcpport.Valid(*entry.PublicPort) || entry.IngressPoolId == nil || *entry.IngressPoolId == "" ||
 			entry.ServiceProtocol == nil || !entry.ServiceProtocol.Valid() || *entry.ServiceProtocol == ingressv1.Http {
@@ -348,6 +357,10 @@ func cloneRoutingTableEntry(source ingressv1.IngressRoutingTableEntry) ingressv1
 	if source.RecoveryEpisodeId != nil {
 		value := *source.RecoveryEpisodeId
 		result.RecoveryEpisodeId = &value
+	}
+	if source.Traffic != nil {
+		copy := *source.Traffic
+		result.Traffic = &copy
 	}
 	return result
 }

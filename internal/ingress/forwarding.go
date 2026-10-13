@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/routebackend"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -138,6 +139,15 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 	}
 	if entry.RecoveryEpisodeId != nil && *entry.RecoveryEpisodeId > 0 {
 		route.RecoveryEpisodeID = uint64(*entry.RecoveryEpisodeId)
+	}
+	if selected := entry.Traffic; selected != nil {
+		limits := trafficlimits.Limits{Connections: selected.Connections, Rate: selected.Rate,
+			RatePer: time.Duration(selected.RatePerNs), Burst: selected.Burst,
+			UploadBytes: selected.UploadBytes, DownloadBytes: selected.DownloadBytes}
+		if !limits.Valid() {
+			return PublicURL{}, errors.New("ingress: routing-table traffic limits are invalid")
+		}
+		route.Traffic = &limits
 	}
 	return route, nil
 }
