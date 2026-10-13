@@ -30,10 +30,10 @@ type cli struct {
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
-	Watch       watchCommand     `cmd:"" help:"Follow resumable local app and TCP service events." group:"start"`
+	Watch       watchCommand     `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
 	Status      statusCommand    `cmd:"" help:"Show configured services and local publications; --all includes other projects." group:"start"`
-	Requests    requestsCommand  `cmd:"" help:"Inspect recent local HTTP requests." group:"manage"`
+	Inspect     inspectCommand   `cmd:"" help:"Inspect recent local HTTP and supported TCP activity." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
 	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
@@ -470,15 +470,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 		return runStatus(ctx, flags.Status, stdout)
-	case "requests list", "requests show <request-id>":
+	case "inspect list", "inspect show <inspection-number>":
 		root, err := projectRoot(ctx, flags)
 		if err != nil {
 			return err
 		}
-		if parsedCommand == "requests list" {
-			return runRequestsList(ctx, flags.Requests.List, root, stdout)
+		if parsedCommand == "inspect list" {
+			return runInspectList(ctx, flags.Inspect.List, root, stdout)
 		}
-		return runRequestsShow(ctx, flags.Requests.Show, root, stdout)
+		return runInspectShow(ctx, flags.Inspect.Show, root, stdout)
 	case "webhook use <endpoint>":
 		return runWebhookChoice(ctx, flags.Webhook.Use.webhookChoiceCommand, project, true, flags.Webhook.Use.Force, stdout)
 	case "webhook release <endpoint>":
