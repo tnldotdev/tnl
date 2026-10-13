@@ -225,10 +225,12 @@ func TestRouteMutationsDoNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
 }
 
 func TestUpdateRouteMapsOpenSessionConflict(t *testing.T) {
-	response := httptest.NewRecorder()
-	writeControlStateProblem(response, "update route", controlstate.ErrPublishRunOpen)
-	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"code":"publish_run_open"`) {
-		t.Fatalf("response = %d: %s", response.Code, response.Body.String())
+	for _, conflict := range []error{controlstate.ErrPublishRunOpen, controlstate.ErrPublishRunConflict} {
+		response := httptest.NewRecorder()
+		writeControlStateProblem(response, "publish run", conflict)
+		if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"code":"publish_run_open"`) {
+			t.Fatalf("%v response = %d: %s", conflict, response.Code, response.Body.String())
+		}
 	}
 }
 

@@ -68,6 +68,10 @@ func TestNameUnavailableRemainsDistinctFromStatusConflict(t *testing.T) {
 	if !errors.Is(err, ErrNameUnavailable) || errors.Is(err, ErrStatusConflict) {
 		t.Fatalf("response error = %v", err)
 	}
+	err = responseError(http.StatusConflict, nil, []byte(`{"code":"publish_run_open"}`))
+	if !errors.Is(err, ErrPublishRunOpen) || !errors.Is(err, ErrStatusConflict) || errors.Is(err, ErrNameUnavailable) {
+		t.Fatalf("open publish run error = %v", err)
+	}
 }
 
 func TestClientBoundsRequests(t *testing.T) {

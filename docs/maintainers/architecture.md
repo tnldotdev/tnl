@@ -513,6 +513,10 @@ public URL
 One app service publication or local `tnl publish` invocation is a tunnel. Starting a new
 publish run increments its public URL's publish run number. Stopping a normal
 tunnel ends the publish run but leaves the public URL available for a later run.
+After an abrupt publisher stop, control may still hold the old publish run until
+its heartbeat expires. Control reports that specific conflict as
+`publish_run_open`; the replacement publisher retries with the same idempotency
+key for up to one minute. Other control conflicts fail without this retry.
 
 Each publish run has two publisher connection slots. Control assigns them to
 different relay services.

@@ -212,6 +212,32 @@ func TestCreatePublishRunClassifiesLifecycleConflict(t *testing.T) {
 	}
 }
 
+func TestCreatePublishRunWaitsForPreviousRunToClose(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		control := &publisherControlStub{allowed: []string{"create_session"}, openRunFailures: 1, publishRunSetup: &controlv1.PublishRunSetup{}}
+		_, err := createPublishRun(t.Context(), Config{Control: control}, controlv1.PublicURL{Id: "public_url_1"})
+		if err != nil || len(control.publishRunKeys) != 2 || control.publishRunKeys[0] != control.publishRunKeys[1] {
+			t.Fatalf("publish run did not retry its open-run conflict with one idempotency key: %v, %v", err, control.publishRunKeys)
+		}
+	})
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		control := &publisherControlStub{allowed: []string{"create_session"}, openRunFailures: 100}
+		_, err := createPublishRun(ctx, Config{Control: control}, controlv1.PublicURL{Id: "public_url_1"})
+		if !errors.Is(err, context.DeadlineExceeded) || len(control.publishRunKeys) != 2 {
+			t.Fatalf("open-run retry did not stop on cancellation: %v, %v", err, control.publishRunKeys)
+		}
+	})
+	synctest.Test(t, func(t *testing.T) {
+		control := &publisherControlStub{allowed: []string{"create_session"}, openRunFailures: 100}
+		_, err := createPublishRun(t.Context(), Config{Control: control}, controlv1.PublicURL{Id: "public_url_1"})
+		if !errors.Is(err, controlclient.ErrPublishRunOpen) || len(control.publishRunKeys) != 32 {
+			t.Fatalf("persistent open-run conflict was not bounded: %v, %d attempts", err, len(control.publishRunKeys))
+		}
+	})
+}
+
 func TestCreateOrLoadRouteCreatesTeamScopedPublicURL(t *testing.T) {
 	control := &publisherControlStub{allowed: []string{"lookup", "create"}}
 	allowed := []string{"2001:db8::1/64", "192.0.2.9/24"}
@@ -467,19 +493,22 @@ func TestObserveHeartbeatPolicyDenialsReportsCumulativeIncreases(t *testing.T) {
 }
 
 type publisherControlStub struct {
-	allowed       []string
-	calls         []string
-	routes        []controlv1.PublicURL
-	created       *controlv1.CreatePublicURLRequest
-	updated       *controlv1.UpdatePublicURLRequest
-	deleted       *string
-	lookupCalls   int
-	lookup        [2]string
-	lookupErr     error
-	heartbeat     func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error)
-	createErr     error
-	updateErr     error
-	publishRunErr error
+	allowed         []string
+	calls           []string
+	routes          []controlv1.PublicURL
+	created         *controlv1.CreatePublicURLRequest
+	updated         *controlv1.UpdatePublicURLRequest
+	deleted         *string
+	lookupCalls     int
+	lookup          [2]string
+	lookupErr       error
+	heartbeat       func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error)
+	createErr       error
+	updateErr       error
+	publishRunErr   error
+	openRunFailures int
+	publishRunKeys  []string
+	publishRunSetup *controlv1.PublishRunSetup
 }
 
 func (s *publisherControlStub) record(operation string) {
@@ -551,10 +580,18 @@ func (s *publisherControlStub) DeletePublicURL(_ context.Context, publicURLID st
 	return nil
 }
 
-func (s *publisherControlStub) CreatePublishRun(context.Context, string, string) (controlv1.PublishRunSetup, error) {
+func (s *publisherControlStub) CreatePublishRun(_ context.Context, _ string, key string) (controlv1.PublishRunSetup, error) {
 	s.record("create_session")
+	s.publishRunKeys = append(s.publishRunKeys, key)
+	if s.openRunFailures > 0 {
+		s.openRunFailures--
+		return controlv1.PublishRunSetup{}, controlclient.ErrPublishRunOpen
+	}
 	if s.publishRunErr != nil {
 		return controlv1.PublishRunSetup{}, s.publishRunErr
+	}
+	if s.publishRunSetup != nil {
+		return *s.publishRunSetup, nil
 	}
 	return controlv1.PublishRunSetup{}, errors.New("not implemented")
 }
