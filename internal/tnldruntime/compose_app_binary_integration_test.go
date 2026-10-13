@@ -220,7 +220,8 @@ volumes:
 			t.Logf("Compose database publication output:\n%s", named.output.String())
 		}
 	})
-	runIntegrationBinaryCommand(t, root, composeEnvironment, fixture.tnlPath, "wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
+	runBoundedIntegrationCommand(t, 90*time.Second, root, composeEnvironment, fixture.tnlPath,
+		"wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
 	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "")
 	waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
 		response, body, err := visitor.requestURLContext(ctx, http.MethodGet, webURL+"/", nil)
@@ -276,7 +277,8 @@ volumes:
 	if err := json.Unmarshal([]byte(currentDescriptor), &currentScope); err != nil || currentScope.Credential == oldScope.Credential {
 		t.Fatalf("restarted publisher retained a stale app credential: %v", err)
 	}
-	runIntegrationBinaryCommand(t, root, composeEnvironment, fixture.tnlPath, "wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
+	runBoundedIntegrationCommand(t, 90*time.Second, root, composeEnvironment, fixture.tnlPath,
+		"wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
 	if currentWeb, err := runCompose(10*time.Second, "ps", "-q", "web"); err != nil || strings.TrimSpace(currentWeb) != strings.TrimSpace(webContainer) {
 		t.Fatalf("app did not stay running through publisher replacement: %v", err)
 	}
