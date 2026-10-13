@@ -11,7 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-var ErrTunnelCursorExpired = errors.New("database tunnel event cursor expired; read a new status snapshot")
+var ErrTunnelCursorExpired = errors.New("TCP tunnel event cursor expired; read a new status snapshot")
 
 type TunnelEvent struct {
 	Sequence         uint64

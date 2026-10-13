@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func TestDatabaseTunnelEventsResumeAcrossStateOpens(t *testing.T) {
+func TestTCPTunnelEventsResumeAcrossStateOpens(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "state")
 	owner, err := Open(t.Context(), directory)
 	if err != nil {
@@ -43,7 +43,7 @@ func TestDatabaseTunnelEventsResumeAcrossStateOpens(t *testing.T) {
 	events, err := reader.TunnelEventsAfter(t.Context(), project, 1)
 	if err != nil || len(events) != 2 || events[0].Hostname != "orders.example" ||
 		events[1].Sequence != 3 || events[1].State != TunnelStateReady || events[1].PublicPort != 15432 {
-		t.Fatalf("resumed database events = %#v, %v", events, err)
+		t.Fatalf("resumed TCP events = %#v, %v", events, err)
 	}
 	other, err := reader.LatestTunnelEventCursor(t.Context(), t.TempDir())
 	if err != nil || other != 0 {
@@ -57,7 +57,7 @@ func TestDatabaseTunnelEventsResumeAcrossStateOpens(t *testing.T) {
 	}
 	events, err = reader.TunnelEventsAfter(t.Context(), project, latest)
 	if err != nil || len(events) != 1 || events[0].State != TunnelStateStopped {
-		t.Fatalf("stopped database event = %#v, %v", events, err)
+		t.Fatalf("stopped TCP event = %#v, %v", events, err)
 	}
 }
 
@@ -93,7 +93,7 @@ func TestPrivateTCPServiceEventsIncludeEverySupportedProtocol(t *testing.T) {
 	}
 }
 
-func TestDatabaseTunnelEventsBoundRetentionAndExpireOldCursor(t *testing.T) {
+func TestTCPTunnelEventsBoundRetentionAndExpireOldCursor(t *testing.T) {
 	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
@@ -125,6 +125,6 @@ func TestDatabaseTunnelEventsBoundRetentionAndExpireOldCursor(t *testing.T) {
 	}
 	events, err := database.TunnelEventsAfter(t.Context(), project, 4)
 	if err != nil || len(events) != 2048 || events[0].Sequence != 5 || events[2047].Sequence != latest {
-		t.Fatalf("retained database events = %d, %v", len(events), err)
+		t.Fatalf("retained TCP events = %d, %v", len(events), err)
 	}
 }

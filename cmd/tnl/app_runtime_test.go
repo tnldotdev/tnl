@@ -377,7 +377,7 @@ func TestStatusIncludesConfiguredUnregisteredServicesAndRecentFailures(t *testin
 	}
 }
 
-func TestWatchResumesDatabaseAndAppEventsWithOneCursor(t *testing.T) {
+func TestWatchResumesTCPAndAppEventsWithOneCursor(t *testing.T) {
 	a, stateDir, _ := testAppRuntime(t)
 	protocol := "postgres"
 	project := a.project
@@ -434,7 +434,7 @@ func TestWatchResumesDatabaseAndAppEventsWithOneCursor(t *testing.T) {
 	if len(events) != 3 || events[2].Type != "service.publication" ||
 		events[2].Service == nil || events[2].Service.PublicURL != "orders.example:15432" ||
 		!events[2].Service.Routable || events[2].Cursor != strings.Split(initial.Snapshot.Cursor, ":")[0]+":3" {
-		t.Fatalf("database watch events = %#v", events)
+		t.Fatalf("TCP watch events = %#v", events)
 	}
 	if _, err := a.manager.Reserve("api", "owner", 1, "https://api.example"); err != nil {
 		t.Fatal(err)
@@ -462,11 +462,11 @@ func TestWatchResumesDatabaseAndAppEventsWithOneCursor(t *testing.T) {
 		t.Fatalf("interleaved watch resume = %s", output.String())
 	}
 	if err := runAppWatch(t.Context(), project, stateDir, watchCommand{After: "0:9999", Output: "ndjson"}, &output); !errors.Is(err, clientstate.ErrTunnelCursorExpired) {
-		t.Fatalf("future database cursor = %v", err)
+		t.Fatalf("future TCP cursor = %v", err)
 	}
 }
 
-func TestWatchDatabaseOnlyProjectWithoutAppRuntime(t *testing.T) {
+func TestWatchTCPOnlyProjectWithoutAppRuntime(t *testing.T) {
 	protocol := "mysql"
 	project := projectConfiguration{Project: projectconfig.Project{
 		Root: t.TempDir(), Config: config.TNL{Services: config.Services{"warehouse": {Publish: &config.Publish{Protocol: &protocol}}}},
@@ -490,7 +490,7 @@ func TestWatchDatabaseOnlyProjectWithoutAppRuntime(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &initial); err != nil ||
 		initial.Snapshot.Cursor != "0:0" || len(initial.Snapshot.Services) != 1 ||
 		initial.Snapshot.Services[0].Name != "warehouse" || initial.Snapshot.Services[0].Registered {
-		t.Fatalf("database-only watch snapshot = %s, %v", output.String(), err)
+		t.Fatalf("TCP-only watch snapshot = %s, %v", output.String(), err)
 	}
 	tunnel, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:3306",
@@ -509,6 +509,6 @@ func TestWatchDatabaseOnlyProjectWithoutAppRuntime(t *testing.T) {
 	var event clientruntime.Event
 	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil || event.Cursor != "0:1" ||
 		event.Type != "service.starting" || event.Service == nil || event.Service.ServiceProtocol != "mysql" {
-		t.Fatalf("database-only event = %s, %v", output.String(), err)
+		t.Fatalf("TCP-only event = %s, %v", output.String(), err)
 	}
 }
