@@ -277,8 +277,18 @@ volumes:
 	if err := json.Unmarshal([]byte(currentDescriptor), &currentScope); err != nil || currentScope.Credential == oldScope.Credential {
 		t.Fatalf("restarted publisher retained a stale app credential: %v", err)
 	}
-	runBoundedIntegrationCommand(t, 90*time.Second, root, composeEnvironment, fixture.tnlPath,
-		"wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
+	waitContext, stopWait := context.WithTimeout(t.Context(), 90*time.Second)
+	defer stopWait()
+	wait := exec.CommandContext(waitContext, fixture.tnlPath, "wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
+	wait.Dir, wait.Env = root, composeEnvironment
+	if output, err := wait.CombinedOutput(); err != nil {
+		statusContext, stopStatus := context.WithTimeout(t.Context(), 10*time.Second)
+		defer stopStatus()
+		status := exec.CommandContext(statusContext, fixture.tnlPath, "status", "--output=json")
+		status.Dir, status.Env = root, composeEnvironment
+		current, statusErr := status.CombinedOutput()
+		t.Fatalf("wait for Compose app and database after restart: %v (%s); status: %v (%s)", err, output, statusErr, current)
+	}
 	if currentWeb, err := runCompose(10*time.Second, "ps", "-q", "web"); err != nil || strings.TrimSpace(currentWeb) != strings.TrimSpace(webContainer) {
 		t.Fatalf("app did not stay running through publisher replacement: %v", err)
 	}
