@@ -69,7 +69,6 @@ func TestBinaryIntegrationComposeAppAndDatabaseVisitor(t *testing.T) {
 	if webURL == "" || databaseURL == "" {
 		t.Fatal("project preparation omitted a saved public URL")
 	}
-	runIntegrationBinaryCommand(t, root, fixture.environment, fixture.tnlPath, "project", "publisher", "credential", "create")
 	appModule := (&url.URL{Scheme: "file", Path: filepath.Join(fixture.repositoryRoot, "packages", "ts", "dist", "internal", "app.js")}).String()
 	appSource := fmt.Sprintf(`import {createServer} from "node:http";
 import {writeFileSync} from "node:fs";
@@ -87,8 +86,8 @@ writeFileSync("/app/ready.json", JSON.stringify({port:server.address().port,url:
   publisher-state-init:
     image: tnl:publisher-dev-integration
     user: "0:0"
-    entrypoint: ["/bin/chown", "${TNL_UID}:${TNL_GID}", "/state"]
-    volumes: [publisher-state:/state]
+    entrypoint: ["/bin/sh", "-c", "chown ${TNL_UID}:${TNL_GID} /state /run/tnl-apps/web && chmod 0700 /state /run/tnl-apps/web"]
+    volumes: [publisher-state:/state, web-endpoint:/run/tnl-apps/web]
   publisher:
     image: tnl:publisher-dev-integration
     user: "${TNL_UID}:${TNL_GID}"
@@ -97,12 +96,14 @@ writeFileSync("/app/ready.json", JSON.stringify({port:server.address().port,url:
     environment:
       TNL_PUBLISHER_EXTERNAL: "1"
       TNL_STATE_DIR: /state
+      TNL_PUBLISHER_APP_ENDPOINT_DIR: /run/tnl-apps
       TNL_SERVER: https://control.127.0.0.1.nip.io
       SSL_CERT_FILE: /trust/roots.pem
     volumes:
       - ${PROJECT_ROOT}:${PROJECT_ROOT}
       - ${TRUST_FILE}:/trust/roots.pem:ro
       - publisher-state:/state
+      - web-endpoint:/run/tnl-apps/web
     extra_hosts:
       - control.127.0.0.1.nip.io:host-gateway
       - relay.127.0.0.1.nip.io:host-gateway
@@ -115,11 +116,11 @@ writeFileSync("/app/ready.json", JSON.stringify({port:server.address().port,url:
     working_dir: /app
     command: ["node", "/app/app.mjs"]
     environment:
-      TNL_PUBLISHER_ENDPOINT_FILE: /run/secrets/tnl-web.endpoint.json
+      TNL_PUBLISHER_ENDPOINT_FILE: /run/tnl-app/publisher.endpoint.json
     volumes:
       - ${PROJECT_ROOT}:/app
       - ${TNL_REPOSITORY}:${TNL_REPOSITORY}:ro
-      - ${PROJECT_ROOT}/.tnl/publisher-web.endpoint.json:/run/secrets/tnl-web.endpoint.json:ro
+      - web-endpoint:/run/tnl-app:ro
     depends_on: [publisher]
   db:
     image: mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
@@ -130,6 +131,7 @@ writeFileSync("/app/ready.json", JSON.stringify({port:server.address().port,url:
     volumes: [db-data:/var/lib/postgresql/data]
 volumes:
   publisher-state:
+  web-endpoint:
   db-data:
 `
 	if err := os.WriteFile(filepath.Join(root, "compose.yaml"), []byte(compose), 0600); err != nil {
@@ -172,7 +174,13 @@ volumes:
 		}
 		return true, nil
 	})
-	runIntegrationBinaryCommand(t, root, composeEnvironment, fixture.tnlPath, "project", "publisher", "credential", "export", "--service", "web")
+	waitForIntegrationCondition(t, 20*time.Second, func(_ context.Context) (bool, error) {
+		_, err := runCompose(10*time.Second, "exec", "-T", "publisher", "test", "-f", "/run/tnl-apps/web/publisher.endpoint.json")
+		return err == nil, err
+	})
+	if _, err := os.Stat(filepath.Join(root, ".tnl", "publisher-web.endpoint.json")); !os.IsNotExist(err) {
+		t.Fatalf("app descriptor was written into shared checkout: %v", err)
+	}
 	if output, err := runCompose(90*time.Second, "up", "-d", "web"); err != nil {
 		t.Fatalf("start Compose app: %v (%s)", err, output)
 	}
@@ -221,55 +229,41 @@ volumes:
 		err = connection.QueryRow(ctx, "SELECT 42").Scan(&answer)
 		return err == nil && answer == 42, err
 	})
-	oldDescriptor, err := os.ReadFile(filepath.Join(root, ".tnl", "publisher-web.endpoint.json"))
+	oldDescriptor, err := runCompose(10*time.Second, "exec", "-T", "publisher", "cat", "/run/tnl-apps/web/publisher.endpoint.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var oldScope struct {
 		Credential string `json:"credential"`
 	}
-	if err := json.Unmarshal(oldDescriptor, &oldScope); err != nil {
+	if err := json.Unmarshal([]byte(oldDescriptor), &oldScope); err != nil {
 		t.Fatal(err)
+	}
+	webContainer, err := runCompose(10*time.Second, "ps", "-q", "web")
+	if err != nil || strings.TrimSpace(webContainer) == "" {
+		t.Fatalf("app container is not running before publisher restart: %v", err)
 	}
 	if output, err := runCompose(30*time.Second, "restart", "publisher"); err != nil {
 		t.Fatalf("restart Compose publisher: %v (%s)", err, output)
 	}
-	waitForIntegrationCondition(t, 20*time.Second, func(ctx context.Context) (bool, error) {
-		command := exec.CommandContext(ctx, fixture.tnlPath, "project", "publisher", "credential", "export", "--service", "web")
-		command.Dir, command.Env = root, composeEnvironment
-		output, err := command.CombinedOutput()
-		if err != nil {
-			return false, fmt.Errorf("reissue app credential after owner restart: %w (%s)", err, output)
-		}
-		return true, nil
+	waitForIntegrationCondition(t, 20*time.Second, func(_ context.Context) (bool, error) {
+		_, err := runCompose(10*time.Second, "exec", "-T", "publisher", "test", "-f", "/run/tnl-apps/web/publisher.endpoint.json")
+		return err == nil, err
 	})
-	currentDescriptor, err := os.ReadFile(filepath.Join(root, ".tnl", "publisher-web.endpoint.json"))
+	currentDescriptor, err := runCompose(10*time.Second, "exec", "-T", "publisher", "cat", "/run/tnl-apps/web/publisher.endpoint.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var currentScope struct {
 		Credential string `json:"credential"`
 	}
-	if err := json.Unmarshal(currentDescriptor, &currentScope); err != nil || currentScope.Credential == oldScope.Credential {
+	if err := json.Unmarshal([]byte(currentDescriptor), &currentScope); err != nil || currentScope.Credential == oldScope.Credential {
 		t.Fatalf("restarted publisher retained a stale app credential: %v", err)
 	}
-	if err := os.Remove(filepath.Join(root, "ready.json")); err != nil {
-		t.Fatal(err)
-	}
-	if output, err := runCompose(90*time.Second, "up", "-d", "--force-recreate", "web"); err != nil {
-		t.Fatalf("restart Compose app with reissued credential: %v (%s)", err, output)
-	}
-	waitForIntegrationCondition(t, 35*time.Second, func(_ context.Context) (bool, error) {
-		data, err := os.ReadFile(filepath.Join(root, "ready.json"))
-		if err != nil {
-			return false, err
-		}
-		if err := json.Unmarshal(data, &app); err != nil {
-			return false, err
-		}
-		return app.Port > 0 && app.URL == webURL, fmt.Errorf("app did not keep its saved public URL after owner restart")
-	})
 	runIntegrationBinaryCommand(t, root, composeEnvironment, fixture.tnlPath, "wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
+	if currentWeb, err := runCompose(10*time.Second, "ps", "-q", "web"); err != nil || strings.TrimSpace(currentWeb) != strings.TrimSpace(webContainer) {
+		t.Fatalf("app did not stay running through publisher replacement: %v", err)
+	}
 	waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
 		response, body, err := visitor.requestURLContext(ctx, http.MethodGet, webURL+"/", nil)
 		if err != nil || response.StatusCode != http.StatusOK {

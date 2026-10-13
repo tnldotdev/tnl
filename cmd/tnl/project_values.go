@@ -20,28 +20,7 @@ const (
 )
 
 type projectCommand struct {
-	Label     projectLabelCommand     `cmd:"" help:"Show this project's worktree label."`
-	Publisher projectPublisherCommand `cmd:"" help:"Prepare a project publisher."`
-}
-
-type projectPublisherCommand struct {
-	Credential projectPublisherCredentialCommand `cmd:"" help:"Manage the project publisher owner credential."`
-}
-
-type projectPublisherCredentialCommand struct {
-	Create projectPublisherCredentialCreateCommand `cmd:"" help:"Create the private owner credential for an external publisher."`
-	Export projectPublisherCredentialExportCommand `cmd:"" help:"Save one app-scoped endpoint for a container."`
-}
-
-type projectPublisherCredentialExportCommand struct {
-	StateDir string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
-	Service  string           `name:"service" required:"" help:"Configured app service using this endpoint."`
-	Output   scalarOutputMode `name:"output" enum:"human,raw,json" default:"human" help:"Output format: ${enum}."`
-}
-
-type projectPublisherCredentialCreateCommand struct {
-	StateDir string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
-	Output   scalarOutputMode `name:"output" enum:"human,raw,json" default:"human" help:"Output format: ${enum}."`
+	Label projectLabelCommand `cmd:"" help:"Show this project's worktree label."`
 }
 
 type projectLabelCommand struct {

@@ -22,10 +22,11 @@ import (
 
 // Defines values for AppPreparationFramework.
 const (
-	Bun  AppPreparationFramework = "bun"
-	Next AppPreparationFramework = "next"
-	Node AppPreparationFramework = "node"
-	Vite AppPreparationFramework = "vite"
+	Bun    AppPreparationFramework = "bun"
+	Next   AppPreparationFramework = "next"
+	Node   AppPreparationFramework = "node"
+	Python AppPreparationFramework = "python"
+	Vite   AppPreparationFramework = "vite"
 )
 
 // Valid indicates whether the value is a known member of the AppPreparationFramework enum.
@@ -36,6 +37,8 @@ func (e AppPreparationFramework) Valid() bool {
 	case Next:
 		return true
 	case Node:
+		return true
+	case Python:
 		return true
 	case Vite:
 		return true
@@ -289,6 +292,9 @@ type AppPreparation struct {
 	Framework AppPreparationFramework `json:"framework"`
 	Owner     string                  `json:"owner"`
 	Service   ServiceName             `json:"service"`
+
+	// TelemetryDisabled Do not report this app invocation in usage telemetry.
+	TelemetryDisabled *bool `json:"telemetry_disabled,omitempty"`
 }
 
 // AppPreparationFramework defines model for AppPreparation.Framework.

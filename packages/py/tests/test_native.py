@@ -151,3 +151,33 @@ def test_native_request_does_not_keep_a_malformed_endpoint_secret_in_its_error()
             assert failure.value.__context__ is None
 
     asyncio.run(scenario())
+
+
+def test_only_explicit_mounted_endpoint_may_use_a_compose_service(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    endpoint = tmp_path / "publisher.endpoint.json"
+    endpoint.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "url": "http://publisher:4123",
+                "credential": "a" * 43,
+            }
+        )
+    )
+    with pytest.raises(InvalidResponse):
+        NativeRuntime._endpoint(str(endpoint))
+    monkeypatch.setenv("TNL_PUBLISHER_ENDPOINT_FILE", str(endpoint))
+    assert NativeRuntime._endpoint(str(endpoint)) == ("http://publisher:4123", "a" * 43)
+    endpoint.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "url": "http://publisher.example:4123",
+                "credential": "a" * 43,
+            }
+        )
+    )
+    with pytest.raises(InvalidResponse):
+        NativeRuntime._endpoint(str(endpoint))

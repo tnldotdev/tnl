@@ -4,15 +4,21 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
+func testRuntimeState(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "state")
+}
+
 func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T) {
 	var runs atomic.Uint64
 	started := make(chan uint64, 4)
-	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "web", Directory: "."}, {Name: "api", Directory: "api"}}, func(ctx context.Context, service Service, observe func(uint64, bool) error) error {
+	manager, err := New(t.Context(), t.TempDir(), testRuntimeState(t), []Service{{Name: "web", Directory: "."}, {Name: "api", Directory: "api"}}, func(ctx context.Context, service Service, observe func(uint64, bool) error) error {
 		run := runs.Add(1)
 		if err := observe(run, true); err != nil {
 			return err
@@ -83,7 +89,7 @@ func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T
 func TestNamedPublicationSharesTheProjectLeaseAndFencesReplacedTargets(t *testing.T) {
 	var runs atomic.Uint64
 	started := make(chan Service, 2)
-	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{
+	manager, err := New(t.Context(), t.TempDir(), testRuntimeState(t), []Service{
 		{Name: "web", Directory: "."}, {Name: "orders", Directory: ".", ServiceProtocol: "postgres"},
 	}, func(ctx context.Context, service Service, observe func(uint64, bool) error) error {
 		if err := observe(runs.Add(1), true); err != nil {
@@ -149,7 +155,7 @@ func TestNamedPublicationSharesTheProjectLeaseAndFencesReplacedTargets(t *testin
 }
 
 func TestNamedHTTPPublicationRequiresABoundOrigin(t *testing.T) {
-	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "api", ServiceProtocol: "http"}},
+	manager, err := New(t.Context(), t.TempDir(), testRuntimeState(t), []Service{{Name: "api", ServiceProtocol: "http"}},
 		func(ctx context.Context, _ Service, _ func(uint64, bool) error) error { <-ctx.Done(); return ctx.Err() })
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +181,7 @@ func TestNamedHTTPPublicationRequiresABoundOrigin(t *testing.T) {
 
 func TestRegistrationAckDoesNotWaitForProvisioning(t *testing.T) {
 	blocked := make(chan struct{})
-	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+	manager, err := New(t.Context(), t.TempDir(), testRuntimeState(t), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
 		close(blocked)
 		<-ctx.Done()
 		return ctx.Err()
@@ -200,7 +206,7 @@ func TestRegistrationAckDoesNotWaitForProvisioning(t *testing.T) {
 
 func TestPublisherWarningsStayWithRunAndClearWhenRoutable(t *testing.T) {
 	started := make(chan struct{})
-	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+	manager, err := New(t.Context(), t.TempDir(), testRuntimeState(t), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
 		close(started)
 		<-ctx.Done()
 		return ctx.Err()
@@ -244,7 +250,7 @@ func TestPublisherWarningsStayWithRunAndClearWhenRoutable(t *testing.T) {
 }
 
 func TestJournalResumeAndManagerRestartCursor(t *testing.T) {
-	project, state := t.TempDir(), t.TempDir()
+	project, state := t.TempDir(), testRuntimeState(t)
 	manager, err := New(t.Context(), project, state, []Service{{Name: "web"}}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -286,7 +292,7 @@ func TestJournalResumeAndManagerRestartCursor(t *testing.T) {
 
 func TestConfigurationReconciliationPreservesLiveAppsAndJoinsRemovedPublishers(t *testing.T) {
 	started, stopped := make(chan struct{}), make(chan struct{})
-	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "api", Readiness: Readiness{Path: "/"}}}, func(ctx context.Context, _ Service, observe func(uint64, bool) error) error {
+	manager, err := New(t.Context(), t.TempDir(), testRuntimeState(t), []Service{{Name: "api", Readiness: Readiness{Path: "/"}}}, func(ctx context.Context, _ Service, observe func(uint64, bool) error) error {
 		if err := observe(1, true); err != nil {
 			return err
 		}
@@ -329,7 +335,7 @@ func TestConfigurationReconciliationPreservesLiveAppsAndJoinsRemovedPublishers(t
 }
 
 func TestPreparationKeepsTheManagerAliveUntilCleanupGrace(t *testing.T) {
-	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "api"}}, nil)
+	manager, err := New(t.Context(), t.TempDir(), testRuntimeState(t), []Service{{Name: "api"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
