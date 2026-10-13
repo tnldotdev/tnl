@@ -29,7 +29,7 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           test "$SHA" = "$(gh api "repos/$REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
-          for attempt in $(seq 1 60); do
+          for ((attempt = 0; attempt < 60; attempt++)); do
             passed=0
             for workflow in checks.yml integration.yml; do
               count="$(gh api --method GET "repos/$REPOSITORY/actions/workflows/$workflow/runs" \
