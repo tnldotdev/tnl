@@ -79,7 +79,7 @@
         },
         "inspection": {
           "$ref": "#/$defs/Inspection",
-          "description": "Local inspection capture and retention for HTTP and database services."
+          "description": "Local inspection capture and retention for HTTP and supported TCP services."
         },
         "tunnel": {
           "allOf": [

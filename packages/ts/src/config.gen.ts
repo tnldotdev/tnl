@@ -235,7 +235,7 @@ export interface TnlConfig {
   };
 }
 /**
- * Local inspection capture and retention for HTTP and database services.
+ * Local inspection capture and retention for HTTP and supported TCP services.
  */
 export interface Inspection {
   mode?: "summary" | "detailed";
