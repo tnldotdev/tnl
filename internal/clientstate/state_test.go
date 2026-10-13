@@ -14,15 +14,20 @@ import (
 
 const testPublicURLID = "url_0123456789abcdefghijkl"
 
-func TestClientV1SchemaRejectsIncompleteState(t *testing.T) {
+func TestClientSchemaRejectsIncompleteState(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	database, err := Open(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if filepath.Base(DatabasePath(root)) != "client-v2.db" {
+	if filepath.Base(DatabasePath(root)) != "client-v3.db" {
 		t.Fatalf("client database path = %q", DatabasePath(root))
+	}
+	var oldEventTables int
+	if err := database.db.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_master WHERE name IN
+		('local_tunnel_events', 'local_tunnel_event_cursors', 'local_tunnel_event_started', 'local_tunnel_event_changed')`).Scan(&oldEventTables); err != nil || oldEventTables != 0 {
+		t.Fatalf("separate TCP event journal remains in client state: count=%d, error=%v", oldEventTables, err)
 	}
 	for _, table := range []string{"server_profiles", "client_setting", "control_sessions", "certificate_materials", "local_tunnels"} {
 		var key string

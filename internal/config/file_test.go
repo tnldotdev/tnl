@@ -224,6 +224,8 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 	}
 	for _, test := range []struct{ source, detail string }{
 		{`{"services":{"web":{"target":{"type":"app","address":3000}}}}`, "app requires"},
+		{`{"services":{"orders":{"protocol":"postgres"}}}`, "TCP services require an address or Docker target"},
+		{`{"services":{"orders":{"protocol":"mysql"}}}`, "TCP services require an address or Docker target"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"app"}}}}`, "app requires"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address"}}}}`, "address is required"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","service":"database"}}}}`, "docker requires"},
@@ -286,7 +288,7 @@ func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
 	webTarget := Target("3000")
 	project := TNL{OAuth: true, Services: Services{
 		"web":    {Publish: &Publish{Target: &webTarget}},
-		"orders": {Publish: &Publish{Protocol: &protocol, Target: &target, TargetTLS: &targetTLS, TargetTLSName: &tlsName, TargetCAFile: &caFile}},
+		"orders": {Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: &target, TargetTLS: &targetTLS, TargetTLSName: &tlsName, TargetCAFile: &caFile}},
 	}}
 	if err := ValidateTNL(project); err != nil {
 		t.Fatalf("mixed web and PostgreSQL services: %v", err)
@@ -295,7 +297,8 @@ func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
 		"http target": func(value *TNL) {
 			invalid := Target("http://db.internal:5432")
 			service := value.Services["orders"]
-			service.Publish.Target = &invalid
+			service.Target.Address = &invalid
+			value.Services["orders"] = service
 		},
 		"readiness": func(value *TNL) {
 			service := value.Services["orders"]
@@ -310,7 +313,8 @@ func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
 		"protocol": func(value *TNL) {
 			invalid := "unknown"
 			service := value.Services["orders"]
-			service.Publish.Protocol = &invalid
+			service.Protocol = &invalid
+			value.Services["orders"] = service
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -319,8 +323,12 @@ func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
 				if service.Publish != nil {
 					copy := *service.Publish
 					service.Publish = &copy
-					changed.Services[key] = service
 				}
+				if service.Target != nil {
+					copy := *service.Target
+					service.Target = &copy
+				}
+				changed.Services[key] = service
 			}
 			change(&changed)
 			if err := ValidateTNL(changed); err == nil {

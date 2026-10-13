@@ -223,6 +223,9 @@ func ValidateTNL(config TNL) error {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 		protocol := ServiceProtocol(effectivePublish)
+		if protocol != "http" && service.Target == nil {
+			return fmt.Errorf("services.%s.target: TCP services require an address or Docker target", name)
+		}
 		visitorTLS := (*string)(nil)
 		if config.Tunnel != nil {
 			visitorTLS = config.Tunnel.VisitorTLS

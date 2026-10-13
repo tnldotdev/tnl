@@ -117,11 +117,11 @@ and cleanup without a deployed server.
 Edit the source, then run `mise exec -- task generate` and
 `mise exec -- task format`. Do not edit committed generated files by hand.
 
-The client uses `client-v2.db` in its state directory. A future incompatible
-SQLite schema can use a new filename such as `client-v3.db`; `tnl` starts that
-file without reading or importing the old one. Goose versions within one file
-still track compatible migrations. The server's current PostgreSQL baseline
-requires a fresh database rather than an upgrade from an older schema.
+The client uses `client-v3.db` in its state directory. It starts a fresh file
+without reading or importing `client-v2.db` or its separate TCP event journal.
+Goose versions within one file track compatible migrations. The server's
+current PostgreSQL baseline requires a fresh database rather than an upgrade
+from an older schema.
 
 | Source                                                                                    | Generated output                                                                          |
 | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |

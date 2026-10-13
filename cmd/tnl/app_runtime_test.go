@@ -326,7 +326,7 @@ func TestNamedPublicationLocalAPIReportsCurrentLeaseAndEvents(t *testing.T) {
 }
 
 func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
-	a, stateDir, _ := testAppRuntime(t)
+	a, stateDir, started := testAppRuntime(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -335,26 +335,17 @@ func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 	protocol := "postgres"
 	target := config.Target(listener.Addr().String())
 	project := a.project
-	project.Config.Services["orders"] = config.Service{Publish: &config.Publish{Protocol: &protocol, Target: &target}}
+	project.Config.Services["orders"] = config.Service{Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}}
 	project.RelativeServiceDirectories["orders"] = "."
 	services := configuredRuntimeServices(project)
-	if len(services) != 2 || services[0].Name != "api" || services[1].Name != "web" {
-		t.Fatalf("app registrations = %#v", services)
+	if len(services) != 3 || services[0].Name != "api" || services[1].Name != "orders" || services[2].Name != "web" {
+		t.Fatalf("configured services = %#v", services)
 	}
-	database, err := clientstate.Open(t.Context(), stateDir)
-	if err != nil {
+	if err := a.manager.Configure(services); err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
-	tunnel, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
-		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: listener.Addr().String(),
-		Project: project.Root, Service: "orders", ServiceProtocol: controlv1.Postgres,
-	})
+	id, err := a.manager.Reserve("orders", "cli-owner", os.Getpid(), "orders.example:15432")
 	if err != nil {
-		t.Fatal(err)
-	}
-	defer tunnel.Finish(context.Background(), nil)
-	if err := tunnel.SetPublicURL(t.Context(), "url_0123456789abcdefghijkl", "orders.example"); err != nil {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
@@ -366,7 +357,11 @@ func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err == nil {
 		t.Fatal("unready TCP publication passed wait")
 	}
-	if err := tunnel.SetReady(t.Context(), "orders.example:15432", 1); err != nil {
+	if err := a.manager.RegisterNamed(id, "cli-owner", string(target)); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := a.manager.Started(id, "tun_named"); err != nil {
 		t.Fatal(err)
 	}
 	output.Reset()
@@ -377,7 +372,7 @@ func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 	var snapshot clientruntime.Snapshot
 	if err := json.Unmarshal(output.Bytes(), &snapshot); err != nil || len(snapshot.Services) != 1 ||
 		!snapshot.Services[0].Ready || snapshot.Services[0].PublicURL != "orders.example:15432" ||
-		snapshot.Services[0].ServiceProtocol != protocol || snapshot.Services[0].TunnelID != tunnel.ID() {
+		snapshot.Services[0].ServiceProtocol != protocol || snapshot.Services[0].TunnelID != "tun_named" {
 		t.Fatalf("TCP wait = %s, %v", output.String(), err)
 	}
 	if err := listener.Close(); err != nil {
@@ -581,17 +576,16 @@ func TestStatusIncludesConfiguredUnregisteredServicesAndRecentFailures(t *testin
 	}
 }
 
-func TestWatchResumesTCPAndAppEventsWithOneCursor(t *testing.T) {
-	a, stateDir, _ := testAppRuntime(t)
+func TestWatchResumesNamedTCPAndAppEventsWithOneCursor(t *testing.T) {
+	a, stateDir, started := testAppRuntime(t)
 	protocol := "postgres"
+	target := config.Target("127.0.0.1:5432")
 	project := a.project
-	project.Config.Services["orders"] = config.Service{Publish: &config.Publish{Protocol: &protocol}}
+	project.Config.Services["orders"] = config.Service{Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}}
 	project.RelativeServiceDirectories["orders"] = "."
-	database, err := clientstate.Open(t.Context(), stateDir)
-	if err != nil {
+	if err := a.manager.Configure(configuredRuntimeServices(project)); err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
 	var output bytes.Buffer
 	initialCtx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
@@ -603,22 +597,24 @@ func TestWatchResumesTCPAndAppEventsWithOneCursor(t *testing.T) {
 		Snapshot clientruntime.Snapshot `json:"snapshot"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &initial); err != nil || initial.Type != "snapshot" ||
-		len(initial.Snapshot.Services) != 3 || !strings.Contains(initial.Snapshot.Cursor, ":") ||
-		initial.Snapshot.Services[1].Name != "orders" {
+		len(initial.Snapshot.Services) != 3 || initial.Snapshot.Services[1].Name != "orders" {
 		t.Fatalf("mixed watch snapshot = %s, %v", output.String(), err)
 	}
-	tunnel, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
-		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:5432",
-		Project: project.Root, Service: "orders", ServiceProtocol: controlv1.Postgres,
-	})
+	if _, err := clientruntime.ParseCursor(initial.Snapshot.Cursor); err != nil {
+		t.Fatalf("mixed project cursor = %q: %v", initial.Snapshot.Cursor, err)
+	}
+	id, err := a.manager.Reserve("orders", "cli-owner", os.Getpid(), "orders.example:15432")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tunnel.Finish(context.Background(), nil)
-	if err := tunnel.SetPublicURL(t.Context(), "url_0123456789abcdefghijkl", "orders.example"); err != nil {
+	if err := a.manager.RegisterNamed(id, "cli-owner", string(target)); err != nil {
 		t.Fatal(err)
 	}
-	if err := tunnel.SetReady(t.Context(), "orders.example:15432", 1); err != nil {
+	<-started
+	if err := a.manager.Started(id, "tun_named"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.manager.RecordPublication(id, clientruntime.PublicationEvent{Type: "ready", PublicURL: "orders.example:15432", PublishRunNumber: 1}); err != nil {
 		t.Fatal(err)
 	}
 	output.Reset()
@@ -635,53 +631,68 @@ func TestWatchResumesTCPAndAppEventsWithOneCursor(t *testing.T) {
 		}
 		events = append(events, event)
 	}
-	if len(events) != 3 || events[2].Type != "service.publication" ||
-		events[2].Service == nil || events[2].Service.PublicURL != "orders.example:15432" ||
-		!events[2].Service.Routable || events[2].Cursor != strings.Split(initial.Snapshot.Cursor, ":")[0]+":3" {
-		t.Fatalf("TCP watch events = %#v", events)
-	}
-	if _, err := a.manager.Reserve("api", "owner", 1, "https://api.example"); err != nil {
+	last, err := clientruntime.ParseCursor(initial.Snapshot.Cursor)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tunnel.Finish(t.Context(), nil); err != nil {
+	publication := false
+	for _, event := range events {
+		current, err := clientruntime.ParseCursor(event.Cursor)
+		if err != nil || current <= last {
+			t.Fatalf("mixed project event cursor = %q after %d: %v", event.Cursor, last, err)
+		}
+		last = current
+		if event.Type == "publication.ready" && event.Service != nil && event.Service.Name == "orders" &&
+			event.Service.ServiceProtocol == protocol && event.Publication != nil && event.Publication.PublicURL == "orders.example:15432" {
+			publication = true
+		}
+	}
+	if !publication {
+		t.Fatalf("named TCP publication missing from shared journal: %#v", events)
+	}
+	if _, err := a.manager.Reserve("api", "owner", os.Getpid(), "https://api.example"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.manager.Unregister(id, "cli-owner"); err != nil {
 		t.Fatal(err)
 	}
 	output.Reset()
 	resumeCtx2, stopResume2 := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer stopResume2()
-	if err := runAppWatch(resumeCtx2, project, stateDir, watchCommand{After: events[2].Cursor, Output: "ndjson"}, &output); err != nil {
+	if err := runAppWatch(resumeCtx2, project, stateDir, watchCommand{After: strconv.FormatUint(last, 10), Output: "ndjson"}, &output); err != nil {
 		t.Fatal(err)
 	}
-	preparedCursor, _, err := parseWatchCursor(events[2].Cursor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous, err := clientruntime.ParseCursor(preparedCursor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	next := strconv.FormatUint(previous+1, 10)
-	if !strings.Contains(output.String(), `"cursor":"`+next+`:3","type":"service.prepared"`) ||
-		!strings.Contains(output.String(), `"cursor":"`+next+`:4","type":"service.stopped"`) {
+	if !strings.Contains(output.String(), `"type":"service.prepared"`) || !strings.Contains(output.String(), `"type":"service.stopped"`) {
 		t.Fatalf("interleaved watch resume = %s", output.String())
 	}
-	if err := runAppWatch(t.Context(), project, stateDir, watchCommand{After: "0:9999", Output: "ndjson"}, &output); !errors.Is(err, clientstate.ErrTunnelCursorExpired) {
-		t.Fatalf("future TCP cursor = %v", err)
+	if err := runAppWatch(t.Context(), project, stateDir, watchCommand{After: "0:9999", Output: "ndjson"}, &output); err == nil {
+		t.Fatal("accepted a combined app and TCP event cursor")
 	}
 }
 
-func TestWatchTCPOnlyProjectWithoutAppRuntime(t *testing.T) {
+func TestWatchNamedAndDirectTCPShareProjectCursor(t *testing.T) {
+	a, stateDir, started := testAppRuntime(t)
 	protocol := "mysql"
-	project := projectConfiguration{Project: projectconfig.Project{
-		Root: t.TempDir(), Config: config.TNL{Services: config.Services{"warehouse": {Publish: &config.Publish{Protocol: &protocol}}}},
-		RelativeServiceDirectories: map[string]string{"warehouse": "."},
-	}}
-	stateDir := filepath.Join(t.TempDir(), "state")
+	target := config.Target("127.0.0.1:3306")
+	project := a.project
+	project.Config.Services = config.Services{"warehouse": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}}}
+	project.RelativeServiceDirectories = map[string]string{"warehouse": "."}
+	if err := a.manager.Configure(configuredRuntimeServices(project)); err != nil {
+		t.Fatal(err)
+	}
 	database, err := clientstate.Open(t.Context(), stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
+	direct, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: string(target),
+		Project: project.Root, ServiceProtocol: controlv1.Mysql,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer direct.Finish(context.Background(), nil)
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
 	var output bytes.Buffer
@@ -692,27 +703,132 @@ func TestWatchTCPOnlyProjectWithoutAppRuntime(t *testing.T) {
 		Snapshot clientruntime.Snapshot `json:"snapshot"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &initial); err != nil ||
-		initial.Snapshot.Cursor != "0:0" || len(initial.Snapshot.Services) != 1 ||
+		len(initial.Snapshot.Services) != 1 || len(initial.Snapshot.Tunnels) != 1 || initial.Snapshot.Tunnels[0].ID != direct.ID() ||
 		initial.Snapshot.Services[0].Name != "warehouse" || initial.Snapshot.Services[0].Registered {
-		t.Fatalf("TCP-only watch snapshot = %s, %v", output.String(), err)
+		t.Fatalf("named and direct TCP watch snapshot = %s, %v", output.String(), err)
 	}
-	tunnel, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
-		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:3306",
-		Project: project.Root, Service: "warehouse", ServiceProtocol: controlv1.Mysql,
-	})
-	if err != nil {
+	if _, err := clientruntime.ParseCursor(initial.Snapshot.Cursor); err != nil {
+		t.Fatalf("named TCP watch cursor = %q: %v", initial.Snapshot.Cursor, err)
+	}
+	if err := direct.SetPublicURL(t.Context(), "url_0123456789abcdefghijkl", "warehouse.example"); err != nil {
 		t.Fatal(err)
 	}
-	defer tunnel.Finish(context.Background(), nil)
+	if err := direct.SetReady(t.Context(), "warehouse.example:13306", 1); err != nil {
+		t.Fatal(err)
+	}
 	output.Reset()
 	ctx, cancel = context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
 	if err := runAppWatch(ctx, project, stateDir, watchCommand{After: initial.Snapshot.Cursor, Output: "ndjson"}, &output); err != nil {
 		t.Fatal(err)
 	}
-	var event clientruntime.Event
-	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil || event.Cursor != "0:1" ||
-		event.Type != "service.starting" || event.Service == nil || event.Service.ServiceProtocol != "mysql" {
-		t.Fatalf("TCP-only event = %s, %v", output.String(), err)
+	var directReady clientruntime.Event
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		var event clientruntime.Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == "tunnel.ready" {
+			directReady = event
+		}
+	}
+	if directReady.Tunnel == nil || directReady.Tunnel.ID != direct.ID() || directReady.Tunnel.PublicURL != "warehouse.example:13306" {
+		t.Fatalf("direct tunnel ready event = %#v; output=%s", directReady, output.String())
+	}
+	previous, err := clientruntime.ParseCursor(directReady.Cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := a.manager.Reserve("warehouse", "cli-owner", os.Getpid(), "warehouse.example:13306")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.manager.RegisterNamed(id, "cli-owner", string(target)); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := a.manager.RecordPublication(id, clientruntime.PublicationEvent{Type: "ready", PublicURL: "warehouse.example:13306", PublishRunNumber: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := direct.Finish(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	ctx, cancel = context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	if err := runAppWatch(ctx, project, stateDir, watchCommand{After: directReady.Cursor, Output: "ndjson"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"type":"publication.ready"`) || !strings.Contains(output.String(), `"type":"tunnel.stopped"`) ||
+		!strings.Contains(output.String(), `"service_protocol":"mysql"`) {
+		t.Fatalf("mixed publication and tunnel events = %s", output.String())
+	}
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		var event clientruntime.Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		current, err := clientruntime.ParseCursor(event.Cursor)
+		if err != nil || current <= previous {
+			t.Fatalf("project cursor = %q after %d: %v", event.Cursor, previous, err)
+		}
+		previous = current
+	}
+}
+
+func TestWatchDirectTunnelWithoutProjectConfiguration(t *testing.T) {
+	t.Setenv("TNL_CONFIG", "")
+	t.Chdir(t.TempDir())
+	stateDir := filepath.Join(t.TempDir(), "state")
+	project, err := projectRoot(t.Context(), cli{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := clientstate.Open(t.Context(), stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	direct, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:3306",
+		Project: project, ServiceProtocol: controlv1.Mysql,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer direct.Finish(context.Background(), nil)
+	flags := cli{Watch: watchCommand{StateDir: stateDir, Output: "ndjson"}}
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	var output bytes.Buffer
+	if err := runAppObservation(ctx, flags, "watch", &output); err != nil {
+		t.Fatal(err)
+	}
+	var initial struct {
+		Snapshot clientruntime.Snapshot `json:"snapshot"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &initial); err != nil ||
+		len(initial.Snapshot.Services) != 0 || len(initial.Snapshot.Tunnels) != 1 || initial.Snapshot.Tunnels[0].ID != direct.ID() {
+		t.Fatalf("config-less direct watch snapshot = %s, %v", output.String(), err)
+	}
+	if _, err := clientruntime.ParseCursor(initial.Snapshot.Cursor); err != nil {
+		t.Fatalf("direct watch cursor = %q: %v", initial.Snapshot.Cursor, err)
+	}
+	if err := direct.SetPublicURL(t.Context(), "url_0123456789abcdefghijkl", "warehouse.example"); err != nil {
+		t.Fatal(err)
+	}
+	if err := direct.SetReady(t.Context(), "warehouse.example:13306", 1); err != nil {
+		t.Fatal(err)
+	}
+	flags.Watch.After = initial.Snapshot.Cursor
+	output.Reset()
+	ctx, cancel = context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	if err := runAppObservation(ctx, flags, "watch", &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"type":"tunnel.ready"`) ||
+		!strings.Contains(output.String(), `"public_url":"warehouse.example:13306"`) {
+		t.Fatalf("config-less direct tunnel events = %s", output.String())
 	}
 }

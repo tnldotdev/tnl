@@ -114,17 +114,23 @@ func (m *Manager) emitLocked(kind string, service *Service, publication ...*Publ
 	if len(m.snapshot.Events) > EventRetention {
 		m.snapshot.Events = slices.Clone(m.snapshot.Events[len(m.snapshot.Events)-EventRetention:])
 	}
-	if err := WriteSnapshot(m.snapshot, m.state); err != nil {
+	if err := WriteSnapshot(&m.snapshot, m.state); err != nil {
 		m.writeErr = err
 	}
 }
 
 func (m *Manager) Snapshot() Snapshot {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	copy := m.snapshot
 	copy.Services = slices.Clone(copy.Services)
 	copy.Events = slices.Clone(copy.Events)
+	state := m.state
+	m.mu.Unlock()
+	if state != nil {
+		if current, err := readSnapshot(state, copy.Project); err == nil {
+			return current
+		}
+	}
 	return copy
 }
 

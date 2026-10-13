@@ -161,10 +161,14 @@ integrations and the CLI use that endpoint, as does the native integration
 fixture. a configured `tnl publish NAME` renews a named publication through
 the same project publisher as app registrations. the manager fences its
 registration, private target, and publish run before forwarding new visitors;
-its journal carries resumable publication events. an unconfigured
-`tnl publish TARGET` and the Go ad-hoc SDK still own their own publishers.
-app registration wire shapes still use the private protocol while the local
-publisher API contract is adopted.
+its client SQLite journal carries one ordered sequence of app and named-service
+events with a numeric cursor. configured TCP services require an address or
+Docker target so they use this same owner. an unconfigured `tnl publish TARGET`
+and the Go ad-hoc SDK still own their own publishers. direct `tnl publish TARGET`
+keeps its tunnel lifecycle in client state and appends its changes to the same
+project watch journal, including when there is no project configuration. it
+retains its own CLI progress output. app registration wire shapes still use
+the private protocol while the local publisher API contract is adopted.
 
 ## resolve project configuration
 
@@ -290,10 +294,12 @@ with a five-second deadline. retries start at
 gets an automatic check; `tnl wait` checks again. a failed check leaves the
 publication running. `tnl status` only reads observations.
 
-`tnl watch` resumes after a local event cursor. a status or initial watch
-snapshot includes the cursor for its service state. cursors older than retained
-events fail with an authored diagnostic. the journal survives a
-manager restart and contains no credentials, request bodies, or OAuth state.
+`tnl watch` resumes after one numeric local event cursor. its initial snapshot
+includes configured services and active direct tunnels. app, named-service, and
+direct tunnel events share the client SQLite sequence even when publishers run
+in separate processes. cursors older than retained events fail with an authored
+diagnostic. the journal survives a manager restart and contains no credentials,
+request bodies, or OAuth state.
 
 `tnl inspect` keeps numbered HTTP and supported TCP summaries in client SQLite.
 HTTP, PostgreSQL, and MySQL default to summary; `inspection.mode: none` or

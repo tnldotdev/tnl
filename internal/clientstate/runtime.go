@@ -3,8 +3,10 @@ package clientstate
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
 )
@@ -77,43 +79,50 @@ func (d *Database) ListRuntimeJournals(ctx context.Context) ([]RuntimeJournal, e
 	return result, nil
 }
 
-// SaveRuntimeJournal atomically advances the snapshot and appends one event.
-// the retained history is bounded by both event count and serialized size.
-func (d *Database) SaveRuntimeJournal(ctx context.Context, project string, cursor int64, snapshot, event []byte) error {
-	if project == "" || cursor <= 0 || len(snapshot) > runtimeJournalByteLimit || len(event) > runtimeJournalByteLimit {
-		return errors.New("clientstate: local runtime journal exceeds limit or has an invalid cursor")
+// SaveRuntimeJournal assigns one cursor to a manager event, following any direct
+// tunnel events committed by other processes. the snapshot and event change in
+// one transaction.
+func (d *Database) SaveRuntimeJournal(ctx context.Context, project string, snapshot, event []byte) (int64, error) {
+	if project == "" || len(snapshot) > runtimeJournalByteLimit || len(event) > runtimeJournalByteLimit || !json.Valid(snapshot) || !json.Valid(event) {
+		return 0, errors.New("clientstate: local runtime journal exceeds limit or contains invalid JSON")
 	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 	queries := d.queries.WithTx(tx)
-	if err := queries.UpsertRuntimeSnapshot(ctx, clientstatedb.UpsertRuntimeSnapshotParams{
-		ProjectRoot: project, Cursor: cursor, SnapshotJson: string(snapshot),
-	}); err != nil {
-		return fmt.Errorf("clientstate: save runtime snapshot: %w", err)
+	cursor, err := queries.UpsertRuntimeSnapshot(ctx, clientstatedb.UpsertRuntimeSnapshotParams{
+		ProjectRoot: project, Cursor: 1, SnapshotJson: string(snapshot),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("clientstate: save runtime snapshot: %w", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(event, &fields); err != nil || fields == nil {
+		return 0, errors.New("clientstate: invalid runtime event")
+	}
+	encodedCursor, _ := json.Marshal(strconv.FormatInt(cursor, 10))
+	fields["cursor"] = encodedCursor
+	if nested, found := fields["snapshot"]; found {
+		var value map[string]json.RawMessage
+		if err := json.Unmarshal(nested, &value); err != nil || value == nil {
+			return 0, errors.New("clientstate: invalid runtime event snapshot")
+		}
+		value["cursor"] = encodedCursor
+		fields["snapshot"], err = json.Marshal(value)
+		if err != nil {
+			return 0, err
+		}
+	}
+	event, err = json.Marshal(fields)
+	if err != nil || len(event) > runtimeJournalByteLimit {
+		return 0, errors.Join(err, errors.New("clientstate: local runtime event exceeds limit"))
 	}
 	if err := queries.InsertRuntimeEvent(ctx, clientstatedb.InsertRuntimeEventParams{
 		ProjectRoot: project, Cursor: cursor, EventJson: string(event),
 	}); err != nil {
-		return fmt.Errorf("clientstate: append runtime event: %w", err)
+		return 0, fmt.Errorf("clientstate: append runtime event: %w", err)
 	}
-	sizes, err := queries.RuntimeEventSizes(ctx, project)
-	if err != nil {
-		return fmt.Errorf("clientstate: bound runtime events: %w", err)
-	}
-	var bytes int64
-	oldest := cursor
-	for _, entry := range sizes {
-		if !entry.Size.Valid || bytes+entry.Size.Int64 > runtimeJournalByteLimit {
-			break
-		}
-		bytes += entry.Size.Int64
-		oldest = entry.Cursor
-	}
-	if err := queries.PruneRuntimeEvents(ctx, clientstatedb.PruneRuntimeEventsParams{ProjectRoot: project, OldestCursor: oldest}); err != nil {
-		return fmt.Errorf("clientstate: prune runtime events: %w", err)
-	}
-	return tx.Commit()
+	return cursor, tx.Commit()
 }

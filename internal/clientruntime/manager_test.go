@@ -5,10 +5,115 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+func TestProjectJournalAssignsCursorsAcrossManagerAndDirectPublisher(t *testing.T) {
+	project, state := t.TempDir(), testRuntimeState(t)
+	manager, err := New(t.Context(), project, state, []Service{{Name: "web", Directory: "."}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	database, err := clientstate.Open(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tunnel, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:5432",
+		Project: project, ServiceProtocol: controlv1.Postgres,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	var workers sync.WaitGroup
+	errors := make(chan error, 1)
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		for number := uint64(1); number <= 32; number++ {
+			if err := tunnel.SetProvisioning(t.Context(), number); err != nil {
+				errors <- err
+				return
+			}
+		}
+	}()
+	go func() {
+		defer workers.Done()
+		for range 32 {
+			manager.RecordFailure("web", "runtime.probe_failed")
+		}
+	}()
+	workers.Wait()
+	select {
+	case err := <-errors:
+		t.Fatal(err)
+	default:
+	}
+	if manager.writeErr != nil {
+		t.Fatal(manager.writeErr)
+	}
+	manager.RecordFailure("web", "runtime.probe_failed")
+	snapshot, err := ReadSnapshot(project, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Events) != 67 || snapshot.Cursor != "67" || snapshot.Services[0].Failure != "runtime.probe_failed" {
+		t.Fatalf("shared journal: cursor=%q, events=%d, services=%#v", snapshot.Cursor, len(snapshot.Events), snapshot.Services)
+	}
+	if live := manager.Snapshot(); live.Cursor != snapshot.Cursor || len(live.Events) != len(snapshot.Events) {
+		t.Fatalf("manager returned stale journal cursor=%q, events=%d", live.Cursor, len(live.Events))
+	}
+	for index, event := range snapshot.Events {
+		sequence, err := ParseCursor(event.Cursor)
+		if err != nil || sequence != uint64(index+1) {
+			t.Fatalf("event %d cursor = %q: %v", index, event.Cursor, err)
+		}
+	}
+}
+
+func TestManagerJoinsExistingDirectPublisherJournal(t *testing.T) {
+	project, state := t.TempDir(), testRuntimeState(t)
+	database, err := clientstate.Open(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tunnel, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:5432",
+		Project: project, ServiceProtocol: controlv1.Postgres,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	manager, err := New(t.Context(), project, state, []Service{{Name: "web", Directory: "."}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	snapshot := manager.Snapshot()
+	if snapshot.Cursor != "2" || len(snapshot.Events) != 2 || snapshot.Events[0].Tunnel == nil ||
+		snapshot.Events[0].Tunnel.ID != tunnel.ID() || snapshot.Events[1].Snapshot == nil || snapshot.Events[1].Snapshot.Cursor != snapshot.Cursor {
+		t.Fatalf("manager joined direct journal: %#v", snapshot)
+	}
+	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
+		t.Fatal(err)
+	}
+	manager.RecordFailure("web", "runtime.probe_failed")
+	snapshot = manager.Snapshot()
+	if snapshot.Cursor != "4" || len(snapshot.Events) != 4 || snapshot.Events[2].Tunnel == nil || snapshot.Events[3].Service == nil {
+		t.Fatalf("interleaved direct and managed events: %#v", snapshot)
+	}
+}
 
 func testRuntimeState(t *testing.T) string {
 	t.Helper()

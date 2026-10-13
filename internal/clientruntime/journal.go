@@ -44,12 +44,23 @@ type Service struct {
 }
 
 type Event struct {
-	Cursor      string            `json:"cursor"`
-	Type        string            `json:"type"`
-	At          time.Time         `json:"at"`
-	Service     *Service          `json:"service,omitempty"`
-	Snapshot    *Snapshot         `json:"snapshot,omitempty"`
-	Publication *PublicationEvent `json:"publication,omitempty"`
+	Cursor      string             `json:"cursor"`
+	Type        string             `json:"type"`
+	At          time.Time          `json:"at"`
+	Service     *Service           `json:"service,omitempty"`
+	Tunnel      *DirectTunnelEvent `json:"tunnel,omitempty"`
+	Snapshot    *Snapshot          `json:"snapshot,omitempty"`
+	Publication *PublicationEvent  `json:"publication,omitempty"`
+}
+
+// DirectTunnelEvent reports an invocation-owned publisher without a configured service.
+type DirectTunnelEvent struct {
+	ID               string                  `json:"tunnel_id"`
+	State            clientstate.TunnelState `json:"state"`
+	ServiceProtocol  string                  `json:"service_protocol"`
+	Target           string                  `json:"target"`
+	PublicURL        string                  `json:"public_url,omitempty"`
+	PublishRunNumber uint64                  `json:"publish_run_number,omitempty"`
 }
 
 type PublicationEvent struct {
@@ -63,12 +74,13 @@ type PublicationEvent struct {
 }
 
 type Snapshot struct {
-	SchemaVersion int       `json:"schema_version"`
-	Project       string    `json:"project"`
-	Cursor        string    `json:"cursor"`
-	ObservedAt    time.Time `json:"observed_at"`
-	Services      []Service `json:"services"`
-	Events        []Event   `json:"-"`
+	SchemaVersion int                      `json:"schema_version"`
+	Project       string                   `json:"project"`
+	Cursor        string                   `json:"cursor"`
+	ObservedAt    time.Time                `json:"observed_at"`
+	Services      []Service                `json:"services"`
+	Tunnels       []clientstate.TunnelInfo `json:"tunnels,omitempty"`
+	Events        []Event                  `json:"-"`
 }
 
 func Identity(project, state string) string {
@@ -136,12 +148,11 @@ func decodeJournal(journal clientstate.RuntimeJournal) (Snapshot, error) {
 	return snapshot, nil
 }
 
-func WriteSnapshot(snapshot Snapshot, db *clientstate.Database) error {
+func WriteSnapshot(snapshot *Snapshot, db *clientstate.Database) error {
 	if len(snapshot.Events) == 0 {
 		return errors.New("local runtime snapshot requires an event")
 	}
-	cursor, err := ParseCursor(snapshot.Cursor)
-	if err != nil {
+	if _, err := ParseCursor(snapshot.Cursor); err != nil {
 		return err
 	}
 	encoded, err := json.Marshal(snapshot)
@@ -152,7 +163,17 @@ func WriteSnapshot(snapshot Snapshot, db *clientstate.Database) error {
 	if err != nil {
 		return err
 	}
-	return db.SaveRuntimeJournal(context.Background(), snapshot.Project, int64(cursor), encoded, event)
+	assigned, err := db.SaveRuntimeJournal(context.Background(), snapshot.Project, encoded, event)
+	if err != nil {
+		return err
+	}
+	snapshot.Cursor = strconv.FormatInt(assigned, 10)
+	latest := &snapshot.Events[len(snapshot.Events)-1]
+	latest.Cursor = snapshot.Cursor
+	if latest.Snapshot != nil {
+		latest.Snapshot.Cursor = snapshot.Cursor
+	}
+	return nil
 }
 
 func EventsAfter(snapshot Snapshot, cursor string) ([]Event, error) {

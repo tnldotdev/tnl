@@ -9,22 +9,14 @@ SELECT project_root, snapshot_json FROM local_runtime_snapshots ORDER BY project
 SELECT event_json FROM local_runtime_events
 WHERE project_root = sqlc.arg(project_root) ORDER BY cursor;
 
--- name: RuntimeEventSizes :many
-SELECT cursor, length(event_json) AS size FROM local_runtime_events
-WHERE project_root = sqlc.arg(project_root) ORDER BY cursor DESC LIMIT 2048;
-
--- name: UpsertRuntimeSnapshot :exec
+-- name: UpsertRuntimeSnapshot :one
 INSERT INTO local_runtime_snapshots (project_root, cursor, snapshot_json)
-VALUES (sqlc.arg(project_root), sqlc.arg(cursor), sqlc.arg(snapshot_json))
+VALUES (sqlc.arg(project_root), sqlc.arg(cursor), json_set(sqlc.arg(snapshot_json), '$.cursor', CAST(sqlc.arg(cursor) AS TEXT)))
 ON CONFLICT (project_root) DO UPDATE SET
-    cursor = excluded.cursor,
-    snapshot_json = excluded.snapshot_json
-WHERE local_runtime_snapshots.cursor < excluded.cursor;
+    cursor = local_runtime_snapshots.cursor + 1,
+    snapshot_json = json_set(excluded.snapshot_json, '$.cursor', CAST(local_runtime_snapshots.cursor + 1 AS TEXT))
+RETURNING cursor;
 
 -- name: InsertRuntimeEvent :exec
 INSERT INTO local_runtime_events (project_root, cursor, event_json)
 VALUES (sqlc.arg(project_root), sqlc.arg(cursor), sqlc.arg(event_json));
-
--- name: PruneRuntimeEvents :exec
-DELETE FROM local_runtime_events
-WHERE project_root = sqlc.arg(project_root) AND cursor < sqlc.arg(oldest_cursor);

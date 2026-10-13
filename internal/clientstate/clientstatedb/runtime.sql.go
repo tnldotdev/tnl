@@ -7,7 +7,6 @@ package clientstatedb
 
 import (
 	"context"
-	"database/sql"
 )
 
 const insertRuntimeEvent = `-- name: InsertRuntimeEvent :exec
@@ -45,54 +44,6 @@ func (q *Queries) ListRuntimeSnapshots(ctx context.Context) ([]ListRuntimeSnapsh
 	for rows.Next() {
 		var i ListRuntimeSnapshotsRow
 		if err := rows.Scan(&i.ProjectRoot, &i.SnapshotJson); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const pruneRuntimeEvents = `-- name: PruneRuntimeEvents :exec
-DELETE FROM local_runtime_events
-WHERE project_root = ?1 AND cursor < ?2
-`
-
-type PruneRuntimeEventsParams struct {
-	ProjectRoot  string
-	OldestCursor int64
-}
-
-func (q *Queries) PruneRuntimeEvents(ctx context.Context, arg PruneRuntimeEventsParams) error {
-	_, err := q.db.ExecContext(ctx, pruneRuntimeEvents, arg.ProjectRoot, arg.OldestCursor)
-	return err
-}
-
-const runtimeEventSizes = `-- name: RuntimeEventSizes :many
-SELECT cursor, length(event_json) AS size FROM local_runtime_events
-WHERE project_root = ?1 ORDER BY cursor DESC LIMIT 2048
-`
-
-type RuntimeEventSizesRow struct {
-	Cursor int64
-	Size   sql.NullInt64
-}
-
-func (q *Queries) RuntimeEventSizes(ctx context.Context, projectRoot string) ([]RuntimeEventSizesRow, error) {
-	rows, err := q.db.QueryContext(ctx, runtimeEventSizes, projectRoot)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []RuntimeEventSizesRow
-	for rows.Next() {
-		var i RuntimeEventSizesRow
-		if err := rows.Scan(&i.Cursor, &i.Size); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -146,22 +97,24 @@ func (q *Queries) RuntimeSnapshot(ctx context.Context, projectRoot string) (stri
 	return snapshot_json, err
 }
 
-const upsertRuntimeSnapshot = `-- name: UpsertRuntimeSnapshot :exec
+const upsertRuntimeSnapshot = `-- name: UpsertRuntimeSnapshot :one
 INSERT INTO local_runtime_snapshots (project_root, cursor, snapshot_json)
-VALUES (?1, ?2, ?3)
+VALUES (?1, ?2, json_set(?3, '$.cursor', CAST(?2 AS TEXT)))
 ON CONFLICT (project_root) DO UPDATE SET
-    cursor = excluded.cursor,
-    snapshot_json = excluded.snapshot_json
-WHERE local_runtime_snapshots.cursor < excluded.cursor
+    cursor = local_runtime_snapshots.cursor + 1,
+    snapshot_json = json_set(excluded.snapshot_json, '$.cursor', CAST(local_runtime_snapshots.cursor + 1 AS TEXT))
+RETURNING cursor
 `
 
 type UpsertRuntimeSnapshotParams struct {
 	ProjectRoot  string
 	Cursor       int64
-	SnapshotJson string
+	SnapshotJson interface{}
 }
 
-func (q *Queries) UpsertRuntimeSnapshot(ctx context.Context, arg UpsertRuntimeSnapshotParams) error {
-	_, err := q.db.ExecContext(ctx, upsertRuntimeSnapshot, arg.ProjectRoot, arg.Cursor, arg.SnapshotJson)
-	return err
+func (q *Queries) UpsertRuntimeSnapshot(ctx context.Context, arg UpsertRuntimeSnapshotParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, upsertRuntimeSnapshot, arg.ProjectRoot, arg.Cursor, arg.SnapshotJson)
+	var cursor int64
+	err := row.Scan(&cursor)
+	return cursor, err
 }

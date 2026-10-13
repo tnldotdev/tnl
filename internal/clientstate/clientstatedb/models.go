@@ -150,6 +150,7 @@ type LocalRuntimeSnapshot struct {
 	ProjectRoot  string
 	Cursor       int64
 	SnapshotJson string
+	EventBytes   int64
 }
 
 type LocalTunnel struct {
@@ -174,25 +175,6 @@ type LocalTunnel struct {
 	IntegrationGroup string
 	PublicPort       int64
 	ServiceProtocol  string
-}
-
-type LocalTunnelEvent struct {
-	ProjectRoot      string
-	Sequence         int64
-	TunnelID         string
-	Service          string
-	ServiceProtocol  string
-	State            string
-	Target           string
-	Hostname         string
-	PublicPort       int64
-	PublishRunNumber int64
-	CreatedAt        int64
-}
-
-type LocalTunnelEventCursor struct {
-	ProjectRoot string
-	Sequence    int64
 }
 
 type OauthAliasReturn struct {
