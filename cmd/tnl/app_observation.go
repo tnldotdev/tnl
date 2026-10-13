@@ -132,7 +132,7 @@ func runAppObservation(ctx context.Context, flags cli, command string, output io
 		return err
 	}
 	if !project.Found() || len(configuredRuntimeServices(project)) == 0 {
-		return failure.Wrap("observe apps", failure.ProjectConfigMissing, errors.New("configured HTTP app services are required; database services use tnl publish"))
+		return failure.Wrap("observe apps", failure.ProjectConfigMissing, errors.New("configured HTTP app services are required; TCP services use tnl publish"))
 	}
 	if canonical, err := filepath.EvalSymlinks(root); err == nil {
 		root = canonical
@@ -159,7 +159,7 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 		}
 		effective, _ := project.EffectiveService(name)
 		if config.ServiceProtocol(effective.Publish) != "http" {
-			return failure.Wrap("wait for service", failure.InvalidCommand, fmt.Errorf("database service %q uses tnl publish; check tnl status instead", name))
+			return failure.Wrap("wait for service", failure.InvalidCommand, fmt.Errorf("TCP service %q uses tnl publish; check tnl status instead", name))
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, flags.Timeout)

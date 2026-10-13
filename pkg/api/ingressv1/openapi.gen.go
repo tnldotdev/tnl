@@ -62,6 +62,7 @@ const (
 	Http     IngressRoutingTableEntryServiceProtocol = "http"
 	Mysql    IngressRoutingTableEntryServiceProtocol = "mysql"
 	Postgres IngressRoutingTableEntryServiceProtocol = "postgres"
+	Redis    IngressRoutingTableEntryServiceProtocol = "redis"
 )
 
 // Valid indicates whether the value is a known member of the IngressRoutingTableEntryServiceProtocol enum.
@@ -72,6 +73,8 @@ func (e IngressRoutingTableEntryServiceProtocol) Valid() bool {
 	case Mysql:
 		return true
 	case Postgres:
+		return true
+	case Redis:
 		return true
 	default:
 		return false

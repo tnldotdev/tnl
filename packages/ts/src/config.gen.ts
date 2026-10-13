@@ -244,9 +244,9 @@ export interface Publish {
   /**
    * Service protocol for the public URL; defaults to http.
    */
-  protocol?: "http" | "postgres" | "mysql";
+  protocol?: "http" | "postgres" | "mysql" | "redis";
   /**
-   * HTTP or HTTPS origin, local port, or private TCP host:port reached by the publisher.
+   * HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher.
    */
   target?: string | number;
   /**
@@ -254,7 +254,7 @@ export interface Publish {
    */
   targetCAFile?: string;
   /**
-   * Use verified TLS for the private TCP target.
+   * Use verified TLS for the TCP target.
    */
   targetTLS?: boolean;
   /**

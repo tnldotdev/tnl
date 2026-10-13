@@ -169,6 +169,15 @@ func TestRoutingTablePortClaimsStayAtomicAcrossPages(t *testing.T) {
 	if got, reason := table.LookupPortWithReason("ingress-b", 5432, now); reason != "" || got.PublicUrlId != otherPool.PublicUrlId {
 		t.Fatalf("other pool port = %+v, %q", got, reason)
 	}
+	redis := event(4, "redis", "ingress-b", 6379)
+	protocol := ingressv1.Redis
+	redis.Entry.ServiceProtocol = &protocol
+	if err := table.ApplyPage(3, ingressv1.IngressRoutingTablePage{ThroughRevision: 4, NextRevision: 4, Events: []ingressv1.IngressRoutingTableEvent{redis}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, reason := table.LookupPortWithReason("ingress-b", 6379, now); reason != "" || got.PublicUrlId != redis.PublicUrlId {
+		t.Fatalf("Redis port = %+v, %q", got, reason)
+	}
 }
 
 func TestRoutingTableAcceptsLargePublicURLIPPolicy(t *testing.T) {

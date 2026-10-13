@@ -61,7 +61,7 @@ type PublicURLServerConfig struct {
 
 type PublicURLServer struct {
 	hostname           string
-	database           *databaseForwarding
+	tcp                *tcpForwarding
 	certificatePlan    controlv1.CertificatePlan
 	tls                *tls.Config
 	certificate        atomic.Pointer[tls.Certificate]
@@ -141,7 +141,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.RequestLimit < 0 {
 		return nil, errors.New("publisher: request limit cannot be negative")
 	}
-	database, err := newDatabaseForwarding(config)
+	forwarding, err := newTCPForwarding(config)
 	if err != nil {
 		return nil, err
 	}
@@ -152,8 +152,8 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if err != nil {
 		return nil, err
 	}
-	if database != nil {
-		database.admission = admission
+	if forwarding != nil {
+		forwarding.admission = admission
 	}
 	if config.CertificatePlan.Identifiers != nil || config.CertificatePlan.CacheKey != "" || config.CertificatePlan.Scope != "" || config.CertificatePlan.ChallengeMethod != "" {
 		config.CertificatePlan, err = certificateidentity.CanonicalPlan(config.CertificatePlan)
@@ -167,7 +167,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		modifyResponse, observe = config.Feedback.modifyResponse, config.Feedback.observe
 	}
 	var handler http.Handler
-	if database != nil {
+	if forwarding != nil {
 		handler = http.NotFoundHandler()
 	} else if config.Handler != nil {
 		handler = config.Handler
@@ -188,7 +188,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	shareSlots := make(chan struct{}, 16)
 	route := &PublicURLServer{
 		hostname:        hostname,
-		database:        database,
+		tcp:             forwarding,
 		admission:       admission,
 		certificatePlan: config.CertificatePlan,
 		queue:           queue,
@@ -716,15 +716,15 @@ func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
 		return
 	}
 	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied}
-	if r.database != nil {
-		if header.Destination.Port() == r.database.publicPort {
+	if r.tcp != nil {
+		if header.Destination.Port() == r.tcp.publicPort {
 			if !denied {
 				select {
 				case <-r.admission.completed:
 					return
 				default:
 				}
-				r.database.forward(metadata, r.tls)
+				r.tcp.forward(metadata, r.tls)
 			}
 			return
 		}

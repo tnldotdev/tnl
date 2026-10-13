@@ -16,6 +16,7 @@ func TestDatabasePublishAndCredentialFlags(t *testing.T) {
 	}{
 		{[]string{"publish", "db.internal:5432", "--protocol", "postgres", "--name", "orders", "--target-tls", "--target-tls-name", "db.internal"}, "postgres"},
 		{[]string{"url", "credential", "create", "--protocol", "mysql", "--name", "orders"}, "mysql"},
+		{[]string{"url", "credential", "create", "--protocol", "redis", "--name", "orders"}, "redis"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)
@@ -33,6 +34,37 @@ func TestDatabasePublishAndCredentialFlags(t *testing.T) {
 		} else if flags.URL.Credential.Create.Protocol != test.want || flags.URL.Credential.Create.Name != "orders" {
 			t.Fatalf("database credential flags = %+v", flags.URL.Credential.Create)
 		}
+	}
+}
+
+func TestRedisPublishTargetAndAddress(t *testing.T) {
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"publish", "redis:6379", "--protocol", "redis", "--name", "cache"}); err != nil {
+		t.Fatal(err)
+	}
+	if flags.Publish.Target != "redis:6379" || flags.Publish.Protocol != "redis" || flags.Publish.Name != "cache" {
+		t.Fatalf("Redis publish flags = %+v", flags.Publish)
+	}
+	protocol, err := publishProtocol(flags.Publish.Protocol)
+	if err != nil || protocol != controlv1.Redis {
+		t.Fatalf("Redis protocol = %q, %v", protocol, err)
+	}
+	if target, err := normalizePublishTarget(flags.Publish.Target, protocol); err != nil || target != "redis:6379" {
+		t.Fatalf("Redis private target = %q, %v", target, err)
+	}
+	if err := validateTCPPublishOptions(flags.Publish, protocol); err != nil {
+		t.Fatal(err)
+	}
+	port := 6379
+	if address, err := savedPublicAddress(controlv1.PublicURL{CanonicalHostname: "cache.example", ServiceProtocol: protocol, PublicPort: &port}); err != nil || address != "cache.example:6379" {
+		t.Fatalf("Redis public address = %q, %v", address, err)
+	}
+	if err := validateTCPPublishOptions(publishCommand{TargetTLSName: "redis.internal"}, protocol); err == nil {
+		t.Fatal("Redis accepted a target TLS name without target TLS")
 	}
 }
 
@@ -96,13 +128,13 @@ func TestDatabasePublicAddressAndFlags(t *testing.T) {
 	if got, err := savedPublicAddress(controlv1.PublicURL{CanonicalHostname: "api.example", ServiceProtocol: controlv1.Http}); err != nil || got != "https://api.example" {
 		t.Fatalf("HTTP address = %q, %v", got, err)
 	}
-	if err := validateDatabasePublishOptions(publishCommand{TargetTLSName: "db.internal"}, controlv1.Http); err == nil {
+	if err := validateTCPPublishOptions(publishCommand{TargetTLSName: "db.internal"}, controlv1.Http); err == nil {
 		t.Fatal("HTTP accepted database TLS settings")
 	}
-	if err := validateDatabasePublishOptions(publishCommand{TargetTLSName: "db.internal"}, controlv1.Postgres); err == nil {
+	if err := validateTCPPublishOptions(publishCommand{TargetTLSName: "db.internal"}, controlv1.Postgres); err == nil {
 		t.Fatal("database accepted target TLS name without target TLS")
 	}
-	if err := validateDatabasePublishOptions(publishCommand{openOptions: openOptions{Open: true}}, controlv1.Mysql); err == nil {
+	if err := validateTCPPublishOptions(publishCommand{openOptions: openOptions{Open: true}}, controlv1.Mysql); err == nil {
 		t.Fatal("database --open was silently ignored")
 	}
 }

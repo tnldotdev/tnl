@@ -30,6 +30,7 @@ jobs:
           cache: true
           cache-dependency-path: |
             go.sum
+            tools/testharness/go.sum
             .github/workflows/integration.yml
 
       - name: Install Task
@@ -45,8 +46,8 @@ jobs:
       - name: Run integration tests
         run: task go:test:integration
 
-      - name: Verify database clients
-        run: task go:test:integration:database-clients
+      - name: Verify TCP clients
+        run: task go:test:integration:tcp-clients
 
   binary:
     name: Binary integration
