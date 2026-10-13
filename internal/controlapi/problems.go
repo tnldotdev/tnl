@@ -31,14 +31,14 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusForbidden, controlv1.GuestTrialExhausted, "guest demo limit reached; run tnl auth login to continue")
 	case errors.Is(err, controlstate.ErrPublicURLConflict):
 		writeProblem(response, http.StatusConflict, controlv1.NameUnavailable, "public URL hostname is unavailable")
-	case errors.Is(err, controlstate.ErrPublishRunOpen):
+	case errors.Is(err, controlstate.ErrPublishRunOpen), errors.Is(err, controlstate.ErrPublishRunConflict):
 		writeProblem(response, http.StatusConflict, controlv1.PublishRunOpen, "public URL has an open publish run")
 	case errors.Is(err, controlstate.ErrPublicURLNotEnabled):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not enabled")
 	case errors.Is(err, controlstate.ErrShareLimit):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "share limit reached; revoke an old share or wait for one to expire")
 	case errors.Is(err, controlstate.ErrPublicURLIdempotency), errors.Is(err, controlstate.ErrPublishRunIdempotency), errors.Is(err, controlstate.ErrShareIdempotency), errors.Is(err, controlstate.ErrShareStale), errors.Is(err, controlstate.ErrFeedbackIdempotency), errors.Is(err, controlstate.ErrFeedbackState),
-		errors.Is(err, controlstate.ErrPublishRunConflict), errors.Is(err, controlstate.ErrPublicURLMutationStale), errors.Is(err, controlstate.ErrPreviewStale),
+		errors.Is(err, controlstate.ErrPublicURLMutationStale), errors.Is(err, controlstate.ErrPreviewStale),
 		errors.Is(err, controlstate.ErrPublicURLAuthority), errors.Is(err, controlstate.ErrPublishRunStale),
 		errors.Is(err, controlstate.ErrPublishRunNotReady), errors.Is(err, controlstate.ErrPublicURLCertificate):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL state conflict")

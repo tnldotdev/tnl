@@ -19,12 +19,14 @@ import (
 )
 
 const activationRetry = 2 * time.Second
+const publishRunOpenRetryWindow = time.Minute
 
 func createPublishRun(ctx context.Context, config Config, route controlv1.PublicURL) (controlv1.PublishRunSetup, error) {
 	idempotencyKey, err := opaqueID(opaqueid.IdempotencyPrefix)
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err
 	}
+	var openUntil time.Time
 	for {
 		var setup controlv1.PublishRunSetup
 		if config.Traffic == (trafficlimits.Selection{}) {
@@ -39,7 +41,14 @@ func createPublishRun(ctx context.Context, config Config, route controlv1.Public
 		if err == nil {
 			return setup, nil
 		}
-		if !errors.Is(err, controlclient.ErrUnavailable) {
+		if errors.Is(err, controlclient.ErrPublishRunOpen) {
+			if openUntil.IsZero() {
+				openUntil = time.Now().Add(publishRunOpenRetryWindow)
+			}
+			if time.Now().After(openUntil) {
+				return setup, err
+			}
+		} else if !errors.Is(err, controlclient.ErrUnavailable) {
 			return setup, classifyPublicURLConflict(err)
 		}
 		select {

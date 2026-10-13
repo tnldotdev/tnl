@@ -39,6 +39,7 @@ var (
 	ErrNotFound             = failure.Wrap("read control resource", failure.ServerResourceNotFound, errors.New("controlclient: not found"))
 	ErrNameUnavailable      = failure.Wrap("select public URL hostname", failure.ServerConflict, errors.New("controlclient: public URL hostname unavailable"))
 	ErrStatusConflict       = failure.Wrap("update control state", failure.ServerConflict, errors.New("controlclient: status conflict"))
+	ErrPublishRunOpen       = failure.Wrap("start publish run", failure.ServerConflict, ErrStatusConflict)
 	ErrCertificateStatus    = failure.Wrap("issue public URL certificate", failure.CertificateUnavailable, errors.New("controlclient: certificate status conflict"))
 	ErrDNSProofPending      = failure.Wrap("configure domain DNS", failure.DNSPending, errors.New("controlclient: DNS setup pending"))
 	ErrRateLimited          = failure.Wrap("request control API", failure.ServerRateLimited, errors.New("controlclient: rate limited"))
@@ -595,7 +596,9 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return ErrNotFound
 	case controlv1.NameUnavailable:
 		return ErrNameUnavailable
-	case controlv1.Conflict, controlv1.PublishRunOpen, controlv1.PolicyRevisionStale:
+	case controlv1.PublishRunOpen:
+		return ErrPublishRunOpen
+	case controlv1.Conflict, controlv1.PolicyRevisionStale:
 		return ErrStatusConflict
 	case controlv1.DnsSetupPending:
 		return ErrDNSProofPending
