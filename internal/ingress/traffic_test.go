@@ -53,7 +53,7 @@ func TestTrafficAdmissionBoundsBothByteDirectionsWithoutBlockingOthers(t *testin
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := traffic.waitBytes(ctx, key, true, 1); !errors.Is(err, context.Canceled) {
+	if err := traffic.waitBytes(ctx, key, true, 64<<10); !errors.Is(err, context.Canceled) {
 		t.Fatalf("exhausted upload = %v", err)
 	}
 	if err := traffic.waitBytes(t.Context(), key, false, 64<<10); err != nil {
