@@ -40,7 +40,7 @@ type tcpForwarding struct {
 func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 	if config.ServiceProtocol == "" || config.ServiceProtocol == controlv1.Http {
 		if config.PublicPort != 0 || config.TargetTLSName != "" || config.TargetTLS || config.VisitorTLSPassthrough {
-			return nil, errors.New("publisher: HTTP public URL cannot configure private TCP forwarding")
+			return nil, errors.New("publisher: HTTP public URL cannot configure TCP forwarding")
 		}
 		return nil, nil
 	}
@@ -49,7 +49,7 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 		return nil, err
 	}
 	if !tcpport.Valid(int(config.PublicPort)) {
-		return nil, errors.New("publisher: private TCP public port is invalid")
+		return nil, errors.New("publisher: TCP public port is invalid")
 	}
 	tlsName := config.TargetTLSName
 	if tlsName == "" {
@@ -77,10 +77,10 @@ func supportsTCPForwarding(protocol controlv1.PublicURLServiceProtocol) bool {
 func validateTCPForwarding(config PublicURLServerConfig) (string, error) {
 	if !supportsTCPForwarding(config.ServiceProtocol) || config.Handler != nil || len(config.Mounts) != 0 || config.ShareAccess != nil ||
 		config.BrowserAccess != nil || config.Feedback != nil {
-		return "", errors.New("publisher: private TCP forwarding configuration is invalid")
+		return "", errors.New("publisher: TCP forwarding configuration is invalid")
 	}
 	if !config.TargetTLS && (config.TargetTLSName != "" || config.TargetOptions.RootCAs != nil) {
-		return "", errors.New("publisher: private target TLS options require target TLS")
+		return "", errors.New("publisher: target TLS options require target TLS")
 	}
 	if config.VisitorTLSPassthrough {
 		if config.ServiceProtocol != controlv1.Postgres && config.ServiceProtocol != controlv1.Mysql {
@@ -298,7 +298,7 @@ func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admiss
 
 func copyTCPConnections(visitor, securedVisitor, backend net.Conn, admission *applicationAdmission) error {
 	if status, _ := admission.enter(time.Now()); status != 0 {
-		return errors.New("publisher: private TCP visitor capacity is exhausted")
+		return errors.New("publisher: TCP visitor capacity is exhausted")
 	}
 	defer admission.leave()
 	_ = visitor.SetDeadline(time.Time{})

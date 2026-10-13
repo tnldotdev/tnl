@@ -66,7 +66,7 @@ type tunnelFlags struct {
 	RateRequests        *int                  `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"Number of requests admitted per rate period. Requires --rate-per."`
 	RatePer             string                `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
 	Concurrency         *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous application requests, streams, and upgrades. Defaults to 500."`
-	TargetCAFile        string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or private TCP target."`
+	TargetCAFile        string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or TCP target."`
 	InspectionMode      config.InspectionMode `name:"inspection-mode" enum:"summary,detailed" default:"summary" help:"Local HTTP and database inspection: summary (default) or detailed."`
 	InspectionRetention time.Duration         `name:"inspection-retention" help:"Keep this service's local inspections for this long (default 24h)."`
 	InspectionMaxBytes  string                `name:"inspection-max-bytes" help:"Maximum local inspection bytes for this service, such as 64MiB."`
