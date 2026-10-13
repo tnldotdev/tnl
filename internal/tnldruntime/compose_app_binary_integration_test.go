@@ -208,7 +208,8 @@ volumes:
 			t.Logf("Compose database publication output:\n%s", named.output.String())
 		}
 	})
-	runIntegrationBinaryCommand(t, root, composeEnvironment, fixture.tnlPath, "wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
+	runBoundedIntegrationCommand(t, 90*time.Second, root, composeEnvironment, fixture.tnlPath,
+		"wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
 	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "")
 	waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
 		response, body, err := visitor.requestURLContext(ctx, http.MethodGet, webURL+"/", nil)
@@ -281,7 +282,8 @@ volumes:
 		}
 		return app.Port > 0 && app.URL == webURL, fmt.Errorf("app did not keep its saved public URL after owner restart")
 	})
-	runIntegrationBinaryCommand(t, root, composeEnvironment, fixture.tnlPath, "wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
+	runBoundedIntegrationCommand(t, 90*time.Second, root, composeEnvironment, fixture.tnlPath,
+		"wait", "--service", "web", "--service", "orders", "--timeout", "75s", "--output=json")
 	waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
 		response, body, err := visitor.requestURLContext(ctx, http.MethodGet, webURL+"/", nil)
 		if err != nil || response.StatusCode != http.StatusOK {
