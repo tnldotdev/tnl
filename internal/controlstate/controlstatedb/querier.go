@@ -318,11 +318,11 @@ type Querier interface {
 	// take the assignment-total guard before relay-service guards and lease rows;
 	// lock all services before checking capacity or locking leases.
 	LockRelayServicesForPlacement(ctx context.Context) ([]string, error)
-	LockTCPPortPublicURL(ctx context.Context, publicUrlID string) (LockTCPPortPublicURLRow, error)
 	// reviewer writes and browser admission read current authority under the same
 	// shared guard as publish run creation, before locking public URLs and runs.
 	// guest previews have no local team row, but still use the same lock order.
 	LockReviewerTeam(ctx context.Context, teamID string) error
+	LockTCPPortPublicURL(ctx context.Context, publicUrlID string) (LockTCPPortPublicURLRow, error)
 	LockTeamActorContext(ctx context.Context, arg LockTeamActorContextParams) (LockTeamActorContextRow, error)
 	LockTeamDomain(ctx context.Context, arg LockTeamDomainParams) (LockTeamDomainRow, error)
 	LockTeamForInvitationAcceptance(ctx context.Context, teamID string) (string, error)
