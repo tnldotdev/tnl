@@ -28,6 +28,7 @@ var migrationFiles embed.FS
 // Database owns the shared local client database.
 type Database struct {
 	root              string
+	service           bool
 	locksDir          string
 	db                *sql.DB
 	queries           *clientstatedb.Queries
@@ -83,6 +84,16 @@ func DefaultDir() (string, error) {
 
 // Open creates and migrates the shared local client database.
 func Open(ctx context.Context, root string) (result *Database, retErr error) {
+	return open(ctx, root, false)
+}
+
+// OpenService uses a separate file wrapping key even on macOS, where the login
+// keychain is unavailable to a system LaunchDaemon.
+func OpenService(ctx context.Context, root string) (*Database, error) {
+	return open(ctx, root, true)
+}
+
+func open(ctx context.Context, root string, service bool) (result *Database, retErr error) {
 	defer func() {
 		if retErr != nil {
 			if _, typed := failure.Of(retErr); !typed {
@@ -113,8 +124,14 @@ func Open(ctx context.Context, root string) (result *Database, retErr error) {
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("clientstate: inspect database: %w", statErr)
 	}
-	if err := prepareSecretProtection(ctx, root, databaseExists); err != nil {
-		return nil, err
+	var protectionErr error
+	if service {
+		protectionErr = prepareFileSecretProtection(ctx, root, databaseExists)
+	} else {
+		protectionErr = prepareSecretProtection(ctx, root, databaseExists)
+	}
+	if protectionErr != nil {
+		return nil, protectionErr
 	}
 	migrations, err := fs.Sub(migrationFiles, "migrations")
 	if err != nil {
@@ -125,7 +142,7 @@ func Open(ctx context.Context, root string) (result *Database, retErr error) {
 		return nil, fmt.Errorf("clientstate: %w", err)
 	}
 	return &Database{
-		root: root, locksDir: locksDir, db: db, queries: clientstatedb.New(db), now: time.Now,
+		root: root, service: service, locksDir: locksDir, db: db, queries: clientstatedb.New(db), now: time.Now,
 		heartbeatInterval: tunnelHeartbeatInterval,
 	}, nil
 }
@@ -155,12 +172,13 @@ func (d *Database) Server(ctx context.Context, serverOrigin string) (*Store, err
 		return nil, err
 	}
 	profileDigest := sha256.Sum256([]byte(d.root + "\x00" + serverOrigin))
+	protector := newSecretProtector(hex.EncodeToString(profileDigest[:]), filepath.Join(locksDir, "keychain-initialization.lock"), d.root)
+	if d.service {
+		protector = newFileSecretProtector(hex.EncodeToString(profileDigest[:]), d.root)
+	}
 	return &Store{
 		database: d, controlEndpoint: serverOrigin, locksDir: locksDir,
-		secrets: newSecretProtector(
-			hex.EncodeToString(profileDigest[:]), filepath.Join(locksDir, "keychain-initialization.lock"),
-			d.root,
-		),
+		secrets: protector,
 	}, nil
 }
 
