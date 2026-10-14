@@ -295,7 +295,7 @@ func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admiss
 		return err
 	}
 	if observe != nil {
-		backend = &databaseInspectionConn{Conn: backend, observer: newPostgresInspector(observe)}
+		backend = &tcpInspectionConn{Conn: backend, observer: newPostgresInspector(observe)}
 	}
 	return copyTCPConnections(visitor, securedVisitor, backend, admission)
 }
