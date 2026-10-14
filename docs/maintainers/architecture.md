@@ -113,12 +113,17 @@ public URL certificate. by default the private target receives plaintext TCP;
 `--target-tls` selects a separate, certificate-verified TLS connection instead.
 the publisher never retries in plaintext after a target TLS failure. a
 PostgreSQL GSS request gets a refusal so the client can request TLS instead.
-PostgreSQL clients must disable SCRAM channel binding
-(`channel_binding=disable`) when visitor TLS ends at the publisher: their TLS
-channel does not reach the database. `--visitor-tls-passthrough` instead passes
-the visitor TLS handshake to a PostgreSQL or MySQL target that accepts TLS,
-without requiring `--target-tls`. the client sees the target's certificate and
+PostgreSQL clients requiring SCRAM channel binding can use separate visitor
+and target TLS only when both present the same certificate. with a plaintext
+target or different certificates, use `channel_binding=disable`; the publisher
+rejects a PLUS choice before forwarding its proof. `--visitor-tls-passthrough`
+passes the visitor TLS handshake to a PostgreSQL or MySQL target that accepts
+TLS, without requiring `--target-tls`. the client sees the target's certificate and
 must verify it; the publisher cannot inspect database commands in this mode.
+passthrough requires the public hostname in visitor SNI. a client that cannot
+send SNI must use split visitor TLS or switch to a client implementation that
+can; for example, mysql-connector-python's pure-Python mode sends SNI where
+its C extension did not in the tested version.
 a MySQL target with no TLS advertises visitor TLS through a rewritten greeting;
 the publisher preserves its challenge and plugin, adjusts the authentication
 packet sequence, and handles the private server's RSA password exchange when
