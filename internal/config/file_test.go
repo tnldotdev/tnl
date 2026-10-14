@@ -515,3 +515,44 @@ func TestTNLDFilePrecedenceDistinguishesAbsentAndEmptyEnvironment(t *testing.T) 
 		})
 	}
 }
+
+func TestComposeAppPublisherRequiresSeparateAppEndpoints(t *testing.T) {
+	base := TNL{Publisher: &AppPublisher{Type: "compose", Service: "publisher", ProjectRoot: "/project", Port: 8765,
+		AppEndpoints: map[string]string{"web": "/run/app-web/app.web.endpoint.json", "api": "/run/app-api/app.api.endpoint.json"}},
+		Services: Services{"web": {Target: &ServiceTarget{Type: "app"}}, "api": {Target: &ServiceTarget{Type: "app"}}}}
+	if err := ValidateTNL(base); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name    string
+		change  func(*TNL)
+		message string
+	}{
+		{"missing app", func(c *TNL) { delete(c.Publisher.AppEndpoints, "api") }, "requires a separate app endpoint"},
+		{"shared volume", func(c *TNL) { c.Publisher.AppEndpoints["api"] = "/run/app-web/app.api.endpoint.json" }, "separate absolute"},
+		{"no mounted root", func(c *TNL) { c.Publisher.ProjectRoot = "project" }, "mounted project root"},
+		{"named service", func(c *TNL) {
+			c.Services["api"] = Service{Target: &ServiceTarget{Type: "address", Address: targetPointer("http://api:3000")}}
+		}, "app registrations only"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			copy := base
+			publisher := *base.Publisher
+			publisher.AppEndpoints = map[string]string{}
+			for name, path := range base.Publisher.AppEndpoints {
+				publisher.AppEndpoints[name] = path
+			}
+			copy.Publisher = &publisher
+			copy.Services = Services{}
+			for name, service := range base.Services {
+				copy.Services[name] = service
+			}
+			test.change(&copy)
+			if err := ValidateTNL(copy); err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("validation = %v", err)
+			}
+		})
+	}
+}
+
+func targetPointer(value string) *Target { target := Target(value); return &target }

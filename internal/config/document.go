@@ -33,6 +33,7 @@ type Document struct {
 // TNL contains project-local client configuration.
 type TNL struct {
 	Server     *string            `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
+	Publisher  *AppPublisher      `json:"publisher,omitempty" yaml:"publisher,omitempty" jsonschema_description:"Where configured app registrations publish."`
 	Team       *string            `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
 	Feedback   *bool              `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
 	OAuth      bool               `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
@@ -43,6 +44,15 @@ type TNL struct {
 	Services   Services           `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with a private target, public URL settings, and optional HTTP settings."`
 	Webhooks   map[string]Webhook `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
 	Aliases    map[string]Alias   `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
+}
+
+// AppPublisher selects the host or a colocated Compose service for app registrations.
+type AppPublisher struct {
+	Type         string            `json:"type" yaml:"type" jsonschema:"required,enum=host,enum=compose"`
+	Service      string            `json:"service,omitempty" yaml:"service,omitempty" jsonschema_description:"Compose service running tnl runtime serve."`
+	ProjectRoot  string            `json:"project_root,omitempty" yaml:"project_root,omitempty" jsonschema_description:"Absolute path of the mounted project inside the publisher container."`
+	Port         int               `json:"port,omitempty" yaml:"port,omitempty" jsonschema_description:"Private TCP port on the Compose publisher service."`
+	AppEndpoints map[string]string `json:"app_endpoints,omitempty" yaml:"app_endpoints,omitempty" jsonschema_description:"Publisher-side private descriptor paths, one per app credential volume."`
 }
 
 type Services map[string]Service

@@ -476,6 +476,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			if err != nil {
 				return err
 			}
+			if selectedComposePublisher(flags.Status.Configuration) {
+				return composeOwnerCommand(ctx, flags.Status.Configuration, stdout, composeStatusArgs(flags.Status)...)
+			}
 			flags.Status.Configuration, err = loadProjectConfiguration(ctx, flags, stateRoot)
 			if err != nil {
 				return err

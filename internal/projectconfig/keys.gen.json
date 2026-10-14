@@ -1,8 +1,10 @@
 {
   "allow_all_ips": "allowAllIPs",
   "allow_ip": "allowIP",
+  "app_endpoints": "appEndpoints",
   "ca_file": "caFile",
   "max_bytes": "maxBytes",
+  "project_root": "projectRoot",
   "public_url": "publicURL",
   "server_name": "serverName",
   "source_ips": "sourceIPs",

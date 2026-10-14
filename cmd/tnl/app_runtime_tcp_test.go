@@ -199,3 +199,81 @@ func TestLocalPublisherRuntimeKeyUsesPrivateClientState(t *testing.T) {
 		t.Fatal("accepted a symlink as the private runtime directory")
 	}
 }
+
+func TestComposePublisherKeepsOwnerAndAppDescriptorsApart(t *testing.T) {
+	ownerState := t.TempDir()
+	appVolume := t.TempDir()
+	key := filepath.Join(ownerState, "publisher")
+	appPath := filepath.Join(appVolume, "app.web.endpoint.json")
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/status" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	server, _, err := startRuntimeTCPCompose(key, handler, "0.0.0.0:0", "publisher", map[string]string{"web": appPath}, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	owner, err := readRuntimeTCPEndpoint(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(appPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var app localPublisherEndpoint
+	if err := json.Unmarshal(data, &app); err != nil || app.Credential == owner.Credential ||
+		!strings.HasPrefix(app.URL, "http://publisher:") || !strings.HasPrefix(owner.URL, "http://127.0.0.1:") {
+		t.Fatalf("Compose endpoints = %+v, %+v, %v", owner, app, err)
+	}
+	if _, err := os.Stat(filepath.Join(appVolume, filepath.Base(runtimeTCPEndpointPath(key)))); !os.IsNotExist(err) {
+		t.Fatalf("owner credential appeared in app volume: %v", err)
+	}
+	request := func(host, token string) int {
+		t.Helper()
+		r, err := http.NewRequestWithContext(t.Context(), http.MethodGet, owner.URL+"/v1/status", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Host = host
+		r.Header.Set("Authorization", "Bearer "+token)
+		response, err := (&http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: time.Second}).Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		return response.StatusCode
+	}
+	if request(strings.TrimPrefix(app.URL, "http://"), app.Credential) != http.StatusOK ||
+		request(strings.TrimPrefix(owner.URL, "http://"), app.Credential) != http.StatusUnauthorized ||
+		request(strings.TrimPrefix(app.URL, "http://"), owner.Credential) != http.StatusUnauthorized {
+		t.Fatal("Compose endpoint authorities crossed scopes")
+	}
+	if err := stopRuntimeTCP(t.Context(), server, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(appPath); !os.IsNotExist(err) {
+		t.Fatalf("app descriptor survived replacement: %v", err)
+	}
+	replacement, _, err := startRuntimeTCPCompose(key, handler, "0.0.0.0:0", "publisher", map[string]string{"web": appPath}, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = replacement.Close() })
+	data, err = os.ReadFile(appPath)
+	var newApp localPublisherEndpoint
+	if err != nil || json.Unmarshal(data, &newApp) != nil || newApp.Credential == app.Credential {
+		t.Fatalf("replacement app credential was reused: %+v, %v", newApp, err)
+	}
+	newOwner, err := readRuntimeTCPEndpoint(key)
+	if err != nil || newOwner.Credential == owner.Credential {
+		t.Fatalf("replacement owner credential was reused: %v", err)
+	}
+	if err := stopRuntimeTCP(t.Context(), replacement, key); err != nil {
+		t.Fatal(err)
+	}
+}

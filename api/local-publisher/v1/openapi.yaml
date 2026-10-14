@@ -407,6 +407,7 @@ components:
       properties:
         owner: { type: string, pattern: "^[a-f0-9]{32}$" }
         target: { type: string, minLength: 1, maxLength: 2048 }
+        bound_host: { type: string, enum: ["0.0.0.0", "::"] }
     EventCursor:
       type: string
       minLength: 1

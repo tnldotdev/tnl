@@ -1,6 +1,7 @@
 package projectconfig
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,23 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 )
+
+func TestMountedPublisherPreservesHostServiceLabelsAcrossStateDirectories(t *testing.T) {
+	hostRoot := t.TempDir()
+	containerRoot := t.TempDir()
+	host, err := Resolve(context.Background(), Selection{}, hostRoot, [32]byte{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	container, err := ResolveForPublisher(context.Background(), Selection{}, containerRoot, [32]byte{2}, host.Worktree.Label)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host.Worktree.Label != container.Worktree.Label ||
+		ServiceWorktreeLabel("web", host.Worktree) != ServiceWorktreeLabel("web", container.Worktree) {
+		t.Fatalf("mounted publisher changed saved hostname: host=%+v container=%+v", host.Worktree.Label, container.Worktree.Label)
+	}
+}
 
 func TestServicesShareOneModelAndInheritRootDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tnl.yml")

@@ -202,6 +202,12 @@ func runAppObservation(ctx context.Context, flags cli, command string, output io
 	if !project.Found() || len(project.Config.Services) == 0 {
 		return failure.Wrap("observe services", failure.ProjectConfigMissing, errors.New("configured services are required"))
 	}
+	if selectedComposePublisher(project) {
+		if command == "watch" {
+			return composeOwnerCommand(ctx, project, output, composeWatchArgs(flags.Watch)...)
+		}
+		return composeOwnerCommand(ctx, project, output, composeWaitArgs(flags.Wait)...)
+	}
 	if canonical, err := filepath.EvalSymlinks(root); err == nil {
 		root = canonical
 	}

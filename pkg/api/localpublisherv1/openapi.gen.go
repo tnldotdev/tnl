@@ -122,6 +122,24 @@ func (e AppPreparationFramework) Valid() bool {
 	}
 }
 
+// Defines values for BoundListenerBoundHost.
+const (
+	Empty BoundListenerBoundHost = "::"
+	N0000 BoundListenerBoundHost = "0.0.0.0"
+)
+
+// Valid indicates whether the value is a known member of the BoundListenerBoundHost enum.
+func (e BoundListenerBoundHost) Valid() bool {
+	switch e {
+	case Empty:
+		return true
+	case N0000:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HTTPServiceMetadataProtocol.
 const (
 	HTTPServiceMetadataProtocolHttp HTTPServiceMetadataProtocol = "http"
@@ -336,9 +354,13 @@ type AppPreparationFramework string
 
 // BoundListener defines model for BoundListener.
 type BoundListener struct {
-	Owner  string `json:"owner"`
-	Target string `json:"target"`
+	BoundHost *BoundListenerBoundHost `json:"bound_host,omitempty"`
+	Owner     string                  `json:"owner"`
+	Target    string                  `json:"target"`
 }
+
+// BoundListenerBoundHost defines model for BoundListener.BoundHost.
+type BoundListenerBoundHost string
 
 // EventCursor Opaque position in the project's ordered local event journal.
 type EventCursor = string

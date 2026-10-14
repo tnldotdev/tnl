@@ -16,6 +16,7 @@ export interface TnlConfig {
    * Control URL used by this project.
    */
   server?: string;
+  publisher?: AppPublisher;
   /**
    * Unique lowercase team name or team ID used by this project.
    */
@@ -432,6 +433,30 @@ export interface TnlConfig {
         }
       | undefined;
   };
+}
+/**
+ * Where configured app registrations publish.
+ */
+export interface AppPublisher {
+  type: "host" | "compose";
+  /**
+   * Compose service running tnl runtime serve.
+   */
+  service?: string;
+  /**
+   * Private TCP port on the Compose publisher service.
+   */
+  port?: number;
+  /**
+   * Publisher-side private descriptor paths, one per app credential volume.
+   */
+  appEndpoints?: {
+    [k: string]: string | undefined;
+  };
+  /**
+   * Absolute path of the mounted project inside the publisher container.
+   */
+  projectRoot?: string;
 }
 /**
  * Local inspection capture and retention for HTTP and supported TCP services.

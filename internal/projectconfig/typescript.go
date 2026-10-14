@@ -258,6 +258,8 @@ var typeScriptKeyMappings = map[string]string{
 	"ca_file":         "caFile",
 	"strip_prefix":    "stripPrefix",
 	"public_url":      "publicURL",
+	"app_endpoints":   "appEndpoints",
+	"project_root":    "projectRoot",
 }
 
 // TypeScriptKeyMappings returns the static-to-TypeScript property mappings

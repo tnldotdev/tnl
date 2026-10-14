@@ -2,6 +2,36 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tnl.dev/schema/v1.json",
   "$defs": {
+    "AppPublisher": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["host", "compose"]
+        },
+        "service": {
+          "type": "string",
+          "description": "Compose service running tnl runtime serve."
+        },
+        "project_root": {
+          "type": "string",
+          "description": "Absolute path of the mounted project inside the publisher container."
+        },
+        "port": {
+          "type": "integer",
+          "description": "Private TCP port on the Compose publisher service."
+        },
+        "app_endpoints": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Publisher-side private descriptor paths, one per app credential volume."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["type"]
+    },
     "Inspection": {
       "properties": {
         "mode": {
@@ -25,6 +55,10 @@
         "server": {
           "type": "string",
           "description": "Control URL used by this project."
+        },
+        "publisher": {
+          "$ref": "#/$defs/AppPublisher",
+          "description": "Where configured app registrations publish."
         },
         "team": {
           "type": "string",

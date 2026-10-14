@@ -57,7 +57,15 @@ func (a *appRuntime) localHandler() http.Handler {
 			runtimeProblem(w, clientruntime.ErrRegistrationStale)
 			return
 		}
-		if err := a.manager.Register(id, bound.Owner, bound.Target, framework); err != nil {
+		boundHost := ""
+		if bound.BoundHost != nil {
+			boundHost = string(*bound.BoundHost)
+		}
+		target, err := a.registeredAppTarget(r.Context(), localPublisherService(r.Context()), bound.Target, boundHost)
+		if err == nil {
+			err = a.manager.Register(id, bound.Owner, target, framework)
+		}
+		if err != nil {
 			runtimeProblem(w, err)
 			return
 		}

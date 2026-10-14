@@ -137,6 +137,31 @@ func ValidateDocument(document Document) error {
 }
 
 func ValidateTNL(config TNL) error {
+	if publisher := config.Publisher; publisher != nil {
+		switch publisher.Type {
+		case "host":
+			if publisher.Service != "" || publisher.ProjectRoot != "" || publisher.Port != 0 || len(publisher.AppEndpoints) != 0 {
+				return errors.New("publisher: host does not take Compose settings")
+			}
+		case "compose":
+			if config.OAuth || len(config.Webhooks) != 0 || len(config.Aliases) != 0 {
+				return errors.New("publisher: compose app placement does not select integration URLs or aliases")
+			}
+			if !naming.ValidServiceName(publisher.Service) || !filepath.IsAbs(publisher.ProjectRoot) ||
+				filepath.Clean(publisher.ProjectRoot) != publisher.ProjectRoot || publisher.Port < 1 || publisher.Port > 65535 || len(publisher.AppEndpoints) == 0 {
+				return errors.New("publisher: compose requires a service, mounted project root, private port, and app endpoints")
+			}
+			seen := make(map[string]bool)
+			for name, path := range publisher.AppEndpoints {
+				if !naming.ValidServiceName(name) || !filepath.IsAbs(path) || filepath.Clean(path) != path || filepath.Base(path) != "app."+name+".endpoint.json" || seen[filepath.Dir(path)] {
+					return fmt.Errorf("publisher.app_endpoints.%s: use a separate absolute app.%s.endpoint.json directory for each app", name, name)
+				}
+				seen[filepath.Dir(path)] = true
+			}
+		default:
+			return errors.New("publisher.type must be host or compose")
+		}
+	}
 	if err := validateReadiness(config.Readiness); err != nil {
 		return err
 	}
@@ -173,6 +198,14 @@ func ValidateTNL(config TNL) error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := config.Services[name]
+		if config.Publisher != nil && config.Publisher.Type == "compose" &&
+			(ServiceProtocol(ServicePublish(config.Publish, service)) != "http" || service.Target != nil && service.Target.Type == "address") {
+			return fmt.Errorf("services.%s: Compose publisher supports app registrations only", name)
+		}
+		if config.Publisher != nil && config.Publisher.Type == "compose" &&
+			(service.Target == nil || service.Target.Type == "app") && config.Publisher.AppEndpoints[name] == "" {
+			return fmt.Errorf("services.%s: compose publisher requires a separate app endpoint", name)
+		}
 		if service.Protocol != nil && *service.Protocol != "http" && service.Target == nil {
 			return fmt.Errorf("services.%s: TCP service requires an address target", name)
 		}
@@ -272,6 +305,13 @@ func ValidateTNL(config TNL) error {
 			}
 			if _, found := config.Services[mount.Service]; !found || mount.Service == name {
 				return fmt.Errorf("services.%s.http.paths[%q]: service %q must name another configured service", name, prefix, mount.Service)
+			}
+		}
+	}
+	if config.Publisher != nil && config.Publisher.Type == "compose" {
+		for name := range config.Publisher.AppEndpoints {
+			if _, ok := config.Services[name]; !ok {
+				return fmt.Errorf("publisher.app_endpoints.%s: app service is not configured", name)
 			}
 		}
 	}

@@ -183,6 +183,54 @@ that owner to issue its credential. App status is authenticated and includes
 only the app's service; SDKs check it before reusing a descriptor after an owner
 restart.
 
+For a colocated Compose publisher, configure `tnl.publisher` with `type:
+compose`, the Compose service, its private TCP port, the mounted project root,
+and one `app_endpoints` path per app. The publisher starts with `tnl runtime
+serve --compose --directory /workspace` after the host runs `tnl config
+generate`; it reads the host's validated `.tnl/project.json` label to preserve
+saved public URLs despite using its own client state. Start the Compose project
+with `docker compose -p "$(tnl project label --output raw)" up`. The publisher
+owns its client state and loopback-addressed owner descriptor; each app receives
+only its own `app.NAME.endpoint.json` through a separate user-owned private
+volume and sets `TNL_APP_ENDPOINT` to that mounted path. Do not mount the owner
+state or another app's descriptor volume in an app. The publisher accepts a
+reported app listener only if it bound all container interfaces, then reaches
+the reported port at the app's Compose service name. SDKs reconnect to the
+replaced publisher using the refreshed descriptor in their volume. Host
+`tnl status`, `tnl wait`, and `tnl watch` run in the selected Compose publisher
+through `docker compose exec`, without exporting its owner credential.
+
+For example, with `/workspace` mounted read-only in the publisher and
+`/run/web` mounted in the publisher and only the `web` app:
+
+```yaml
+version: 1
+tnl:
+  publisher:
+    type: compose
+    service: publisher
+    project_root: /workspace
+    port: 8765
+    app_endpoints:
+      web: /run/web/app.web.endpoint.json
+  services:
+    web:
+      target: { type: app }
+```
+
+Create `/run/web` and the publisher-only client state as separate writable
+volumes owned by the publisher's numeric user. Mount the web volume read-only
+in the app, set `TNL_APP_ENDPOINT=/run/web/app.web.endpoint.json`, and bind the
+app HTTP listener to `0.0.0.0`. The publisher container needs `tnl`, its own
+login and state, and access to control and the relay service. Its API port is
+private to the Compose network; host commands reach it with `docker compose
+exec`, not a host-published port.
+
+The Compose selection currently accepts only configured HTTP app registrations
+without project OAuth, webhooks, or aliases; address services still use the host
+`tnl publish` path. Keep their state and publication ownership separate until
+named-service leases share the app manager.
+
 Named CLI publication leases need the same manager ownership and journal as
 app registrations; add their API operations when those workers use the unified
 SQLite journal, rather than introducing a second TCP event history.

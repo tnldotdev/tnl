@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -45,6 +46,7 @@ type runtimeEndpointOptions struct {
 type runtimeOptions struct {
 	Directory string `name:"directory" required:"" type:"path"`
 	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	Compose   bool   `name:"compose" help:"Run the selected Compose publisher with mounted project metadata."`
 }
 
 func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfiguration, string, error) {
@@ -70,9 +72,37 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 	if err != nil {
 		return projectConfiguration{}, "", err
 	}
-	project, err := projectconfig.Resolve(ctx, selection, directory, salt)
+	var project projectconfig.Project
+	if options.Compose || os.Getenv("TNL_APP_ENDPOINT") != "" {
+		projectRoot := directory
+		if selection.Path != "" {
+			projectRoot = filepath.Dir(selection.Path)
+		}
+		file, readErr := os.Open(filepath.Join(projectRoot, projectmeta.DirectoryName, projectmeta.JSONName))
+		if readErr != nil {
+			return projectConfiguration{}, "", errors.New("generate and mount .tnl/project.json from the host before starting the Compose publisher")
+		}
+		defer file.Close()
+		data, readErr := io.ReadAll(io.LimitReader(file, projectmeta.MaxFileBytes+1))
+		if readErr != nil || len(data) > projectmeta.MaxFileBytes {
+			return projectConfiguration{}, "", errors.New("generate and mount .tnl/project.json from the host before starting the Compose publisher")
+		}
+		var metadata projectmeta.Metadata
+		if err := json.Unmarshal(data, &metadata); err != nil || metadata.Worktree == nil {
+			return projectConfiguration{}, "", errors.New("mounted project metadata needs a worktree label")
+		}
+		if err := metadata.Validate(); err != nil {
+			return projectConfiguration{}, "", err
+		}
+		project, err = projectconfig.ResolveForPublisher(ctx, selection, directory, salt, metadata.Worktree.Label)
+	} else {
+		project, err = projectconfig.Resolve(ctx, selection, directory, salt)
+	}
 	if err != nil {
 		return projectConfiguration{}, "", err
+	}
+	if os.Getenv("TNL_APP_ENDPOINT") != "" && (project.Config.Publisher == nil || project.Config.Publisher.Type != "compose") {
+		return projectConfiguration{}, "", errors.New("TNL_APP_ENDPOINT requires a configured Compose publisher")
 	}
 	if selected := os.Getenv("TNL_SERVER"); selected != "" {
 		canonical, err := clientstate.CanonicalServer(selected)
@@ -170,6 +200,17 @@ func runRuntimeEndpoint(ctx context.Context, options runtimeEndpointOptions, out
 	if !slices.ContainsFunc(configuredRuntimeServices(project), func(candidate clientruntime.Service) bool { return candidate.Name == service }) {
 		return errors.New("local publisher endpoint needs a configured app service")
 	}
+	if publisher := project.Config.Publisher; publisher != nil && publisher.Type == "compose" {
+		path := os.Getenv("TNL_APP_ENDPOINT")
+		if !filepath.IsAbs(path) || filepath.Base(path) != "app."+service+".endpoint.json" {
+			return errors.New("mount this app's private Compose endpoint and set TNL_APP_ENDPOINT")
+		}
+		return json.NewEncoder(output).Encode(struct {
+			Version int    `json:"version"`
+			Path    string `json:"path"`
+			Spawn   bool   `json:"spawn"`
+		}{privateprotocol.Version, path, false})
+	}
 	if runtimeAvailable(ctx, key) {
 		response, err := localOwnerRequest(ctx, key, http.MethodPost, "/v1/scopes/app/"+url.PathEscape(service), nil)
 		if err != nil {
@@ -240,6 +281,15 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	if err != nil {
 		return err
 	}
+	compose := project.Config.Publisher != nil && project.Config.Publisher.Type == "compose"
+	if options.Compose != compose {
+		return errors.New("runtime serve --compose must match the configured publisher")
+	}
+	if compose {
+		if err := validateComposeAppVolumes(project.Config.Publisher.AppEndpoints, project.Root, root); err != nil {
+			return err
+		}
+	}
 	key, err := runtimeKey(project.Root, root)
 	if err != nil {
 		return err
@@ -262,7 +312,11 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	if err != nil {
 		return err
 	}
-	runtime.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
+	if compose {
+		runtime.manager.Alive = func(pid int) bool { return pid > 0 }
+	} else {
+		runtime.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
+	}
 	defer runtime.manager.Close()
 	runtime.adhoc = clientruntime.NewAdHocManager(ctx, runtime.publishAdHoc, runtime.manager.Alive, runtime.manager.BeginPreparation)
 	defer runtime.adhoc.Close()
@@ -270,7 +324,14 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	for _, service := range configuredRuntimeServices(project) {
 		appServices = append(appServices, service.Name)
 	}
-	tcpServer, tcpDone, err := startRuntimeTCP(key, runtime.localHandler(), appServices...)
+	var tcpServer *http.Server
+	var tcpDone <-chan error
+	if compose {
+		publisher := project.Config.Publisher
+		tcpServer, tcpDone, err = startRuntimeTCPCompose(key, runtime.localHandler(), net.JoinHostPort("0.0.0.0", fmt.Sprint(publisher.Port)), publisher.Service, publisher.AppEndpoints, appServices...)
+	} else {
+		tcpServer, tcpDone, err = startRuntimeTCP(key, runtime.localHandler(), appServices...)
+	}
 	if err != nil {
 		return err
 	}
@@ -284,10 +345,10 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		case err := <-tcpDone:
 			return fmt.Errorf("serve local publisher TCP API: %w", err)
 		case <-ticker.C:
-			if os.Getppid() != parentPID {
+			if !compose && os.Getppid() != parentPID {
 				return nil
 			}
-			if runtime.manager.Sweep(runtime.manager.Alive) {
+			if runtime.manager.Sweep(runtime.manager.Alive) && !compose {
 				return nil
 			}
 			runtime.adhoc.Sweep()
@@ -314,16 +375,25 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	if request.Version != privateprotocol.Version || !privateprotocol.ValidOwner(request.Owner) || request.PID <= 0 || !request.Framework.Valid() {
 		return privateprotocol.Assignment{}, failure.Wrap("prepare app", failure.ProjectConfigInvalid, errors.New("invalid app preparation"))
 	}
-	directory, err := filepath.EvalSymlinks(request.Directory)
-	if err != nil || !pathInside(directory, a.project.Root) {
-		return privateprotocol.Assignment{}, failure.Wrap("select app directory", failure.ProjectConfigInvalid, errors.Join(err, errors.New("app directory is outside the project")))
-	}
-	project, _, err := runtimeProject(ctx, runtimeOptions{Directory: directory, StateDir: a.state.Root()})
-	if err != nil {
-		return privateprotocol.Assignment{}, err
-	}
-	if project.Root != a.project.Root {
-		return privateprotocol.Assignment{}, failure.Wrap("select app project", failure.ProjectConfigInvalid, errors.New("app preparation selected another project"))
+	project := a.project
+	directory := ""
+	if a.project.Config.Publisher != nil && a.project.Config.Publisher.Type == "compose" {
+		if !filepath.IsAbs(request.Directory) || strings.ContainsRune(request.Directory, 0) || localPublisherService(ctx) == "" {
+			return privateprotocol.Assignment{}, failure.Wrap("select app directory", failure.ProjectConfigInvalid, errors.New("compose app needs its scoped credential and an absolute directory"))
+		}
+	} else {
+		var err error
+		directory, err = filepath.EvalSymlinks(request.Directory)
+		if err != nil || !pathInside(directory, a.project.Root) {
+			return privateprotocol.Assignment{}, failure.Wrap("select app directory", failure.ProjectConfigInvalid, errors.Join(err, errors.New("app directory is outside the project")))
+		}
+		project, _, err = runtimeProject(ctx, runtimeOptions{Directory: directory, StateDir: a.state.Root()})
+		if err != nil {
+			return privateprotocol.Assignment{}, err
+		}
+		if project.Root != a.project.Root {
+			return privateprotocol.Assignment{}, failure.Wrap("select app project", failure.ProjectConfigInvalid, errors.New("app preparation selected another project"))
+		}
 	}
 	name := request.Service
 	if name == "" {
@@ -348,6 +418,9 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	}
 	if !naming.ValidServiceName(name) {
 		return privateprotocol.Assignment{}, failure.Wrap("select app service", failure.ServiceNotConfigured, errors.New("select a unique configured service"))
+	}
+	if service := localPublisherService(ctx); service != "" && service != name {
+		return privateprotocol.Assignment{}, failure.Wrap("select app service", failure.ServiceNotConfigured, errors.New("app credential belongs to another service"))
 	}
 	defer func() {
 		if resultErr == nil {
@@ -405,8 +478,10 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	if err != nil || len(payload) > privateprotocol.MaxBytes {
 		return privateprotocol.Assignment{}, failure.Wrap("prepare app metadata", failure.ProjectConfigInvalid, errors.Join(err, errors.New("app metadata exceeds private protocol limit")))
 	}
-	if err := projectmeta.Write(ctx, a.project.Root, metadata); err != nil {
-		return privateprotocol.Assignment{}, err
+	if a.project.Config.Publisher == nil || a.project.Config.Publisher.Type != "compose" {
+		if err := projectmeta.Write(ctx, a.project.Root, metadata); err != nil {
+			return privateprotocol.Assignment{}, err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return privateprotocol.Assignment{}, err
@@ -427,6 +502,20 @@ func valueOrEmpty(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func (a *appRuntime) registeredAppTarget(ctx context.Context, service, target, boundHost string) (string, error) {
+	if a.project.Config.Publisher == nil || a.project.Config.Publisher.Type != "compose" {
+		return target, nil
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" ||
+		parsed.String() != target || parsed.Path != "" || parsed.User != nil || boundHost != "0.0.0.0" && boundHost != "::" ||
+		localPublisherService(ctx) != service || a.project.Config.Publisher.AppEndpoints[service] == "" {
+		return "", failure.Wrap("register Compose app listener", failure.ProjectConfigInvalid,
+			errors.New("app must report its own wildcard-bound HTTP listener using its service credential"))
+	}
+	return "http://" + net.JoinHostPort(service, parsed.Port()), nil
 }
 
 func (a *appRuntime) ownerOperations() http.Handler {

@@ -14,6 +14,7 @@ const schema = parseJSON(
     $defs: z.object({
       TNL: schemaObject,
       Inspection: schemaObject,
+      AppPublisher: schemaObject,
     }),
   }),
   "configuration schema",
@@ -28,6 +29,7 @@ const client = {
   $schema: schema.$schema,
   $defs: {
     Inspection: schema.$defs.Inspection,
+    AppPublisher: schema.$defs.AppPublisher,
   },
 };
 renameProperties(client, keys);

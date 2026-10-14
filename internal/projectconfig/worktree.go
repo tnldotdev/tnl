@@ -145,6 +145,14 @@ func ApplyWorktreeHashSalt(worktree Worktree, projectRoot string, salt [32]byte)
 	return worktree
 }
 
+// WithWorktreeLabel uses a validated host label for a mounted project. service
+// hostnames must use the same label parts, not the container's client-state salt.
+func WithWorktreeLabel(worktree Worktree, label WorktreeLabel) Worktree {
+	worktree.Label = label
+	worktree.labelParts = worktreeLabelParts{project: label.Project, checkout: label.Checkout, id: label.ID}
+	return worktree
+}
+
 func worktreeLabelID(root, projectRoot string, salt [32]byte) string {
 	return labelID("tnl-worktree-label-v2\x00", root, projectRoot, salt)
 }

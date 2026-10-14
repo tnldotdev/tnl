@@ -23,6 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -102,6 +103,65 @@ func TestRuntimeOwnerEndpointReturnsDescriptorWithoutStartingPublisher(t *testin
 	}
 	if _, err := os.Stat(endpoint.Path); !os.IsNotExist(err) {
 		t.Fatalf("endpoint lookup started the local publisher: %v", err)
+	}
+}
+
+func TestComposeAppEndpointDoesNotStartAHostOwner(t *testing.T) {
+	t.Setenv("TNL_CONFIG", "")
+	project := t.TempDir()
+	path := filepath.Join(t.TempDir(), "app.web.endpoint.json")
+	data := `{"version":1,"tnl":{"publisher":{"type":"compose","service":"publisher","project_root":"/project","port":8765,"app_endpoints":{"web":"/run/app-web/app.web.endpoint.json"}},"services":{"web":{"target":{"type":"app"}}}}}`
+	if err := os.WriteFile(filepath.Join(project, "tnl.json"), []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(project, projectmeta.DirectoryName), 0700); err != nil {
+		t.Fatal(err)
+	}
+	metadata := `{"namespace":"member.example","dev":false,"version":2,"serviceDirectories":{},"services":{},"worktree":{"label":{"project":"shop","id":"k7n2p9","fullLabel":"shop-k7n2p9"}}}`
+	if err := os.WriteFile(filepath.Join(project, projectmeta.DirectoryName, projectmeta.JSONName), []byte(metadata), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TNL_APP_ENDPOINT", path)
+	state := filepath.Join(t.TempDir(), "state")
+	var output bytes.Buffer
+	if err := runRuntimeEndpoint(t.Context(), runtimeEndpointOptions{runtimeOptions: runtimeOptions{Directory: project, StateDir: state}, Service: "web"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var address struct {
+		Version int    `json:"version"`
+		Path    string `json:"path"`
+		Spawn   bool   `json:"spawn"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &address); err != nil || address.Version != 1 || address.Path != path || address.Spawn {
+		t.Fatalf("Compose endpoint = %s, %v", output.String(), err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("endpoint lookup created a credential: %v", err)
+	}
+	key, err := runtimeKey(project, state)
+	if err != nil || runtimeAvailable(t.Context(), key) {
+		t.Fatalf("endpoint lookup started host publisher: %v", err)
+	}
+}
+
+func TestComposeAppListenerMapsOnlyItsWildcardBoundPort(t *testing.T) {
+	a := &appRuntime{project: projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Publisher: &config.AppPublisher{
+		Type: "compose", Service: "publisher", Port: 8765, AppEndpoints: map[string]string{"web": "/run/app-web/app.web.endpoint.json"},
+	}}}}}
+	ctx := context.WithValue(t.Context(), localPublisherScopeKey{}, "web")
+	target, err := a.registeredAppTarget(ctx, "web", "http://127.0.0.1:4137", "0.0.0.0")
+	if err != nil || target != "http://web:4137" {
+		t.Fatalf("mapped target = %q, %v", target, err)
+	}
+	for _, test := range []struct{ service, target, bound string }{
+		{"api", "http://127.0.0.1:4137", "0.0.0.0"},
+		{"web", "http://127.0.0.1:4137", "127.0.0.1"},
+		{"web", "http://api:4137", "0.0.0.0"},
+		{"web", "http://127.0.0.1:4137/path", "0.0.0.0"},
+	} {
+		if target, err := a.registeredAppTarget(ctx, test.service, test.target, test.bound); err == nil {
+			t.Fatalf("accepted %q as %q: %s", test.target, test.service, target)
+		}
 	}
 }
 
