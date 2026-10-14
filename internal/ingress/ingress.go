@@ -1,4 +1,4 @@
-// package ingress routes HTTPS by exact SNI and database connections by the
+// package ingress routes HTTPS by exact SNI and TCP connections by the
 // trusted destination port without terminating visitor TLS.
 package ingress
 
@@ -243,7 +243,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	}
 	_ = public.SetReadDeadline(time.Time{})
 	// fly sends the visitor's original destination in the trusted outer header.
-	// database clients start with protocol negotiation, not a TLS ClientHello.
+	// TCP clients can send protocol bytes before any TLS ClientHello.
 	if s.config.RequireProxyHeader && destination.Port() != 443 {
 		finishInspection()
 		if s.config.LookupPort == nil {

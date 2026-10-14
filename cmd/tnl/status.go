@@ -66,6 +66,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			if err != nil {
 				return err
 			}
+			appSnapshot = mergeTCPServices(appSnapshot, project, snapshot.Tunnels)
 		}
 	} else {
 		projects, err := clientruntime.ListSnapshots(root)
@@ -123,6 +124,9 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 		)
 		if tunnel.Service != "" {
 			fields = append(fields, clioutput.Field{Label: "service", Value: tunnel.Service})
+		}
+		if tunnel.ServiceProtocol != "" {
+			fields = append(fields, clioutput.Field{Label: "protocol", Value: string(tunnel.ServiceProtocol)})
 		}
 		if flags.All {
 			fields = append(fields, clioutput.Field{Label: "project", Value: tunnel.Project})

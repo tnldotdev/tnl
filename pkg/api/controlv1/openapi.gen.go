@@ -436,6 +436,8 @@ const (
 	Http     PublicURLServiceProtocol = "http"
 	Mysql    PublicURLServiceProtocol = "mysql"
 	Postgres PublicURLServiceProtocol = "postgres"
+	Redis    PublicURLServiceProtocol = "redis"
+	Ssh      PublicURLServiceProtocol = "ssh"
 )
 
 // Valid indicates whether the value is a known member of the PublicURLServiceProtocol enum.
@@ -446,6 +448,10 @@ func (e PublicURLServiceProtocol) Valid() bool {
 	case Mysql:
 		return true
 	case Postgres:
+		return true
+	case Redis:
+		return true
+	case Ssh:
 		return true
 	default:
 		return false

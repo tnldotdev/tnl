@@ -20,6 +20,7 @@ import type { OpenOptions } from "@tnldotdev/tnl";
 }) satisfies OpenOptions;
 
 const staticConfig = {
+  inspection: { mode: "summary" },
   tunnel: {
     allowIP: ["192.0.2.0/24"],
     domain: "example.test",
@@ -28,6 +29,28 @@ const staticConfig = {
   publish: { target: 3000 },
   readiness: { path: "/health" },
 } satisfies TnlConfigInput;
+
+({
+  services: {
+    web: { directory: "apps/web" },
+    orders: {
+      inspection: { mode: "none" },
+      publish: {
+        protocol: "postgres",
+        target: "db.internal:5432",
+        targetTLS: true,
+        targetTLSName: "db.internal",
+        targetCAFile: "./ca.pem",
+      },
+    },
+  },
+}) satisfies TnlConfig;
+({
+  publish: {
+    // @ts-expect-error the retired static key is not accepted in TypeScript.
+    ca_file: "./ca.pem",
+  },
+}) satisfies TnlConfig;
 
 "1m" satisfies TnlRatePeriod;
 "1h30m" satisfies TnlRatePeriod;

@@ -37,8 +37,8 @@ func resolveProjectMounts(project projectConfiguration, service string) ([]local
 			return nil, fmt.Errorf("service %q mount %q: %w", service, prefix, err)
 		}
 		caFile := ""
-		if effective.Publish != nil && effective.Publish.CAFile != nil {
-			caFile = *effective.Publish.CAFile
+		if effective.Publish != nil && effective.Publish.TargetCAFile != nil {
+			caFile = *effective.Publish.TargetCAFile
 		}
 		options, err := targetOptionsForCA(caFile, project.Root)
 		if err != nil {

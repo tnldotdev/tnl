@@ -2,8 +2,23 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tnl.dev/schema/v1.json",
   "$defs": {
+    "Inspection": {
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["none", "summary"]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Publish": {
       "properties": {
+        "protocol": {
+          "type": "string",
+          "enum": ["http", "postgres", "mysql", "redis", "ssh"],
+          "description": "Service protocol for the public URL; defaults to http."
+        },
         "target": {
           "oneOf": [
             {
@@ -16,11 +31,19 @@
               "minimum": 1
             }
           ],
-          "description": "HTTP or HTTPS origin reachable by the publisher, or a local port."
+          "description": "HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher."
         },
-        "ca_file": {
+        "target_tls_name": {
           "type": "string",
-          "description": "Additional PEM certificate authorities for HTTPS targets; relative paths are resolved from the project root."
+          "description": "Hostname expected in the target's TLS certificate; defaults to the target host."
+        },
+        "target_tls": {
+          "type": "boolean",
+          "description": "Use verified TLS for the TCP target."
+        },
+        "target_ca_file": {
+          "type": "string",
+          "description": "Additional PEM certificate authorities for the target; relative paths are resolved from the project root."
         }
       },
       "additionalProperties": false,
@@ -54,10 +77,9 @@
           "type": "boolean",
           "description": "Publish one shared OAuth callback URL while project tunnels run."
         },
-        "request_inspection": {
-          "type": "string",
-          "enum": ["summary", "detailed"],
-          "description": "Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies."
+        "inspection": {
+          "$ref": "#/$defs/Inspection",
+          "description": "Local inspection capture and retention for HTTP and supported TCP services."
         },
         "tunnel": {
           "allOf": [
@@ -170,10 +192,8 @@
                 "minLength": 1,
                 "description": "Service directory relative to the project configuration."
               },
-              "request_inspection": {
-                "type": "string",
-                "enum": ["summary", "detailed"],
-                "description": "Local HTTP request capture for this service."
+              "inspection": {
+                "$ref": "#/$defs/Inspection"
               },
               "tunnel": {
                 "allOf": [

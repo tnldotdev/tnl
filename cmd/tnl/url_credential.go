@@ -116,8 +116,8 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 		return err
 	}
 	if protocol != controlv1.Http && flags.Target != "" {
-		return failure.Wrap("reserve database public URL", failure.InvalidTunnelFlags,
-			errors.New("database targets stay on the publisher; omit --target and supply host:port when publishing"))
+		return failure.Wrap("reserve TCP public URL", failure.InvalidTunnelFlags,
+			errors.New("TCP targets stay on the publisher; omit --target and supply host:port when publishing"))
 	}
 	if flags.Ephemeral {
 		if flags.Selector != "" || flags.PublicURL != "" || flags.Name != "" || flags.Target != "" || flags.AllowIP != nil || flags.AllowAllIPs || protocol != controlv1.Http {

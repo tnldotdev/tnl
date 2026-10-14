@@ -20,18 +20,6 @@ import (
 
 const DocumentVersion = 1
 
-// RequestInspectionMode selects how much local HTTP detail the publisher saves.
-type RequestInspectionMode string
-
-const (
-	RequestInspectionSummary  RequestInspectionMode = "summary"
-	RequestInspectionDetailed RequestInspectionMode = "detailed"
-)
-
-func (mode RequestInspectionMode) Valid() bool {
-	return mode == RequestInspectionSummary || mode == RequestInspectionDetailed
-}
-
 // Document is the versioned static tnl.yml, tnl.yaml, or tnl.json contract.
 // TypeScript configuration evaluates directly to the TnlConfig shape and is
 // wrapped in this document shape by the loader.
@@ -44,29 +32,29 @@ type Document struct {
 
 // TNL contains project-local client configuration.
 type TNL struct {
-	Server            *string                `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
-	Team              *string                `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
-	Feedback          *bool                  `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
-	OAuth             bool                   `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
-	RequestInspection *RequestInspectionMode `json:"request_inspection,omitempty" yaml:"request_inspection,omitempty" jsonschema:"enum=summary,enum=detailed" jsonschema_description:"Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies."`
-	Tunnel            *Tunnel                `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
-	Publish           *Publish               `json:"publish,omitempty" yaml:"publish,omitempty"`
-	Readiness         *Readiness             `json:"readiness,omitempty" yaml:"readiness,omitempty"`
-	Services          Services               `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional tunnel, publish, readiness overrides, and path mounts."`
-	Webhooks          map[string]Webhook     `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
-	Aliases           map[string]Alias       `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
+	Server     *string            `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
+	Team       *string            `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
+	Feedback   *bool              `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
+	OAuth      bool               `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
+	Inspection *Inspection        `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP and supported TCP services."`
+	Tunnel     *Tunnel            `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
+	Publish    *Publish           `json:"publish,omitempty" yaml:"publish,omitempty"`
+	Readiness  *Readiness         `json:"readiness,omitempty" yaml:"readiness,omitempty"`
+	Services   Services           `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional tunnel, publish, readiness overrides, and path mounts."`
+	Webhooks   map[string]Webhook `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
+	Aliases    map[string]Alias   `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
 }
 
 type Services map[string]Service
 
 // Service contains project-local overrides for one named local service.
 type Service struct {
-	RequestInspection *RequestInspectionMode `json:"request_inspection,omitempty" yaml:"request_inspection,omitempty" jsonschema:"enum=summary,enum=detailed" jsonschema_description:"Override local request capture for this service."`
-	Directory         *string                `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
-	Tunnel            *Tunnel                `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
-	Publish           *Publish               `json:"publish,omitempty" yaml:"publish,omitempty"`
-	Readiness         *Readiness             `json:"readiness,omitempty" yaml:"readiness,omitempty"`
-	Paths             map[string]PathMount   `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Mount other configured local services at paths on this service's public URL."`
+	Inspection *Inspection          `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
+	Directory  *string              `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
+	Tunnel     *Tunnel              `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
+	Publish    *Publish             `json:"publish,omitempty" yaml:"publish,omitempty"`
+	Readiness  *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty"`
+	Paths      map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Mount other configured local services at paths on this service's public URL."`
 }
 
 // PathMount selects a local service reached at a path on another service's public URL.
@@ -138,8 +126,51 @@ type Rate struct {
 }
 
 type Publish struct {
-	Target *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin reachable by the publisher, or a local port."`
-	CAFile *string `json:"ca_file,omitempty" yaml:"ca_file,omitempty" jsonschema_description:"Additional PEM certificate authorities for HTTPS targets; relative paths are resolved from the project root."`
+	Protocol      *string `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh" jsonschema_description:"Service protocol for the public URL; defaults to http."`
+	Target        *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher."`
+	TargetTLSName *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty" jsonschema_description:"Hostname expected in the target's TLS certificate; defaults to the target host."`
+	TargetTLS     *bool   `json:"target_tls,omitempty" yaml:"target_tls,omitempty" jsonschema_description:"Use verified TLS for the TCP target."`
+	TargetCAFile  *string `json:"target_ca_file,omitempty" yaml:"target_ca_file,omitempty" jsonschema_description:"Additional PEM certificate authorities for the target; relative paths are resolved from the project root."`
+}
+
+// ServiceProtocol selects the public URL's service protocol, defaulting to http.
+func ServiceProtocol(publish *Publish) string {
+	if publish != nil && publish.Protocol != nil {
+		return *publish.Protocol
+	}
+	return "http"
+}
+
+// MergePublish applies one service's publish settings over the project defaults.
+func MergePublish(base, override *Publish) *Publish {
+	if base == nil && override == nil {
+		return nil
+	}
+	result := &Publish{}
+	if base != nil {
+		*result = *base
+	}
+	if override == nil {
+		return result
+	}
+	if override.Protocol != nil {
+		result.Protocol = override.Protocol
+	}
+	if override.Target != nil {
+		result.Target = override.Target
+		result.TargetTLSName, result.TargetCAFile = nil, nil
+		result.TargetTLS = nil
+	}
+	if override.TargetTLSName != nil {
+		result.TargetTLSName = override.TargetTLSName
+	}
+	if override.TargetTLS != nil {
+		result.TargetTLS = override.TargetTLS
+	}
+	if override.TargetCAFile != nil {
+		result.TargetCAFile = override.TargetCAFile
+	}
+	return result
 }
 
 // readiness selects the public GET used to check one app publication.

@@ -13,8 +13,6 @@ CREATE TABLE local_requests (
     status INTEGER NOT NULL,
     duration_ms INTEGER NOT NULL,
     origin TEXT NOT NULL CHECK (origin IN ('local_service', 'tnl')),
-    capture_mode TEXT NOT NULL CHECK (capture_mode IN ('summary', 'detailed')),
-    detail_json TEXT CHECK (detail_json IS NULL OR json_valid(detail_json)),
     UNIQUE (primary_checkout_root, request_number)
 ) STRICT;
 

@@ -73,4 +73,22 @@ func TestIntegrationDatabasePublicURLClaimsPortWithCreation(t *testing.T) {
 	if err != nil || mysqlURL.ServiceProtocol != PublicURLServiceMySQL || mysqlURL.PublicPort == nil || *mysqlURL.PublicPort != 3306 {
 		t.Fatalf("saved MySQL address = %#v, %v", mysqlURL, err)
 	}
+	if err := database.EnsurePrimaryIngressPool(t.Context(), "192.0.2.10", "", []int32{5432, 15432, 3306, 6379}, now.Add(3*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	redis := request
+	redis.IdempotencyKey, redis.CanonicalHostname, redis.ServiceProtocol = "redis-endpoint", "redis."+request.CanonicalHostname, PublicURLServiceRedis
+	redisURL, err := database.CreatePublicURL(t.Context(), redis, now.Add(3*time.Hour))
+	if err != nil || redisURL.ServiceProtocol != PublicURLServiceRedis || redisURL.Target != "" || redisURL.PublicPort == nil || *redisURL.PublicPort != 6379 {
+		t.Fatalf("saved Redis address = %#v, %v", redisURL, err)
+	}
+	if err := database.EnsurePrimaryIngressPool(t.Context(), "192.0.2.10", "", []int32{5432, 15432, 3306, 6379, 2222}, now.Add(4*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	ssh := request
+	ssh.IdempotencyKey, ssh.CanonicalHostname, ssh.ServiceProtocol = "ssh-endpoint", "ssh."+request.CanonicalHostname, PublicURLServiceSSH
+	sshURL, err := database.CreatePublicURL(t.Context(), ssh, now.Add(4*time.Hour))
+	if err != nil || sshURL.ServiceProtocol != PublicURLServiceSSH || sshURL.Target != "" || sshURL.PublicPort == nil || *sshURL.PublicPort != 2222 {
+		t.Fatalf("saved SSH address = %#v, %v", sshURL, err)
+	}
 }

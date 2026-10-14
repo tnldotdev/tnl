@@ -35,12 +35,12 @@ existing ingress-address configuration; another disabled pool never receives
 DNS records.
 
 Migration 25 records the visitor service protocol separately from a public
-URL's purpose. Database URLs have no saved private target. Control assigns a
+URL's purpose. TCP public URLs have no saved private target. Control assigns a
 TCP port only after the pool and port have been enabled. A claimed URL keeps
 its port across runs; deletion moves the claim into seven days of quarantine.
 Cleanup releases a bounded batch after the deadline, retaining the historical
 hostname-and-port pair so a new URL cannot take both values at once. Both
-database protocols prefer available symmetric ports (such as `10001`), then
+TCP protocols prefer available symmetric ports (such as `10001`), then
 choose among the remaining available ports using the public URL ID.
 
 Control may enable `ingress-a` after its public IPs and `TNLD_TCP_PORTS`
