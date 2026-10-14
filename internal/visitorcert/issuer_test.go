@@ -54,7 +54,7 @@ func TestVisitorIssuerBindsOnlyVerifiedIdentityAndURL(t *testing.T) {
 	}
 	if leaf.IsCA || leaf.Subject.CommonName != "tnl visitor" || len(leaf.URIs) != 1 ||
 		leaf.URIs[0].String() != "tnl://visitor/"+publicURLID+"/"+identityID ||
-		!leaf.NotAfter.Equal(now.Add(MaxLifetime)) || len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {
+		!leaf.NotAfter.Equal(now.Add(MaxLifetime-time.Minute)) || len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {
 		t.Fatalf("signed certificate escaped visitor scope: %+v", leaf)
 	}
 	if identity, err := issuer.Identity(leaf, publicURLID, now); err != nil || identity != identityID {

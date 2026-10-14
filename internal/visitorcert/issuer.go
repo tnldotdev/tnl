@@ -83,8 +83,9 @@ func (i *Issuer) Issue(csrDER []byte, publicURLID, identityID string, expiresAt,
 		return nil, fmt.Errorf("create visitor certificate serial: %w", err)
 	}
 	serial[0] &= 0x7f
-	if expiresAt.After(now.Add(MaxLifetime)) {
-		expiresAt = now.Add(MaxLifetime)
+	notBefore := now.Add(-time.Minute)
+	if expiresAt.After(notBefore.Add(MaxLifetime)) {
+		expiresAt = notBefore.Add(MaxLifetime)
 	}
 	if expiresAt.After(i.certificate.NotAfter) {
 		expiresAt = i.certificate.NotAfter
@@ -99,7 +100,7 @@ func (i *Issuer) Issue(csrDER []byte, publicURLID, identityID string, expiresAt,
 	template := &x509.Certificate{
 		SerialNumber: new(big.Int).SetBytes(serial),
 		Subject:      pkix.Name{CommonName: "tnl visitor"},
-		NotBefore:    now.Add(-time.Minute), NotAfter: expiresAt,
+		NotBefore:    notBefore, NotAfter: expiresAt,
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true, URIs: []*url.URL{scope},
