@@ -1,9 +1,8 @@
-# deploy the tnl server
+# run a split tnl server on Fly
 
-Use an isolated staging server to try changes before they reach production.
-This repository runs the same split topology in each environment: control,
-ingress, and two relay services. Each environment has its own PostgreSQL state,
-hostnames, and credentials. Its roles run the same selected server image.
+This is an example of running a tnl server as four Fly apps: control, ingress,
+and two relay services. The manifests in this directory give each role its own
+app and run the same selected server image across the roles.
 
 ```text
 publisher --> relay a
@@ -21,23 +20,16 @@ relays do not store server state. A small self-hosted server can instead start
 with the standalone role and move to separate processes when it needs
 independent failure boundaries.
 
-## staging and production
-
-Checks run in parallel on each change. A checked merge to `main` deploys a
-commit-specific image to staging. Publishing a signed release, including an
-RC, deploys that release image to production. The deployment first migrates
-control's database, then updates the server processes. Schema changes must
-remain compatible with processes that are still serving traffic during the
-update.
+## use this example
 
 The Fly manifests describe each role; `process-counts.json` records the
-desired process counts and relay groups for each environment. The deployment
-can create missing Fly apps and Machines, or update an existing set, without
-changing the other environment. PostgreSQL, DNS, and credentials are supplied
-separately. After a deployment, check control readiness and make a new publish
-run and visitor request; readiness alone does not test the full path.
+desired Machine counts and relay groups. The deployment creates missing Fly
+apps, public addresses, and Machines, then updates them to the selected image.
+Supply PostgreSQL, DNS, and credentials separately. Migrate control's database
+before updating the processes, keeping schema changes compatible with processes
+still serving traffic. After deploying, check control readiness and make a new
+publish run and visitor request; readiness alone does not test the full path.
 
 For a self-hosted setup, start with the [self-hosting guide](https://tnl.dev/docs/self-hosting).
 It covers PostgreSQL, DNS, TLS, and the standalone and split-role Compose
-examples. The topology here is one way to run split roles, not a requirement
-for every server.
+examples. This Fly topology is one way to run split roles.
