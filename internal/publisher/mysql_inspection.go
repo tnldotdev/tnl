@@ -4,19 +4,16 @@ import (
 	"encoding/binary"
 	"sync"
 	"time"
-	"unicode/utf8"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 const (
 	mysqlMaxPayload                   = 1<<24 - 1
-	mysqlMaxStatement                 = 8 << 10
 	mysqlMaxColumns                   = 256
 	mysqlMaxPending                   = 32
-	mysqlClientCapture                = mysqlMaxStatement + 16
+	mysqlClientCapture                = 16
 	mysqlServerCapture                = 64
 	mysqlClientCompress               = 1 << 5
 	mysqlClientDeprecateEOF           = 1 << 24
@@ -27,8 +24,6 @@ const (
 type mysqlCall struct {
 	operation         inspection.Operation
 	responseSequence  byte
-	statement         string
-	truncated         bool
 	started           time.Time
 	rows              int64
 	resultSets        int
@@ -50,16 +45,10 @@ const (
 	mysqlPhasePrepareColumnEOF
 )
 
-type mysqlPreparedStatement struct {
-	statement string
-	truncated bool
-}
-
 type mysqlInspector struct {
 	mu              sync.Mutex
 	client          mysqlFrame
 	server          mysqlFrame
-	mode            projectconfig.InspectionMode
 	observe         func(DatabaseObservation)
 	deprecateEOF    bool
 	disabled        bool
@@ -67,21 +56,16 @@ type mysqlInspector struct {
 	commandSequence byte
 	phase           mysqlPhase
 	columns         int
-	prepared        map[uint32]mysqlPreparedStatement
 	pending         []mysqlCall
 	completed       []DatabaseObservation
 }
 
-func newMySQLInspector(clientFlags uint32, mode projectconfig.InspectionMode, observe func(DatabaseObservation)) *mysqlInspector {
-	clientLimit := 16
-	if mode == projectconfig.InspectionDetailed {
-		clientLimit = mysqlClientCapture
-	}
+func newMySQLInspector(clientFlags uint32, observe func(DatabaseObservation)) *mysqlInspector {
 	return &mysqlInspector{
-		client: mysqlFrame{limit: clientLimit}, server: mysqlFrame{limit: mysqlServerCapture},
-		mode: mode, observe: observe, deprecateEOF: clientFlags&mysqlClientDeprecateEOF != 0,
+		client: mysqlFrame{limit: mysqlClientCapture}, server: mysqlFrame{limit: mysqlServerCapture},
+		observe: observe, deprecateEOF: clientFlags&mysqlClientDeprecateEOF != 0,
 		disabled:       clientFlags&(mysqlClientCompress|mysqlClientZstdCompression) != 0,
-		serverSequence: 1, prepared: make(map[uint32]mysqlPreparedStatement),
+		serverSequence: 1,
 	}
 }
 
@@ -112,7 +96,7 @@ func (m *mysqlInspector) serverBytes(data []byte) {
 	}
 }
 
-func (m *mysqlInspector) onClientPacket(sequence byte, data []byte, size int64, frames int) {
+func (m *mysqlInspector) onClientPacket(sequence byte, data []byte, _ int64, frames int) {
 	if sequence != 0 || len(data) == 0 {
 		m.stopLocked()
 		return
@@ -121,24 +105,18 @@ func (m *mysqlInspector) onClientPacket(sequence byte, data []byte, size int64, 
 	command := data[0]
 	switch command {
 	case 0x16: // COM_STMT_PREPARE
-		statement, truncated := m.statement(data[1:], size-1)
-		m.add(mysqlCall{prepared: true, started: time.Now(),
-			statement: statement, truncated: truncated})
+		m.add(mysqlCall{prepared: true, started: time.Now()})
 	case 0x17: // COM_STMT_EXECUTE
 		if len(data) < 5 {
 			m.stopLocked()
 			return
 		}
-		prepared := m.prepared[binary.LittleEndian.Uint32(data[1:5])]
-		m.add(mysqlCall{started: time.Now(), operation: "execute", statement: prepared.statement, truncated: prepared.truncated})
+		m.add(mysqlCall{started: time.Now(), operation: "execute"})
 	case 0x03: // COM_QUERY
-		statement, truncated := m.statement(data[1:], size-1)
-		m.add(mysqlCall{started: time.Now(), operation: "query", statement: statement, truncated: truncated})
+		m.add(mysqlCall{started: time.Now(), operation: "query"})
 	case 0x19: // COM_STMT_CLOSE, with no server response.
 		if len(data) < 5 {
 			m.stopLocked()
-		} else {
-			delete(m.prepared, binary.LittleEndian.Uint32(data[1:5]))
 		}
 	case 0x18: // COM_STMT_SEND_LONG_DATA has no server response.
 	case 0x01: // COM_QUIT has no server response.
@@ -147,20 +125,6 @@ func (m *mysqlInspector) onClientPacket(sequence byte, data []byte, size int64, 
 	default:
 		m.stopLocked() // an unknown response would desynchronize later executions.
 	}
-}
-
-func (m *mysqlInspector) statement(data []byte, size int64) (string, bool) {
-	if m.mode != projectconfig.InspectionDetailed {
-		return "", false
-	}
-	truncated := size > mysqlMaxStatement || size > int64(len(data))
-	if len(data) > mysqlMaxStatement {
-		data = data[:mysqlMaxStatement]
-	}
-	for len(data) > 0 && !utf8.Valid(data) {
-		data = data[:len(data)-1]
-	}
-	return string(data), truncated
 }
 
 func (m *mysqlInspector) add(call mysqlCall) {
@@ -250,17 +214,12 @@ func (m *mysqlInspector) prepareResponse(call *mysqlCall, data []byte, size int6
 		m.stopLocked()
 		return
 	}
-	id := binary.LittleEndian.Uint32(data[1:5])
 	call.prepareColumns = int(binary.LittleEndian.Uint16(data[5:7]))
 	call.prepareParameters = int(binary.LittleEndian.Uint16(data[7:9]))
 	if call.prepareColumns > mysqlMaxColumns || call.prepareParameters > mysqlMaxColumns {
 		m.stopLocked()
 		return
 	}
-	if len(m.prepared) >= mysqlMaxPending {
-		clear(m.prepared)
-	}
-	m.prepared[id] = mysqlPreparedStatement{statement: call.statement, truncated: call.truncated}
 	m.advancePrepare(call)
 }
 
@@ -375,8 +334,8 @@ func (m *mysqlInspector) finish(result inspection.Result, code uint16, state str
 	m.completed = append(m.completed, DatabaseObservation{
 		Protocol: controlv1.Mysql, ReceivedAt: call.started, Operation: call.operation,
 		Result: result, SQLState: state, MySQLErrorCode: code, Rows: call.rows,
-		ResultSets: call.resultSets, Statement: call.statement, StatementTruncated: call.truncated,
-		Duration: time.Since(call.started),
+		ResultSets: call.resultSets,
+		Duration:   time.Since(call.started),
 	})
 }
 
