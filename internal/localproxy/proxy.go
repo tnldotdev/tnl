@@ -152,7 +152,20 @@ func NewWithMountsHooksOptionsAdmitted(target, hostname string, requestLimit int
 	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, false, onTargetFailure)
 }
 
+// NewWithMountsHooksOptionsDynamic resolves the base upstream for each visitor
+// request, rejecting it when the configured binding is missing.
+func NewWithMountsHooksOptionsDynamic(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, resolve func(context.Context) (string, error), onTargetFailure ...func()) (http.Handler, error) {
+	if resolve == nil {
+		return nil, errors.New("localproxy: target resolver is required")
+	}
+	return buildWithMounts(target, hostname, requestLimit, mounts, hooks, options, false, onTargetFailure, resolve)
+}
+
 func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, admit bool, onTargetFailure []func()) (http.Handler, error) {
+	return buildWithMounts(target, hostname, requestLimit, mounts, hooks, options, admit, onTargetFailure, nil)
+}
+
+func buildWithMounts(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, admit bool, onTargetFailure []func(), resolve func(context.Context) (string, error)) (http.Handler, error) {
 	if requestLimit < 0 {
 		return nil, errors.New("localproxy: request limit cannot be negative")
 	}
@@ -167,6 +180,33 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 	if err != nil {
 		return nil, err
 	}
+	var baseMu sync.Mutex
+	current := target
+	baseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if resolve == nil {
+			base.ServeHTTP(w, r)
+			return
+		}
+		selected, err := resolve(r.Context())
+		if err != nil || selected == "" {
+			diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+			return
+		}
+		baseMu.Lock()
+		if current != selected {
+			replacement, err := newReverseProxy(selected, requestLimit, hooks, options, onTargetFailure)
+			if err != nil {
+				baseMu.Unlock()
+				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+				return
+			}
+			base.Transport.(*http.Transport).CloseIdleConnections()
+			base, current = replacement, selected
+		}
+		proxy := base
+		baseMu.Unlock()
+		proxy.ServeHTTP(w, r)
+	})
 	type mountedProxy struct {
 		Mount
 		proxy http.Handler
@@ -271,7 +311,7 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 			mount.proxy.ServeHTTP(response, request)
 			return
 		}
-		base.ServeHTTP(response, request)
+		baseHandler.ServeHTTP(response, request)
 	}), nil
 }
 

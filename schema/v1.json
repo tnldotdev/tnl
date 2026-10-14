@@ -231,6 +231,33 @@
                         "additionalProperties": false,
                         "type": "object",
                         "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "compose"
+                          },
+                          "project": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                          },
+                          "file": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "service": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "project", "file", "service", "port"]
                       }
                     ]
                   },
@@ -429,6 +456,33 @@
                         "additionalProperties": false,
                         "type": "object",
                         "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "compose"
+                          },
+                          "project": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                          },
+                          "file": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "service": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "project", "file", "service", "port"]
                       }
                     ]
                   },
@@ -582,6 +636,33 @@
                         "additionalProperties": false,
                         "type": "object",
                         "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "compose"
+                          },
+                          "project": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                          },
+                          "file": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "service": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "project", "file", "service", "port"]
                       }
                     ]
                   },
@@ -735,6 +816,33 @@
                         "additionalProperties": false,
                         "type": "object",
                         "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "compose"
+                          },
+                          "project": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                          },
+                          "file": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "service": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "project", "file", "service", "port"]
                       }
                     ]
                   },
@@ -888,6 +996,33 @@
                         "additionalProperties": false,
                         "type": "object",
                         "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "compose"
+                          },
+                          "project": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                          },
+                          "file": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "service": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "project", "file", "service", "port"]
                       }
                     ]
                   },

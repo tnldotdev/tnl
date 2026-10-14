@@ -96,6 +96,13 @@ export interface TnlConfig {
                   caFile?: string;
                   serverName?: string;
                 };
+              }
+            | {
+                type: "compose";
+                project: string;
+                file: string;
+                service: string;
+                port: number;
               };
           tunnel?: {
             /**
@@ -156,14 +163,22 @@ export interface TnlConfig {
         }
       | {
           inspection?: Inspection1;
-          target: {
-            type: "address";
-            address: string | number;
-            tls?: {
-              caFile?: string;
-              serverName?: string;
-            };
-          };
+          target:
+            | {
+                type: "address";
+                address: string | number;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+              }
+            | {
+                type: "compose";
+                project: string;
+                file: string;
+                service: string;
+                port: number;
+              };
           tunnel?: {
             /**
              * Ready team domain used for generated public URL hostnames.
@@ -205,14 +220,22 @@ export interface TnlConfig {
         }
       | {
           inspection?: Inspection1;
-          target: {
-            type: "address";
-            address: string | number;
-            tls?: {
-              caFile?: string;
-              serverName?: string;
-            };
-          };
+          target:
+            | {
+                type: "address";
+                address: string | number;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+              }
+            | {
+                type: "compose";
+                project: string;
+                file: string;
+                service: string;
+                port: number;
+              };
           tunnel?: {
             /**
              * Ready team domain used for generated public URL hostnames.
@@ -254,14 +277,22 @@ export interface TnlConfig {
         }
       | {
           inspection?: Inspection1;
-          target: {
-            type: "address";
-            address: string | number;
-            tls?: {
-              caFile?: string;
-              serverName?: string;
-            };
-          };
+          target:
+            | {
+                type: "address";
+                address: string | number;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+              }
+            | {
+                type: "compose";
+                project: string;
+                file: string;
+                service: string;
+                port: number;
+              };
           tunnel?: {
             /**
              * Ready team domain used for generated public URL hostnames.
@@ -303,14 +334,22 @@ export interface TnlConfig {
         }
       | {
           inspection?: Inspection1;
-          target: {
-            type: "address";
-            address: string | number;
-            tls?: {
-              caFile?: string;
-              serverName?: string;
-            };
-          };
+          target:
+            | {
+                type: "address";
+                address: string | number;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+              }
+            | {
+                type: "compose";
+                project: string;
+                file: string;
+                service: string;
+                port: number;
+              };
           tunnel?: {
             /**
              * Ready team domain used for generated public URL hostnames.

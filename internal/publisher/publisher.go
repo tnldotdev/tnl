@@ -60,6 +60,7 @@ type Config struct {
 	ProjectRoot              string
 	Service                  string
 	Target                   string
+	ResolveTarget            func(context.Context) (string, error)
 	ServiceProtocol          controlv1.PublicURLServiceProtocol
 	TargetTLSName            string
 	TargetTLS                bool

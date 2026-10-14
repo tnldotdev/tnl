@@ -86,6 +86,16 @@ visitor TLS for TCP public URLs; the publisher handles it when the protocol uses
 ordinary TCP ports (1–65535). `internal/tcptarget` checks the private
 host:port target before the publisher dials it.
 
+For a named service, `target: {type: compose, project: my-worktree,
+file: compose.yaml, service: db, port: 5432}` selects an explicit Compose
+project, file beneath the current project root, service, and private TCP port.
+The owner looks up the current published host port through `docker compose port`
+when `tnl publish db` starts. It resolves again for each HTTP request or TCP
+visitor connection. A missing or ambiguous binding rejects new traffic; a
+replacement binding changes the local upstream without replacing the saved
+public URL or publish run. Readiness follows the current binding (including
+after a container stops) rather than trusting the host port from startup.
+
 `internal/ingresspool` names the pool across control and ingress without making
 the stateless ingress role depend on control's database package.
 

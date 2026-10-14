@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -22,6 +23,8 @@ import (
 )
 
 const MaxDocumentBytes = 1 << 20
+
+var composeName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
 // LoadDocument strictly loads one versioned static configuration document.
 func LoadDocument(path string) (Document, error) {
@@ -174,10 +177,14 @@ func ValidateTNL(config TNL) error {
 	for _, name := range names {
 		service := config.Services[name]
 		if service.Protocol != nil && *service.Protocol != "http" && service.Target == nil {
-			return fmt.Errorf("services.%s: TCP service requires an address target", name)
+			return fmt.Errorf("services.%s: TCP service requires an address or Compose target", name)
 		}
 		effectivePublish := ServicePublish(config.Publish, service)
 		if service.Target != nil {
+			compose := service.Target
+			if compose.Type != "compose" && (compose.Project != nil || compose.File != nil || compose.Service != nil || compose.Port != nil) {
+				return fmt.Errorf("services.%s.target: Compose fields require type compose", name)
+			}
 			if tls := service.Target.TLS; tls != nil {
 				if tls.ServerName != nil && (*tls.ServerName == "" || strings.TrimSpace(*tls.ServerName) != *tls.ServerName) {
 					return fmt.Errorf("services.%s.target.tls.server_name must be a hostname", name)
@@ -198,8 +205,15 @@ func ValidateTNL(config TNL) error {
 				if service.Target.TLS != nil && ServiceProtocol(effectivePublish) == "http" && !strings.HasPrefix(string(*service.Target.Address), "https://") {
 					return fmt.Errorf("services.%s.target.tls requires an HTTPS address", name)
 				}
+			case "compose":
+				if compose.Address != nil || compose.TLS != nil || compose.Project == nil || !composeName.MatchString(*compose.Project) ||
+					compose.Service == nil || !composeName.MatchString(*compose.Service) || compose.Port == nil || *compose.Port < 1 || *compose.Port > 65535 ||
+					compose.File == nil || *compose.File == "" || filepath.IsAbs(*compose.File) || filepath.Clean(*compose.File) != *compose.File ||
+					*compose.File == "." || *compose.File == ".." || strings.HasPrefix(*compose.File, ".."+string(filepath.Separator)) {
+					return fmt.Errorf("services.%s.target: compose requires a project, relative file, service, and private port (1-65535), without address or TLS", name)
+				}
 			default:
-				return fmt.Errorf("services.%s.target: type must be app or address", name)
+				return fmt.Errorf("services.%s.target: type must be app, address, or compose", name)
 			}
 		}
 		if service.HTTP != nil {

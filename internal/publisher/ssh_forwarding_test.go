@@ -1,12 +1,14 @@
 package publisher
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
 	"flag"
 	"io"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -87,6 +89,63 @@ func TestSSHForwardingRequiresInstalledCertificate(t *testing.T) {
 	if received := awaitPublisherTest(t, backendResult); received != "SSH-2.0-client\r\n" {
 		t.Fatalf("SSH target received %q", received)
 	}
+}
+
+func TestTCPVisitorFollowsReplacedBindingWithoutReplacingPublicURLServer(t *testing.T) {
+	first, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	var mu sync.Mutex
+	address := first.Addr().String()
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "shell.example", ServiceProtocol: controlv1.Ssh, PublicPort: 2222,
+		Target: address, Certificate: publicURLTestCertificate(t, "shell.example"),
+		ResolveTarget: func(context.Context) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if address == "" {
+				return "", errors.New("binding unavailable")
+			}
+			return address, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+	visit := func(listener net.Listener) {
+		t.Helper()
+		visitor := openDatabaseVisitor(t, route, 2222)
+		defer visitor.Close()
+		if tcp, ok := listener.(*net.TCPListener); ok {
+			_ = tcp.SetDeadline(time.Now().Add(time.Second))
+		}
+		conn, err := listener.Accept()
+		if err != nil {
+			t.Fatalf("current binding was not reached: %v", err)
+		}
+		conn.Close()
+	}
+	visit(first)
+	mu.Lock()
+	address = ""
+	mu.Unlock()
+	visitor := openDatabaseVisitor(t, route, 2222)
+	if _, err := visitor.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("missing binding: %v", err)
+	}
+	visitor.Close()
+	mu.Lock()
+	address = second.Addr().String()
+	mu.Unlock()
+	visit(second)
 }
 
 func TestTCPVisitorChecksCurrentNamedLeaseBeforeDialingTarget(t *testing.T) {

@@ -1,11 +1,14 @@
 package localproxy
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -55,6 +58,48 @@ func TestMountedProxySelectsCompleteLongestPrefixAndPreservesPathsByDefault(t *t
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("different hostname reached mount: %d", response.Code)
 	}
+}
+
+func TestDynamicBaseTargetFollowsReplacementAndFailsClosed(t *testing.T) {
+	upstream := func(body string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) }))
+	}
+	first, second := upstream("first"), upstream("second")
+	defer first.Close()
+	defer second.Close()
+	var mu sync.Mutex
+	current := first.URL
+	handler, err := NewWithMountsHooksOptionsDynamic(first.URL, "web.example.test", 0, nil, ResponseHooks{}, TargetOptions{}, func(context.Context) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if current == "" {
+			return "", errors.New("service stopped")
+		}
+		return current, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serve := func(want string, status int) {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Host = "web.example.test"
+		request.TLS = &tls.ConnectionState{ServerName: "web.example.test"}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != status || status == http.StatusOK && response.Body.String() != want {
+			t.Fatalf("response = %d %q, want %d %q", response.Code, response.Body.String(), status, want)
+		}
+	}
+	serve("first", http.StatusOK)
+	mu.Lock()
+	current = ""
+	mu.Unlock()
+	serve("", http.StatusBadGateway)
+	mu.Lock()
+	current = second.URL
+	mu.Unlock()
+	serve("second", http.StatusOK)
 }
 
 func TestMountedProxySharesPublicURLRequestLimitDuringStreams(t *testing.T) {

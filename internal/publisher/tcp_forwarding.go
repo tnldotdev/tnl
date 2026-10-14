@@ -29,6 +29,7 @@ type tcpForwarding struct {
 	admit               func() error
 	publicPort          uint16
 	target              string
+	resolveTarget       func(context.Context) (string, error)
 	backendTLS          *tls.Config
 	onTargetFailure     func()
 	onCancelUnsupported func()
@@ -60,6 +61,7 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 	}
 	return &tcpForwarding{
 		protocol: config.ServiceProtocol, publicPort: config.PublicPort, target: config.Target,
+		resolveTarget:       config.ResolveTarget,
 		admit:               config.AdmitConnection,
 		backendTLS:          backendTLS,
 		onTargetFailure:     config.OnTargetFailure,
@@ -90,7 +92,16 @@ func validateTCPForwarding(config PublicURLServerConfig) (string, error) {
 func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	backend, err := (&net.Dialer{}).DialContext(ctx, "tcp", d.target)
+	target := d.target
+	if d.resolveTarget != nil {
+		var resolveErr error
+		target, resolveErr = d.resolveTarget(ctx)
+		if resolveErr != nil || target == "" {
+			d.targetFailed()
+			return
+		}
+	}
+	backend, err := (&net.Dialer{}).DialContext(ctx, "tcp", target)
 	if err != nil {
 		d.targetFailed()
 		return

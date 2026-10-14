@@ -47,7 +47,7 @@ type publishCommand struct {
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	if flags.Service != "" && flags.PublishCredential == "" {
-		if target := flags.project.Config.Services[flags.Service].Target; target != nil && target.Type == "address" {
+		if target := flags.project.Config.Services[flags.Service].Target; target != nil && (target.Type == "address" || target.Type == "compose") {
 			return runNamedPublish(ctx, flags, stdout, stderr, reporters...)
 		}
 	}

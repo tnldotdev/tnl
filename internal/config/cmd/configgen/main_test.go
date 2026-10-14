@@ -44,8 +44,9 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	if _, found := tcp.Properties.Get("http"); found || !reflect.DeepEqual(tcp.Required, []string{"protocol", "target"}) {
 		t.Fatalf("TCP variant must require protocol and target without HTTP settings: %#v", tcp)
 	}
-	if target, found := tcp.Properties.Get("target"); !found || len(target.OneOf) != 1 {
-		t.Fatalf("TCP target must use an address: %#v", target)
+	if target, found := tcp.Properties.Get("target"); !found || len(target.OneOf) != 2 ||
+		!reflect.DeepEqual(target.OneOf[1].Required, []string{"type", "project", "file", "service", "port"}) {
+		t.Fatalf("TCP target must use an address or explicit Compose coordinates: %#v", target)
 	}
 	for _, property := range []string{"server", "team"} {
 		if _, found := serviceSchema.Properties.Get(property); found {

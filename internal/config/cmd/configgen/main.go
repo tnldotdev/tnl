@@ -116,9 +116,16 @@ func servicesSchema() *jsonschema.Schema {
 	tlsProperties.Set("server_name", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
 	tlsProperties.Set("ca_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
 	addressTargetProperties.Set("tls", &jsonschema.Schema{Type: "object", Properties: tlsProperties, AdditionalProperties: jsonschema.FalseSchema})
+	composeProperties := jsonschema.NewProperties()
+	composeProperties.Set("type", &jsonschema.Schema{Const: "compose"})
+	composeProperties.Set("project", &jsonschema.Schema{Type: "string", Pattern: `^[a-z0-9][a-z0-9_-]*$`})
+	composeProperties.Set("file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
+	composeProperties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z0-9][a-z0-9_-]*$`})
+	composeProperties.Set("port", &jsonschema.Schema{Type: "integer", Minimum: "1", Maximum: "65535"})
 	targetVariants := []*jsonschema.Schema{
 		{Type: "object", Required: []string{"type"}, Properties: appTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
 		{Type: "object", Required: []string{"type", "address"}, Properties: addressTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
+		{Type: "object", Required: []string{"type", "project", "file", "service", "port"}, Properties: composeProperties, AdditionalProperties: jsonschema.FalseSchema},
 	}
 	properties.Set("target", &jsonschema.Schema{OneOf: targetVariants})
 	tunnel := tunnelSchema()

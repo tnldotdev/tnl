@@ -133,7 +133,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if flags.PublishCredential == "" {
 		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	}
-	if flags.Target == "" && flags.PublishCredential == "" {
+	if flags.Target == "" && flags.PublishCredential == "" && !(service != "" && c.Config.Services[service].Target != nil && c.Config.Services[service].Target.Type == "compose") {
 		if service != "" {
 			if selected := c.Config.Services[service].Target; selected != nil && selected.Type == "app" {
 				return failure.Wrap("select app service", failure.MissingTarget,

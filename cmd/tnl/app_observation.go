@@ -255,7 +255,15 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 			go func() {
 				defer workers.Done()
 				if service.ServiceProtocol != "" && service.ServiceProtocol != "http" {
-					service.Ready = probeTCPTarget(ctx, service.Target)
+					target := service.Target
+					if selected := project.Config.Services[service.Name].Target; selected != nil && selected.Type == "compose" {
+						var err error
+						target, err = composeTarget(project.Project, selected, service.ServiceProtocol)(ctx)
+						if err != nil {
+							return
+						}
+					}
+					service.Ready = probeTCPTarget(ctx, target)
 					return
 				}
 				observation := probe(ctx, *service)

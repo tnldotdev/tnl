@@ -31,9 +31,9 @@ func (a *appRuntime) startNamed(ctx context.Context, request localpublisherv1.Pu
 		return localpublisherv1.PublicationLease{}, err
 	}
 	definition, found := project.Config.Services[request.Service]
-	if !found || definition.Target == nil || definition.Target.Type != "address" {
+	if !found || definition.Target == nil || definition.Target.Type != "address" && definition.Target.Type != "compose" {
 		return localpublisherv1.PublicationLease{}, failure.Wrap("select named service", failure.ServiceNotConfigured,
-			fmt.Errorf("service %q needs a configured address target", request.Service))
+			fmt.Errorf("service %q needs a configured address or Compose target", request.Service))
 	}
 	effective, err := project.EffectiveService(request.Service)
 	if err != nil {
@@ -72,14 +72,18 @@ func (a *appRuntime) startNamed(ctx context.Context, request localpublisherv1.Pu
 	if err != nil {
 		return localpublisherv1.PublicationLease{}, err
 	}
-	if effective.Publish == nil || effective.Publish.Target == nil {
+	var target string
+	if definition.Target.Type == "compose" {
+		target, err = composeTarget(project.Project, definition.Target, protocol)(ctx)
+	} else if effective.Publish == nil || effective.Publish.Target == nil {
 		return localpublisherv1.PublicationLease{}, failure.Wrap("resolve named service target", failure.MissingTarget, errors.New("configured address is required"))
+	} else {
+		target, err = normalizePublishTarget(string(*effective.Publish.Target), controlv1.PublicURLServiceProtocol(protocol))
 	}
-	target, err := normalizePublishTarget(string(*effective.Publish.Target), controlv1.PublicURLServiceProtocol(protocol))
 	if err != nil {
 		return localpublisherv1.PublicationLease{}, err
 	}
-	if protocol == "http" {
+	if protocol == "http" && definition.Target.Type != "compose" {
 		options, err := targetOptionsForCA(valueOrEmpty(effective.Publish.TargetCAFile), project.Root)
 		if err != nil {
 			return localpublisherv1.PublicationLease{}, err

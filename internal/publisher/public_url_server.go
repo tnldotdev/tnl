@@ -38,6 +38,7 @@ type PublicURLServerConfig struct {
 	PublicURLID         string
 	PublishRunNumber    uint64
 	Target              string
+	ResolveTarget       func(context.Context) (string, error)
 	ServiceProtocol     controlv1.PublicURLServiceProtocol
 	PublicPort          uint16
 	TargetTLSName       string
@@ -170,14 +171,18 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	} else if config.Handler != nil {
 		handler = config.Handler
 	} else {
-		handler, err = localproxy.NewWithMountsHooksOptionsAdmitted(config.Target, hostname, config.Limits.Concurrency, config.Mounts,
-			localproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
-				if request != nil {
-					if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
-						forwarded.Store(true)
-					}
+		hooks := localproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
+			if request != nil {
+				if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
+					forwarded.Store(true)
 				}
-			}}, config.TargetOptions, config.OnTargetFailure)
+			}
+		}}
+		if config.ResolveTarget != nil {
+			handler, err = localproxy.NewWithMountsHooksOptionsDynamic(config.Target, hostname, config.Limits.Concurrency, config.Mounts, hooks, config.TargetOptions, config.ResolveTarget, config.OnTargetFailure)
+		} else {
+			handler, err = localproxy.NewWithMountsHooksOptionsAdmitted(config.Target, hostname, config.Limits.Concurrency, config.Mounts, hooks, config.TargetOptions, config.OnTargetFailure)
+		}
 		if err != nil {
 			return nil, err
 		}

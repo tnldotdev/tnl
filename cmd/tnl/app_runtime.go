@@ -199,7 +199,7 @@ func configuredRuntimeServices(project projectConfiguration) []clientruntime.Ser
 		effective, _ := project.EffectiveService(name)
 		service := project.Config.Services[name]
 		protocol := config.ServiceProtocol(effective.Publish)
-		named := service.Target != nil && service.Target.Type == "address"
+		named := service.Target != nil && (service.Target.Type == "address" || service.Target.Type == "compose")
 		if !named && protocol != "http" {
 			continue
 		}
@@ -394,7 +394,7 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 		return privateprotocol.Assignment{}, err
 	}
 	if definition := project.Config.Services[name]; definition.Target != nil && definition.Target.Type != "app" {
-		return privateprotocol.Assignment{}, failure.Wrap("select app service", failure.ServiceNotConfigured, errors.New("configured address services are published with tnl publish"))
+		return privateprotocol.Assignment{}, failure.Wrap("select app service", failure.ServiceNotConfigured, errors.New("configured named services are published with tnl publish"))
 	}
 	a.prepareMu.Lock()
 	defer a.prepareMu.Unlock()
@@ -636,6 +636,10 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		}
 	}
 	configuration := services.config(service.Target, preparation.policy.prefixes, flags.limits())
+	definition := project.Config.Services[service.Name]
+	if preparation.named && definition.Target != nil && definition.Target.Type == "compose" {
+		configuration.ResolveTarget = composeTarget(project.Project, definition.Target, service.ServiceProtocol)
+	}
 	if preparation.named {
 		configuration.ServiceProtocol = controlv1.PublicURLServiceProtocol(service.ServiceProtocol)
 	}
@@ -763,7 +767,9 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 			copy := service
 			copy.PublicURL, copy.PublishRunNumber, copy.Routable = event.PublicURL, event.PublishRunNumber, true
 			probes.Add(1)
-			if service.ServiceProtocol != "" && service.ServiceProtocol != "http" {
+			if configuration.ResolveTarget != nil {
+				go func() { defer probes.Done(); a.checkCompose(probeCtx, copy, configuration.ResolveTarget) }()
+			} else if service.ServiceProtocol != "" && service.ServiceProtocol != "http" {
 				go func() { defer probes.Done(); a.checkNamedTCP(probeCtx, copy) }()
 			} else {
 				go func() { defer probes.Done(); a.check(probeCtx, copy) }()
@@ -776,6 +782,34 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		defer stop()
 	}
 	return publisher.Run(ctx, configuration)
+}
+
+func (a *appRuntime) checkCompose(ctx context.Context, service clientruntime.Service, resolve func(context.Context) (string, error)) {
+	for ctx.Err() == nil && a.manager.Current(service.Name, service.RegistrationID, service.Target, service.PublishRunNumber) {
+		address, err := resolve(ctx)
+		observation := clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber,
+			CheckedAt: time.Now().UTC(), Readiness: service.Readiness, Reason: "runtime.probe_failed"}
+		if err == nil {
+			if service.ServiceProtocol == "http" {
+				observation = clientruntime.Probe(ctx, service, nil)
+			} else {
+				observation.Ready = probeTCPTarget(ctx, address)
+			}
+		}
+		if observation.Ready {
+			observation.Reason = ""
+		}
+		if !a.manager.Observe(observation) {
+			return
+		}
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
 }
 
 func (a *appRuntime) checkNamedTCP(ctx context.Context, service clientruntime.Service) {
