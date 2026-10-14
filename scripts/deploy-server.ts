@@ -67,7 +67,7 @@ const flyConfigSchema = z.object({
   app: z.string(),
   primary_region: z.string(),
   kill_signal: z.string(),
-  kill_timeout: z.number().int().positive(),
+  kill_timeout: z.string().regex(/^[1-9][0-9]*s$/),
   env: z.record(z.string(), z.string()),
   metrics: z.array(z.object({ port: z.number().int(), path: z.string() })).optional(),
   services: z.array(flyServiceSchema),
@@ -301,7 +301,7 @@ function machineSettings(
     metadata: member?.config.metadata ?? { fly_process_group: group },
     services,
     ...(config.metrics?.[0] ? { metrics: config.metrics[0] } : {}),
-    stop_config: { signal: config.kill_signal, timeout: `${config.kill_timeout}s` },
+    stop_config: { signal: config.kill_signal, timeout: config.kill_timeout },
     ...(!member && config.processes?.[group] ? { init: { cmd: [config.processes[group]] } } : {}),
   };
 }
