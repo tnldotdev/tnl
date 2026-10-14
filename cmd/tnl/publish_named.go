@@ -258,6 +258,10 @@ func followNamedPublication(ctx context.Context, flags publishCommand, client na
 		}
 		if status.TunnelId != nil && *status.TunnelId != started {
 			started = *status.TunnelId
+			readyRun = 0
+			output.mu.Lock()
+			output.readyPublishRunNumber, output.provision, output.stalled = 0, 0, 0
+			output.mu.Unlock()
 			target := ""
 			if status.Target != nil {
 				target = *status.Target
