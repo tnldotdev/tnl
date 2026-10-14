@@ -45,6 +45,7 @@ type PublicURLServerConfig struct {
 	TargetOptions       localproxy.TargetOptions
 	Handler             http.Handler
 	AdmitRequest        func(*http.Request) error
+	AdmitConnection     func() error
 	ObserveResponse     func(*http.Response) error
 	Mounts              []localproxy.Mount
 	ShareAccess         *shareAccess
@@ -698,6 +699,9 @@ func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
 	if r.tcp != nil {
 		if header.Destination.Port() == r.tcp.publicPort {
 			if !denied {
+				if r.tcp.admit != nil && r.tcp.admit() != nil {
+					return
+				}
 				select {
 				case <-r.admission.completed:
 					return

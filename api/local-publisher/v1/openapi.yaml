@@ -5,8 +5,8 @@ info:
   license: { name: MIT, identifier: MIT }
   description: >-
     Project-scoped API used by the tnl CLI and application integrations to
-    register bound app listeners and observe local
-    service state. One publisher owns the project, worktree, and client state
+    register bound app listeners, lease CLI-owned named services, and observe
+    local service state. One publisher owns the project, worktree, and client state
     directory. The owner credential cannot be replaced by a control access
     token; app credentials are scoped to one configured app service. This API
     does not carry visitor bytes or expose the control session to applications.
@@ -74,6 +74,42 @@ paths:
       responses:
         "204": { description: Registration renewed }
         default: { $ref: "#/components/responses/Problem" }
+  /v1/publications:
+    post:
+      operationId: startNamedPublication
+      summary: Lease a configured address service to the CLI owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublicationRequest" }
+      responses:
+        "200":
+          description: Publication accepted; public readiness is not implied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicationLease" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publications/{publication_id}:
+    parameters:
+      - $ref: "#/components/parameters/PublicationID"
+      - $ref: "#/components/parameters/PublicationOwner"
+    delete:
+      operationId: stopNamedPublication
+      summary: Stop a matching CLI-owned named publication
+      responses:
+        "204": { description: Publication stopped }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publications/{publication_id}/renew:
+    post:
+      operationId: renewNamedPublication
+      summary: Keep a matching CLI-owned named publication current
+      parameters:
+        - $ref: "#/components/parameters/PublicationID"
+        - $ref: "#/components/parameters/PublicationOwner"
+      responses:
+        "204": { description: Publication renewed }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/status:
     get:
       operationId: getLocalProjectStatus
@@ -135,6 +171,16 @@ components:
       schema: { type: string, minLength: 1, maxLength: 128 }
     RegistrationOwner:
       name: X-Registration-Owner
+      in: header
+      required: true
+      schema: { type: string, pattern: "^[a-f0-9]{32}$" }
+    PublicationID:
+      name: publication_id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    PublicationOwner:
+      name: X-Publication-Owner
       in: header
       required: true
       schema: { type: string, pattern: "^[a-f0-9]{32}$" }
@@ -289,6 +335,35 @@ components:
       properties:
         owner: { type: string, pattern: "^[a-f0-9]{32}$" }
         target: { type: string, minLength: 1, maxLength: 2048 }
+    PublicationRequest:
+      type: object
+      additionalProperties: false
+      required: [service, owner, pid]
+      properties:
+        service: { $ref: "#/components/schemas/ServiceName" }
+        owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+        pid: { type: integer, minimum: 1 }
+    PublicationLease:
+      type: object
+      additionalProperties: false
+      required: [publication_id, service, cursor]
+      properties:
+        publication_id: { type: string, minLength: 1, maxLength: 128 }
+        service: { $ref: "#/components/schemas/ServiceName" }
+        cursor: { $ref: "#/components/schemas/EventCursor" }
+        current_ip: { type: string, minLength: 1, maxLength: 64 }
+    PublicationEvent:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type: { type: string, minLength: 1, maxLength: 128 }
+        public_url_id: { type: string, minLength: 1, maxLength: 128 }
+        hostname: { type: string, minLength: 1, maxLength: 253 }
+        public_url: { type: string, minLength: 1, maxLength: 512 }
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        transport: { type: string, enum: [quic, tls-tcp] }
+        policy_denials: { type: integer, format: int64, minimum: 1 }
     EventCursor:
       type: string
       minLength: 1
@@ -304,6 +379,8 @@ components:
         state: { type: string, enum: [not_started, publishing, routable, ready, draining, failed] }
         public_url: { type: string, minLength: 1, maxLength: 512 }
         registration_id: { type: string, minLength: 1, maxLength: 128 }
+        publication_id: { type: string, minLength: 1, maxLength: 128 }
+        tunnel_id: { type: string, minLength: 1, maxLength: 128 }
         target: { type: string, minLength: 1, maxLength: 2048 }
         publish_run_number: { type: integer, format: int64, minimum: 1 }
         reason: { type: string, maxLength: 128 }
@@ -327,6 +404,7 @@ components:
         type: { type: string, minLength: 1, maxLength: 128 }
         service: { $ref: "#/components/schemas/ServiceName" }
         status: { $ref: "#/components/schemas/ServiceStatus" }
+        publication: { $ref: "#/components/schemas/PublicationEvent" }
     ProjectEventPage:
       type: object
       additionalProperties: false

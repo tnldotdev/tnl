@@ -3,9 +3,11 @@ package publisher
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"flag"
 	"io"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -84,6 +86,59 @@ func TestSSHForwardingRequiresInstalledCertificate(t *testing.T) {
 	}
 	if received := awaitPublisherTest(t, backendResult); received != "SSH-2.0-client\r\n" {
 		t.Fatalf("SSH target received %q", received)
+	}
+}
+
+func TestTCPVisitorChecksCurrentNamedLeaseBeforeDialingTarget(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	var current atomic.Bool
+	current.Store(true)
+	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "shell.example", ServiceProtocol: controlv1.Ssh, PublicPort: 2222,
+		Target: listener.Addr().String(), Certificate: publicURLTestCertificate(t, "shell.example"),
+		AdmitConnection: func() error {
+			if !current.Load() {
+				return errors.New("stale lease")
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+	accepted := make(chan struct{}, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			accepted <- struct{}{}
+			_ = conn.Close()
+		}
+	}()
+	first := openDatabaseVisitor(t, route, 2222)
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("current lease did not reach target")
+	}
+	_ = first.Close()
+	current.Store(false)
+	stale := openDatabaseVisitor(t, route, 2222)
+	if _, err := stale.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("stale visitor = %v, want EOF", err)
+	}
+	if tcp, ok := listener.(*net.TCPListener); ok {
+		_ = tcp.SetDeadline(time.Now().Add(200 * time.Millisecond))
+	}
+	if conn, err := listener.Accept(); err == nil {
+		_ = conn.Close()
+		t.Fatal("stale visitor reached the TCP target")
+	} else if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
+		t.Fatalf("target accept after stale lease = %v", err)
 	}
 }
 

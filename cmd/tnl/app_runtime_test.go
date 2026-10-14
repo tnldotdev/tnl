@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -244,6 +245,117 @@ func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 	output.Reset()
 	if err := runStatus(t.Context(), statusCommand{StateDir: stateDir, Project: project.Root, Output: "human"}, &output); err != nil || !strings.Contains(output.String(), "orders routable") || !strings.Contains(output.String(), "orders.example:15432") {
 		t.Fatalf("TCP status = %s, %v", output.String(), err)
+	}
+}
+
+func TestWaitChecksManagedNamedTCPWithoutHTTPProbe(t *testing.T) {
+	a, stateDir, started := testAppRuntime(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	protocol := "postgres"
+	target := config.Target(listener.Addr().String())
+	project := a.project
+	project.Config.Services["orders"] = config.Service{Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}}
+	project.RelativeServiceDirectories["orders"] = "."
+	if err := a.manager.Configure(configuredRuntimeServices(project)); err != nil {
+		t.Fatal(err)
+	}
+	id, err := a.manager.Reserve("orders", "cli-owner", os.Getpid(), "orders.example:15432")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.manager.RegisterNamed(id, "cli-owner", string(target)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("named worker did not start")
+	}
+	if err := a.manager.Started(id, string(target), "tun_named"); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	probe := func(context.Context, clientruntime.Service) clientruntime.Observation {
+		t.Fatal("managed TCP service sent an HTTP readiness probe")
+		return clientruntime.Observation{}
+	}
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, waitCommand{Service: []string{"orders"}, Timeout: 2 * time.Second, Output: "json"}, &output, probe); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot clientruntime.Snapshot
+	if err := json.Unmarshal(output.Bytes(), &snapshot); err != nil || len(snapshot.Services) != 1 ||
+		!snapshot.Services[0].Ready || snapshot.Services[0].RegistrationID != id || snapshot.Services[0].TunnelID != "tun_named" {
+		t.Fatalf("managed TCP wait = %s: %v", output.String(), err)
+	}
+	if err := a.manager.Unregister(id, "cli-owner"); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, waitCommand{Service: []string{"orders"}, Timeout: 300 * time.Millisecond, Output: "json"}, &output, probe); err == nil {
+		t.Fatal("stopped named lease passed wait")
+	}
+}
+
+func TestWaitChecksManagedNamedHTTPReadiness(t *testing.T) {
+	a, stateDir, started := testAppRuntime(t)
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer local.Close()
+	target := config.Target(local.URL)
+	project := a.project
+	project.Config.Services["orders"] = config.Service{Target: &config.ServiceTarget{Type: "address", Address: &target},
+		HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}}}
+	project.RelativeServiceDirectories["orders"] = "."
+	if err := a.manager.Configure(configuredRuntimeServices(project)); err != nil {
+		t.Fatal(err)
+	}
+	id, err := a.manager.Reserve("orders", "cli-owner", os.Getpid(), "https://orders.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.manager.RegisterNamed(id, "cli-owner", local.URL); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("named HTTP worker did not start")
+	}
+	if err := a.manager.Started(id, local.URL, "tun_named_http"); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	var calls int
+	probe := func(ctx context.Context, service clientruntime.Service) clientruntime.Observation {
+		calls++
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, local.URL+service.Readiness.Path, nil)
+		if err != nil {
+			t.Error(err)
+			return clientruntime.Observation{}
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Error(err)
+			return clientruntime.Observation{}
+		}
+		response.Body.Close()
+		return clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber,
+			Readiness: service.Readiness, Ready: response.StatusCode == http.StatusOK, CheckedAt: time.Now().UTC()}
+	}
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, waitCommand{Service: []string{"orders"}, Timeout: 2 * time.Second, Output: "json"}, &output, probe); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot clientruntime.Snapshot
+	if err := json.Unmarshal(output.Bytes(), &snapshot); err != nil || calls != 1 || len(snapshot.Services) != 1 || !snapshot.Services[0].Ready ||
+		snapshot.Services[0].Readiness.Path != "/health" || snapshot.Services[0].ServiceProtocol != "http" {
+		t.Fatalf("managed HTTP readiness = %s, calls=%d: %v", output.String(), calls, err)
 	}
 }
 

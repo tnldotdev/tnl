@@ -58,6 +58,24 @@ func (e HTTPServiceMetadataProtocol) Valid() bool {
 	}
 }
 
+// Defines values for PublicationEventTransport.
+const (
+	Quic   PublicationEventTransport = "quic"
+	TlsTcp PublicationEventTransport = "tls-tcp"
+)
+
+// Valid indicates whether the value is a known member of the PublicationEventTransport enum.
+func (e PublicationEventTransport) Valid() bool {
+	switch e {
+	case Quic:
+		return true
+	case TlsTcp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ServiceStatusProtocol.
 const (
 	ServiceStatusProtocolHttp     ServiceStatusProtocol = "http"
@@ -246,10 +264,11 @@ type Problem struct {
 // ProjectEvent defines model for ProjectEvent.
 type ProjectEvent struct {
 	// Cursor Opaque position in the project's ordered local event journal.
-	Cursor  EventCursor    `json:"cursor"`
-	Service *ServiceName   `json:"service,omitempty"`
-	Status  *ServiceStatus `json:"status,omitempty"`
-	Type    string         `json:"type"`
+	Cursor      EventCursor       `json:"cursor"`
+	Publication *PublicationEvent `json:"publication,omitempty"`
+	Service     *ServiceName      `json:"service,omitempty"`
+	Status      *ServiceStatus    `json:"status,omitempty"`
+	Type        string            `json:"type"`
 }
 
 // ProjectEventPage defines model for ProjectEventPage.
@@ -290,6 +309,37 @@ type ProjectSnapshot struct {
 	Services []ServiceStatus `json:"services"`
 }
 
+// PublicationEvent defines model for PublicationEvent.
+type PublicationEvent struct {
+	Hostname         *string                    `json:"hostname,omitempty"`
+	PolicyDenials    *int64                     `json:"policy_denials,omitempty"`
+	PublicUrl        *string                    `json:"public_url,omitempty"`
+	PublicUrlId      *string                    `json:"public_url_id,omitempty"`
+	PublishRunNumber *int64                     `json:"publish_run_number,omitempty"`
+	Transport        *PublicationEventTransport `json:"transport,omitempty"`
+	Type             string                     `json:"type"`
+}
+
+// PublicationEventTransport defines model for PublicationEvent.Transport.
+type PublicationEventTransport string
+
+// PublicationLease defines model for PublicationLease.
+type PublicationLease struct {
+	CurrentIp *string `json:"current_ip,omitempty"`
+
+	// Cursor Opaque position in the project's ordered local event journal.
+	Cursor        EventCursor `json:"cursor"`
+	PublicationId string      `json:"publication_id"`
+	Service       ServiceName `json:"service"`
+}
+
+// PublicationRequest defines model for PublicationRequest.
+type PublicationRequest struct {
+	Owner   string      `json:"owner"`
+	Pid     int         `json:"pid"`
+	Service ServiceName `json:"service"`
+}
+
 // ServiceName defines model for ServiceName.
 type ServiceName = string
 
@@ -297,12 +347,14 @@ type ServiceName = string
 type ServiceStatus struct {
 	Protocol         ServiceStatusProtocol `json:"protocol"`
 	PublicUrl        *string               `json:"public_url,omitempty"`
+	PublicationId    *string               `json:"publication_id,omitempty"`
 	PublishRunNumber *int64                `json:"publish_run_number,omitempty"`
 	Reason           *string               `json:"reason,omitempty"`
 	RegistrationId   *string               `json:"registration_id,omitempty"`
 	Service          ServiceName           `json:"service"`
 	State            ServiceStatusState    `json:"state"`
 	Target           *string               `json:"target,omitempty"`
+	TunnelId         *string               `json:"tunnel_id,omitempty"`
 }
 
 // ServiceStatusProtocol defines model for ServiceStatus.Protocol.
@@ -335,6 +387,12 @@ type WebhookMetadata struct {
 // WebhookMetadataMethods defines model for WebhookMetadata.Methods.
 type WebhookMetadataMethods string
 
+// PublicationID defines model for PublicationID.
+type PublicationID = string
+
+// PublicationOwner defines model for PublicationOwner.
+type PublicationOwner = string
+
 // RegistrationID defines model for RegistrationID.
 type RegistrationID = string
 
@@ -345,6 +403,16 @@ type RegistrationOwner = string
 type ListLocalProjectEventsParams struct {
 	After       EventCursor `form:"after" json:"after"`
 	WaitSeconds *int        `form:"wait_seconds,omitempty" json:"wait_seconds,omitempty"`
+}
+
+// StopNamedPublicationParams defines parameters for StopNamedPublication.
+type StopNamedPublicationParams struct {
+	XPublicationOwner PublicationOwner `json:"X-Publication-Owner"`
+}
+
+// RenewNamedPublicationParams defines parameters for RenewNamedPublication.
+type RenewNamedPublicationParams struct {
+	XPublicationOwner PublicationOwner `json:"X-Publication-Owner"`
 }
 
 // UnregisterAppListenerParams defines parameters for UnregisterAppListener.
@@ -359,6 +427,9 @@ type RenewAppRegistrationParams struct {
 
 // PrepareAppServiceJSONRequestBody defines body for PrepareAppService for application/json ContentType.
 type PrepareAppServiceJSONRequestBody = AppPreparation
+
+// StartNamedPublicationJSONRequestBody defines body for StartNamedPublication for application/json ContentType.
+type StartNamedPublicationJSONRequestBody = PublicationRequest
 
 // RegisterAppListenerJSONRequestBody defines body for RegisterAppListener for application/json ContentType.
 type RegisterAppListenerJSONRequestBody = BoundListener
@@ -525,6 +596,30 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/prepare (the `PrepareAppService` operationId).
 	PrepareAppService(ctx context.Context, body PrepareAppServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// StartNamedPublicationWithBody Lease a configured address service to the CLI owner
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publications (the `StartNamedPublication` operationId).
+	StartNamedPublicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartNamedPublication Lease a configured address service to the CLI owner
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publications (the `StartNamedPublication` operationId).
+	StartNamedPublication(ctx context.Context, body StartNamedPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StopNamedPublication Stop a matching CLI-owned named publication
+	//
+	// Corresponds with DELETE /v1/publications/{publication_id} (the `StopNamedPublication` operationId).
+	StopNamedPublication(ctx context.Context, publicationId PublicationID, params *StopNamedPublicationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewNamedPublication Keep a matching CLI-owned named publication current
+	//
+	// Corresponds with POST /v1/publications/{publication_id}/renew (the `RenewNamedPublication` operationId).
+	RenewNamedPublication(ctx context.Context, publicationId PublicationID, params *RenewNamedPublicationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// UnregisterAppListener Stop a matching registration without closing the app listener
 	//
 	// Corresponds with DELETE /v1/registrations/{registration_id} (the `UnregisterAppListener` operationId).
@@ -611,6 +706,70 @@ func (c *Client) PrepareAppServiceWithBody(ctx context.Context, contentType stri
 // Corresponds with POST /v1/prepare (the `PrepareAppService` operationId).
 func (c *Client) PrepareAppService(ctx context.Context, body PrepareAppServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPrepareAppServiceRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartNamedPublicationWithBody Lease a configured address service to the CLI owner
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publications (the `StartNamedPublication` operationId).
+func (c *Client) StartNamedPublicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartNamedPublicationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartNamedPublication Lease a configured address service to the CLI owner
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publications (the `StartNamedPublication` operationId).
+func (c *Client) StartNamedPublication(ctx context.Context, body StartNamedPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartNamedPublicationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StopNamedPublication Stop a matching CLI-owned named publication
+//
+// Corresponds with DELETE /v1/publications/{publication_id} (the `StopNamedPublication` operationId).
+func (c *Client) StopNamedPublication(ctx context.Context, publicationId PublicationID, params *StopNamedPublicationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStopNamedPublicationRequest(c.Server, publicationId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewNamedPublication Keep a matching CLI-owned named publication current
+//
+// Corresponds with POST /v1/publications/{publication_id}/renew (the `RenewNamedPublication` operationId).
+func (c *Client) RenewNamedPublication(ctx context.Context, publicationId PublicationID, params *RenewNamedPublicationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewNamedPublicationRequest(c.Server, publicationId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -825,6 +984,140 @@ func NewPrepareAppServiceRequestWithBody(server string, contentType string, body
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewStartNamedPublicationRequest calls the generic StartNamedPublication builder with application/json body
+func NewStartNamedPublicationRequest(server string, body StartNamedPublicationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewStartNamedPublicationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewStartNamedPublicationRequestWithBody constructs an http.Request for the StartNamedPublication method, with any body, and a specified content type
+func NewStartNamedPublicationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publications")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewStopNamedPublicationRequest constructs an http.Request for the StopNamedPublication method
+func NewStopNamedPublicationRequest(server string, publicationId PublicationID, params *StopNamedPublicationParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publication_id", publicationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publications/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Publication-Owner", params.XPublicationOwner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Publication-Owner", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewRenewNamedPublicationRequest constructs an http.Request for the RenewNamedPublication method
+func NewRenewNamedPublicationRequest(server string, publicationId PublicationID, params *RenewNamedPublicationParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publication_id", publicationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publications/%s/renew", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Publication-Owner", params.XPublicationOwner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Publication-Owner", headerParam0)
+
+	}
 
 	return req, nil
 }
@@ -1071,6 +1364,34 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/prepare (the `PrepareAppService` operationId).
 	PrepareAppServiceWithResponse(ctx context.Context, body PrepareAppServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareAppServiceResponse, error)
 
+	// StartNamedPublicationWithBodyWithResponse Lease a configured address service to the CLI owner
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publications (the `StartNamedPublication` operationId).
+	StartNamedPublicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartNamedPublicationResponse, error)
+
+	// StartNamedPublicationWithResponse Lease a configured address service to the CLI owner
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publications (the `StartNamedPublication` operationId).
+	StartNamedPublicationWithResponse(ctx context.Context, body StartNamedPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*StartNamedPublicationResponse, error)
+
+	// StopNamedPublicationWithResponse Stop a matching CLI-owned named publication
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/publications/{publication_id} (the `StopNamedPublication` operationId).
+	StopNamedPublicationWithResponse(ctx context.Context, publicationId PublicationID, params *StopNamedPublicationParams, reqEditors ...RequestEditorFn) (*StopNamedPublicationResponse, error)
+
+	// RenewNamedPublicationWithResponse Keep a matching CLI-owned named publication current
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publications/{publication_id}/renew (the `RenewNamedPublication` operationId).
+	RenewNamedPublicationWithResponse(ctx context.Context, publicationId PublicationID, params *RenewNamedPublicationParams, reqEditors ...RequestEditorFn) (*RenewNamedPublicationResponse, error)
+
 	// UnregisterAppListenerWithResponse Stop a matching registration without closing the app listener
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -1245,6 +1566,136 @@ func (r PrepareAppServiceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PrepareAppServiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StartNamedPublicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicationLease
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StartNamedPublicationResponse) GetJSON200() *PublicationLease {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r StartNamedPublicationResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r StartNamedPublicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartNamedPublicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartNamedPublicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartNamedPublicationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StopNamedPublicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r StopNamedPublicationResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r StopNamedPublicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StopNamedPublicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StopNamedPublicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StopNamedPublicationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenewNamedPublicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r RenewNamedPublicationResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenewNamedPublicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenewNamedPublicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenewNamedPublicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenewNamedPublicationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1476,6 +1927,58 @@ func (c *ClientWithResponses) PrepareAppServiceWithResponse(ctx context.Context,
 	return ParsePrepareAppServiceResponse(rsp)
 }
 
+// StartNamedPublicationWithBodyWithResponse Lease a configured address service to the CLI owner
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publications (the `StartNamedPublication` operationId).
+func (c *ClientWithResponses) StartNamedPublicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartNamedPublicationResponse, error) {
+	rsp, err := c.StartNamedPublicationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartNamedPublicationResponse(rsp)
+}
+
+// StartNamedPublicationWithResponse Lease a configured address service to the CLI owner
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publications (the `StartNamedPublication` operationId).
+func (c *ClientWithResponses) StartNamedPublicationWithResponse(ctx context.Context, body StartNamedPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*StartNamedPublicationResponse, error) {
+	rsp, err := c.StartNamedPublication(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartNamedPublicationResponse(rsp)
+}
+
+// StopNamedPublicationWithResponse Stop a matching CLI-owned named publication
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/publications/{publication_id} (the `StopNamedPublication` operationId).
+func (c *ClientWithResponses) StopNamedPublicationWithResponse(ctx context.Context, publicationId PublicationID, params *StopNamedPublicationParams, reqEditors ...RequestEditorFn) (*StopNamedPublicationResponse, error) {
+	rsp, err := c.StopNamedPublication(ctx, publicationId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStopNamedPublicationResponse(rsp)
+}
+
+// RenewNamedPublicationWithResponse Keep a matching CLI-owned named publication current
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publications/{publication_id}/renew (the `RenewNamedPublication` operationId).
+func (c *ClientWithResponses) RenewNamedPublicationWithResponse(ctx context.Context, publicationId PublicationID, params *RenewNamedPublicationParams, reqEditors ...RequestEditorFn) (*RenewNamedPublicationResponse, error) {
+	rsp, err := c.RenewNamedPublication(ctx, publicationId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewNamedPublicationResponse(rsp)
+}
+
 // UnregisterAppListenerWithResponse Stop a matching registration without closing the app listener
 //
 // Returns a wrapper object for the known response body format(s).
@@ -1643,6 +2146,97 @@ func ParsePrepareAppServiceResponse(rsp *http.Response) (*PrepareAppServiceRespo
 	return response, nil
 }
 
+// ParseStartNamedPublicationResponse parses an HTTP response from a StartNamedPublicationWithResponse call
+func ParseStartNamedPublicationResponse(rsp *http.Response) (*StartNamedPublicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartNamedPublicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicationLease
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStopNamedPublicationResponse parses an HTTP response from a StopNamedPublicationWithResponse call
+func ParseStopNamedPublicationResponse(rsp *http.Response) (*StopNamedPublicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StopNamedPublicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenewNamedPublicationResponse parses an HTTP response from a RenewNamedPublicationWithResponse call
+func ParseRenewNamedPublicationResponse(rsp *http.Response) (*RenewNamedPublicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenewNamedPublicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseUnregisterAppListenerResponse parses an HTTP response from a UnregisterAppListenerWithResponse call
 func ParseUnregisterAppListenerResponse(rsp *http.Response) (*UnregisterAppListenerResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -1774,6 +2368,15 @@ type ServerInterface interface {
 	// PrepareAppService Prepare a configured app registration before it binds
 	// (POST /v1/prepare)
 	PrepareAppService(w http.ResponseWriter, r *http.Request)
+	// StartNamedPublication Lease a configured address service to the CLI owner
+	// (POST /v1/publications)
+	StartNamedPublication(w http.ResponseWriter, r *http.Request)
+	// StopNamedPublication Stop a matching CLI-owned named publication
+	// (DELETE /v1/publications/{publication_id})
+	StopNamedPublication(w http.ResponseWriter, r *http.Request, publicationId PublicationID, params StopNamedPublicationParams)
+	// RenewNamedPublication Keep a matching CLI-owned named publication current
+	// (POST /v1/publications/{publication_id}/renew)
+	RenewNamedPublication(w http.ResponseWriter, r *http.Request, publicationId PublicationID, params RenewNamedPublicationParams)
 	// UnregisterAppListener Stop a matching registration without closing the app listener
 	// (DELETE /v1/registrations/{registration_id})
 	UnregisterAppListener(w http.ResponseWriter, r *http.Request, registrationId RegistrationID, params UnregisterAppListenerParams)
@@ -1862,6 +2465,128 @@ func (siw *ServerInterfaceWrapper) PrepareAppService(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PrepareAppService(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartNamedPublication operation middleware
+func (siw *ServerInterfaceWrapper) StartNamedPublication(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartNamedPublication(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StopNamedPublication operation middleware
+func (siw *ServerInterfaceWrapper) StopNamedPublication(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publication_id" -------------
+	var publicationId PublicationID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publication_id", r.PathValue("publication_id"), &publicationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publication_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StopNamedPublicationParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Publication-Owner" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Publication-Owner")]; found {
+		var XPublicationOwner PublicationOwner
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Publication-Owner", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Publication-Owner", valueList[0], &XPublicationOwner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Publication-Owner", Err: err})
+			return
+		}
+
+		params.XPublicationOwner = XPublicationOwner
+
+	} else {
+		err := fmt.Errorf("header parameter X-Publication-Owner is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Publication-Owner", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StopNamedPublication(w, r, publicationId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenewNamedPublication operation middleware
+func (siw *ServerInterfaceWrapper) RenewNamedPublication(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publication_id" -------------
+	var publicationId PublicationID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publication_id", r.PathValue("publication_id"), &publicationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publication_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RenewNamedPublicationParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Publication-Owner" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Publication-Owner")]; found {
+		var XPublicationOwner PublicationOwner
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Publication-Owner", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Publication-Owner", valueList[0], &XPublicationOwner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Publication-Owner", Err: err})
+			return
+		}
+
+		params.XPublicationOwner = XPublicationOwner
+
+	} else {
+		err := fmt.Errorf("header parameter X-Publication-Owner is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Publication-Owner", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenewNamedPublication(w, r, publicationId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2144,6 +2869,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/registrations/{registration_id}", wrapper.UnregisterAppListener)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/registrations/{registration_id}", wrapper.RegisterAppListener)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/registrations/{registration_id}/renew", wrapper.RenewAppRegistration)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publications", wrapper.StartNamedPublication)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publications/{publication_id}", wrapper.StopNamedPublication)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publications/{publication_id}/renew", wrapper.RenewNamedPublication)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/status", wrapper.GetLocalProjectStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/events", wrapper.ListLocalProjectEvents)
 

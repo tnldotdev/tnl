@@ -31,6 +31,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type runtimeCommand struct {
@@ -40,6 +41,7 @@ type runtimeCommand struct {
 type runtimeOptions struct {
 	Directory string `name:"directory" required:"" type:"path"`
 	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	Embedded  bool   `kong:"-"`
 }
 
 func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfiguration, string, error) {
@@ -169,6 +171,7 @@ type appPreparation struct {
 	flags      tunnelFlags
 	framework  privateprotocol.Framework
 	project    projectConfiguration
+	named      bool
 }
 
 type appRuntime struct {
@@ -195,14 +198,23 @@ func configuredRuntimeServices(project projectConfiguration) []clientruntime.Ser
 	for name := range project.Config.Services {
 		effective, _ := project.EffectiveService(name)
 		service := project.Config.Services[name]
-		if config.ServiceProtocol(effective.Publish) != "http" || service.Target != nil && service.Target.Type != "app" {
+		protocol := config.ServiceProtocol(effective.Publish)
+		named := service.Target != nil && service.Target.Type == "address"
+		if !named && protocol != "http" {
 			continue
 		}
 		readiness := clientruntime.Readiness{Path: "/"}
-		if effective.Readiness != nil {
+		if protocol == "http" && effective.Readiness != nil {
 			readiness.Path = effective.Readiness.Path
 		}
-		services = append(services, clientruntime.Service{Name: name, Directory: project.RelativeServiceDirectories[name], Readiness: readiness})
+		entry := clientruntime.Service{Name: name, Directory: project.RelativeServiceDirectories[name], Readiness: readiness}
+		if named {
+			entry.ServiceProtocol = protocol
+			if protocol != "http" {
+				entry.Readiness = clientruntime.Readiness{}
+			}
+		}
+		services = append(services, entry)
 	}
 	slices.SortFunc(services, func(a, b clientruntime.Service) int { return strings.Compare(a.Name, b.Name) })
 	return services
@@ -267,7 +279,9 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	defer runtime.adhoc.Close()
 	appServices := make([]string, 0)
 	for _, service := range configuredRuntimeServices(project) {
-		appServices = append(appServices, service.Name)
+		if service.ServiceProtocol == "" {
+			appServices = append(appServices, service.Name)
+		}
 	}
 	tcpServer, tcpDone, err := startRuntimeTCP(key, runtime.localHandler(), appServices...)
 	if err != nil {
@@ -297,7 +311,7 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		case err := <-tcpDone:
 			return fmt.Errorf("serve local publisher TCP API: %w", err)
 		case <-ticker.C:
-			if os.Getppid() != parentPID {
+			if !options.Embedded && os.Getppid() != parentPID {
 				return nil
 			}
 			if runtime.manager.Sweep(runtime.manager.Alive) {
@@ -378,6 +392,9 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	effective, err := project.EffectiveService(name)
 	if err != nil {
 		return privateprotocol.Assignment{}, err
+	}
+	if definition := project.Config.Services[name]; definition.Target != nil && definition.Target.Type != "app" {
+		return privateprotocol.Assignment{}, failure.Wrap("select app service", failure.ServiceNotConfigured, errors.New("configured address services are published with tnl publish"))
 	}
 	a.prepareMu.Lock()
 	defer a.prepareMu.Unlock()
@@ -571,13 +588,24 @@ func runtimeProblem(w http.ResponseWriter, err error) {
 
 func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service, observe func(uint64, bool) error) (result error) {
 	a.mu.Lock()
-	preparation := a.prepared[service.RegistrationID]
+	preparation, found := a.prepared[service.RegistrationID]
 	a.mu.Unlock()
+	if !found {
+		return clientruntime.ErrRegistrationStale
+	}
 	services, flags := preparation.services, preparation.flags
 	project := preparation.project
 	server := services.authenticated.ServerEndpoint
-	group := projectIntegrationGroup(project.Project, services.namespace)
-	tunnel, err := a.state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandDev, Server: server, Target: service.Target, Project: a.project.Root, Service: service.Name, IntegrationGroup: group})
+	group := ""
+	if service.ServiceProtocol == "" || service.ServiceProtocol == "http" {
+		group = projectIntegrationGroup(project.Project, services.namespace)
+	}
+	command := clientstate.TunnelCommandDev
+	if preparation.named {
+		command = clientstate.TunnelCommandPublish
+	}
+	tunnel, err := a.state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: command, Server: server, Target: service.Target,
+		ServiceProtocol: controlv1.PublicURLServiceProtocol(service.ServiceProtocol), Project: a.project.Root, Service: service.Name, IntegrationGroup: group})
 	if err != nil {
 		return err
 	}
@@ -587,18 +615,30 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		defer cancel()
 		result = errors.Join(result, tunnel.Finish(closeCtx, result))
 	}()
-	if err := tunnel.SetDevTarget(ctx, service.Framework, service.Target); err != nil {
-		return err
+	if preparation.named {
+		if err := a.manager.Started(service.RegistrationID, service.Target, tunnel.ID()); err != nil {
+			return err
+		}
+	} else {
+		if err := tunnel.SetDevTarget(ctx, service.Framework, service.Target); err != nil {
+			return err
+		}
 	}
 	output, err := newPublishOutput("human", "tnl", io.Discard, io.Discard, nil)
 	if err != nil {
 		return err
 	}
-	previewID, err := ensurePreview(ctx, a.state, services.state, services.routes, server, services.teamID, a.project.Root)
-	if err != nil {
-		return err
+	previewID := ""
+	if group != "" {
+		previewID, err = ensurePreview(ctx, a.state, services.state, services.routes, server, services.teamID, a.project.Root)
+		if err != nil {
+			return err
+		}
 	}
 	configuration := services.config(service.Target, preparation.policy.prefixes, flags.limits())
+	if preparation.named {
+		configuration.ServiceProtocol = controlv1.PublicURLServiceProtocol(service.ServiceProtocol)
+	}
 	effective, err := project.EffectiveService(service.Name)
 	if err != nil {
 		return err
@@ -609,10 +649,18 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 			return err
 		}
 	}
+	if effective.Publish != nil {
+		if effective.Publish.TargetTLS != nil {
+			configuration.TargetTLS = *effective.Publish.TargetTLS
+		}
+		if effective.Publish.TargetTLSName != nil {
+			configuration.TargetTLSName = *effective.Publish.TargetTLSName
+		}
+	}
 	configuration.ControlURL = server
 	configuration.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
 	configuration.PreviewID, configuration.ProjectRoot, configuration.Service = previewID, a.project.Root, service.Name
-	configuration.Feedback = project.Config.Feedback != nil && *project.Config.Feedback
+	configuration.Feedback = (service.ServiceProtocol == "" || service.ServiceProtocol == "http") && project.Config.Feedback != nil && *project.Config.Feedback
 	configuration.InspectionMode = flags.InspectionMode
 	configuration.AdmitRequest = func(_ *http.Request, identity publisher.PublishRunIdentity) error {
 		if !a.manager.Current(service.Name, service.RegistrationID, service.Target, identity.Number) {
@@ -620,18 +668,29 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		}
 		return nil
 	}
+	if preparation.named && service.ServiceProtocol != "http" {
+		configuration.AdmitConnection = func(identity publisher.PublishRunIdentity) error {
+			if !a.manager.Current(service.Name, service.RegistrationID, service.Target, identity.Number) {
+				return diagnostic.Wrap(diagnostic.TargetUnavailable, clientruntime.ErrRegistrationStale)
+			}
+			return nil
+		}
+	}
 	recorder, err := newInspectionRecorder(ctx, tunnel, a.project.Root, service.Name, flags)
 	if err != nil {
 		return err
 	}
 	defer recorder.Close()
 	configuration.ObserveRequest = httpObservation(recorder)
+	if service.ServiceProtocol == "mysql" || service.ServiceProtocol == "postgres" {
+		configuration.ObserveDatabase = sqlObservation(recorder)
+	}
 	configuration.Logf = func(_ string, _ ...any) {
 		if ctx.Err() == nil {
 			a.manager.RecordWarning(service.Name, service.RegistrationID, string(failure.TransportUnavailable))
 		}
 	}
-	if project.Config.OAuth {
+	if group != "" && project.Config.OAuth {
 		origin, oauthServices, err := projectOAuthPublisher(ctx, a.state, project.Project, server, valueOrEmpty(project.Config.Team), services.authenticated)
 		if err != nil {
 			return err
@@ -640,7 +699,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		defer stop()
 		configuration.ObserveResponse = integrationurls.Observer(a.state, server, origin.Hostname, group, tunnel.ID())
 	}
-	if len(project.Config.Webhooks) != 0 {
+	if group != "" && len(project.Config.Webhooks) != 0 {
 		stop := startWebhookIntegrationURL(ctx, a.state, services, project.Project, tunnel, service.Name, group, output, nil)
 		defer stop()
 	}
@@ -669,7 +728,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	probeCtx, cancelProbes := context.WithCancel(ctx)
 	defer func() { cancelProbes(); probes.Wait() }()
 	configuration.Observe = func(event publisher.Event) error {
-		if event.Type == publisher.EventPublicURLAssigned {
+		if event.Type == publisher.EventPublicURLAssigned && previewID != "" {
 			preview, err := services.routes.AddPreviewPublicURL(ctx, previewID, event.PublicURLID)
 			if err != nil {
 				return err
@@ -680,6 +739,15 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		}
 		if err := handlePublisherEvent(ctx, tunnel, output, event); err != nil {
 			return err
+		}
+		if preparation.named {
+			if err := a.manager.RecordPublication(service.RegistrationID, service.Target, clientruntime.PublicationEvent{
+				Type: string(event.Type), PublicURLID: event.PublicURLID, Hostname: event.Hostname,
+				PublicURL: event.PublicURL, PublishRunNumber: event.PublishRunNumber,
+				Transport: string(event.Transport), PolicyDenials: event.PolicyDenials,
+			}); err != nil {
+				return err
+			}
 		}
 		switch event.Type {
 		case publisher.EventProvisioningStep:
@@ -695,15 +763,41 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 			copy := service
 			copy.PublicURL, copy.PublishRunNumber, copy.Routable = event.PublicURL, event.PublishRunNumber, true
 			probes.Add(1)
-			go func() { defer probes.Done(); a.check(probeCtx, copy) }()
+			if service.ServiceProtocol != "" && service.ServiceProtocol != "http" {
+				go func() { defer probes.Done(); a.checkNamedTCP(probeCtx, copy) }()
+			} else {
+				go func() { defer probes.Done(); a.check(probeCtx, copy) }()
+			}
 		}
 		return nil
 	}
-	if len(project.Config.Aliases) != 0 {
+	if group != "" && len(project.Config.Aliases) != 0 {
 		stop := startProjectAliases(ctx, a.state, project, service.Name, valueOrEmpty(project.Config.Team), services, configuration, group, tunnel, output)
 		defer stop()
 	}
 	return publisher.Run(ctx, configuration)
+}
+
+func (a *appRuntime) checkNamedTCP(ctx context.Context, service clientruntime.Service) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	for attempt := 0; ctx.Err() == nil; attempt++ {
+		if !a.manager.Current(service.Name, service.RegistrationID, service.Target, service.PublishRunNumber) {
+			return
+		}
+		if probeTCPTarget(ctx, service.Target) {
+			_ = a.manager.Observe(clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber,
+				CheckedAt: time.Now().UTC(), Ready: true, Readiness: service.Readiness})
+			return
+		}
+		timer := time.NewTimer(clientruntime.RetryDelay(attempt))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
 }
 
 func (a *appRuntime) check(ctx context.Context, service clientruntime.Service) {

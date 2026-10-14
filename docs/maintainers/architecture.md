@@ -178,9 +178,14 @@ The Unix socket stays under `/tmp` to fit macOS socket path limits until that
 transport is retired.
 
 `internal/clientruntime.Manager` accepts separate CLI-owned named leases for
-configured HTTP and TCP targets. It checks ownership, target protocol, lease
-expiry, and the current publish run before admitting work. The CLI and owner API
-connect those leases to publisher workers in the next lifecycle boundary.
+configured address services using HTTP or TCP targets. `tnl publish NAME`
+registers and renews its lease through the authenticated owner API; the project
+publisher runs that service beside app registrations. It checks ownership,
+target protocol, lease expiry, and the current publish run before forwarding
+HTTP requests or TCP visitor connections. A lost owner can be replaced and
+the CLI reconnects to its new endpoint. Named observations and direct tunnel
+transitions use the same SQLite cursor. An app credential cannot operate on a
+named lease.
 
 ## resolve project configuration
 

@@ -97,6 +97,10 @@ func readProjectServicesSnapshot(ctx context.Context, project projectConfigurati
 
 func mergeTCPServices(snapshot clientruntime.Snapshot, project projectConfiguration, tunnels []clientstate.TunnelInfo) clientruntime.Snapshot {
 	for name := range project.Config.Services {
+		index := slices.IndexFunc(snapshot.Services, func(service clientruntime.Service) bool { return service.Name == name })
+		if index >= 0 && snapshot.Services[index].RegistrationID != "" {
+			continue
+		}
 		effective, _ := project.EffectiveService(name)
 		protocol := config.ServiceProtocol(effective.Publish)
 		if protocol == "http" {
@@ -124,7 +128,11 @@ func mergeTCPServices(snapshot clientruntime.Snapshot, project projectConfigurat
 			service.PublicURL, service.Target = selected.PublicURL, selected.Target
 			service.PublishRunNumber = selected.PublishRunNumber
 		}
-		snapshot.Services = append(snapshot.Services, service)
+		if index >= 0 {
+			snapshot.Services[index] = service
+		} else {
+			snapshot.Services = append(snapshot.Services, service)
+		}
 	}
 	slices.SortFunc(snapshot.Services, func(a, b clientruntime.Service) int { return cmp.Compare(a.Name, b.Name) })
 	return snapshot
@@ -246,7 +254,7 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
-				if service.ServiceProtocol != "" {
+				if service.ServiceProtocol != "" && service.ServiceProtocol != "http" {
 					service.Ready = probeTCPTarget(ctx, service.Target)
 					return
 				}
@@ -272,7 +280,7 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 				}
 			}
 			service.Ready = service.Ready && matched
-			if matched && service.ServiceProtocol == "" && service.Observation != nil {
+			if matched && (service.ServiceProtocol == "" || service.ServiceProtocol == "http") && service.Observation != nil {
 				data, err := json.Marshal(service.Observation)
 				if err != nil {
 					return err
@@ -430,6 +438,22 @@ func writeAppWatchEvent(output io.Writer, mode string, event clientruntime.Event
 		}
 		if event.Tunnel.PublishRunNumber != 0 {
 			fields = append(fields, clioutput.Field{Label: "publish run number", Value: strconv.FormatUint(event.Tunnel.PublishRunNumber, 10)})
+		}
+		blocks = append(blocks, clioutput.Fields(fields...))
+	}
+	if event.Publication != nil {
+		fields := []clioutput.Field{{Label: "progress", Value: event.Publication.Type}}
+		if event.Publication.Hostname != "" {
+			fields = append(fields, clioutput.Field{Label: "hostname", Value: event.Publication.Hostname})
+		}
+		if event.Publication.PublicURL != "" {
+			fields = append(fields, clioutput.Field{Label: "public URL", Value: event.Publication.PublicURL})
+		}
+		if event.Publication.Transport != "" {
+			fields = append(fields, clioutput.Field{Label: "transport", Value: event.Publication.Transport})
+		}
+		if event.Publication.PolicyDenials != 0 {
+			fields = append(fields, clioutput.Field{Label: "policy denials", Value: strconv.FormatUint(event.Publication.PolicyDenials, 10)})
 		}
 		blocks = append(blocks, clioutput.Fields(fields...))
 	}

@@ -23,6 +23,9 @@ func TestLocalPublisherTCPRequiresCredentialOnPrivateOperations(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+	handler.HandleFunc("POST /v1/publications", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	handler.HandleFunc("POST /v1/publications/{publication_id}/renew", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	handler.HandleFunc("DELETE /v1/publications/{publication_id}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	server, _, err := startRuntimeTCP(socket, handler, "api")
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +61,12 @@ func TestLocalPublisherTCPRequiresCredentialOnPrivateOperations(t *testing.T) {
 		{path: "/v1/status", token: app.Credential, status: http.StatusUnauthorized},
 		{method: http.MethodPost, path: "/v1/prepare", token: endpoint.Credential, status: http.StatusUnauthorized},
 		{method: http.MethodPost, path: "/v1/prepare", token: app.Credential, status: http.StatusNoContent},
+		{method: http.MethodPost, path: "/v1/publications", token: endpoint.Credential, status: http.StatusNoContent},
+		{method: http.MethodPost, path: "/v1/publications", token: app.Credential, status: http.StatusUnauthorized},
+		{method: http.MethodPost, path: "/v1/publications/reg_test/renew", token: endpoint.Credential, status: http.StatusNoContent},
+		{method: http.MethodPost, path: "/v1/publications/reg_test/renew", token: app.Credential, status: http.StatusUnauthorized},
+		{method: http.MethodDelete, path: "/v1/publications/reg_test", token: endpoint.Credential, status: http.StatusNoContent},
+		{method: http.MethodDelete, path: "/v1/publications/reg_test", token: app.Credential, status: http.StatusUnauthorized},
 		{method: http.MethodPost, path: "/v1/ad-hoc/register", token: app.Credential, status: http.StatusUnauthorized},
 		{method: http.MethodPost, path: "/v1/register", token: endpoint.Credential, status: http.StatusUnauthorized},
 	} {
