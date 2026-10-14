@@ -51,6 +51,7 @@ INSERT INTO control.ingress_pool_ports (ingress_pool_id, port, enabled)
 SELECT $1, listed.port, true
 FROM unnest($2::integer[]) AS listed(port)
 ON CONFLICT (ingress_pool_id, port) DO UPDATE SET enabled = true
+WHERE NOT control.ingress_pool_ports.enabled
 `
 
 type EnableIngressPoolPortsParams struct {

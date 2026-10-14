@@ -7,6 +7,7 @@ kill_timeout = 45
 AWS_EC2_METADATA_DISABLED = "true"
 AWS_ROLE_ARN = "arn:aws:iam::405474549090:role/tnl-dns-runtime-production"
 TNLD_ROLE = "control"
+TNLD_TCP_PORTS = "1024-65535"
 TNLD_CONTROL_LISTEN = "0.0.0.0:8443"
 TNLD_PRIVATE_CONTROL_LISTEN = "[::]:9443"
 TNLD_METRICS_LISTEN = "[::]:9090"

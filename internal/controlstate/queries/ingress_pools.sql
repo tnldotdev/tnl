@@ -15,4 +15,5 @@ RETURNING *;
 INSERT INTO control.ingress_pool_ports (ingress_pool_id, port, enabled)
 SELECT sqlc.arg(ingress_pool_id), listed.port, true
 FROM unnest(sqlc.arg(ports)::integer[]) AS listed(port)
-ON CONFLICT (ingress_pool_id, port) DO UPDATE SET enabled = true;
+ON CONFLICT (ingress_pool_id, port) DO UPDATE SET enabled = true
+WHERE NOT control.ingress_pool_ports.enabled;
