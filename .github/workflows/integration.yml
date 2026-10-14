@@ -50,6 +50,9 @@ jobs:
       - name: Verify TCP clients
         run: task go:test:integration:tcp-clients
 
+      - name: Verify split PostgreSQL TLS
+        run: task go:test:integration:postgres-tls
+
       - name: Check MySQL inspector against Vitess
         run: task go:test:integration:mysql-oracle
 

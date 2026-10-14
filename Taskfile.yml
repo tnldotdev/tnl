@@ -246,9 +246,9 @@ tasks:
       - go -C tools/testharness run . ssh -- go test -race -v ./internal/publisher -run='^TestIntegrationSSHClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:postgres-tls:
-    desc: Verify PostgreSQL channel binding with a disposable TLS-enabled target
+    desc: Verify split database TLS and channel binding with a disposable TLS-enabled PostgreSQL target
     cmds:
-      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgres(MatchingCertificate|EncryptedCancellation)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher ./internal/tnldruntime -run='^TestIntegration(DatabaseClientPostgres(MatchingCertificate|EncryptedCancellation)|SplitDatabasePublishAndVisit)$' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   go:test:integration:mysql-oracle:
     desc: Check bounded MySQL result observations against the test-only Vitess decoder
@@ -393,6 +393,22 @@ tasks:
       vars: [SERVER, TEAM, STATE_DIR, TNL_BINARY, VERSION]
     cmds:
       - node scripts/release-check.ts run --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --custom-domain "{{.CUSTOM_DOMAIN}}"
+
+  staging:check:smoke:
+    desc: Run the smallest publisher and visitor checks against an explicit deployed server
+    requires:
+      vars: [SERVER, TEAM, TNL_BINARY, VERSION, REVISION, TOKEN_FILE]
+    cmds:
+      - go test -v ./internal/stagingcheck -run='^TestDeployedSmoke$' -count=1 -timeout=12m -args -tnl-test-tier=deployed -tnl-server='{{.SERVER}}' -tnl-team='{{.TEAM}}' -tnl-binary='{{.TNL_BINARY}}' -tnl-version='{{.VERSION}}' -tnl-revision='{{.REVISION}}' -tnl-login-token-file='{{.TOKEN_FILE}}'
+
+  staging:check:full:
+    desc: Check both publisher transports and four public TCP protocols on an explicit deployed server
+    requires:
+      vars: [SERVER, TEAM, TNL_BINARY, VERSION, REVISION, TOKEN_FILE]
+    cmds:
+      - go test -v ./internal/stagingcheck -run='^TestDeployedFull$' -count=1 -timeout=22m -args -tnl-test-tier=deployed -tnl-server='{{.SERVER}}' -tnl-team='{{.TEAM}}' -tnl-binary='{{.TNL_BINARY}}' -tnl-version='{{.VERSION}}' -tnl-revision='{{.REVISION}}' -tnl-login-token-file='{{.TOKEN_FILE}}'
+      - for: [postgres, mysql, redis, ssh]
+        cmd: go -C tools/testharness run . {{.ITEM}} -- go test -v ./internal/stagingcheck -run='^TestDeployedFullTCP$' -count=1 -timeout=10m -args -tnl-test-tier=deployed -tnl-server='{{.SERVER}}' -tnl-team='{{.TEAM}}' -tnl-binary='{{.TNL_BINARY}}' -tnl-version='{{.VERSION}}' -tnl-revision='{{.REVISION}}' -tnl-login-token-file='{{.TOKEN_FILE}}' -tnl-tcp-protocol='{{.ITEM}}'
 
   go:build:
     cmds:
