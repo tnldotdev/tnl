@@ -4,12 +4,74 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"io/fs"
 	"net/netip"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 	"github.com/tnldotdev/tnl/internal/publisheridentity"
 )
+
+func TestIntegrationGuestPublisherMigrationFollowsLiveIP(t *testing.T) {
+	ctx := t.Context()
+	url := newDisposableControlStateDatabaseURL(t, "guest_publisher_upgrade")
+	config, err := parseDirectConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct := stdlib.OpenDB(*config)
+	t.Cleanup(func() { _ = direct.Close() })
+	if err := ensureMigrationLock(ctx, direct); err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, direct, migrations,
+		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	for _, version := range []int64{32, 33} {
+		if _, err := provider.UpTo(ctx, version); err != nil {
+			t.Fatalf("migrate to %d: %v", version, err)
+		}
+		current, err := readSchemaVersion(ctx, pool)
+		if err != nil || current != version {
+			t.Fatalf("schema version = %d, %v; want %d", current, err, version)
+		}
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass('control.guest_publisher_identities') IS NOT NULL`).Scan(&exists); err != nil || exists {
+			t.Fatalf("guest identity table at version %d = %t, %v", version, exists, err)
+		}
+	}
+	if err := checkSchemaVersion(ctx, pool); err == nil {
+		t.Fatal("guest publisher runtime accepted schema 33 without its trial link")
+	}
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatalf("migrate from 33 to 34: %v", err)
+	}
+	current, err := readSchemaVersion(ctx, pool)
+	if err != nil || current != 34 {
+		t.Fatalf("final schema version = %d, %v", current, err)
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('control.guest_publisher_identities') IS NOT NULL`).Scan(&exists); err != nil || !exists {
+		t.Fatalf("guest identity table at version 34 = %t, %v", exists, err)
+	}
+	if err := checkSchemaVersion(ctx, pool); err != nil {
+		t.Fatalf("guest publisher runtime rejected schema 34: %v", err)
+	}
+}
 
 func TestIntegrationGuestPublisherStaysInsideItsTrial(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "guest_publisher")
