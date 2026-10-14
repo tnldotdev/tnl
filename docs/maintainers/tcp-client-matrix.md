@@ -4,43 +4,43 @@ Publisher-path checks on PR #288 (`bebaf470`, 2026-10-13), with affected cases r
 
 ## postgresql
 
-**P:** visitor TLS → plaintext target. **S:** verified TLS on both sides with the same certificate. **D:** verified TLS with different certificates. **T:** visitor TLS passthrough. Each client ran a query, a prepared/bound operation, and 1,000 rows.
+**P:** visitor TLS → plaintext target. **S:** verified TLS on both sides with the same certificate. **D:** verified TLS with different certificates. Each client ran a query, a prepared/bound operation, and 1,000 rows.
 
-| client / runtime                    | P   | S   | D               | T   |
-| ----------------------------------- | --- | --- | --------------- | --- |
-| `psql` 18.6 / macOS                 | ok  | ok  | ok, binding off | ok  |
-| psycopg 3.3.6 / Python 3.13.9       | ok  | ok  | ok, binding off | ok  |
-| psycopg2 2.9.13 / Python 3.13.9     | ok  | ok  | ok, binding off | ok  |
-| asyncpg 0.32.0 / Python 3.13.9      | ok* | ok* | ok*             | ok* |
-| node-postgres 8.23.1 / Node 22.23.2 | ok  | ok  | ok, binding off | ok  |
-| JDBC 42.7.8 / Java 21               | ok  | ok  | ok, binding off | ok  |
-| Npgsql 8.0.8 / .NET 8               | ok  | ok  | ok, binding off | ok  |
-| SQLx 0.8.6, native TLS / Rust 1.91  | ok  | ok  | ok              | ok  |
-| SQLx 0.8.6, rustls / Rust 1.91      | ok* | ok* | ok*             | ok* |
-| PDO_pgsql / PHP 8.4                 | ok  | ok  | ok, binding off | ok  |
-| `pg` 1.5.9 / Ruby 2.6               | ok  | ok  | ok, binding off | ok  |
+| client / runtime                    | P   | S   | D               |
+| ----------------------------------- | --- | --- | --------------- |
+| `psql` 18.6 / macOS                 | ok  | ok  | ok, binding off |
+| psycopg 3.3.6 / Python 3.13.9       | ok  | ok  | ok, binding off |
+| psycopg2 2.9.13 / Python 3.13.9     | ok  | ok  | ok, binding off |
+| asyncpg 0.32.0 / Python 3.13.9      | ok* | ok* | ok*             |
+| node-postgres 8.23.1 / Node 22.23.2 | ok  | ok  | ok, binding off |
+| JDBC 42.7.8 / Java 21               | ok  | ok  | ok, binding off |
+| Npgsql 8.0.8 / .NET 8               | ok  | ok  | ok, binding off |
+| SQLx 0.8.6, native TLS / Rust 1.91  | ok  | ok  | ok              |
+| SQLx 0.8.6, rustls / Rust 1.91      | ok* | ok* | ok*             |
+| PDO_pgsql / PHP 8.4                 | ok  | ok  | ok, binding off |
+| `pg` 1.5.9 / Ruby 2.6               | ok  | ok  | ok, binding off |
 
-The #294 write-half-close fix removed asyncpg and SQLx/rustls close timeouts in P and D. A proper test CA and signed server certificate removed rustls's `CaUsedAsEndEntity` rejection in S and T. `SCRAM-SHA-256-PLUS` still receives the authored `28000` error in D; requiring channel binding works in S and T. Wrong CA, wrong hostname, and plaintext visitor checks were rejected as expected.
+The #294 write-half-close fix removed asyncpg and SQLx/rustls close timeouts in P and D. A proper test CA and signed server certificate removed rustls's `CaUsedAsEndEntity` rejection in S. `SCRAM-SHA-256-PLUS` still receives the authored `28000` error in D; requiring channel binding works in S. Wrong CA, wrong hostname, and plaintext visitor checks were rejected as expected. A separate integration check sent encrypted PostgreSQL cancel requests through the public URL in P and D, observed SQLSTATE `57014`, and reused the original connection; plaintext cancel requests remain rejected.
 
 ## mysql
 
-**P:** verified visitor TLS → plaintext target. **T:** separate verified target TLS. **V:** visitor TLS passthrough. Clients ran `SELECT 1`, a prepared/parameterized value of `23`, two result sets, and close unless qualified.
+**P:** verified visitor TLS → plaintext target. **T:** separate verified target TLS. Clients ran `SELECT 1`, a prepared/parameterized value of `23`, two result sets, and close unless qualified.
 
-| client / runtime              | P   | T   | V                    |
-| ----------------------------- | --- | --- | -------------------- |
-| MySQL CLI 8.4.11              | ok  | —   | —                    |
-| MariaDB CLI 11.8.9            | ok  | —   | —                    |
-| MariaDB Connector C 3.4.10    | ok  | —   | —                    |
-| PyMySQL 1.2.3 / Python 3.13.9 | ok  | ok  | ok                   |
-| mysql-connector-python 26.7.0 | ok  | ok  | C: no SNI; pure: ok* |
-| mysql2 3.24.6 / Node 22.23.2  | ok* | ok* | ok*                  |
-| Connector/J 9.5.0 / Java 21   | ok  | —   | —                    |
-| MySqlConnector 2.5.0 / .NET 9 | ok  | —   | —                    |
-| SQLx 0.8.6 / Rust 1.91        | ok  | —   | —                    |
-| PDO_mysql / PHP 8.4           | ok  | ok  | ok                   |
-| Ruby mysql2 0.5.7 / Ruby 3.3  | ok  | ok  | ok                   |
+| client / runtime              | P   | T   |
+| ----------------------------- | --- | --- |
+| MySQL CLI 8.4.11              | ok  | —   |
+| MariaDB CLI 11.8.9            | ok  | —   |
+| MariaDB Connector C 3.4.10    | ok  | —   |
+| PyMySQL 1.2.3 / Python 3.13.9 | ok  | ok  |
+| mysql-connector-python 26.7.0 | ok  | ok  |
+| mysql2 3.24.6 / Node 22.23.2  | ok* | ok* |
+| Connector/J 9.5.0 / Java 21   | ok  | —   |
+| MySqlConnector 2.5.0 / .NET 9 | ok  | —   |
+| SQLx 0.8.6 / Rust 1.91        | ok  | —   |
+| PDO_mysql / PHP 8.4           | ok  | ok  |
+| Ruby mysql2 0.5.7 / Ruby 3.3  | ok  | ok  |
 
-The MySQL and MariaDB CLIs worked without SNI in P on their allocated port; the MySQL CLI also passed `VERIFY_IDENTITY`. With #294, node-mysql2's query, `end()`, and process exit passed **5/5** in V, without `destroy()`; direct, P, and T controls also exited **5/5**. In V, mysql-connector-python's C extension sent no SNI and was rejected **3/3**; `use_pure=True` sent the public hostname and passed **3/3**. Exact SNI remains required for passthrough. Wrong CA and nonempty wrong-SNI attempts were rejected. Fresh-target direct MySQL authentication sometimes failed before its cache was warm, also without tnl in the path.
+The MySQL and MariaDB CLIs worked without SNI in P on their allocated port; the MySQL CLI also passed `VERIFY_IDENTITY`. With #294, node-mysql2's query, `end()`, and process exit passed **5/5** in direct, P, and T controls. Wrong CA and nonempty wrong-SNI attempts were rejected. Fresh-target direct MySQL authentication sometimes failed before its cache was warm, also without tnl in the path.
 
 ## redis
 
