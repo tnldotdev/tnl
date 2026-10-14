@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -155,6 +157,51 @@ func TestNamedCLIRecoversReadyStatusWhenLeaseAlreadyExists(t *testing.T) {
 	err = followNamedPublication(ctx, publishCommand{Service: "orders"}, client, owner, output, nil, telemetrySelfHosted)
 	if !errors.Is(err, context.Canceled) || !stopped || !strings.Contains(stdout.String(), `"type":"ready"`) || !strings.Contains(stdout.String(), `"tunnel_id":"`+tunnelID+`"`) {
 		t.Fatalf("reacquired ready lease = %v, stopped=%t, events=%s", err, stopped, stdout.String())
+	}
+}
+
+func TestNamedCLIReportsNewOwnerWithTheSamePublishRunNumber(t *testing.T) {
+	var starts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		index := starts.Load()
+		id := fmt.Sprintf("reg_%032d", index)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/publications":
+			index = starts.Add(1)
+			id = fmt.Sprintf("reg_%032d", index)
+			privateprotocol.Write(w, http.StatusOK, localpublisherv1.PublicationLease{PublicationId: id, Service: "orders", Cursor: "0"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/status":
+			tunnelID := fmt.Sprintf("tun_%d", index)
+			url := "orders.example:15432"
+			number := int64(1)
+			privateprotocol.Write(w, http.StatusOK, localpublisherv1.ProjectSnapshot{Project: "/project", Cursor: "0", Services: []localpublisherv1.ServiceStatus{{
+				Service: "orders", Protocol: localpublisherv1.ServiceStatusProtocolPostgres, State: localpublisherv1.Routable,
+				PublicationId: &id, TunnelId: &tunnelID, PublicUrl: &url, PublishRunNumber: &number,
+			}}})
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/publications/"):
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	stdout := &stopAfterReady{}
+	output, err := newPublishOutput(publishOutputNDJSON, "tnl publish", stdout, &bytes.Buffer{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := namedPublisherClient{endpoint: localPublisherEndpoint{URL: server.URL, Credential: "local-owner"}, http: &http.Client{Timeout: time.Second}}
+	for range 2 {
+		ctx, stop := context.WithTimeout(t.Context(), 3*time.Second)
+		stdout.stop = stop
+		if err := followNamedPublication(ctx, publishCommand{Service: "orders"}, client, "0123456789abcdef0123456789abcdef", output, nil, telemetrySelfHosted); !errors.Is(err, context.Canceled) {
+			t.Fatalf("follow replacement = %v", err)
+		}
+		stop()
+	}
+	if got := strings.Count(stdout.String(), `"type":"ready"`); got != 2 {
+		t.Fatalf("ready events = %d: %s", got, stdout.String())
 	}
 }
 
