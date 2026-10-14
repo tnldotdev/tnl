@@ -27,9 +27,30 @@ const (
 )
 
 var (
-	testTier        = flag.String("tnl-test-tier", string(TestTierRoutine), "tnl test tier")
-	testPostgresURL = flag.String("tnl-test-postgres-url", "", "disposable PostgreSQL administration URL")
+	testTier         = flag.String("tnl-test-tier", string(TestTierRoutine), "tnl test tier")
+	testPostgresURL  = flag.String("tnl-test-postgres-url", "", "disposable PostgreSQL administration URL")
+	testPostgresCert = flag.String("tnl-test-postgres-cert", "", "disposable PostgreSQL target TLS certificate")
+	testPostgresKey  = flag.String("tnl-test-postgres-key", "", "disposable PostgreSQL target TLS private key")
+	testPostgresCA   = flag.String("tnl-test-postgres-ca", "", "disposable PostgreSQL target TLS root CA")
 )
+
+type PostgresTLSMaterial struct {
+	CertificateFile string
+	KeyFile         string
+	RootCAFile      string
+}
+
+// PostgresTLSFiles returns the disposable target certificate, key, and root CA.
+func PostgresTLSFiles(t testing.TB) PostgresTLSMaterial {
+	t.Helper()
+	if *testPostgresCert == "" && *testPostgresKey == "" && *testPostgresCA == "" {
+		t.Skip("requires the disposable PostgreSQL TLS target")
+	}
+	if *testPostgresCert == "" || *testPostgresKey == "" || *testPostgresCA == "" {
+		t.Fatal("TLS-enabled PostgreSQL tests require -tnl-test-postgres-cert, -tnl-test-postgres-key, and -tnl-test-postgres-ca")
+	}
+	return PostgresTLSMaterial{CertificateFile: *testPostgresCert, KeyFile: *testPostgresKey, RootCAFile: *testPostgresCA}
+}
 
 // RequireTestTier skips a test unless its suite is selected.
 func RequireTestTier(t testing.TB, required TestTier) {

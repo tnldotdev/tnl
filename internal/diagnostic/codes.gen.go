@@ -2,6 +2,7 @@
 package diagnostic
 
 const (
+	DatabaseCancelUnsupported   Code = "TNL_DATABASE_CANCEL_UNSUPPORTED"
 	AliasUnavailable            Code = "TNL_ALIAS_UNAVAILABLE"
 	MemberHostnameDepthExceeded Code = "TNL_MEMBER_HOSTNAME_DEPTH_EXCEEDED"
 	WebhookUnavailable          Code = "TNL_WEBHOOK_UNAVAILABLE"

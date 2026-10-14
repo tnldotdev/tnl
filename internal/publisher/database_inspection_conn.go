@@ -1,6 +1,9 @@
 package publisher
 
-import "net"
+import (
+	"errors"
+	"net"
+)
 
 // databaseInspector observes one authenticated TCP connection in both directions.
 // observers capture bounded metadata and never change the bytes being copied.
@@ -33,4 +36,11 @@ func (c *databaseInspectionConn) Read(data []byte) (int, error) {
 		c.observer.stop()
 	}
 	return n, err
+}
+
+func (c *databaseInspectionConn) CloseWrite() error {
+	if closer, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return closer.CloseWrite()
+	}
+	return errors.ErrUnsupported
 }

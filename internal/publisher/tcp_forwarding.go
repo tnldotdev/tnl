@@ -21,18 +21,20 @@ import (
 
 var postgresSSLRequest = [8]byte{0, 0, 0, 8, 4, 210, 22, 47}
 var postgresGSSRequest = [8]byte{0, 0, 0, 8, 4, 210, 22, 48}
+var postgresCancelRequest = [8]byte{0, 0, 0, 16, 4, 210, 22, 46}
 
 const mysqlClientSSL = 1 << 11
 
 type tcpForwarding struct {
-	protocol        controlv1.PublicURLServiceProtocol
-	admission       *applicationAdmission
-	publicPort      uint16
-	target          string
-	backendTLS      *tls.Config
-	passthrough     bool
-	onTargetFailure func()
-	observeDatabase func(DatabaseObservation)
+	protocol            controlv1.PublicURLServiceProtocol
+	admission           *applicationAdmission
+	publicPort          uint16
+	target              string
+	backendTLS          *tls.Config
+	passthrough         bool
+	onTargetFailure     func()
+	onCancelUnsupported func()
+	observeDatabase     func(DatabaseObservation)
 }
 
 func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
@@ -60,10 +62,11 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 	}
 	return &tcpForwarding{
 		protocol: config.ServiceProtocol, publicPort: config.PublicPort, target: config.Target,
-		backendTLS:      backendTLS,
-		passthrough:     config.VisitorTLSPassthrough,
-		onTargetFailure: config.OnTargetFailure,
-		observeDatabase: config.ObserveDatabase,
+		backendTLS:          backendTLS,
+		passthrough:         config.VisitorTLSPassthrough,
+		onTargetFailure:     config.OnTargetFailure,
+		onCancelUnsupported: config.OnCancelUnsupported,
+		observeDatabase:     config.ObserveDatabase,
 	}, nil
 }
 
@@ -158,6 +161,16 @@ func (d *tcpForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.Confi
 		}
 	}
 	if startup != postgresSSLRequest {
+		if startup == postgresCancelRequest {
+			var proof [8]byte
+			if _, err := io.ReadFull(visitor, proof[:]); err != nil {
+				return err
+			}
+			if d.onCancelUnsupported != nil {
+				d.onCancelUnsupported()
+			}
+			return errors.New("publisher: plaintext PostgreSQL cancellation is not supported")
+		}
 		return errors.New("publisher: PostgreSQL visitor TLS is required")
 	}
 	if d.backendTLS != nil || d.passthrough {
@@ -188,7 +201,7 @@ func (d *tcpForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.Confi
 	if d.passthrough {
 		return forwardVisitorTLSPassthrough(visitor, backend, hostname, d.admission)
 	}
-	return forwardDatabaseTLS(visitor, backend, publicTLS, d.admission)
+	return forwardDatabaseTLS(visitor, backend, publicTLS, d.admission, d.observeDatabase)
 }
 
 func (d *tcpForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config, hostname string) error {
@@ -281,12 +294,33 @@ func readMySQLPacket(connection net.Conn, limit int) ([]byte, error) {
 	return packet, err
 }
 
-func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admission *applicationAdmission) error {
+func forwardDatabaseTLS(visitor, backend net.Conn, publicTLS *tls.Config, admission *applicationAdmission,
+	observe func(DatabaseObservation)) error {
+	var visitorCertificate []byte
+	if publicTLS.GetCertificate != nil {
+		publicTLS = publicTLS.Clone()
+		getCertificate := publicTLS.GetCertificate
+		publicTLS.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			certificate, err := getCertificate(hello)
+			if err == nil && certificate != nil && len(certificate.Certificate) != 0 {
+				visitorCertificate = certificate.Certificate[0]
+			}
+			return certificate, err
+		}
+	}
 	securedVisitor := tls.Server(visitor, publicTLS)
 	if err := securedVisitor.Handshake(); err != nil {
 		return err
 	}
-	return copyTCPConnections(visitor, securedVisitor, backend, admission)
+	var client net.Conn = securedVisitor
+	if targetTLS, ok := backend.(*tls.Conn); !ok || len(targetTLS.ConnectionState().PeerCertificates) == 0 ||
+		!bytes.Equal(visitorCertificate, targetTLS.ConnectionState().PeerCertificates[0].Raw) {
+		client = &postgresAuthChoiceConn{Conn: securedVisitor}
+	}
+	if observe != nil {
+		backend = &databaseInspectionConn{Conn: backend, observer: newPostgresInspector(observe)}
+	}
+	return copyTCPConnections(visitor, client, backend, admission)
 }
 
 func copyTCPConnections(visitor, securedVisitor, backend net.Conn, admission *applicationAdmission) error {

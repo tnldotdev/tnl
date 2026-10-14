@@ -38,7 +38,7 @@ const (
 )
 
 type harnessArguments struct {
-	Service string   `arg:"" enum:"postgres,mysql,redis,ssh,dns,runtime" help:"Disposable service for the test command."`
+	Service string   `arg:"" enum:"postgres,postgres-tls,mysql,redis,ssh,dns,runtime" help:"Disposable service for the test command."`
 	Command []string `arg:"" optional:"" passthrough:"" sep:"none" help:"Test command and arguments after --."`
 }
 
@@ -56,7 +56,7 @@ func parseHarnessArguments(arguments []string) (harnessArguments, error) {
 			return parsed, errors.New("dns and runtime do not take a test command")
 		}
 	} else if len(arguments) < 3 || arguments[1] != "--" || len(parsed.Command) == 0 {
-		return parsed, errors.New("usage: testharness postgres|mysql|redis|ssh -- go test [arguments...], or testharness dns|runtime")
+		return parsed, errors.New("usage: testharness postgres|postgres-tls|mysql|redis|ssh -- go test [arguments...], or testharness dns|runtime")
 	} else {
 		// kong's passthrough includes the separator; only the child command
 		// and its arguments belong in the process we launch.
@@ -92,7 +92,7 @@ func run() error {
 	}
 	command := arguments.Command
 	switch arguments.Service {
-	case "postgres":
+	case "postgres", "postgres-tls":
 		container, err := postgres.Run(ctx, postgresImage, postgres.BasicWaitStrategies(), loopbackPort("5432"))
 		if err != nil {
 			return fmt.Errorf("start disposable PostgreSQL: %w", err)
@@ -103,6 +103,17 @@ func run() error {
 			return fmt.Errorf("read disposable PostgreSQL address: %w", err)
 		}
 		command = append(command, "-tnl-test-postgres-url="+address)
+		if arguments.Service == "postgres-tls" {
+			certificate, key, rootCA, cleanup, err := preparePostgresTLS(ctx, container)
+			if cleanup != nil {
+				defer cleanup()
+			}
+			if err != nil {
+				return fmt.Errorf("enable disposable PostgreSQL TLS: %w", err)
+			}
+			command = append(command, "-tnl-test-postgres-cert="+certificate,
+				"-tnl-test-postgres-key="+key, "-tnl-test-postgres-ca="+rootCA)
+		}
 	case "mysql":
 		var container *mysql.MySQLContainer
 		for range 3 {

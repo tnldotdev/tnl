@@ -101,6 +101,7 @@ const (
 	EventTransportFallback   EventType = "transport_fallback"
 	EventIPPolicyDenials     EventType = "ip_policy_denials"
 	EventTargetUnavailable   EventType = "target_unavailable"
+	EventCancelUnsupported   EventType = "cancel_unsupported"
 )
 
 type Event struct {
