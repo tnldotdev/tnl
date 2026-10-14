@@ -219,7 +219,7 @@ func selectScopedPublishTarget(saved, selected string) (string, error) {
 	}
 	if selected == "" {
 		if saved == "" {
-			return "", failure.Wrap("select scoped publish target", failure.MissingTarget, errors.New("pass a target or set TNL_TARGET or publish.target"))
+			return "", failure.Wrap("select scoped publish target", failure.MissingTarget, errors.New("pass a target or set TNL_TARGET"))
 		}
 		return saved, nil
 	}

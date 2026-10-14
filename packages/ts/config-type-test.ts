@@ -4,7 +4,6 @@ import {
   type TnlConfigContext,
   type TnlConfigInput,
   type TnlConfigForServices,
-  type TnlRatePeriod,
 } from "@tnldotdev/tnl/config";
 import type { OpenOptions } from "@tnldotdev/tnl";
 
@@ -24,43 +23,87 @@ const staticConfig = {
   tunnel: {
     allowIP: ["192.0.2.0/24"],
     domain: "example.test",
-    limits: { requests: 20, rate: { requests: 5, per: "1m" }, concurrency: 750 },
   },
-  publish: { target: 3000 },
-  readiness: { path: "/health" },
 } satisfies TnlConfigInput;
+
+const namedTargets = defineConfig({
+  services: {
+    web: {
+      target: { type: "app" },
+      http: { readiness: { path: "/health" }, paths: { "/api": "api" }, open: true },
+    },
+    api: { target: { type: "address", address: 3000 } },
+    orders: {
+      protocol: "postgres",
+      target: {
+        type: "address",
+        address: "db.internal:5432",
+        tls: { serverName: "db.internal", caFile: "./ca.pem" },
+      },
+    },
+  },
+});
+({
+  services: {
+    web: {
+      // @ts-expect-error app registration now names the service instead of selecting its directory.
+      directory: "apps/web",
+    },
+  },
+}) satisfies TnlConfig;
+namedTargets.services.web.target.type satisfies "app";
+namedTargets.services.orders.protocol satisfies "postgres";
+({
+  services: {
+    web: {
+      target: {
+        // @ts-expect-error the app reports its own bound address.
+        type: "app",
+        address: 3000,
+      },
+    },
+  },
+}) satisfies TnlConfig;
+// @ts-expect-error an explicit target requires an address.
+defineConfig({ services: { orders: { protocol: "postgres", target: { type: "address" } } } });
+// @ts-expect-error TCP services require a private target.
+defineConfig({ services: { orders: { protocol: "postgres" } } });
+// @ts-expect-error app registrations can only publish HTTP services.
+defineConfig({ services: { orders: { protocol: "postgres", target: { type: "app" } } } });
+({
+  services: {
+    orders: {
+      protocol: "postgres",
+      target: { type: "address", address: "db:5432" },
+      // @ts-expect-error HTTP settings are unavailable to TCP services.
+      http: { open: true },
+    },
+  },
+}) satisfies TnlConfig;
+defineConfig({
+  // @ts-expect-error nested HTTP path mounts name a configured service.
+  services: { web: { target: { type: "app" }, http: { paths: { "/api": "missing" } } }, api: {} },
+});
 
 ({
   services: {
-    web: { directory: "apps/web" },
+    web: { target: { type: "app" } },
     orders: {
       inspection: { mode: "none", retention: "48h", maxBytes: "16MiB" },
-      publish: {
-        protocol: "postgres",
-        target: "db.internal:5432",
-        targetTLS: true,
-        targetTLSName: "db.internal",
-        targetCAFile: "./ca.pem",
+      protocol: "postgres",
+      target: {
+        type: "address",
+        address: "db.internal:5432",
+        tls: { serverName: "db.internal", caFile: "./ca.pem" },
       },
     },
   },
 }) satisfies TnlConfig;
 ({
-  publish: {
-    // @ts-expect-error the retired static key is not accepted in TypeScript.
-    ca_file: "./ca.pem",
-  },
+  // @ts-expect-error the retired root publish block is not accepted in TypeScript.
+  publish: { target: 3000 },
 }) satisfies TnlConfig;
 
-"1m" satisfies TnlRatePeriod;
-"1h30m" satisfies TnlRatePeriod;
-"1h2m3s4ms" satisfies TnlRatePeriod;
-// @ts-expect-error rate periods require a numeric amount and duration unit.
-"minute" satisfies TnlRatePeriod;
-// @ts-expect-error rate periods do not use plain numbers.
-"1" satisfies TnlRatePeriod;
-// @ts-expect-error rate periods do not include spaces.
-"1 minute" satisfies TnlRatePeriod;
 ({
   tunnel: {
     // @ts-expect-error requestLimit is not a configuration alias for limits.concurrency.
@@ -71,13 +114,8 @@ const staticConfig = {
   services: {
     api: {
       tunnel: {
-        limits: {
-          rate: {
-            requests: 1,
-            // @ts-expect-error service limits use the same rate period type.
-            per: "minute",
-          },
-        },
+        // @ts-expect-error limit settings are reserved for a follow-up.
+        limits: { requests: 1 },
       },
     },
   },
@@ -104,21 +142,21 @@ environment.ARBITRARY_VARIABLE satisfies string;
 
 declare const services: NonNullable<TnlConfig["services"]>;
 // @ts-expect-error configured services need not exist for an arbitrary name.
-services.arbitraryService.directory satisfies string | undefined;
+services.arbitraryService.target satisfies object | undefined;
 const service = services.arbitraryService;
-if (service) service.directory satisfies string | undefined;
+if (service) service.target satisfies object | undefined;
 
 const projectScopedSettings = {
   server: "https://control.example",
   team: "studio",
   feedback: true,
   services: {
-    web: { readiness: { path: "/health" } },
+    web: { target: { type: "app" }, http: { readiness: { path: "/health" } } },
   },
 } satisfies TnlConfig;
 const mountedServices = {
   services: {
-    web: { paths: { "/api": "api", "/v1": { service: "api", stripPrefix: true } } },
+    web: { http: { paths: { "/api": "api", "/v1": { service: "api", stripPrefix: true } } } },
     api: {},
   },
 } satisfies TnlConfig;
@@ -141,7 +179,7 @@ integrationConfig.webhooks.customProvider.provider satisfies "custom";
 const aliasConfig = defineConfig({
   services: {
     api: {},
-    web: { paths: { "/api": "api", "/v1": { service: "api", stripPrefix: true } } },
+    web: { http: { paths: { "/api": "api", "/v1": { service: "api", stripPrefix: true } } } },
   },
   aliases: { review: { service: "web" }, nested: { service: "api", name: "api.shop" } },
 });
@@ -150,7 +188,7 @@ aliasConfig.aliases.nested.name satisfies "api.shop";
 const aliasFactory = defineConfig(async ({ worktree }) => ({
   services: {
     api: { tunnel: { name: `api-${worktree.label.id}` } },
-    web: { paths: { "/api": "api" } },
+    web: { http: { paths: { "/api": "api" } } },
   },
   aliases: { review: { service: "web" } },
 }));
@@ -163,7 +201,7 @@ if (aliasFactoryResult.aliases?.review) {
 // the generated TnlConfig describes the file shape. provide known names when
 // checking a plain object without defineConfig's service-key inference.
 const explicitServices = {
-  services: { api: {}, web: { paths: { "/api": "api" } } },
+  services: { api: {}, web: { http: { paths: { "/api": "api" } } } },
   aliases: { review: { service: "web" } },
   webhooks: { hook: { service: "api", path: "/hook", provider: "custom" } },
 } satisfies TnlConfigForServices<"api" | "web">;
@@ -190,9 +228,11 @@ const explicitServices = {
 ({
   services: {
     api: {
-      paths: {
-        // @ts-expect-error "missing" is not assignable to configured service "api".
-        "/other": "missing",
+      http: {
+        paths: {
+          // @ts-expect-error "missing" is not assignable to configured service "api".
+          "/other": "missing",
+        },
       },
     },
   },
@@ -205,11 +245,13 @@ defineConfig({
   webhooks: { hook: { service: "missing", path: "/hook", provider: "custom" } },
 });
 // @ts-expect-error string path mounts name a configured service.
-defineConfig({ services: { web: { paths: { "/api": "missing" } }, api: {} } });
-// @ts-expect-error object path mounts name a configured service.
-defineConfig({ services: { web: { paths: { "/api": { service: "missing" } } }, api: {} } });
+defineConfig({ services: { web: { http: { paths: { "/api": "missing" } } }, api: {} } });
+defineConfig({
+  // @ts-expect-error object path mounts name a configured service.
+  services: { web: { http: { paths: { "/api": { service: "missing" } } } }, api: {} },
+});
 // @ts-expect-error a service cannot mount itself.
-defineConfig({ services: { api: { paths: { "/api": "api" } } } });
+defineConfig({ services: { api: { http: { paths: { "/api": "api" } } } } });
 // @ts-expect-error factory returns retain service-reference checks.
 defineConfig(() => ({ services: { api: {} }, aliases: { review: { service: "missing" } } }));
 // @ts-expect-error async factory returns retain service-reference checks.
@@ -225,19 +267,21 @@ defineConfig(async () => ({
   webhooks: { hook: { service: "missing", path: "/hook", provider: "custom" } },
 }));
 // @ts-expect-error factory string mounts retain service-reference checks.
-defineConfig(() => ({ services: { api: {}, web: { paths: { "/api": "missing" } } } }));
-// @ts-expect-error factory object mounts retain service-reference checks.
-defineConfig(() => ({ services: { api: {}, web: { paths: { "/api": { service: "missing" } } } } }));
+defineConfig(() => ({ services: { api: {}, web: { http: { paths: { "/api": "missing" } } } } }));
+defineConfig(() => ({
+  // @ts-expect-error factory object mounts retain service-reference checks.
+  services: { api: {}, web: { http: { paths: { "/api": { service: "missing" } } } } },
+}));
 // @ts-expect-error server belongs to the project, not a service.
 ({ server: "https://control.example" }) satisfies NonNullable<TnlConfig["services"]>[string];
 // @ts-expect-error team belongs to the project, not a service.
 ({ team: "studio" }) satisfies NonNullable<TnlConfig["services"]>[string];
 
 const literalConfig = defineConfig({
-  readiness: { path: "/health" },
   tunnel: { name: "api" },
+  services: { api: { target: { type: "app" }, http: { readiness: { path: "/health" } } } },
 } as const);
-literalConfig.readiness.path satisfies "/health";
+literalConfig.services.api.http.readiness.path satisfies "/health";
 literalConfig.tunnel.name satisfies "api";
 
 const exactConfig = defineConfig({ tunnel: { publicURL: "https://api.example.test" } } as const);
@@ -250,6 +294,7 @@ defineConfig({ version: 1 });
 defineConfig({ tnld: { role: "relay" } });
 
 export {
+  namedTargets,
   aliasConfig,
   aliasFactory,
   dynamicConfig,

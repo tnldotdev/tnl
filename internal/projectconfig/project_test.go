@@ -18,22 +18,17 @@ tnl:
   team: Root Team
   tunnel:
     domain: routes.example.test
-    open: true
     allow_ip: [192.0.2.0/24]
     ephemeral: true
-  publish:
-    target: 3000
-  readiness:
-    path: /health
   services:
     web:
       tunnel:
         name: web
         allow_all_ips: true
-      publish:
-        target: 4000
-      readiness:
-        path: /status
+      target: {type: address, address: 4000}
+      http:
+        readiness: {path: /status}
+        open: true
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)

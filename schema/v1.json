@@ -20,53 +20,6 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "Publish": {
-      "properties": {
-        "protocol": {
-          "type": "string",
-          "enum": ["http", "postgres", "mysql", "redis", "ssh"],
-          "description": "Service protocol for the public URL; defaults to http."
-        },
-        "target": {
-          "oneOf": [
-            {
-              "type": "string",
-              "minLength": 1
-            },
-            {
-              "type": "integer",
-              "maximum": 65535,
-              "minimum": 1
-            }
-          ],
-          "description": "HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher."
-        },
-        "target_tls_name": {
-          "type": "string",
-          "description": "Hostname expected in the target's TLS certificate; defaults to the target host."
-        },
-        "target_tls": {
-          "type": "boolean",
-          "description": "Use verified TLS for the TCP target."
-        },
-        "target_ca_file": {
-          "type": "string",
-          "description": "Additional PEM certificate authorities for the target; relative paths are resolved from the project root."
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "Readiness": {
-      "properties": {
-        "path": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": ["path"]
-    },
     "TNL": {
       "properties": {
         "server": {
@@ -129,10 +82,6 @@
               "type": "string",
               "description": "Exact public URL hostname or HTTPS origin to publish."
             },
-            "open": {
-              "type": "boolean",
-              "description": "Open the public URL in a browser once ready."
-            },
             "allow_ip": {
               "items": {
                 "type": "string"
@@ -148,148 +97,175 @@
             "ephemeral": {
               "type": "boolean",
               "description": "Remove the public URL when this tunnel stops."
-            },
-            "limits": {
-              "properties": {
-                "requests": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "description": "Total admitted application requests for this tunnel."
-                },
-                "rate": {
-                  "properties": {
-                    "requests": {
-                      "type": "integer",
-                      "minimum": 1
-                    },
-                    "per": {
-                      "type": "string",
-                      "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                    }
-                  },
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": ["requests", "per"]
-                },
-                "concurrency": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "description": "Maximum simultaneous application requests, streams, and upgrades.",
-                  "default": 500
-                }
-              },
-              "additionalProperties": false,
-              "type": "object"
             }
           },
           "additionalProperties": false,
           "type": "object",
           "description": "Default public URL and tunnel settings."
         },
-        "publish": {
-          "$ref": "#/$defs/Publish"
-        },
-        "readiness": {
-          "$ref": "#/$defs/Readiness"
-        },
         "services": {
           "additionalProperties": {
-            "properties": {
-              "directory": {
-                "type": "string",
-                "minLength": 1,
-                "description": "Service directory relative to the project configuration."
-              },
-              "inspection": {
-                "$ref": "#/$defs/Inspection"
-              },
-              "tunnel": {
-                "allOf": [
-                  {
-                    "not": {
-                      "required": ["name", "public_url"]
-                    }
-                  },
-                  {
-                    "if": {
-                      "properties": {
-                        "allow_all_ips": {
-                          "const": true
-                        }
-                      },
-                      "required": ["allow_all_ips"]
-                    },
-                    "then": {
-                      "not": {
-                        "anyOf": [
-                          {
-                            "required": ["allow_ip"]
-                          }
-                        ]
-                      }
-                    }
-                  }
-                ],
+            "oneOf": [
+              {
                 "properties": {
-                  "domain": {
-                    "type": "string",
-                    "description": "Ready team domain used for generated public URL hostnames."
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
                   },
-                  "name": {
-                    "type": "string",
-                    "description": "One DNS label beneath the member namespace."
-                  },
-                  "public_url": {
-                    "type": "string",
-                    "description": "Exact public URL hostname or HTTPS origin to publish."
-                  },
-                  "open": {
-                    "type": "boolean",
-                    "description": "Open the public URL in a browser once ready."
-                  },
-                  "allow_ip": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array",
-                    "uniqueItems": true,
-                    "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
-                  },
-                  "allow_all_ips": {
-                    "type": "boolean",
-                    "description": "Allow visitors from every IP address."
-                  },
-                  "ephemeral": {
-                    "type": "boolean",
-                    "description": "Remove the public URL when this tunnel stops."
-                  },
-                  "limits": {
-                    "properties": {
-                      "requests": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "Total admitted application requests for this tunnel."
-                      },
-                      "rate": {
+                  "target": {
+                    "oneOf": [
+                      {
                         "properties": {
-                          "requests": {
-                            "type": "integer",
-                            "minimum": 1
-                          },
-                          "per": {
-                            "type": "string",
-                            "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                          "type": {
+                            "const": "app"
                           }
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["requests", "per"]
+                        "required": ["type"]
                       },
-                      "concurrency": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "Maximum simultaneous application requests, streams, and upgrades.",
-                        "default": 500
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      }
+                    ]
+                  },
+                  "tunnel": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": ["name", "public_url"]
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "allow_all_ips": {
+                              "const": true
+                            }
+                          },
+                          "required": ["allow_all_ips"]
+                        },
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": ["allow_ip"]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "domain": {
+                        "type": "string",
+                        "description": "Ready team domain used for generated public URL hostnames."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "One DNS label beneath the member namespace."
+                      },
+                      "public_url": {
+                        "type": "string",
+                        "description": "Exact public URL hostname or HTTPS origin to publish."
+                      },
+                      "allow_ip": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true,
+                        "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+                      },
+                      "allow_all_ips": {
+                        "type": "boolean",
+                        "description": "Allow visitors from every IP address."
+                      },
+                      "ephemeral": {
+                        "type": "boolean",
+                        "description": "Remove the public URL when this tunnel stops."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  "protocol": {
+                    "const": "http"
+                  },
+                  "http": {
+                    "properties": {
+                      "readiness": {
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["path"]
+                      },
+                      "paths": {
+                        "additionalProperties": {
+                          "oneOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                            },
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                                },
+                                "strip_prefix": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            }
+                          ]
+                        },
+                        "type": "object",
+                        "maxProperties": 32,
+                        "description": "Mount another configured service at a path on this service's public URL."
+                      },
+                      "open": {
+                        "type": "boolean"
                       }
                     },
                     "additionalProperties": false,
@@ -297,52 +273,472 @@
                   }
                 },
                 "additionalProperties": false,
-                "type": "object",
-                "description": "PublicURL and tunnel overrides for this service."
+                "type": "object"
               },
-              "publish": {
-                "$ref": "#/$defs/Publish"
-              },
-              "readiness": {
-                "$ref": "#/$defs/Readiness"
-              },
-              "paths": {
-                "additionalProperties": {
-                  "oneOf": [
-                    {
-                      "type": "string",
-                      "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
-                    },
-                    {
-                      "properties": {
-                        "service": {
-                          "type": "string",
-                          "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+              {
+                "properties": {
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
                         },
-                        "strip_prefix": {
-                          "type": "boolean"
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      }
+                    ]
+                  },
+                  "tunnel": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": ["name", "public_url"]
                         }
                       },
-                      "additionalProperties": false,
-                      "type": "object",
-                      "required": ["service"]
-                    }
-                  ]
+                      {
+                        "if": {
+                          "properties": {
+                            "allow_all_ips": {
+                              "const": true
+                            }
+                          },
+                          "required": ["allow_all_ips"]
+                        },
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": ["allow_ip"]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "domain": {
+                        "type": "string",
+                        "description": "Ready team domain used for generated public URL hostnames."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "One DNS label beneath the member namespace."
+                      },
+                      "public_url": {
+                        "type": "string",
+                        "description": "Exact public URL hostname or HTTPS origin to publish."
+                      },
+                      "allow_ip": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true,
+                        "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+                      },
+                      "allow_all_ips": {
+                        "type": "boolean",
+                        "description": "Allow visitors from every IP address."
+                      },
+                      "ephemeral": {
+                        "type": "boolean",
+                        "description": "Remove the public URL when this tunnel stops."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  "protocol": {
+                    "const": "postgres"
+                  }
                 },
+                "additionalProperties": false,
                 "type": "object",
-                "maxProperties": 32,
-                "description": "Mount another configured service at a path on this service's public URL."
+                "required": ["protocol", "target"]
+              },
+              {
+                "properties": {
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      }
+                    ]
+                  },
+                  "tunnel": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": ["name", "public_url"]
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "allow_all_ips": {
+                              "const": true
+                            }
+                          },
+                          "required": ["allow_all_ips"]
+                        },
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": ["allow_ip"]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "domain": {
+                        "type": "string",
+                        "description": "Ready team domain used for generated public URL hostnames."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "One DNS label beneath the member namespace."
+                      },
+                      "public_url": {
+                        "type": "string",
+                        "description": "Exact public URL hostname or HTTPS origin to publish."
+                      },
+                      "allow_ip": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true,
+                        "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+                      },
+                      "allow_all_ips": {
+                        "type": "boolean",
+                        "description": "Allow visitors from every IP address."
+                      },
+                      "ephemeral": {
+                        "type": "boolean",
+                        "description": "Remove the public URL when this tunnel stops."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  "protocol": {
+                    "const": "mysql"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["protocol", "target"]
+              },
+              {
+                "properties": {
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      }
+                    ]
+                  },
+                  "tunnel": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": ["name", "public_url"]
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "allow_all_ips": {
+                              "const": true
+                            }
+                          },
+                          "required": ["allow_all_ips"]
+                        },
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": ["allow_ip"]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "domain": {
+                        "type": "string",
+                        "description": "Ready team domain used for generated public URL hostnames."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "One DNS label beneath the member namespace."
+                      },
+                      "public_url": {
+                        "type": "string",
+                        "description": "Exact public URL hostname or HTTPS origin to publish."
+                      },
+                      "allow_ip": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true,
+                        "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+                      },
+                      "allow_all_ips": {
+                        "type": "boolean",
+                        "description": "Allow visitors from every IP address."
+                      },
+                      "ephemeral": {
+                        "type": "boolean",
+                        "description": "Remove the public URL when this tunnel stops."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  "protocol": {
+                    "const": "redis"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["protocol", "target"]
+              },
+              {
+                "properties": {
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      }
+                    ]
+                  },
+                  "tunnel": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": ["name", "public_url"]
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "allow_all_ips": {
+                              "const": true
+                            }
+                          },
+                          "required": ["allow_all_ips"]
+                        },
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": ["allow_ip"]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "domain": {
+                        "type": "string",
+                        "description": "Ready team domain used for generated public URL hostnames."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "One DNS label beneath the member namespace."
+                      },
+                      "public_url": {
+                        "type": "string",
+                        "description": "Exact public URL hostname or HTTPS origin to publish."
+                      },
+                      "allow_ip": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true,
+                        "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
+                      },
+                      "allow_all_ips": {
+                        "type": "boolean",
+                        "description": "Allow visitors from every IP address."
+                      },
+                      "ephemeral": {
+                        "type": "boolean",
+                        "description": "Remove the public URL when this tunnel stops."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  "protocol": {
+                    "const": "ssh"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["protocol", "target"]
               }
-            },
-            "additionalProperties": false,
-            "type": "object"
+            ]
           },
           "propertyNames": {
             "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
           },
           "type": "object",
           "maxProperties": 32,
-          "description": "Named local services with optional tunnel, publish, readiness overrides, and path mounts."
+          "description": "Named local services with a private target, public URL settings, and optional HTTP settings."
         },
         "webhooks": {
           "additionalProperties": {

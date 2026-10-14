@@ -20,7 +20,7 @@ func TestInitPlansNextProjectWithoutRewritingExistingFrameworkConfig(t *testing.
 	if plan.manager != "pnpm" || plan.framework != "next" || !slices.Equal(plan.packages, []string{"@tnldotdev/tnl"}) || len(plan.frameworkAfter) != 0 || !slices.Equal(plan.actions, []string{frameworkConfigAction("next", path)}) {
 		t.Fatalf("plan = %#v", plan)
 	}
-	for _, fragment := range []string{"app:", `directory: "."`, "defineConfig"} {
+	for _, fragment := range []string{"app:", `target: { type: "app" }`, "defineConfig"} {
 		if !strings.Contains(string(plan.configData), fragment) {
 			t.Fatalf("planned configuration missing %q: %s", fragment, plan.configData)
 		}

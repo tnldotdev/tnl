@@ -173,7 +173,40 @@ func ValidateTNL(config TNL) error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := config.Services[name]
-		effectivePublish := MergePublish(config.Publish, service.Publish)
+		if service.Protocol != nil && *service.Protocol != "http" && service.Target == nil {
+			return fmt.Errorf("services.%s: TCP service requires an address target", name)
+		}
+		effectivePublish := ServicePublish(config.Publish, service)
+		if service.Target != nil {
+			if tls := service.Target.TLS; tls != nil {
+				if tls.ServerName != nil && (*tls.ServerName == "" || strings.TrimSpace(*tls.ServerName) != *tls.ServerName) {
+					return fmt.Errorf("services.%s.target.tls.server_name must be a hostname", name)
+				}
+				if tls.CAFile != nil && (*tls.CAFile == "" || strings.TrimSpace(*tls.CAFile) != *tls.CAFile) {
+					return fmt.Errorf("services.%s.target.tls.ca_file must be a nonempty path", name)
+				}
+			}
+			switch service.Target.Type {
+			case "app":
+				if service.Target.Address != nil || service.Target.TLS != nil || ServiceProtocol(effectivePublish) != "http" {
+					return fmt.Errorf("services.%s.target: app requires HTTP and no private address or TLS settings", name)
+				}
+			case "address":
+				if service.Target.Address == nil {
+					return fmt.Errorf("services.%s.target: address is required", name)
+				}
+				if service.Target.TLS != nil && ServiceProtocol(effectivePublish) == "http" && !strings.HasPrefix(string(*service.Target.Address), "https://") {
+					return fmt.Errorf("services.%s.target.tls requires an HTTPS address", name)
+				}
+			default:
+				return fmt.Errorf("services.%s.target: type must be app or address", name)
+			}
+		}
+		if service.HTTP != nil {
+			if err := validateReadiness(service.HTTP.Readiness); err != nil {
+				return fmt.Errorf("services.%s.http: %w", name, err)
+			}
+		}
 		if err := validateReadiness(service.Readiness); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
@@ -190,10 +223,9 @@ func ValidateTNL(config TNL) error {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 		protocol := ServiceProtocol(effectivePublish)
+		paths := ServicePaths(service)
 		if protocol != "http" {
-			if service.Readiness != nil || config.Readiness != nil || len(service.Paths) != 0 ||
-				service.Tunnel != nil && service.Tunnel.Open != nil && *service.Tunnel.Open ||
-				config.Tunnel != nil && config.Tunnel.Open != nil && *config.Tunnel.Open {
+			if service.HTTP != nil || service.Readiness != nil || config.Readiness != nil {
 				return fmt.Errorf("services.%s: TCP services cannot use HTTP readiness, path mounts, or browser opening", name)
 			}
 			selected := MergeInspection(config.Inspection, service.Inspection)
@@ -211,7 +243,7 @@ func ValidateTNL(config TNL) error {
 				}
 			}
 			for _, sibling := range config.Services {
-				for _, mount := range sibling.Paths {
+				for _, mount := range ServicePaths(sibling) {
 					if mount.Service == name {
 						return fmt.Errorf("services.%s: TCP services cannot be used as HTTP path mounts", name)
 					}
@@ -221,21 +253,21 @@ func ValidateTNL(config TNL) error {
 		if err := validateRatePair(service.Tunnel, config.Tunnel); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
-		if len(service.Paths) > 32 {
-			return fmt.Errorf("services.%s.paths may contain at most 32 mounts", name)
+		if len(paths) > 32 {
+			return fmt.Errorf("services.%s.http.paths may contain at most 32 mounts", name)
 		}
-		prefixes := make([]string, 0, len(service.Paths))
-		for prefix := range service.Paths {
+		prefixes := make([]string, 0, len(paths))
+		for prefix := range paths {
 			prefixes = append(prefixes, prefix)
 		}
 		slices.Sort(prefixes)
 		for _, prefix := range prefixes {
-			mount := service.Paths[prefix]
+			mount := paths[prefix]
 			if !localproxy.ValidMountPrefix(prefix) {
-				return fmt.Errorf("services.%s.paths: %q must be a clean absolute path outside /__tnl/", name, prefix)
+				return fmt.Errorf("services.%s.http.paths: %q must be a clean absolute path outside /__tnl/", name, prefix)
 			}
 			if _, found := config.Services[mount.Service]; !found || mount.Service == name {
-				return fmt.Errorf("services.%s.paths[%q]: service %q must name another configured service", name, prefix, mount.Service)
+				return fmt.Errorf("services.%s.http.paths[%q]: service %q must name another configured service", name, prefix, mount.Service)
 			}
 		}
 	}
@@ -315,32 +347,32 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	if publish != nil {
 		protocol := ServiceProtocol(publish)
 		if !controlv1.PublicURLServiceProtocol(protocol).Valid() {
-			return errors.New("publish.protocol must be a supported service protocol")
+			return errors.New("protocol must be a supported service protocol")
 		}
 		if publish.TargetTLS != nil && protocol == "http" {
-			return errors.New("publish.target_tls requires a TCP service protocol")
+			return errors.New("target.tls requires a TCP service protocol")
 		}
 		if publish.Target != nil {
 			target := string(*publish.Target)
 			if protocol == "http" {
 				if _, err := localproxy.NormalizeTarget(target); err != nil {
-					return fmt.Errorf("publish.target: %w", err)
+					return fmt.Errorf("target.address: %w", err)
 				}
 			} else if _, err := tcptarget.Normalize(target); err != nil {
-				return fmt.Errorf("publish.target: %w", err)
+				return fmt.Errorf("target.address: %w", err)
 			}
 		}
 		if publish.TargetTLSName != nil {
 			if protocol == "http" || *publish.TargetTLSName == "" || strings.TrimSpace(*publish.TargetTLSName) != *publish.TargetTLSName {
-				return errors.New("publish.target_tls_name requires a TCP service protocol and a hostname")
+				return errors.New("target.tls.server_name requires a TCP service protocol and a hostname")
 			}
 		}
 		if protocol != "http" && (publish.TargetTLSName != nil || publish.TargetCAFile != nil) &&
 			(publish.TargetTLS == nil || !*publish.TargetTLS) {
-			return errors.New("publish.target_tls must be true when target TLS settings are supplied")
+			return errors.New("target.tls must be enabled when target TLS settings are supplied")
 		}
 		if publish.TargetCAFile != nil && (strings.TrimSpace(*publish.TargetCAFile) != *publish.TargetCAFile || *publish.TargetCAFile == "") {
-			return errors.New("publish.target_ca_file must be a nonempty path without surrounding whitespace")
+			return errors.New("target.tls.ca_file must be a nonempty path without surrounding whitespace")
 		}
 	}
 	return nil

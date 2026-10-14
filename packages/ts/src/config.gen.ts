@@ -42,27 +42,9 @@ export interface TnlConfig {
      */
     name?: string;
     /**
-     * Open the public URL in a browser once ready.
-     */
-    open?: boolean;
-    /**
      * Remove the public URL when this tunnel stops.
      */
     ephemeral?: boolean;
-    limits?: {
-      /**
-       * Total admitted application requests for this tunnel.
-       */
-      requests?: number;
-      rate?: {
-        requests: number;
-        per: TnlRatePeriod;
-      };
-      /**
-       * Maximum simultaneous application requests, streams, and upgrades.
-       */
-      concurrency?: number;
-    };
     /**
      * Allow visitors from every IP address.
      */
@@ -76,22 +58,25 @@ export interface TnlConfig {
      */
     publicURL?: string;
   };
-  publish?: Publish;
-  readiness?: Readiness;
   /**
-   * Named local services with optional tunnel, publish, readiness overrides, and path mounts.
+   * Named local services with a private target, public URL settings, and optional HTTP settings.
    */
   services?: {
     [k: string]:
       | {
-          /**
-           * Service directory relative to the project configuration.
-           */
-          directory?: string;
           inspection?: Inspection1;
-          /**
-           * PublicURL and tunnel overrides for this service.
-           */
+          target?:
+            | {
+                type: "app";
+              }
+            | {
+                type: "address";
+                address: string | number;
+                tls?: {
+                  caFile?: string;
+                  serverName?: string;
+                };
+              };
           tunnel?: {
             /**
              * Ready team domain used for generated public URL hostnames.
@@ -102,27 +87,9 @@ export interface TnlConfig {
              */
             name?: string;
             /**
-             * Open the public URL in a browser once ready.
-             */
-            open?: boolean;
-            /**
              * Remove the public URL when this tunnel stops.
              */
             ephemeral?: boolean;
-            limits?: {
-              /**
-               * Total admitted application requests for this tunnel.
-               */
-              requests?: number;
-              rate?: {
-                requests: number;
-                per: TnlRatePeriod;
-              };
-              /**
-               * Maximum simultaneous application requests, streams, and upgrades.
-               */
-              concurrency?: number;
-            };
             /**
              * Allow visitors from every IP address.
              */
@@ -136,20 +103,177 @@ export interface TnlConfig {
              */
             publicURL?: string;
           };
-          publish?: Publish;
-          readiness?: Readiness;
-          /**
-           * Mount another configured service at a path on this service's public URL.
-           */
-          paths?: {
-            [k: string]:
-              | string
-              | {
-                  service: string;
-                  stripPrefix?: boolean;
-                }
-              | undefined;
+          protocol?: "http";
+          http?: {
+            readiness?: {
+              path: string;
+            };
+            /**
+             * Mount another configured service at a path on this service's public URL.
+             */
+            paths?: {
+              [k: string]:
+                | string
+                | {
+                    service: string;
+                    stripPrefix?: boolean;
+                  }
+                | undefined;
+            };
+            open?: boolean;
           };
+        }
+      | {
+          inspection?: Inspection1;
+          target: {
+            type: "address";
+            address: string | number;
+            tls?: {
+              caFile?: string;
+              serverName?: string;
+            };
+          };
+          tunnel?: {
+            /**
+             * Ready team domain used for generated public URL hostnames.
+             */
+            domain?: string;
+            /**
+             * One DNS label beneath the member namespace.
+             */
+            name?: string;
+            /**
+             * Remove the public URL when this tunnel stops.
+             */
+            ephemeral?: boolean;
+            /**
+             * Allow visitors from every IP address.
+             */
+            allowAllIPs?: boolean;
+            /**
+             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+             */
+            allowIP?: string[];
+            /**
+             * Exact public URL hostname or HTTPS origin to publish.
+             */
+            publicURL?: string;
+          };
+          protocol: "postgres";
+        }
+      | {
+          inspection?: Inspection1;
+          target: {
+            type: "address";
+            address: string | number;
+            tls?: {
+              caFile?: string;
+              serverName?: string;
+            };
+          };
+          tunnel?: {
+            /**
+             * Ready team domain used for generated public URL hostnames.
+             */
+            domain?: string;
+            /**
+             * One DNS label beneath the member namespace.
+             */
+            name?: string;
+            /**
+             * Remove the public URL when this tunnel stops.
+             */
+            ephemeral?: boolean;
+            /**
+             * Allow visitors from every IP address.
+             */
+            allowAllIPs?: boolean;
+            /**
+             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+             */
+            allowIP?: string[];
+            /**
+             * Exact public URL hostname or HTTPS origin to publish.
+             */
+            publicURL?: string;
+          };
+          protocol: "mysql";
+        }
+      | {
+          inspection?: Inspection1;
+          target: {
+            type: "address";
+            address: string | number;
+            tls?: {
+              caFile?: string;
+              serverName?: string;
+            };
+          };
+          tunnel?: {
+            /**
+             * Ready team domain used for generated public URL hostnames.
+             */
+            domain?: string;
+            /**
+             * One DNS label beneath the member namespace.
+             */
+            name?: string;
+            /**
+             * Remove the public URL when this tunnel stops.
+             */
+            ephemeral?: boolean;
+            /**
+             * Allow visitors from every IP address.
+             */
+            allowAllIPs?: boolean;
+            /**
+             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+             */
+            allowIP?: string[];
+            /**
+             * Exact public URL hostname or HTTPS origin to publish.
+             */
+            publicURL?: string;
+          };
+          protocol: "redis";
+        }
+      | {
+          inspection?: Inspection1;
+          target: {
+            type: "address";
+            address: string | number;
+            tls?: {
+              caFile?: string;
+              serverName?: string;
+            };
+          };
+          tunnel?: {
+            /**
+             * Ready team domain used for generated public URL hostnames.
+             */
+            domain?: string;
+            /**
+             * One DNS label beneath the member namespace.
+             */
+            name?: string;
+            /**
+             * Remove the public URL when this tunnel stops.
+             */
+            ephemeral?: boolean;
+            /**
+             * Allow visitors from every IP address.
+             */
+            allowAllIPs?: boolean;
+            /**
+             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+             */
+            allowIP?: string[];
+            /**
+             * Exact public URL hostname or HTTPS origin to publish.
+             */
+            publicURL?: string;
+          };
+          protocol: "ssh";
         }
       | undefined;
   };
@@ -241,31 +365,6 @@ export interface Inspection {
   mode?: "none" | "summary";
   retention?: string;
   maxBytes?: string;
-}
-export interface Publish {
-  /**
-   * Service protocol for the public URL; defaults to http.
-   */
-  protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh";
-  /**
-   * HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher.
-   */
-  target?: string | number;
-  /**
-   * Additional PEM certificate authorities for the target; relative paths are resolved from the project root.
-   */
-  targetCAFile?: string;
-  /**
-   * Use verified TLS for the TCP target.
-   */
-  targetTLS?: boolean;
-  /**
-   * Hostname expected in the target's TLS certificate; defaults to the target host.
-   */
-  targetTLSName?: string;
-}
-export interface Readiness {
-  path: string;
 }
 export interface Inspection1 {
   mode?: "none" | "summary";

@@ -34,22 +34,27 @@ func TestLoadDocumentNormalizesBareExactPublicURLs(t *testing.T) {
 func TestLoadDocumentRequiresVersionAndStrictFields(t *testing.T) {
 	directory := t.TempDir()
 	for name, test := range map[string]struct{ contents, category string }{
-		"missing.yml":        {"tnl: {}\n", "version is required"},
-		"missing.json":       {`{"tnl":{}}`, "version is required"},
-		"future.yml":         {"version: 2\n", "unsupported configuration version 2"},
-		"future.json":        {`{"version":2}`, "unsupported configuration version 2"},
-		"unknown.yml":        {"version: 1\ntnl:\n  unexpected_key: true\n", "field unexpected_key not found"},
-		"unknown.json":       {`{"version":1,"tnl":{"unexpected_key":true}}`, `unknown object member name "unexpected_key"`},
-		"service-oauth.json": {`{"version":1,"tnl":{"services":{"api":{"oauth":true}}}}`, `unknown object member name "oauth"`},
-		"retired-ca.yml":     {"version: 1\ntnl:\n  publish:\n    ca_file: ca.pem\n", "field ca_file not found"},
-		"retired-ca.json":    {`{"version":1,"tnl":{"publish":{"ca_file":"ca.pem"}}}`, `unknown object member name "ca_file"`},
-		"retired-tls.yml":    {"version: 1\ntnl:\n  services:\n    orders:\n      publish: {protocol: postgres, target: 'db:5432'}\n      tcp: {visitor_tls: passthrough}\n", "field tcp not found"},
-		"retired-tls.json":   {`{"version":1,"tnl":{"services":{"orders":{"publish":{"protocol":"postgres","target":"db:5432"},"tcp":{"visitor_tls":"passthrough"}}}}}`, `unknown object member name "tcp"`},
-		"duplicate.yml":      {"version: 1\nversion: 1\n", "already defined"},
-		"duplicate.json":     {`{"version":1,"version":1}`, "duplicate object member name"},
-		"tagged.yml":         {"version: 1\ntnl: !include config.yml\n", "custom YAML tag"},
-		"trailing.json":      {"{\"version\":1} {}", "after top-level value"},
-		"trailing.yml":       {"version: 1\n---\nversion: 1\n", "more than one YAML document"},
+		"missing.yml":                  {"tnl: {}\n", "version is required"},
+		"missing.json":                 {`{"tnl":{}}`, "version is required"},
+		"future.yml":                   {"version: 2\n", "unsupported configuration version 2"},
+		"future.json":                  {`{"version":2}`, "unsupported configuration version 2"},
+		"unknown.yml":                  {"version: 1\ntnl:\n  unexpected_key: true\n", "field unexpected_key not found"},
+		"unknown.json":                 {`{"version":1,"tnl":{"unexpected_key":true}}`, `unknown object member name "unexpected_key"`},
+		"service-oauth.json":           {`{"version":1,"tnl":{"services":{"api":{"oauth":true}}}}`, `unknown object member name "oauth"`},
+		"retired-publish.yml":          {"version: 1\ntnl:\n  publish:\n    target: 3000\n", "field publish not found"},
+		"retired-publish.json":         {`{"version":1,"tnl":{"publish":{"target":3000}}}`, `unknown object member name "publish"`},
+		"retired-service.yml":          {"version: 1\ntnl:\n  services:\n    web:\n      directory: apps/web\n", "field directory not found"},
+		"retired-service.json":         {`{"version":1,"tnl":{"services":{"web":{"paths":{"/api":"api"}}}}}`, `unknown object member name "paths"`},
+		"retired-service-publish.json": {`{"version":1,"tnl":{"services":{"api":{"publish":{"target":3000}}}}}`, `unknown object member name "publish"`},
+		"retired-limits.yml":           {"version: 1\ntnl:\n  tunnel:\n    limits: {requests: 2}\n", "field limits not found"},
+		"retired-limits.json":          {`{"version":1,"tnl":{"services":{"api":{"tunnel":{"limits":{"requests":2}}}}}}`, `unknown object member name "limits"`},
+		"retired-tls.yml":              {"version: 1\ntnl:\n  services:\n    orders:\n      protocol: postgres\n      target: {type: address, address: 'db:5432'}\n      tcp: {visitor_tls: passthrough}\n", "field tcp not found"},
+		"retired-tls.json":             {`{"version":1,"tnl":{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"tcp":{"visitor_tls":"passthrough"}}}}}`, `unknown object member name "tcp"`},
+		"duplicate.yml":                {"version: 1\nversion: 1\n", "already defined"},
+		"duplicate.json":               {`{"version":1,"version":1}`, "duplicate object member name"},
+		"tagged.yml":                   {"version: 1\ntnl: !include config.yml\n", "custom YAML tag"},
+		"trailing.json":                {"{\"version\":1} {}", "after top-level value"},
+		"trailing.yml":                 {"version: 1\n---\nversion: 1\n", "more than one YAML document"},
 	} {
 		path := filepath.Join(directory, name)
 		if err := os.WriteFile(path, []byte(test.contents), 0o600); err != nil {
@@ -78,14 +83,11 @@ tnl:
   tunnel:
     allow_ip: [192.0.2.1]
     allow_all_ips: false
-    limits:
-      requests: 20
-      rate: {requests: 5, per: 1m}
-      concurrency: 750
-  publish:
-    target: 3000
-  readiness:
-    path: /health
+  services:
+    app:
+      target: {type: address, address: 3000}
+      http:
+        readiness: {path: /health}
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -96,13 +98,9 @@ tnl:
 	}
 	if document.TNL == nil || document.TNL.Server == nil || *document.TNL.Server != "https://control.example.com" ||
 		document.TNL.Feedback == nil || !*document.TNL.Feedback || !document.TNL.OAuth ||
-		document.TNL.Publish == nil || document.TNL.Publish.Target == nil || string(*document.TNL.Publish.Target) != "3000" ||
-		document.TNL.Readiness == nil || document.TNL.Readiness.Path != "/health" ||
-		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs ||
-		document.TNL.Tunnel.Limits == nil || document.TNL.Tunnel.Limits.Concurrency == nil || *document.TNL.Tunnel.Limits.Concurrency != 750 ||
-		document.TNL.Tunnel.Limits.Requests == nil || *document.TNL.Tunnel.Limits.Requests != 20 ||
-		document.TNL.Tunnel.Limits.Rate == nil || document.TNL.Tunnel.Limits.Rate.Requests == nil || *document.TNL.Tunnel.Limits.Rate.Requests != 5 ||
-		document.TNL.Tunnel.Limits.Rate.Per == nil || document.TNL.Tunnel.Limits.Rate.Per.Value() != time.Minute {
+		document.TNL.Services["app"].Target == nil || string(*document.TNL.Services["app"].Target.Address) != "3000" ||
+		document.TNL.Services["app"].HTTP == nil || document.TNL.Services["app"].HTTP.Readiness.Path != "/health" ||
+		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs {
 		t.Fatalf("document = %#v", document)
 	}
 }
@@ -168,8 +166,8 @@ func TestValidateTNLRejectsInvalidServiceNames(t *testing.T) {
 
 func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
 	for name, contents := range map[string]string{
-		"json": `{"version":1,"tnl":{"services":{"web":{"paths":{"/api":"api","/v1":{"service":"api","strip_prefix":true}}},"api":{}}}}`,
-		"yml":  "version: 1\ntnl:\n  services:\n    web:\n      paths:\n        /api: api\n        /v1:\n          service: api\n          strip_prefix: true\n    api: {}\n",
+		"json": `{"version":1,"tnl":{"services":{"web":{"http":{"paths":{"/api":"api","/v1":{"service":"api","strip_prefix":true}}}},"api":{}}}}`,
+		"yml":  "version: 1\ntnl:\n  services:\n    web:\n      http:\n        paths:\n          /api: api\n          /v1:\n            service: api\n            strip_prefix: true\n    api: {}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			filename := "tnl." + name
@@ -181,20 +179,61 @@ func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
 				t.Fatal(err)
 			}
 			parsed, err := LoadDocument(path)
-			if err != nil || parsed.TNL.Services["web"].Paths["/api"].Service != "api" ||
-				parsed.TNL.Services["web"].Paths["/v1"].Service != "api" || !parsed.TNL.Services["web"].Paths["/v1"].StripPrefix {
+			if err != nil || ServicePaths(parsed.TNL.Services["web"])["/api"].Service != "api" ||
+				ServicePaths(parsed.TNL.Services["web"])["/v1"].Service != "api" || !ServicePaths(parsed.TNL.Services["web"])["/v1"].StripPrefix {
 				t.Fatalf("paths = %+v, %v", parsed.TNL, err)
 			}
 		})
 	}
 	for _, prefix := range []string{"/", "/api/", "/api//v1", "/api/../admin", "/api%2Fv1", "/__tnl", "/__tnl/share"} {
-		if err := ValidateTNL(TNL{Services: Services{"web": {Paths: map[string]PathMount{prefix: {Service: "api"}}}, "api": {}}}); err == nil {
+		if err := ValidateTNL(TNL{Services: Services{"web": {HTTP: &HTTPService{Paths: map[string]PathMount{prefix: {Service: "api"}}}}, "api": {}}}); err == nil {
 			t.Fatalf("invalid mount prefix %q was accepted", prefix)
 		}
 	}
 	for _, destination := range []string{"missing", "web", ""} {
-		if err := ValidateTNL(TNL{Services: Services{"web": {Paths: map[string]PathMount{"/api": {Service: destination}}}, "api": {}}}); err == nil {
+		if err := ValidateTNL(TNL{Services: Services{"web": {HTTP: &HTTPService{Paths: map[string]PathMount{"/api": {Service: destination}}}}, "api": {}}}); err == nil {
 			t.Fatalf("mount destination %q was accepted", destination)
+		}
+	}
+}
+
+func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
+	for filename, source := range map[string]string{
+		"tnl.json": `{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"},"http":{"readiness":{"path":"/health"},"paths":{"/api":"api"},"open":true}},"api":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"address","address":"db.internal:5432","tls":{"server_name":"db.internal","ca_file":"./ca.pem"}}}}}}`,
+		"tnl.yml":  "version: 1\ntnl:\n  services:\n    web:\n      target: {type: app}\n      http:\n        readiness: {path: /health}\n        paths: {/api: api}\n        open: true\n    api:\n      target: {type: address, address: 3000}\n    orders:\n      protocol: postgres\n      target: {type: address, address: 'db.internal:5432', tls: {server_name: db.internal, ca_file: './ca.pem'}}\n",
+	} {
+		path := filepath.Join(t.TempDir(), filename)
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		document, err := LoadDocument(path)
+		if err != nil {
+			t.Fatalf("%s: %v", filename, err)
+		}
+		web, api, orders := document.TNL.Services["web"], document.TNL.Services["api"], document.TNL.Services["orders"]
+		if web.Target.Type != "app" || web.HTTP.Readiness.Path != "/health" || web.HTTP.Open == nil || !*web.HTTP.Open || ServicePaths(web)["/api"].Service != "api" ||
+			api.Target.Type != "address" || string(*api.Target.Address) != "3000" ||
+			orders.Protocol == nil || *orders.Protocol != "postgres" || string(*orders.Target.Address) != "db.internal:5432" ||
+			orders.Target.TLS == nil || *orders.Target.TLS.ServerName != "db.internal" {
+			t.Fatalf("%s: services = %#v", filename, document.TNL.Services)
+		}
+	}
+	for _, test := range []struct{ source, detail string }{
+		{`{"services":{"web":{"target":{"type":"app","address":3000}}}}`, "app requires"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"app"}}}}`, "app requires"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address"}}}}`, "address is required"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"http":{"readiness":{"path":"/"}}}}}`, "cannot use HTTP"},
+		{`{"services":{"web":{"target":{"type":"app","tls":{}}}}}`, "app requires"},
+		{`{"services":{"orders":{"protocol":"postgres"}}}`, "TCP service requires an address"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432","tls":{"server_name":""}}}}}`, "target.tls.server_name"},
+		{`{"services":{"web":{"target":{"type":"address","address":3000,"tls":{"ca_file":"./ca.pem"}}}}}`, "target.tls requires an HTTPS address"},
+	} {
+		path := filepath.Join(t.TempDir(), "tnl.json")
+		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":`+test.source+`}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadDocument(path); err == nil || !strings.Contains(err.Error(), test.detail) {
+			t.Fatalf("%s: error = %v, want %q", test.source, err, test.detail)
 		}
 	}
 }
@@ -236,11 +275,11 @@ func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) 
 }
 
 func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
-	protocol, target, tlsName, caFile, targetTLS := "postgres", Target("db.internal:5432"), "db.internal", "./certs/target-ca.pem", true
+	protocol, target, tlsName, caFile := "postgres", Target("db.internal:5432"), "db.internal", "./certs/target-ca.pem"
 	webTarget := Target("3000")
 	project := TNL{OAuth: true, Services: Services{
-		"web":    {Publish: &Publish{Target: &webTarget}},
-		"orders": {Publish: &Publish{Protocol: &protocol, Target: &target, TargetTLS: &targetTLS, TargetTLSName: &tlsName, TargetCAFile: &caFile}},
+		"web":    {Target: &ServiceTarget{Type: "address", Address: &webTarget}},
+		"orders": {Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: &target, TLS: &TargetTLS{ServerName: &tlsName, CAFile: &caFile}}},
 	}}
 	if err := ValidateTNL(project); err != nil {
 		t.Fatalf("mixed web and PostgreSQL services: %v", err)
@@ -249,30 +288,32 @@ func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
 		"http target": func(value *TNL) {
 			invalid := Target("http://db.internal:5432")
 			service := value.Services["orders"]
-			service.Publish.Target = &invalid
+			service.Target.Address = &invalid
+			value.Services["orders"] = service
 		},
 		"readiness": func(value *TNL) {
 			service := value.Services["orders"]
-			service.Readiness = &Readiness{Path: "/health"}
+			service.HTTP = &HTTPService{Readiness: &Readiness{Path: "/health"}}
 			value.Services["orders"] = service
 		},
 		"mount": func(value *TNL) {
 			service := value.Services["web"]
-			service.Paths = map[string]PathMount{"/db": {Service: "orders"}}
+			service.HTTP = &HTTPService{Paths: map[string]PathMount{"/db": {Service: "orders"}}}
 			value.Services["web"] = service
 		},
 		"protocol": func(value *TNL) {
 			invalid := "unknown"
 			service := value.Services["orders"]
-			service.Publish.Protocol = &invalid
+			service.Protocol = &invalid
+			value.Services["orders"] = service
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := TNL{OAuth: project.OAuth, Services: Services{"web": project.Services["web"], "orders": project.Services["orders"]}}
 			for key, service := range changed.Services {
-				if service.Publish != nil {
-					copy := *service.Publish
-					service.Publish = &copy
+				if service.Target != nil {
+					copy := *service.Target
+					service.Target = &copy
 					changed.Services[key] = service
 				}
 			}
@@ -304,16 +345,18 @@ func TestInspectionModeValid(t *testing.T) {
 func TestTCPInspectionModes(t *testing.T) {
 	for _, protocol := range []string{"postgres", "mysql", "redis"} {
 		mode := InspectionSummary
+		target := Target("localhost:5432")
 		project := TNL{Inspection: &Inspection{Mode: &mode}, Services: Services{"service": {
-			Publish: &Publish{Protocol: &protocol},
+			Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: &target},
 		}}}
 		if err := ValidateTNL(project); err != nil {
 			t.Fatalf("%s summary inspection: %v", protocol, err)
 		}
 	}
 	protocol, mode := "ssh", InspectionSummary
+	target := Target("localhost:22")
 	project := TNL{Inspection: &Inspection{Mode: &mode}, Services: Services{"service": {
-		Publish: &Publish{Protocol: &protocol},
+		Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: &target},
 	}}}
 	if err := ValidateTNL(project); err == nil {
 		t.Fatal("SSH accepted summary inspection")
@@ -348,8 +391,8 @@ func TestInspectionRetentionAndByteSizeValidation(t *testing.T) {
 
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"inspection":{"mode":"none","retention":"168h","max_bytes":"64MiB"},"services":{"web":{"inspection":{"mode":"summary"}}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"readiness":{"path":"/health"}}}`,
-		"yml":  "version: 1\ntnl:\n  inspection: {mode: none, retention: 168h, max_bytes: 64MiB}\n  services:\n    web:\n      inspection: {mode: summary}\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  readiness:\n    path: /health\n",
+		"json": `{"version":1,"tnl":{"inspection":{"mode":"none","retention":"168h","max_bytes":"64MiB"},"services":{"web":{"inspection":{"mode":"summary"},"target":{"type":"address","address":3000},"http":{"readiness":{"path":"/health"}}}},"tunnel":{"allow_ip":["192.0.2.1"]}}}`,
+		"yml":  "version: 1\ntnl:\n  inspection: {mode: none, retention: 168h, max_bytes: 64MiB}\n  services:\n    web:\n      inspection: {mode: summary}\n      target: {type: address, address: 3000}\n      http:\n        readiness: {path: /health}\n  tunnel:\n    allow_ip: [192.0.2.1]\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -362,9 +405,9 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		})
 	}
 	for name, test := range map[string]struct{ json, yaml, category string }{
-		"zero concurrency":           {`{"version":1,"tnl":{"tunnel":{"limits":{"concurrency":0}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      concurrency: 0\n", "tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
-		"negative total":             {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"limits":{"requests":-1}}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        limits:\n          requests: -1\n", "services.web: tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
-		"missing rate period":        {`{"version":1,"tnl":{"tunnel":{"limits":{"rate":{"requests":2}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      rate: {requests: 2}\n", "tunnel.limits.rate requires positive requests and per"},
+		"zero concurrency":           {`{"version":1,"tnl":{"tunnel":{"limits":{"concurrency":0}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      concurrency: 0\n", "limits"},
+		"negative total":             {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"limits":{"requests":-1}}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        limits:\n          requests: -1\n", "limits"},
+		"missing rate period":        {`{"version":1,"tnl":{"tunnel":{"limits":{"rate":{"requests":2}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      rate: {requests: 2}\n", "limits"},
 		"retired request limit":      {`{"version":1,"tnl":{"tunnel":{"request_limit":2}}}`, "version: 1\ntnl:\n  tunnel:\n    request_limit: 2\n", "request_limit"},
 		"invalid inspection":         {`{"version":1,"tnl":{"inspection":{"mode":"all"}}}`, "version: 1\ntnl:\n  inspection: {mode: all}\n", "inspection: mode must be none or summary"},
 		"invalid service inspection": {`{"version":1,"tnl":{"services":{"web":{"inspection":{"mode":"all"}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      inspection: {mode: all}\n", "services.web.inspection: mode must be none or summary"},
@@ -378,7 +421,7 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"service team":               {`{"version":1,"tnl":{"services":{"web":{"team":"studio"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      team: studio\n", "team"},
 		"service feedback":           {`{"version":1,"tnl":{"services":{"web":{"feedback":true}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      feedback: true\n", "feedback"},
 		"obsolete subdomain":         {`{"version":1,"tnl":{"tunnel":{"subdomain":"api"}}}`, "version: 1\ntnl:\n  tunnel:\n    subdomain: api\n", "subdomain"},
-		"target":                     {`{"version":1,"tnl":{"publish":{"target":"https://example.com/path"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com/path\n", "publish.target:"},
+		"target":                     {`{"version":1,"tnl":{"services":{"web":{"target":{"type":"address","address":"https://example.com/path"}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      target: {type: address, address: https://example.com/path}\n", "target.address:"},
 		"ip":                         {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
 		"duplicate":                  {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},
 		"obsolete provider grant":    {`{"version":1,"tnl":{"tunnel":{"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [stripe]\n", "allow_providers"},

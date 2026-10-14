@@ -9,7 +9,7 @@ import (
 )
 
 func TestInitReportsManualActionForExistingFrameworkConfig(t *testing.T) {
-	for _, test := range []struct{ framework, action string }{{"next", "withTnl"}, {"vite", "tnl() to plugins."}} {
+	for _, test := range []struct{ framework, action string }{{"next", "withTnl"}, {"vite", `tnl({ service: "app" }) to plugins.`}} {
 		t.Run(test.framework, func(t *testing.T) {
 			root := copyInitFixture(t, test.framework)
 			path := filepath.Join(root, test.framework+".config.ts")

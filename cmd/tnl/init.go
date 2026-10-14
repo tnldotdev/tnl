@@ -236,7 +236,7 @@ export default defineConfig({
   feedback: true,
   services: {
     %s: {
-      directory: ".",
+      target: { type: "app" },
     },
   },
 });
@@ -281,16 +281,16 @@ func planFrameworkConfig(plan *initPlan, root string) error {
 
 func frameworkConfigSource(framework string) []byte {
 	if framework == "next" {
-		return []byte("import { withTnl } from \"@tnldotdev/tnl/next\";\n\nexport default withTnl({});\n")
+		return []byte("import { withTnl } from \"@tnldotdev/tnl/next\";\n\nexport default withTnl({}, { service: \"app\" });\n")
 	}
-	return []byte("import { defineConfig } from \"vite\";\nimport tnl from \"@tnldotdev/tnl/vite\";\n\nexport default defineConfig({\n  plugins: [tnl()],\n});\n")
+	return []byte("import { defineConfig } from \"vite\";\nimport tnl from \"@tnldotdev/tnl/vite\";\n\nexport default defineConfig({\n  plugins: [tnl({ service: \"app\" })],\n});\n")
 }
 
 func frameworkConfigAction(framework, path string) string {
 	if framework == "next" {
-		return fmt.Sprintf("Update %s: import { withTnl } from \"@tnldotdev/tnl/next\" and wrap the default export with withTnl(...).", path)
+		return fmt.Sprintf("Update %s: import { withTnl } from \"@tnldotdev/tnl/next\" and wrap the default export with withTnl(..., { service: \"app\" }).", path)
 	}
-	return fmt.Sprintf("Update %s: import tnl from \"@tnldotdev/tnl/vite\" and add tnl() to plugins.", path)
+	return fmt.Sprintf("Update %s: import tnl from \"@tnldotdev/tnl/vite\" and add tnl({ service: \"app\" }) to plugins.", path)
 }
 
 func packageInstallCommand(manager string, packages []string) []string {

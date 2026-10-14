@@ -64,7 +64,7 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 export default defineConfig({
   services: {
     app: {
-      directory: ".",
+      target: { type: "app" },
     },
   },
 });
@@ -97,8 +97,8 @@ allowed on the declared webhook path and method.
 
 ## give your services their own urls
 
-If your project has several services, give each its own directory in
-`tnl.config.ts`:
+If your project has several apps, name each app in `tnl.config.ts` and pass
+the same name to its framework integration or `tnl.prepare` call:
 
 ```ts
 // tnl.config.ts
@@ -107,14 +107,17 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 export default defineConfig({
   services: {
     web: {
-      directory: "apps/web",
+      target: { type: "app" },
     },
     api: {
-      directory: "apps/api",
+      target: { type: "app" },
     },
   },
 });
 ```
+
+For example, use `withTnl({}, { service: "web" })` in Next.js or
+`tnl({ service: "api" })` in Vite. Each app reports the port it actually binds.
 
 Start each service with its normal development command:
 
@@ -142,6 +145,23 @@ const apiURL = tnl.services?.api?.url;
 
 Read about [project configuration](https://tnl.dev/docs/configuration) and
 [framework metadata](https://tnl.dev/docs/frameworks#use-a-service-url-in-your-app).
+An address target lets `tnl publish orders` reach a local PostgreSQL service;
+use `target.tls` when that private service requires a verified certificate:
+
+```yaml
+version: 1
+tnl:
+  services:
+    orders:
+      protocol: postgres
+      target:
+        type: address
+        address: db.internal:5432
+        tls:
+          server_name: db.internal
+          ca_file: ./certs/db-ca.pem
+```
+
 For a Node or Bun API, prepare its service before startup and register the bound
 listener. Port 0 lets the application choose an available port:
 

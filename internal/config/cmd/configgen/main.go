@@ -106,31 +106,62 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 
 func servicesSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
-	properties.Set("directory", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), Description: "Service directory relative to the project configuration."})
 	properties.Set("inspection", &jsonschema.Schema{Ref: "#/$defs/Inspection"})
+	appTargetProperties := jsonschema.NewProperties()
+	appTargetProperties.Set("type", &jsonschema.Schema{Const: "app"})
+	addressTargetProperties := jsonschema.NewProperties()
+	addressTargetProperties.Set("type", &jsonschema.Schema{Const: "address"})
+	addressTargetProperties.Set("address", schemaForType(reflect.TypeOf(config.Target(""))))
+	tlsProperties := jsonschema.NewProperties()
+	tlsProperties.Set("server_name", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
+	tlsProperties.Set("ca_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
+	addressTargetProperties.Set("tls", &jsonschema.Schema{Type: "object", Properties: tlsProperties, AdditionalProperties: jsonschema.FalseSchema})
+	targetVariants := []*jsonschema.Schema{
+		{Type: "object", Required: []string{"type"}, Properties: appTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
+		{Type: "object", Required: []string{"type", "address"}, Properties: addressTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
+	}
+	properties.Set("target", &jsonschema.Schema{OneOf: targetVariants})
 	tunnel := tunnelSchema()
 	tunnel.Description = "PublicURL and tunnel overrides for this service."
 	properties.Set("tunnel", tunnel)
-	properties.Set("publish", &jsonschema.Schema{Ref: "#/$defs/Publish"})
-	properties.Set("readiness", &jsonschema.Schema{Ref: "#/$defs/Readiness"})
 	mountProperties := jsonschema.NewProperties()
 	mountProperties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`})
 	mountProperties.Set("strip_prefix", &jsonschema.Schema{Type: "boolean"})
-	properties.Set("paths", &jsonschema.Schema{
+	paths := &jsonschema.Schema{
 		Type: "object", MaxProperties: integerPointer(32),
 		AdditionalProperties: &jsonschema.Schema{OneOf: []*jsonschema.Schema{
 			{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
 			{Type: "object", Required: []string{"service"}, Properties: mountProperties, AdditionalProperties: jsonschema.FalseSchema},
 		}},
 		Description: "Mount another configured service at a path on this service's public URL.",
-	})
-	service := &jsonschema.Schema{
-		Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
+	}
+	httpProperties := jsonschema.NewProperties()
+	readinessProperties := jsonschema.NewProperties()
+	readinessProperties.Set("path", &jsonschema.Schema{Type: "string"})
+	httpProperties.Set("readiness", &jsonschema.Schema{Type: "object", Required: []string{"path"}, Properties: readinessProperties, AdditionalProperties: jsonschema.FalseSchema})
+	httpProperties.Set("paths", paths)
+	httpProperties.Set("open", &jsonschema.Schema{Type: "boolean"})
+	serviceVariants := make([]*jsonschema.Schema, 0, 5)
+	for _, protocol := range []string{"http", "postgres", "mysql", "redis", "ssh"} {
+		variant := jsonschema.NewProperties()
+		for pair := properties.Oldest(); pair != nil; pair = pair.Next() {
+			variant.Set(pair.Key, pair.Value)
+		}
+		variant.Set("protocol", &jsonschema.Schema{Const: protocol})
+		required := []string{"protocol", "target"}
+		if protocol == "http" {
+			required = nil
+			variant.Set("http", &jsonschema.Schema{Type: "object", Properties: httpProperties, AdditionalProperties: jsonschema.FalseSchema})
+		} else {
+			variant.Set("target", &jsonschema.Schema{OneOf: targetVariants[1:]})
+		}
+		variant.Set("tunnel", tunnelSchema())
+		serviceVariants = append(serviceVariants, &jsonschema.Schema{Type: "object", Required: required, Properties: variant, AdditionalProperties: jsonschema.FalseSchema})
 	}
 	return &jsonschema.Schema{
 		Type: "object", MaxProperties: integerPointer(32),
 		PropertyNames:        &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
-		AdditionalProperties: service,
+		AdditionalProperties: &jsonschema.Schema{OneOf: serviceVariants},
 	}
 }
 
@@ -139,21 +170,12 @@ func tunnelSchema() *jsonschema.Schema {
 	properties.Set("domain", &jsonschema.Schema{Type: "string", Description: "Ready team domain used for generated public URL hostnames."})
 	properties.Set("name", &jsonschema.Schema{Type: "string", Description: "One DNS label beneath the member namespace."})
 	properties.Set("public_url", &jsonschema.Schema{Type: "string", Description: "Exact public URL hostname or HTTPS origin to publish."})
-	properties.Set("open", &jsonschema.Schema{Type: "boolean", Description: "Open the public URL in a browser once ready."})
 	properties.Set("allow_ip", &jsonschema.Schema{
 		Type: "array", Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true,
 		Description: "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.",
 	})
 	properties.Set("allow_all_ips", &jsonschema.Schema{Type: "boolean", Description: "Allow visitors from every IP address."})
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the public URL when this tunnel stops."})
-	limitProperties := jsonschema.NewProperties()
-	limitProperties.Set("requests", &jsonschema.Schema{Type: "integer", Minimum: "1", Description: "Total admitted application requests for this tunnel."})
-	rateProperties := jsonschema.NewProperties()
-	rateProperties.Set("requests", &jsonschema.Schema{Type: "integer", Minimum: "1"})
-	rateProperties.Set("per", &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern})
-	limitProperties.Set("rate", &jsonschema.Schema{Type: "object", Required: []string{"requests", "per"}, Properties: rateProperties, AdditionalProperties: jsonschema.FalseSchema})
-	limitProperties.Set("concurrency", &jsonschema.Schema{Type: "integer", Minimum: "1", Default: 500, Description: "Maximum simultaneous application requests, streams, and upgrades."})
-	properties.Set("limits", &jsonschema.Schema{Type: "object", Properties: limitProperties, AdditionalProperties: jsonschema.FalseSchema})
 	allowAllProperties := jsonschema.NewProperties()
 	allowAllProperties.Set("allow_all_ips", &jsonschema.Schema{Const: true})
 	return &jsonschema.Schema{

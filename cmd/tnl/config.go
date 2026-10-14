@@ -135,11 +135,15 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	}
 	if flags.Target == "" && flags.PublishCredential == "" {
 		if service != "" {
+			if selected := c.Config.Services[service].Target; selected != nil && selected.Type == "app" {
+				return failure.Wrap("select app service", failure.MissingTarget,
+					fmt.Errorf("service %q expects an app registration; start the app normally instead of running tnl publish", service))
+			}
 			return failure.Wrap("select target for service", failure.MissingTarget,
-				fmt.Errorf("target is required for service %q through publish.target", service))
+				fmt.Errorf("target is required for service %q through services.%s.target.address", service, service))
 		}
 		return failure.Wrap("select target", failure.MissingTarget,
-			errors.New("target is required as an argument or publish.target in project configuration"))
+			errors.New("target is required as an argument"))
 	}
 	if err := validateTunnelFlags(flags.tunnelFlags); err != nil {
 		return failure.Wrap("validate tunnel options", failure.InvalidTunnelFlags, err)

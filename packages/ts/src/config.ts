@@ -18,18 +18,22 @@ type TargetReferences<Config> = {
 } & {
   [Field in keyof Config as Field extends "services" ? Field : never]: {
     [Name in keyof Config[Field]]: {
-      [Paths in keyof Config[Field][Name] as Paths extends "paths" ? Paths : never]: {
-        [
-          Prefix in keyof Config[Field][Name][Paths]
-        ]: Config[Field][Name][Paths][Prefix] extends string
-          ? Exclude<ServiceNames<Config>, Name>
-          : ObjectReference<Exclude<ServiceNames<Config>, Name>>;
+      [HTTP in keyof Config[Field][Name] as HTTP extends "http" ? HTTP : never]: {
+        [Paths in keyof Config[Field][Name][HTTP] as Paths extends "paths" ? Paths : never]: {
+          [
+            Prefix in keyof Config[Field][Name][HTTP][Paths]
+          ]: Config[Field][Name][HTTP][Paths][Prefix] extends string
+            ? Exclude<ServiceNames<Config>, Name>
+            : ObjectReference<Exclude<ServiceNames<Config>, Name>>;
+        };
       };
     };
   };
 };
 
 type Service = NonNullable<NonNullable<TnlConfig["services"]>[string]>;
+type HTTPService = Extract<Service, { protocol?: "http" }>;
+type TCPService = Exclude<Service, HTTPService>;
 type Alias = NonNullable<NonNullable<TnlConfig["aliases"]>[string]>;
 type Webhook = NonNullable<NonNullable<TnlConfig["webhooks"]>[string]>;
 
@@ -43,16 +47,20 @@ export type TnlConfigForServices<Names extends string> = Omit<
   "services" | "aliases" | "webhooks"
 > & {
   services?: {
-    [Name in Names]: Omit<Service, "paths"> & {
-      paths?: Record<
-        string,
-        | Exclude<NoInfer<Names>, Name>
-        | {
-            service: Exclude<NoInfer<Names>, Name>;
-            stripPrefix?: boolean;
-          }
-      >;
-    };
+    [Name in Names]:
+      | TCPService
+      | (Omit<HTTPService, "http"> & {
+          http?: Omit<NonNullable<HTTPService["http"]>, "paths"> & {
+            paths?: Record<
+              string,
+              | Exclude<NoInfer<Names>, Name>
+              | {
+                  service: Exclude<NoInfer<Names>, Name>;
+                  stripPrefix?: boolean;
+                }
+            >;
+          };
+        });
   };
   aliases?: Record<string, Omit<Alias, "service"> & { service: NoInfer<Names> }>;
   webhooks?: Record<string, Omit<Webhook, "service"> & { service: NoInfer<WebhookService<Names>> }>;

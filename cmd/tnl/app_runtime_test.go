@@ -71,7 +71,7 @@ func TestRuntimeAddressReturnsSocketWithoutStartingPublisher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(project, "tnl.json"), []byte(`{"version":1,"tnl":{"services":{"web":{"directory":"."}}}}`), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(project, "tnl.json"), []byte(`{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"}}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	state := filepath.Join(t.TempDir(), "state")
@@ -239,7 +239,7 @@ func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err == nil {
 		t.Fatal("wait passed with closed TCP target")
 	}
-	if err := os.WriteFile(filepath.Join(project.Root, "tnl.json"), []byte(`{"version":1,"tnl":{"services":{"web":{},"orders":{"publish":{"protocol":"postgres","target":"`+string(target)+`"}}}}}`), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(project.Root, "tnl.json"), []byte(`{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"}},"orders":{"protocol":"postgres","target":{"type":"address","address":"`+string(target)+`"}}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	output.Reset()

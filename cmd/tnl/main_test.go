@@ -366,7 +366,7 @@ func TestBarePublishReachesCanonicalDispatch(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	stateDir := filepath.Join(t.TempDir(), "state")
 	err := run(t.Context(), []string{"--no-config", "publish", "--state-dir", stateDir, "--server", "http://control.example"}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), "target is required as an argument or publish.target in project configuration") {
+	if err == nil || !strings.Contains(err.Error(), "target is required as an argument") {
 		t.Fatalf("run error = %v", err)
 	}
 	if reason, _, ok := failure.Describe(err); !ok || reason != failure.MissingTarget {

@@ -28,12 +28,24 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 		services.PropertyNames.Pattern == "" || services.AdditionalProperties == nil {
 		t.Fatalf("services schema = %#v", services)
 	}
-	serviceSchema := services.AdditionalProperties
-	if _, found := serviceSchema.Properties.Get("directory"); !found {
-		t.Fatal("service directory property is missing")
+	if len(services.AdditionalProperties.OneOf) != 5 {
+		t.Fatalf("expected protocol-specific service variants, got %#v", services.AdditionalProperties)
 	}
-	if paths, found := serviceSchema.Properties.Get("paths"); !found || paths.AdditionalProperties == nil || len(paths.AdditionalProperties.OneOf) != 2 {
+	serviceSchema := services.AdditionalProperties.OneOf[0]
+	if _, found := serviceSchema.Properties.Get("directory"); found {
+		t.Fatal("retired service directory property is still present")
+	}
+	if http, found := serviceSchema.Properties.Get("http"); !found || http.Properties == nil {
+		t.Fatalf("service HTTP schema = %#v", http)
+	} else if paths, found := http.Properties.Get("paths"); !found || paths.AdditionalProperties == nil || len(paths.AdditionalProperties.OneOf) != 2 {
 		t.Fatalf("service path mount schema = %#v", paths)
+	}
+	tcp := services.AdditionalProperties.OneOf[1]
+	if _, found := tcp.Properties.Get("http"); found || !reflect.DeepEqual(tcp.Required, []string{"protocol", "target"}) {
+		t.Fatalf("TCP variant must require protocol and target without HTTP settings: %#v", tcp)
+	}
+	if target, found := tcp.Properties.Get("target"); !found || len(target.OneOf) != 1 {
+		t.Fatalf("TCP target must use an address: %#v", target)
 	}
 	for _, property := range []string{"server", "team"} {
 		if _, found := serviceSchema.Properties.Get(property); found {
@@ -44,10 +56,10 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	if _, found := tunnel.Properties.Get("ephemeral"); !found {
 		t.Fatal("tunnel ephemeral property is missing")
 	}
-	if limits, found := tunnel.Properties.Get("limits"); !found || limits.Properties == nil {
-		t.Fatalf("tunnel limits schema = %#v", limits)
-	} else if concurrency, found := limits.Properties.Get("concurrency"); !found || concurrency.Minimum != "1" || concurrency.Default != 500 {
-		t.Fatalf("tunnel concurrency schema = %#v", concurrency)
+	for _, field := range []string{"limits", "open", "visitor_tls"} {
+		if _, found := tunnel.Properties.Get(field); found {
+			t.Fatalf("retired tunnel field %q remains in the schema", field)
+		}
 	}
 	if _, found := tunnel.Properties.Get("allow_providers"); found {
 		t.Fatal("tunnel-wide provider grants must not be generated")

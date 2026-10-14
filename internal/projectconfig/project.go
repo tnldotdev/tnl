@@ -139,9 +139,18 @@ func (p Project) EffectiveService(name string) (config.TNL, error) {
 	}
 	result.Inspection = config.MergeInspection(result.Inspection, service.Inspection)
 	result.Tunnel = mergeTunnel(result.Tunnel, service.Tunnel)
-	result.Publish = config.MergePublish(result.Publish, service.Publish)
+	result.Publish = config.ServicePublish(base.Publish, service)
 	if service.Readiness != nil {
 		result.Readiness = service.Readiness
+	}
+	if service.HTTP != nil && service.HTTP.Readiness != nil {
+		result.Readiness = service.HTTP.Readiness
+	}
+	if service.HTTP != nil && service.HTTP.Open != nil {
+		if result.Tunnel == nil {
+			result.Tunnel = &config.Tunnel{}
+		}
+		result.Tunnel.Open = service.HTTP.Open
 	}
 	return result, nil
 }
