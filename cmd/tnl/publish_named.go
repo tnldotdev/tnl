@@ -187,6 +187,12 @@ func runNamedPublish(ctx context.Context, flags publishCommand, stdout, stderr i
 	for ctx.Err() == nil {
 		client, stop, err := localPublisherForCLI(ctx, flags)
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				if err := waitNamedRetry(ctx); err != nil {
+					return err
+				}
+				continue
+			}
 			return err
 		}
 		err = followNamedPublication(ctx, flags, client, owner, output, telemetry, serverKind)
@@ -203,14 +209,22 @@ func runNamedPublish(ctx context.Context, flags publishCommand, stdout, stderr i
 				return diagnostic.Wrap(diagnostic.AuthenticationRequired, err)
 			}
 		}
-		timer := time.NewTimer(250 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-		case <-timer.C:
+		if err := waitNamedRetry(ctx); err != nil {
+			return err
 		}
 	}
 	return ctx.Err()
+}
+
+func waitNamedRetry(ctx context.Context) error {
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func followNamedPublication(ctx context.Context, flags publishCommand, client namedPublisherClient, owner string, output *publishOutput, telemetry telemetryReporter, serverKind telemetryServerKind) (result error) {
