@@ -25,7 +25,9 @@ var ErrRegistrationStale = errors.New("app registration is stale")
 type Service struct {
 	Project           string       `json:"project,omitempty"`
 	Name              string       `json:"service"`
+	ServiceProtocol   string       `json:"service_protocol,omitempty"`
 	Directory         string       `json:"directory"`
+	TunnelID          string       `json:"tunnel_id,omitempty"`
 	PublicURL         string       `json:"public_url,omitempty"`
 	RegistrationID    string       `json:"registration_id,omitempty"`
 	Target            string       `json:"target,omitempty"`

@@ -62,9 +62,6 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		flags.Ephemeral || flags.AllowAllIPs || len(flags.AllowIP) != 0 {
 		return failure.Wrap("validate scoped publish options", failure.InvalidTunnelFlags, errors.New("a scoped publish credential cannot change saved URL settings"))
 	}
-	if flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0 {
-		return failure.Wrap("validate scoped publish project", failure.InvalidTunnelFlags, errors.New("project integration URLs require a signed-in tnl session"))
-	}
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return err
@@ -109,7 +106,13 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		return failure.Wrap("read scoped publish protocol", failure.ServerResponseInvalid,
 			errors.New("control returned an invalid service protocol"))
 	}
-	if err := validateDatabasePublishOptions(flags, protocol); err != nil {
+	if err := selectPublishInspection(&flags, protocol); err != nil {
+		return err
+	}
+	if protocol == controlv1.Http && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
+		return failure.Wrap("validate scoped publish project", failure.InvalidTunnelFlags, errors.New("project integration URLs require a signed-in tnl session"))
+	}
+	if err := validateTCPPublishOptions(flags, protocol); err != nil {
 		return err
 	}
 	target, err := selectScopedPublishTargetForProtocol(route.Target, flags.Target, protocol)
@@ -127,7 +130,7 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		}
 	}
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
-		Command: clientstate.TunnelCommandPublish, Server: serverURL, Target: target,
+		Command: clientstate.TunnelCommandPublish, Server: serverURL, Target: target, ServiceProtocol: protocol,
 		Project: flags.projectRoot, Service: flags.Service,
 	})
 	if err != nil {
@@ -169,26 +172,26 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membershipID,
 		PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: publicURLScope, Purpose: controlv1.App,
 		Hostname: route.CanonicalHostname, Target: target, AllowedIPPrefixes: allowed,
-		ServiceProtocol: protocol, TargetTLSName: flags.TargetTLSName, DatabaseTLSPassthrough: flags.DatabasePassthrough,
+		ServiceProtocol: protocol, TargetTLSName: flags.TargetTLSName, TargetTLS: flags.TargetTLS, VisitorTLSPassthrough: flags.VisitorTLSPassthrough,
 		PreserveSavedURLTarget: route.Target == "",
 		TargetOptions:          targetOptions,
-		Limits:                 flags.limits(), RequestInspection: flags.RequestInspection,
+		Limits:                 flags.limits(), InspectionMode: flags.InspectionMode,
 		QUICConnector: muxsession.QUICConnector{TLSConfig: connectionTLS},
 		TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: connectionTLS},
 	}
-	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
+	recorder, err := newInspectionRecorder(ctx, tunnel, flags.projectRoot, flags.Service, flags.InspectionMode)
 	if err != nil {
 		return err
 	}
 	defer recorder.Close()
-	publisherConfig.ObserveRequest = requestObservation(recorder)
+	publisherConfig.ObserveRequest = httpObservation(recorder)
 	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service)
 	if err != nil {
 		return err
 	}
 	if protocol != controlv1.Http && len(publisherConfig.Mounts) != 0 {
-		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
-			errors.New("database public URLs cannot use HTTP path mounts"))
+		return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags,
+			errors.New("TCP public URLs cannot use HTTP path mounts"))
 	}
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {
@@ -233,11 +236,11 @@ func selectScopedPublishTargetForProtocol(saved, selected string, protocol contr
 	}
 	if saved != "" {
 		return "", failure.Wrap("read scoped publish target", failure.ServerResponseInvalid,
-			errors.New("control returned a private database target"))
+			errors.New("control returned a TCP target"))
 	}
 	if selected == "" {
 		return "", failure.Wrap("select scoped publish target", failure.MissingTarget,
-			errors.New("pass a private database host:port or set TNL_TARGET"))
+			errors.New("pass a TCP host:port or set TNL_TARGET"))
 	}
 	return normalizePublishTarget(selected, protocol)
 }

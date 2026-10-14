@@ -43,10 +43,10 @@ type telemetryTrackedCommand string
 type telemetryCommandAction string
 
 const (
-	telemetryInit     telemetryTrackedCommand = "init"
-	telemetryLogin    telemetryTrackedCommand = "login"
-	telemetryPublish  telemetryTrackedCommand = "publish"
-	telemetryRequests telemetryTrackedCommand = "requests"
+	telemetryInit    telemetryTrackedCommand = "init"
+	telemetryLogin   telemetryTrackedCommand = "login"
+	telemetryPublish telemetryTrackedCommand = "publish"
+	telemetryInspect telemetryTrackedCommand = "inspect"
 )
 
 type telemetryFailureStage string

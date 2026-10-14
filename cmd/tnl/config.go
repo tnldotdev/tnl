@@ -106,11 +106,20 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		}
 	}
 	usingConfiguredTarget := flags.Target == ""
+	if flags.Protocol == "" && effective.Publish != nil && effective.Publish.Protocol != nil {
+		flags.Protocol = *effective.Publish.Protocol
+	}
 	if usingConfiguredTarget && effective.Publish != nil && effective.Publish.Target != nil {
 		flags.Target = string(*effective.Publish.Target)
 	}
-	if usingConfiguredTarget && flags.TargetCAFile == "" && effective.Publish != nil && effective.Publish.CAFile != nil {
-		flags.TargetCAFile = *effective.Publish.CAFile
+	if usingConfiguredTarget && flags.TargetCAFile == "" && effective.Publish != nil && effective.Publish.TargetCAFile != nil {
+		flags.TargetCAFile = *effective.Publish.TargetCAFile
+	}
+	if usingConfiguredTarget && flags.TargetTLSName == "" && effective.Publish != nil && effective.Publish.TargetTLSName != nil {
+		flags.TargetTLSName = *effective.Publish.TargetTLSName
+	}
+	if usingConfiguredTarget && !flags.TargetTLS && effective.Publish != nil && effective.Publish.TargetTLS != nil {
+		flags.TargetTLS = *effective.Publish.TargetTLS
 	}
 	if flags.PublishCredential == "" {
 		applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
@@ -118,7 +127,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		// a saved URL supplies hostname and visitor policy; local admission is still configurable.
 		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
 	}
-	applyRequestInspection(&flags.tunnelFlags, effective)
+	applyInspection(&flags.tunnelFlags, effective)
 	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
 	if flags.PublishCredential == "" {
 		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
@@ -216,16 +225,22 @@ func applyTunnelLimits(flags *tunnelFlags, limits *config.Limits) {
 	}
 }
 
-func applyRequestInspection(flags *tunnelFlags, effective config.TNL) {
-	if flags.requestInspectionFromCLI {
-		return
+func applyInspection(flags *tunnelFlags, effective config.TNL) {
+	if effective.Inspection != nil {
+		if !flags.inspectionModeFromCLI && effective.Inspection.Mode != nil {
+			flags.InspectionMode = *effective.Inspection.Mode
+			flags.inspectionModeFromConfig = true
+		}
 	}
-	if effective.RequestInspection != nil {
-		flags.RequestInspection = *effective.RequestInspection
+	if flags.InspectionMode == "" {
+		flags.InspectionMode = config.InspectionSummary
 	}
 }
 
 func validateTunnelFlags(flags tunnelFlags) error {
+	if !flags.InspectionMode.Valid() {
+		return errors.New("--inspection-mode must be none or summary")
+	}
 	if flags.Requests != nil && *flags.Requests <= 0 || flags.Concurrency != nil && *flags.Concurrency <= 0 {
 		return errors.New("--requests and --concurrency must be greater than zero")
 	}

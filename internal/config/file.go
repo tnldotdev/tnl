@@ -16,6 +16,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/tcptarget"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -138,8 +140,8 @@ func ValidateTNL(config TNL) error {
 	if err := validateReadiness(config.Readiness); err != nil {
 		return err
 	}
-	if err := validateRequestInspection(config.RequestInspection); err != nil {
-		return fmt.Errorf("request_inspection: %w", err)
+	if err := ValidateInspection(config.Inspection); err != nil {
+		return fmt.Errorf("inspection: %w", err)
 	}
 	if err := validateServerAndTeam(config.Server, config.Team); err != nil {
 		return err
@@ -171,11 +173,12 @@ func ValidateTNL(config TNL) error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := config.Services[name]
+		effectivePublish := MergePublish(config.Publish, service.Publish)
 		if err := validateReadiness(service.Readiness); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
-		if err := validateRequestInspection(service.RequestInspection); err != nil {
-			return fmt.Errorf("services.%s.request_inspection: %w", name, err)
+		if err := ValidateInspection(service.Inspection); err != nil {
+			return fmt.Errorf("services.%s.inspection: %w", name, err)
 		}
 		if !naming.ValidServiceName(name) {
 			return fmt.Errorf("service name %q must be one lowercase DNS label beginning with a letter", name)
@@ -183,8 +186,37 @@ func ValidateTNL(config TNL) error {
 		if err := validateServiceDirectory(service.Directory); err != nil {
 			return fmt.Errorf("services.%s.directory: %w", name, err)
 		}
-		if err := validateServiceValues(service.Tunnel, service.Publish); err != nil {
+		if err := validateServiceValues(service.Tunnel, effectivePublish); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
+		}
+		protocol := ServiceProtocol(effectivePublish)
+		if protocol != "http" {
+			if service.Readiness != nil || config.Readiness != nil || len(service.Paths) != 0 ||
+				service.Tunnel != nil && service.Tunnel.Open != nil && *service.Tunnel.Open ||
+				config.Tunnel != nil && config.Tunnel.Open != nil && *config.Tunnel.Open {
+				return fmt.Errorf("services.%s: TCP services cannot use HTTP readiness, path mounts, or browser opening", name)
+			}
+			selected := MergeInspection(config.Inspection, service.Inspection)
+			if protocol == "ssh" && selected != nil && selected.Mode != nil && *selected.Mode != InspectionNone {
+				return fmt.Errorf("services.%s: SSH inspection supports none only", name)
+			}
+			for _, definition := range config.Webhooks {
+				if definition.Service == name {
+					return fmt.Errorf("services.%s: TCP services cannot receive HTTP webhooks", name)
+				}
+			}
+			for _, definition := range config.Aliases {
+				if definition.Service == name {
+					return fmt.Errorf("services.%s: TCP services cannot serve HTTP aliases", name)
+				}
+			}
+			for _, sibling := range config.Services {
+				for _, mount := range sibling.Paths {
+					if mount.Service == name {
+						return fmt.Errorf("services.%s: TCP services cannot be used as HTTP path mounts", name)
+					}
+				}
+			}
 		}
 		if err := validateRatePair(service.Tunnel, config.Tunnel); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
@@ -216,13 +248,6 @@ func validateReadiness(value *Readiness) error {
 	}
 	if value.Path != "/" && !localproxy.ValidMountPrefix(value.Path) {
 		return errors.New("readiness.path must be a clean absolute path outside /__tnl/")
-	}
-	return nil
-}
-
-func validateRequestInspection(value *RequestInspectionMode) error {
-	if value != nil && !value.Valid() {
-		return errors.New("must be summary or detailed")
 	}
 	return nil
 }
@@ -287,13 +312,36 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 			seen[canonical[0]] = struct{}{}
 		}
 	}
-	if publish != nil && publish.Target != nil {
-		if _, err := localproxy.NormalizeTarget(string(*publish.Target)); err != nil {
-			return fmt.Errorf("publish.target: %w", err)
+	if publish != nil {
+		protocol := ServiceProtocol(publish)
+		if !controlv1.PublicURLServiceProtocol(protocol).Valid() {
+			return errors.New("publish.protocol must be a supported service protocol")
 		}
-	}
-	if publish != nil && publish.CAFile != nil && (strings.TrimSpace(*publish.CAFile) != *publish.CAFile || *publish.CAFile == "") {
-		return errors.New("publish.ca_file must be a nonempty path without surrounding whitespace")
+		if publish.TargetTLS != nil && protocol == "http" {
+			return errors.New("publish.target_tls requires a TCP service protocol")
+		}
+		if publish.Target != nil {
+			target := string(*publish.Target)
+			if protocol == "http" {
+				if _, err := localproxy.NormalizeTarget(target); err != nil {
+					return fmt.Errorf("publish.target: %w", err)
+				}
+			} else if _, err := tcptarget.Normalize(target); err != nil {
+				return fmt.Errorf("publish.target: %w", err)
+			}
+		}
+		if publish.TargetTLSName != nil {
+			if protocol == "http" || *publish.TargetTLSName == "" || strings.TrimSpace(*publish.TargetTLSName) != *publish.TargetTLSName {
+				return errors.New("publish.target_tls_name requires a TCP service protocol and a hostname")
+			}
+		}
+		if protocol != "http" && (publish.TargetTLSName != nil || publish.TargetCAFile != nil) &&
+			(publish.TargetTLS == nil || !*publish.TargetTLS) {
+			return errors.New("publish.target_tls must be true when target TLS settings are supplied")
+		}
+		if publish.TargetCAFile != nil && (strings.TrimSpace(*publish.TargetCAFile) != *publish.TargetCAFile || *publish.TargetCAFile == "") {
+			return errors.New("publish.target_ca_file must be a nonempty path without surrounding whitespace")
+		}
 	}
 	return nil
 }

@@ -249,13 +249,15 @@ tasks:
     vars:
       RUN: '{{default "^TestIntegration" .RUN}}'
     cmds:
-      - node scripts/run-go-tests-with-postgres.ts -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime ./internal/publisher -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime ./internal/publisher -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
 
-  go:test:integration:database-clients:
-    desc: Verify real database clients with disposable TLS-enabled servers
+  go:test:integration:tcp-clients:
+    desc: Verify real TCP clients with disposable targets
     cmds:
-      - node scripts/run-go-tests-with-postgres.ts --tls -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgres(Login|ChannelBinding)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
-      - node scripts/run-go-tests-with-mysql.ts -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientMySQLLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgresLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . mysql -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientMySQLLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . redis -- go test -race -v ./internal/publisher -run='^TestIntegrationRedisClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . ssh -- go test -race -v ./internal/publisher -run='^TestIntegrationSSHClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:binary:
     desc: Run Linux binary integration tests
@@ -264,30 +266,19 @@ tasks:
       - sh: test "$(uname -s)" = Linux
         msg: Binary integration tests require Linux
     cmds:
-      - node scripts/run-go-tests-with-postgres.ts -- go test -race -v ./internal/tnldruntime -run='^TestBinaryIntegration' -count=1 -timeout=15m -args -tnl-test-tier=binary
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestBinaryIntegration' -count=1 -timeout=15m -args -tnl-test-tier=binary
 
   go:test:integration:dns:
     desc: Run the authoritative DNS integration test in disposable Linux containers
     cmds:
-      - |
-        bash -euo pipefail -c '
-          compose() {
-            docker compose --file internal/tnldruntime/testdata/dns-integration.compose.yaml "$@"
-          }
-          cleanup() {
-            compose down --volumes --remove-orphans >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT HUP INT TERM
-          cleanup
-          compose up --abort-on-container-exit --exit-code-from test --remove-orphans
-        '
+      - go -C tools/testharness run . dns
 
   go:test:integration:route53:
     desc: Issue one staging ACME certificate using real Route 53 TXT propagation in the staging zone
     requires:
       vars: [ZONE_ID]
     cmds:
-      - node scripts/run-go-tests-with-postgres.ts -- go test -race -v ./internal/certificates -run='^TestIntegrationRoute53StagingACME$' -count=1 -timeout=12m -args -tnl-test-tier=route53 -tnl-route53-zone-id='{{.ZONE_ID}}'
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/certificates -run='^TestIntegrationRoute53StagingACME$' -count=1 -timeout=12m -args -tnl-test-tier=route53 -tnl-route53-zone-id='{{.ZONE_ID}}'
 
   go:test:load:database:
     desc: Run database load tests (DELAY=0ms/5ms/20ms, PUBLIC_URLS=1000, HISTORY=1 event/route, RUN=^TestLoad)
@@ -299,7 +290,7 @@ tasks:
       RETENTION: '{{default "0s" .RETENTION}}'
       RUN: '{{default "^TestLoad" .RUN}}'
     cmds:
-      - node scripts/run-go-tests-with-postgres.ts -- go test -v ./internal/controlstate -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=database-load -tnl-load-delay='{{.DELAY}}' -tnl-load-public-urls='{{.PUBLIC_URLS}}' -tnl-load-history='{{.HISTORY}}' -tnl-load-duration='{{.DURATION}}' -tnl-load-retention='{{.RETENTION}}'
+      - go -C tools/testharness run . postgres -- go test -v ./internal/controlstate -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=database-load -tnl-load-delay='{{.DELAY}}' -tnl-load-public-urls='{{.PUBLIC_URLS}}' -tnl-load-history='{{.HISTORY}}' -tnl-load-duration='{{.DURATION}}' -tnl-load-retention='{{.RETENTION}}'
 
   go:test:load:runtime:
     desc: Run per-component constrained real visitor/recovery/shutdown load
@@ -352,7 +343,7 @@ tasks:
       RACE: '{{default "" .RACE}}'
       RESULTS: "{{.RESULTS}}"
     cmds:
-      - node scripts/runtime-load.ts
+      - go -C tools/testharness run . runtime
 
   go:test:fuzz:
     desc: Fuzz all Go parser and policy boundaries

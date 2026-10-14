@@ -33,35 +33,36 @@ import (
 
 // PublicURLServerConfig configures publisher TLS termination and local HTTP forwarding.
 type PublicURLServerConfig struct {
-	Hostname               string
-	PreviewID              string
-	PublicURLID            string
-	PublishRunNumber       uint64
-	Target                 string
-	ServiceProtocol        controlv1.PublicURLServiceProtocol
-	PublicPort             uint16
-	TargetTLSName          string
-	DatabaseTLSPassthrough bool
-	TargetOptions          localproxy.TargetOptions
-	Handler                http.Handler
-	AdmitRequest           func(*http.Request) error
-	ObserveResponse        func(*http.Response) error
-	Mounts                 []localproxy.Mount
-	ShareAccess            *shareAccess
-	BrowserAccess          *browserAccess
-	Feedback               *feedbackRuntime
-	RequestLimit           int // zero selects localproxy.DefaultRequestLimit.
-	Limits                 ApplicationLimits
-	OnTargetFailure        func()
-	ObserveRequest         func(RequestObservation)
-	RequestInspection      projectconfig.RequestInspectionMode
-	Certificate            tls.Certificate
-	CertificatePlan        controlv1.CertificatePlan
+	Hostname              string
+	PreviewID             string
+	PublicURLID           string
+	PublishRunNumber      uint64
+	Target                string
+	ServiceProtocol       controlv1.PublicURLServiceProtocol
+	PublicPort            uint16
+	TargetTLSName         string
+	TargetTLS             bool
+	VisitorTLSPassthrough bool
+	TargetOptions         localproxy.TargetOptions
+	Handler               http.Handler
+	AdmitRequest          func(*http.Request) error
+	ObserveResponse       func(*http.Response) error
+	Mounts                []localproxy.Mount
+	ShareAccess           *shareAccess
+	BrowserAccess         *browserAccess
+	Feedback              *feedbackRuntime
+	RequestLimit          int // zero selects localproxy.DefaultRequestLimit.
+	Limits                ApplicationLimits
+	OnTargetFailure       func()
+	ObserveRequest        func(RequestObservation)
+	InspectionMode        projectconfig.InspectionMode
+	Certificate           tls.Certificate
+	CertificatePlan       controlv1.CertificatePlan
 }
 
 type PublicURLServer struct {
 	hostname           string
-	database           *databaseForwarding
+	tcp                *tcpForwarding
 	certificatePlan    controlv1.CertificatePlan
 	tls                *tls.Config
 	certificate        atomic.Pointer[tls.Certificate]
@@ -94,7 +95,6 @@ type responseOriginKey struct{}
 type observedResponseWriter struct {
 	http.ResponseWriter
 	status int
-	body   *bodyCapture
 }
 
 func (w *observedResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -111,22 +111,17 @@ func (w *observedResponseWriter) Write(data []byte) (int, error) {
 		w.status = http.StatusOK
 	}
 	n, err := w.ResponseWriter.Write(data)
-	if w.body != nil {
-		w.body.append(data[:n])
-	}
 	return n, err
 }
 
 // RequestObservation holds local HTTP observations for the CLI inspector.
 type RequestObservation struct {
-	ReceivedAt  time.Time
-	Method      string
-	Path        string
-	Status      int
-	Duration    time.Duration
-	Origin      string
-	CaptureMode projectconfig.RequestInspectionMode
-	Detail      *RequestDetail
+	ReceivedAt time.Time
+	Method     string
+	Path       string
+	Status     int
+	Duration   time.Duration
+	Origin     string
 }
 
 // NewPublicURLServer creates a public URL server served by publisher connections.
@@ -135,13 +130,13 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if err != nil || hostname != config.Hostname {
 		return nil, errors.New("publisher: public URL hostname must be canonical")
 	}
-	if config.RequestInspection != "" && !config.RequestInspection.Valid() {
-		return nil, errors.New("publisher: request inspection mode must be summary or detailed")
+	if config.InspectionMode != "" && !config.InspectionMode.Valid() {
+		return nil, errors.New("publisher: request inspection mode must be none or summary")
 	}
 	if config.RequestLimit < 0 {
 		return nil, errors.New("publisher: request limit cannot be negative")
 	}
-	database, err := newDatabaseForwarding(config)
+	forwarding, err := newTCPForwarding(config)
 	if err != nil {
 		return nil, err
 	}
@@ -152,8 +147,8 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if err != nil {
 		return nil, err
 	}
-	if database != nil {
-		database.admission = admission
+	if forwarding != nil {
+		forwarding.admission = admission
 	}
 	if config.CertificatePlan.Identifiers != nil || config.CertificatePlan.CacheKey != "" || config.CertificatePlan.Scope != "" || config.CertificatePlan.ChallengeMethod != "" {
 		config.CertificatePlan, err = certificateidentity.CanonicalPlan(config.CertificatePlan)
@@ -167,7 +162,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		modifyResponse, observe = config.Feedback.modifyResponse, config.Feedback.observe
 	}
 	var handler http.Handler
-	if database != nil {
+	if forwarding != nil {
 		handler = http.NotFoundHandler()
 	} else if config.Handler != nil {
 		handler = config.Handler
@@ -188,7 +183,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	shareSlots := make(chan struct{}, 16)
 	route := &PublicURLServer{
 		hostname:        hostname,
-		database:        database,
+		tcp:             forwarding,
 		admission:       admission,
 		certificatePlan: config.CertificatePlan,
 		queue:           queue,
@@ -199,23 +194,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		},
 		http: &http.Server{
 			Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				if config.ObserveRequest != nil && !sharePath(request.URL.EscapedPath()) {
+				if config.ObserveRequest != nil && config.InspectionMode != projectconfig.InspectionNone && !sharePath(request.URL.EscapedPath()) {
 					started := time.Now()
 					forwarded := &atomic.Bool{}
 					request = request.WithContext(context.WithValue(request.Context(), responseOriginKey{}, forwarded))
 					tracked := &observedResponseWriter{ResponseWriter: response}
-					var detail *RequestDetail
-					var incoming, outgoing *bodyCapture
-					if config.RequestInspection == projectconfig.RequestInspectionDetailed {
-						detail = &RequestDetail{}
-						detail.Query, detail.QueryTruncated = boundedRequestText(request.URL.RawQuery, 8<<10)
-						detail.RequestHeaders, detail.RequestHeadersTruncated = boundedRequestHeaders(request.Header, 16<<10)
-						incoming, outgoing = &bodyCapture{}, &bodyCapture{}
-						if request.Body != nil {
-							request.Body = &observedBodyReader{ReadCloser: request.Body, body: incoming}
-						}
-						tracked.body = outgoing
-					}
 					response = tracked
 					defer func() {
 						path := request.URL.EscapedPath()
@@ -230,21 +213,8 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						if status == 0 {
 							status = http.StatusOK
 						}
-						mode := projectconfig.RequestInspectionSummary
-						if detail != nil {
-							mode = projectconfig.RequestInspectionDetailed
-							detail.RequestBody, detail.ResponseBody = incoming.snapshot(), outgoing.snapshot()
-							if request.ContentLength > incoming.total {
-								detail.RequestBody.Incomplete = true
-							}
-							if status == http.StatusSwitchingProtocols {
-								detail.RequestBody.Unavailable, detail.ResponseBody.Unavailable = "upgrade", "upgrade"
-							}
-							detail.ResponseHeaders, detail.ResponseHeadersTruncated = boundedRequestHeaders(tracked.Header(), 16<<10)
-						}
 						config.ObserveRequest(RequestObservation{ReceivedAt: started.UTC(), Method: request.Method,
-							Path: path, Status: status, Duration: time.Since(started), Origin: origin,
-							CaptureMode: mode, Detail: detail})
+							Path: path, Status: status, Duration: time.Since(started), Origin: origin})
 					}()
 				}
 				if code := localproxy.ValidateRequest(request, hostname); code != "" {
@@ -509,9 +479,16 @@ func (r *PublicURLServer) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certi
 	if hello == nil {
 		return nil, errors.New("publisher: TLS SNI does not match public URL")
 	}
-	hostname, err := naming.CanonicalizeHostname(hello.ServerName)
-	if err != nil || hostname != r.hostname {
-		return nil, errors.New("publisher: TLS SNI does not match public URL")
+	if hello.ServerName == "" {
+		// a dedicated MySQL public port selects this certificate without SNI.
+		if r.tcp == nil || r.tcp.protocol != controlv1.Mysql {
+			return nil, errors.New("publisher: TLS SNI does not match public URL")
+		}
+	} else {
+		hostname, err := naming.CanonicalizeHostname(hello.ServerName)
+		if err != nil || hostname != r.hostname {
+			return nil, errors.New("publisher: TLS SNI does not match public URL")
+		}
 	}
 	if len(hello.SupportedProtos) == 1 && hello.SupportedProtos[0] == acme.ALPNProto {
 		return r.challenges.GetCertificate(hello)
@@ -716,15 +693,22 @@ func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
 		return
 	}
 	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied}
-	if r.database != nil {
-		if header.Destination.Port() == r.database.publicPort {
+	if r.tcp != nil {
+		if header.Destination.Port() == r.tcp.publicPort {
 			if !denied {
 				select {
 				case <-r.admission.completed:
 					return
 				default:
 				}
-				r.database.forward(metadata, r.tls, r.hostname)
+				// ssh has no visitor TLS handshake, so check the same installed
+				// certificate that gates publish-run readiness before forwarding.
+				if r.tcp.protocol == controlv1.Ssh {
+					if err := r.withValidCertificate(func() error { return nil }); err != nil {
+						return
+					}
+				}
+				r.tcp.forward(metadata, r.tls, r.hostname)
 			}
 			return
 		}

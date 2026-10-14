@@ -30,10 +30,10 @@ type cli struct {
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
-	Watch       watchCommand     `cmd:"" help:"Follow ordered local app lifecycle events." group:"start"`
+	Watch       watchCommand     `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
 	Status      statusCommand    `cmd:"" help:"Show configured services and local publications; --all includes other projects." group:"start"`
-	Requests    requestsCommand  `cmd:"" help:"Inspect recent local HTTP requests." group:"manage"`
+	Inspect     inspectCommand   `cmd:"" help:"Inspect recent local HTTP and supported TCP activity." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
 	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
@@ -55,23 +55,24 @@ type openOptions struct {
 
 type tunnelFlags struct {
 	teamSelectionFlags `embed:""`
-	Domain             string                       `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
-	Name               string                       `name:"name" env:"TNL_NAME" help:"One label beneath the selected domain or member namespace. Defaults to a service-and-worktree name."`
-	PublicURL          string                       `name:"public-url" env:"TNL_PUBLIC_URL" help:"Exact public URL hostname or HTTPS origin to publish."`
-	AllowIP            []string                     `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
-	AllowAllIPs        bool                         `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
-	Ephemeral          bool                         `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
-	Requests           *int                         `name:"requests" env:"TNL_REQUESTS" help:"Total application requests admitted before the tunnel drains."`
-	RateRequests       *int                         `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"Number of requests admitted per rate period. Requires --rate-per."`
-	RatePer            string                       `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
-	Concurrency        *int                         `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous application requests, streams, and upgrades. Defaults to 500."`
-	TargetCAFile       string                       `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or database target."`
-	RequestInspection  config.RequestInspectionMode `name:"request-inspection" enum:"summary,detailed" default:"summary" help:"Local request capture: summary (default) or detailed, including credentials and bounded bodies."`
+	Domain             string                `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
+	Name               string                `name:"name" env:"TNL_NAME" help:"One label beneath the selected domain or member namespace. Defaults to a service-and-worktree name."`
+	PublicURL          string                `name:"public-url" env:"TNL_PUBLIC_URL" help:"Exact public URL hostname or HTTPS origin to publish."`
+	AllowIP            []string              `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
+	AllowAllIPs        bool                  `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
+	Ephemeral          bool                  `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
+	Requests           *int                  `name:"requests" env:"TNL_REQUESTS" help:"Total application requests admitted before the tunnel drains."`
+	RateRequests       *int                  `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"Number of requests admitted per rate period. Requires --rate-per."`
+	RatePer            string                `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
+	Concurrency        *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous application requests, streams, and upgrades. Defaults to 500."`
+	TargetCAFile       string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or TCP target."`
+	InspectionMode     config.InspectionMode `name:"inspection-mode" enum:"none,summary" default:"summary" help:"Local HTTP and TCP inspection: summary (default) or none."`
 
 	allowAllIPsFromCLI       bool
 	ephemeralFromCLI         bool
 	domainFromCLI            bool
-	requestInspectionFromCLI bool
+	inspectionModeFromCLI    bool
+	inspectionModeFromConfig bool
 }
 
 type remoteFlags struct {
@@ -470,15 +471,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 		return runStatus(ctx, flags.Status, stdout)
-	case "requests list", "requests show <request-id>":
+	case "inspect list", "inspect show <inspection-number>":
 		root, err := projectRoot(ctx, flags)
 		if err != nil {
 			return err
 		}
-		if parsedCommand == "requests list" {
-			return runRequestsList(ctx, flags.Requests.List, root, stdout)
+		if parsedCommand == "inspect list" {
+			return runInspectList(ctx, flags.Inspect.List, root, stdout)
 		}
-		return runRequestsShow(ctx, flags.Requests.Show, root, stdout)
+		return runInspectShow(ctx, flags.Inspect.Show, root, stdout)
 	case "webhook use <endpoint>":
 		return runWebhookChoice(ctx, flags.Webhook.Use.webhookChoiceCommand, project, true, flags.Webhook.Use.Force, stdout)
 	case "webhook release <endpoint>":
@@ -632,7 +633,8 @@ func canonicalParsedCommand(command string) string {
 }
 
 func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
-	publicURL, name, domain, allowIP, allowAllIPs, ephemeral, open, inspection := false, false, false, false, false, false, false, false
+	publicURL, name, domain, allowIP, allowAllIPs, ephemeral, open := false, false, false, false, false, false, false
+	inspectionMode := false
 	for _, path := range parsed.Path {
 		if path.Flag == nil {
 			continue
@@ -652,15 +654,15 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 			allowAllIPs = true
 		case "ephemeral":
 			ephemeral = true
-		case "request-inspection":
-			inspection = true
+		case "inspection-mode":
+			inspectionMode = true
 		}
 	}
 	apply := func(tunnel *tunnelFlags) {
 		tunnel.allowAllIPsFromCLI = allowAllIPs
 		tunnel.ephemeralFromCLI = ephemeral
 		tunnel.domainFromCLI = domain
-		tunnel.requestInspectionFromCLI = inspection
+		tunnel.inspectionModeFromCLI = inspectionMode
 		if publicURL && !name {
 			tunnel.Name = ""
 		}

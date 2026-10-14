@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestConfigPathDoesNotEvaluateTypeScript(t *testing.T) {
@@ -174,20 +175,20 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	}
 }
 
-func TestRequestInspectionServiceAndFlagPrecedence(t *testing.T) {
-	rootMode, serviceMode := config.RequestInspectionDetailed, config.RequestInspectionSummary
+func TestInspectionServiceAndFlagPrecedence(t *testing.T) {
+	rootMode, serviceMode := config.InspectionNone, config.InspectionSummary
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		RequestInspection: &rootMode, Services: config.Services{"web": {
-			RequestInspection: &serviceMode, Publish: &config.Publish{Target: &target},
+		Inspection: &config.Inspection{Mode: &rootMode}, Services: config.Services{"web": {
+			Inspection: &config.Inspection{Mode: &serviceMode}, Publish: &config.Publish{Target: &target},
 		}},
 	}}}
 	for _, tc := range []struct {
 		args []string
-		want config.RequestInspectionMode
+		want config.InspectionMode
 	}{
 		{[]string{"publish", "web"}, "summary"},
-		{[]string{"publish", "web", "--request-inspection=detailed"}, "detailed"},
+		{[]string{"publish", "web", "--inspection-mode=none"}, "none"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)
@@ -202,8 +203,8 @@ func TestRequestInspectionServiceAndFlagPrecedence(t *testing.T) {
 		if err := project.applyPublish(&flags.Publish); err != nil {
 			t.Fatal(err)
 		}
-		if flags.Publish.RequestInspection != tc.want {
-			t.Fatalf("%v: capture = %q", tc.args, flags.Publish.RequestInspection)
+		if flags.Publish.InspectionMode != tc.want {
+			t.Fatalf("%v: inspection mode = %q", tc.args, flags.Publish.InspectionMode)
 		}
 	}
 }
@@ -505,7 +506,7 @@ func TestTargetCAIsBoundToConfiguredTarget(t *testing.T) {
 	target := config.Target("https://api.internal:443")
 	caFile := "/run/secrets/target_ca"
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		Publish: &config.Publish{Target: &target, CAFile: &caFile},
+		Publish: &config.Publish{Target: &target, TargetCAFile: &caFile},
 	}}}
 	configured := publishCommand{tunnelFlags: tunnelFlags{PublicURL: "https://app.example"}}
 	if err := project.applyPublish(&configured); err != nil || configured.Target != string(target) || configured.TargetCAFile != caFile {
@@ -514,5 +515,29 @@ func TestTargetCAIsBoundToConfiguredTarget(t *testing.T) {
 	override := publishCommand{Target: "http://other:3000", tunnelFlags: tunnelFlags{PublicURL: "https://app.example"}}
 	if err := project.applyPublish(&override); err != nil || override.TargetCAFile != "" {
 		t.Fatalf("explicit target inherited trust = %#v, %v", override, err)
+	}
+}
+
+func TestProjectDatabaseServiceAppliesProtocolAndTargetTLS(t *testing.T) {
+	protocol, name, tlsName, caFile, targetTLS := "postgres", "orders", "db.internal", "./ca.pem", true
+	target := config.Target("db.internal:5432")
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
+		"web": {}, "orders": {Tunnel: &config.Tunnel{Name: &name},
+			Publish: &config.Publish{Protocol: &protocol, Target: &target, TargetTLS: &targetTLS, TargetTLSName: &tlsName, TargetCAFile: &caFile}},
+	}}}}
+	flags := publishCommand{Target: "orders"}
+	if err := project.applyPublish(&flags); err != nil {
+		t.Fatal(err)
+	}
+	if flags.Service != "orders" || flags.Name != "orders" || flags.Protocol != "postgres" || flags.Target != string(target) ||
+		!flags.TargetTLS || flags.TargetTLSName != tlsName || flags.TargetCAFile != caFile {
+		t.Fatalf("database service = %#v", flags)
+	}
+	if err := validateTCPPublishOptions(flags, controlv1.Postgres); err != nil {
+		t.Fatal(err)
+	}
+	flags = publishCommand{Target: "orders", Protocol: "mysql", TargetTLS: true, TargetTLSName: "other.internal", tunnelFlags: tunnelFlags{TargetCAFile: "other.pem"}}
+	if err := project.applyPublish(&flags); err != nil || flags.Protocol != "mysql" || flags.TargetTLSName != "other.internal" || flags.TargetCAFile != "other.pem" {
+		t.Fatalf("explicit overrides = %#v, %v", flags, err)
 	}
 }

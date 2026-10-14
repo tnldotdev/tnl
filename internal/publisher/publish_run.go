@@ -59,7 +59,7 @@ func runSession(
 	var publicPort uint16
 	if setup.PublicUrl.PublicPort != nil {
 		if !tcpport.Valid(*setup.PublicUrl.PublicPort) {
-			return errors.New("publisher: server returned invalid database public port")
+			return errors.New("publisher: server returned invalid TCP public port")
 		}
 		publicPort = uint16(*setup.PublicUrl.PublicPort)
 	}
@@ -186,17 +186,17 @@ func runSession(
 		BrowserAccess: browserAccessForRun(config, setup, publishRunToken, shareRuntime),
 		PreviewID:     config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version,
 		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, TargetOptions: config.TargetOptions, CertificatePlan: plan,
-		ServiceProtocol: setup.PublicUrl.ServiceProtocol, TargetTLSName: config.TargetTLSName,
-		PublicPort:             publicPort,
-		DatabaseTLSPassthrough: config.DatabaseTLSPassthrough,
-		Mounts:                 config.Mounts,
-		ShareAccess:            shareRuntime,
-		Feedback:               feedback,
-		RequestLimit:           config.RequestLimit,
-		Limits:                 config.Limits,
-		ObserveRequest:         config.ObserveRequest,
-		RequestInspection:      config.RequestInspection,
-		Handler:                config.Handler,
+		ServiceProtocol: setup.PublicUrl.ServiceProtocol, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS,
+		VisitorTLSPassthrough: config.VisitorTLSPassthrough,
+		PublicPort:            publicPort,
+		Mounts:                config.Mounts,
+		ShareAccess:           shareRuntime,
+		Feedback:              feedback,
+		RequestLimit:          config.RequestLimit,
+		Limits:                config.Limits,
+		ObserveRequest:        config.ObserveRequest,
+		InspectionMode:        config.InspectionMode,
+		Handler:               config.Handler,
 		AdmitRequest: func(request *http.Request) error {
 			if config.AdmitRequest == nil {
 				return nil

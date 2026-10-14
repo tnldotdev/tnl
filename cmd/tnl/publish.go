@@ -22,16 +22,17 @@ import (
 )
 
 type publishCommand struct {
-	openOptions         `embed:""`
-	remoteFlags         `embed:""`
-	tunnelFlags         `embed:""`
-	Target              string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or database host:port."`
-	Protocol            string            `name:"protocol" env:"TNL_PROTOCOL" help:"Local service protocol; defaults to http."`
-	TargetTLSName       string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the private database TLS certificate; defaults to the target host."`
-	DatabasePassthrough bool              `name:"database-tls-passthrough" help:"Pass visitor TLS to the private database after checking public URL SNI; required for TLS channel binding."`
-	PublishCredential   string            `name:"credential" env:"TNL_CREDENTIAL" help:"Credential for publishing one saved public URL without a control session."`
-	Output              publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
-	Demo                bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
+	openOptions           `embed:""`
+	remoteFlags           `embed:""`
+	tunnelFlags           `embed:""`
+	Target                string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or TCP host:port."`
+	Protocol              string            `name:"protocol" env:"TNL_PROTOCOL" help:"Local service protocol; defaults to http."`
+	TargetTLSName         string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the target's TLS certificate; defaults to the target host."`
+	TargetTLS             bool              `name:"target-tls" env:"TNL_TARGET_TLS" help:"Use verified TLS for the TCP target."`
+	VisitorTLSPassthrough bool              `name:"visitor-tls-passthrough" help:"Pass database visitor TLS to the private target; the client verifies its certificate and tnl cannot inspect it."`
+	PublishCredential     string            `name:"credential" env:"TNL_CREDENTIAL" help:"Credential for publishing one saved public URL without a control session."`
+	Output                publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
+	Demo                  bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
 	serverFromConfig bool
 	selectedTeam     string
@@ -47,7 +48,6 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	output.setRequestInspection(flags.RequestInspection)
 	defer func() { result = output.finish(ctx, result) }()
 	if flags.PublishCredential != "" {
 		if flags.Demo {
@@ -59,12 +59,14 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	if protocol != controlv1.Http &&
-		(flags.Demo || flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
-		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
-			errors.New("database publication cannot run the demo or project integration URLs"))
+	if err := selectPublishInspection(&flags, protocol); err != nil {
+		return err
 	}
-	if err := validateDatabasePublishOptions(flags, protocol); err != nil {
+	if protocol != controlv1.Http && flags.Demo {
+		return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags,
+			errors.New("TCP publication cannot run the demo"))
+	}
+	if err := validateTCPPublishOptions(flags, protocol); err != nil {
 		return err
 	}
 	var localDemo *demo.Server
@@ -105,7 +107,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		}
 	}
 	tunnel, err := state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{
-		Command: clientstate.TunnelCommandPublish, Server: serverURL, Target: target,
+		Command: clientstate.TunnelCommandPublish, Server: serverURL, Target: target, ServiceProtocol: protocol,
 		Project: flags.projectRoot, Service: flags.Service,
 	})
 	if err != nil {
@@ -182,7 +184,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	integrationGroup := ""
-	if !flags.Demo && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
+	if protocol == controlv1.Http && !flags.Demo && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
 		if flags.project.Root == "" {
 			worktree, resolveErr := projectconfig.ResolveWorktree(ctx, flags.projectRoot)
 			if resolveErr != nil {
@@ -195,7 +197,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			return err
 		}
 	}
-	if !flags.Demo && flags.project.Config.OAuth {
+	if protocol == controlv1.Http && !flags.Demo && flags.project.Config.OAuth {
 		oauth, oauthServices, resolveErr := projectOAuthPublisher(ctx, state, flags.project.Project, serverURL, flags.selectedTeam, authenticated)
 		if resolveErr != nil {
 			return resolveErr
@@ -204,22 +206,23 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		defer stopCallbacks()
 		oauthHostname = oauth.Hostname
 	}
-	if !flags.Demo && len(flags.project.Config.Webhooks) > 0 {
+	if protocol == controlv1.Http && !flags.Demo && len(flags.project.Config.Webhooks) > 0 {
 		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, flags.project.Project, tunnel, flags.Service, integrationGroup, output, telemetry)
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.limits())
 	publisherConfig.ServiceProtocol = protocol
 	publisherConfig.TargetTLSName = flags.TargetTLSName
-	publisherConfig.DatabaseTLSPassthrough = flags.DatabasePassthrough
+	publisherConfig.TargetTLS = flags.TargetTLS
+	publisherConfig.VisitorTLSPassthrough = flags.VisitorTLSPassthrough
 	publisherConfig.TargetOptions = targetOptions
-	recorder, err := newRequestRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
+	recorder, err := newInspectionRecorder(ctx, tunnel, flags.projectRoot, flags.Service, flags.InspectionMode)
 	if err != nil {
 		return err
 	}
 	defer recorder.Close()
-	publisherConfig.ObserveRequest = requestObservation(recorder)
-	publisherConfig.RequestInspection = flags.RequestInspection
+	publisherConfig.ObserveRequest = httpObservation(recorder)
+	publisherConfig.InspectionMode = flags.InspectionMode
 	if oauthHostname != "" {
 		publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauthHostname, integrationGroup, tunnel.ID())
 	}
@@ -234,8 +237,8 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	if protocol != controlv1.Http && len(publisherConfig.Mounts) != 0 {
-		return failure.Wrap("validate database publish options", failure.InvalidTunnelFlags,
-			errors.New("database public URLs cannot use HTTP path mounts"))
+		return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags,
+			errors.New("TCP public URLs cannot use HTTP path mounts"))
 	}
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {
@@ -244,7 +247,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		}
 		return handlePublisherEvent(ctx, tunnel, output, event)
 	})
-	if !flags.Demo && len(flags.project.Config.Aliases) != 0 {
+	if protocol == controlv1.Http && !flags.Demo && len(flags.project.Config.Aliases) != 0 {
 		stopAliases := startProjectAliases(ctx, state, flags.project, flags.Service, flags.selectedTeam, services, publisherConfig, integrationGroup, tunnel, output)
 		defer stopAliases()
 	}

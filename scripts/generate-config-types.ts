@@ -11,7 +11,12 @@ const schema = parseJSON(
   await readFile(path.join(root, "schema", "v1.json"), "utf8"),
   z.object({
     $schema: z.string(),
-    $defs: z.object({ TNL: schemaObject, Publish: schemaObject, Readiness: schemaObject }),
+    $defs: z.object({
+      TNL: schemaObject,
+      Publish: schemaObject,
+      Readiness: schemaObject,
+      Inspection: schemaObject,
+    }),
   }),
   "configuration schema",
 );
@@ -23,7 +28,11 @@ const keys = parseJSON(
 const client = {
   ...schema.$defs.TNL,
   $schema: schema.$schema,
-  $defs: { Publish: schema.$defs.Publish, Readiness: schema.$defs.Readiness },
+  $defs: {
+    Publish: schema.$defs.Publish,
+    Readiness: schema.$defs.Readiness,
+    Inspection: schema.$defs.Inspection,
+  },
 };
 renameProperties(client, keys);
 

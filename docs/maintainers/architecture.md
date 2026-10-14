@@ -75,39 +75,66 @@ visitor may use a separate, bounded forwarding budget to reach the publisher
 for an HTTPS 403, but never reaches the target. The publisher removes
 untrusted forwarding headers before proxying an allowed HTTP request.
 
-For a database public URL, ingress uses the original destination port in the
+For a TCP public URL, ingress uses the original destination port in the
 trusted outer PROXY v2 header instead of inspecting a ClientHello. A routing
 entry binds that port to a saved public URL within one ingress pool; missing or
 conflicting entries fail closed. Ingress applies the same IP policy, admission,
-and retry boundary before forwarding database startup bytes unchanged. It closes
-a denied database connection without opening a publisher stream. Database TLS
-negotiation belongs to the publisher, not ingress.
+and retry boundary before forwarding visitor bytes unchanged. It closes a denied
+TCP connection without opening a publisher stream. Ingress does not terminate
+visitor TLS for TCP public URLs; the publisher handles it when the protocol uses TLS.
 `internal/tcpport` checks allocated public ports (1024–65535) separately from
-ordinary TCP ports (1–65535). `internal/databasetarget` checks the private
+ordinary TCP ports (1–65535). `internal/tcptarget` checks the private
 host:port target before the publisher dials it.
 
 `internal/ingresspool` names the pool across control and ingress without making
 the stateless ingress role depend on control's database package.
 
-The publisher requires TLS negotiation for the selected database protocol before
-forwarding database authentication bytes. In the default mode, it terminates
-visitor TLS with the public URL certificate, verifies a separate TLS connection
-to the private target using its target hostname and configured roots, and copies
-the database protocol between them. A PostgreSQL GSS request gets a refusal so
-the client can request TLS instead. The explicit passthrough mode checks the
-visitor's exact SNI but leaves TLS termination and the public URL certificate
-with the private database; it is needed when authentication binds to the TLS
-channel, such as PostgreSQL SCRAM-SHA-256-PLUS. Plaintext database startup is
-never forwarded.
+the publisher requires TLS negotiation for the selected database protocol before
+forwarding database authentication bytes. it terminates visitor TLS with the
+public URL certificate. by default the private target receives plaintext TCP;
+`--target-tls` selects a separate, certificate-verified TLS connection instead.
+the publisher never retries in plaintext after a target TLS failure. a
+PostgreSQL GSS request gets a refusal so the client can request TLS instead.
+PostgreSQL clients must disable SCRAM channel binding
+(`channel_binding=disable`) when visitor TLS ends at the publisher: their TLS
+channel does not reach the database. `--visitor-tls-passthrough` instead passes
+the visitor TLS handshake to a PostgreSQL or MySQL target that accepts TLS,
+without requiring `--target-tls`. the client sees the target's certificate and
+must verify it; the publisher cannot inspect database commands in this mode.
+a MySQL target with no TLS advertises visitor TLS through a rewritten greeting;
+the publisher preserves its challenge and plugin, adjusts the authentication
+packet sequence, and handles the private server's RSA password exchange when
+required. plaintext database startup is never forwarded from a visitor.
 
 `tnl publish db.internal:5432 --protocol postgres` keeps the private target on
 the customer machine and displays the saved public `hostname:port` after the
-publish run is ready. `tnl url credential create --protocol postgres` saves the
-same endpoint without a private target; a credential-backed `tnl publish` must
-then supply that target locally. `--target-ca-file` extends the trust roots for
-the private TLS connection, while `--target-tls-name` sets the expected private
-certificate hostname. `--database-tls-passthrough` delegates that certificate
-check to the visiting database client instead.
+publish run is ready. a configured database service can select the same protocol
+and private `host:port` target through `publish.protocol` and `publish.target` in
+`tnl.config.ts`. `tnl url credential create --protocol postgres` saves the
+endpoint without a private target; a credential-backed `tnl publish` must then
+supply that target locally. a bare port selects a loopback target, while a
+host:port such as `postgres:5432` reaches a service on the publisher's network.
+`--target-ca-file` extends the trust roots for an explicit `--target-tls`
+connection, while `--target-tls-name` sets its expected certificate hostname.
+TypeScript configuration uses `publish.targetTLS`, `publish.targetCAFile`, and
+`publish.targetTLSName` for the same settings.
+
+`tnl publish redis:6379 --protocol redis` uses the same saved TCP port and
+publisher-owned private target. Redis visitors start TLS immediately, before
+sending authentication or commands. The publisher terminates visitor TLS and
+forwards Redis bytes to the private target unchanged. A Redis target in a
+Compose network can remain plaintext; `--target-tls` instead requires a
+verified TLS handshake to the target and never falls back to plaintext. Redis
+authentication and command authorization remain with the target.
+
+`tnl publish sshd:22 --protocol ssh` forwards the SSH protocol unchanged to an
+existing sshd. An SSH client must check that sshd's host key matches the key it
+expects for the saved public `hostname:port`; the public URL certificate does
+not authenticate the SSH server to the SSH client. Control and the publisher
+still issue and install that certificate before marking the publish run ready.
+The publisher checks it before forwarding new SSH visitors and retains the
+normal certificate expiration and renewal lifecycle. Target TLS remains an
+explicit option for an SSH target behind a separate TLS wrapper.
 
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
@@ -219,6 +246,14 @@ publication running. `tnl status` only reads observations.
 snapshot includes the cursor for its service state. cursors older than retained
 events fail with an authored diagnostic. the journal survives a
 manager restart and contains no credentials, request bodies, or OAuth state.
+
+`tnl inspect` keeps numbered HTTP and supported TCP summaries in client SQLite.
+HTTP, PostgreSQL, and MySQL default to summary; `inspection.mode: none` or
+`--inspection-mode=none` disables capture. the record contract also accepts
+Redis command names and outcomes for a later publisher observer, without
+arguments or reply bodies. SSH does not create inspection records. no protocol
+retains request headers, bodies, SQL statements, or Redis arguments in this
+history.
 
 `internal/adhoc.Run` owns the common publication boundary for ad-hoc SDK
 registrations. control allocates the URL before `publisher.Run` starts; the

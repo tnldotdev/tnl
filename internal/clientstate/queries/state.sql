@@ -153,6 +153,7 @@ INSERT INTO local_tunnels (
     server_origin,
     project_root,
     service,
+    service_protocol,
     hostname,
     target,
     framework,
@@ -172,6 +173,7 @@ INSERT INTO local_tunnels (
     sqlc.arg(server_origin),
     sqlc.arg(project_root),
     sqlc.arg(service),
+    sqlc.arg(service_protocol),
     '',
     sqlc.arg(target),
     '',
@@ -211,6 +213,7 @@ WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
 -- name: SetTunnelReady :execrows
 UPDATE local_tunnels
 SET hostname = sqlc.arg(hostname),
+    public_port = sqlc.arg(public_port),
     publish_run_number = sqlc.arg(publish_run_number),
     state = 'ready',
     updated_at = sqlc.arg(now)
@@ -252,3 +255,14 @@ ORDER BY started_at, id;
 DELETE FROM local_tunnels
 WHERE stopped_at < sqlc.arg(terminal_before)
    OR (stopped_at IS NULL AND lease_expires_at < sqlc.arg(stale_before));
+
+-- name: LatestTunnelEventCursor :one
+SELECT sequence FROM local_tunnel_event_cursors WHERE project_root = sqlc.arg(project_root);
+
+-- name: OldestTunnelEventCursor :one
+SELECT sequence FROM local_tunnel_events WHERE project_root = sqlc.arg(project_root) ORDER BY sequence LIMIT 1;
+
+-- name: ListTunnelEventsAfter :many
+SELECT * FROM local_tunnel_events
+WHERE project_root = sqlc.arg(project_root) AND sequence > sqlc.arg(after) AND sequence <= sqlc.arg(latest)
+ORDER BY sequence;

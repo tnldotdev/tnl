@@ -28,6 +28,7 @@ export interface TnlConfig {
    * Publish one shared OAuth callback URL while project tunnels run.
    */
   oauth?: boolean;
+  inspection?: Inspection;
   /**
    * Default public URL and tunnel settings.
    */
@@ -87,6 +88,7 @@ export interface TnlConfig {
            * Service directory relative to the project configuration.
            */
           directory?: string;
+          inspection?: Inspection1;
           /**
            * PublicURL and tunnel overrides for this service.
            */
@@ -148,10 +150,6 @@ export interface TnlConfig {
                 }
               | undefined;
           };
-          /**
-           * Local HTTP request capture for this service.
-           */
-          requestInspection?: "summary" | "detailed";
         }
       | undefined;
   };
@@ -235,23 +233,40 @@ export interface TnlConfig {
         }
       | undefined;
   };
-  /**
-   * Local HTTP request capture: summary (default) or detailed, including credentials and bounded bodies.
-   */
-  requestInspection?: "summary" | "detailed";
+}
+/**
+ * Local inspection capture and retention for HTTP and supported TCP services.
+ */
+export interface Inspection {
+  mode?: "none" | "summary";
 }
 export interface Publish {
   /**
-   * HTTP or HTTPS origin reachable by the publisher, or a local port.
+   * Service protocol for the public URL; defaults to http.
+   */
+  protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh";
+  /**
+   * HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher.
    */
   target?: string | number;
   /**
-   * Additional PEM certificate authorities for HTTPS targets; relative paths are resolved from the project root.
+   * Additional PEM certificate authorities for the target; relative paths are resolved from the project root.
    */
-  ca_file?: string;
+  targetCAFile?: string;
+  /**
+   * Use verified TLS for the TCP target.
+   */
+  targetTLS?: boolean;
+  /**
+   * Hostname expected in the target's TLS certificate; defaults to the target host.
+   */
+  targetTLSName?: string;
 }
 export interface Readiness {
   path: string;
+}
+export interface Inspection1 {
+  mode?: "none" | "summary";
 }
 
 /** The Git worktree or project directory that contains tnl.config.ts. */

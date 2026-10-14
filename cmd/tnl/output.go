@@ -11,7 +11,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -72,7 +71,6 @@ type publishOutput struct {
 	command               string
 	target                string
 	current               string
-	inspection            config.RequestInspectionMode
 	demo                  bool
 	guestDemo             bool
 	openURL               func(string) error
@@ -223,9 +221,6 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			if o.guestDemo {
 				fields = append(fields, clioutput.Field{Label: "guest trial", Value: "15 min / about 5 MiB across runs"})
 			}
-			if o.inspection == config.RequestInspectionDetailed {
-				fields = append(fields, clioutput.Field{Label: "request capture", Value: "detailed; headers and bodies saved locally"})
-			}
 			if o.current != "" {
 				fields = append(fields, clioutput.Field{Label: "automatically allowed IP", Value: o.current})
 			}
@@ -293,12 +288,6 @@ func (o *publishOutput) currentIP(ip string) error {
 		return nil
 	}
 	return o.emit(publishEvent{Type: publishEventCurrentIP, IP: ip})
-}
-
-func (o *publishOutput) setRequestInspection(mode config.RequestInspectionMode) {
-	o.mu.Lock()
-	o.inspection = mode
-	o.mu.Unlock()
 }
 
 func (o *publishOutput) setDemo() {
