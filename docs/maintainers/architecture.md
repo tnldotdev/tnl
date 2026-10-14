@@ -675,6 +675,11 @@ website's response schemas.
 `pkg/protocol/tunnelv1` is the handwritten tunnel protocol source of truth.
 `internal/muxsession` provides multiplexed byte streams, `internal/tunnel`
 implements handshakes, and `internal/streamcopy` copies bytes in both directions.
+the admission sideband defines separate authenticated streams from publisher
+to relay and relay to ingress. each header names the visitor connection,
+publish run, connection assignment, and, at ingress, the connected relay lease.
+an acknowledgement can flow back without entering the visitor stream or
+changing visitor TLS bytes.
 
 ## keep local packages focused
 

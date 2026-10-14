@@ -81,6 +81,8 @@ type StreamKind string
 const (
 	VisitorStream            StreamKind = "visitor"
 	InternalForwardingStream StreamKind = "internal_forward"
+	PublisherAdmissionStream StreamKind = "publisher_admission"
+	IngressAdmissionStream   StreamKind = "ingress_admission"
 )
 
 // VisitorStreamHeader identifies one visitor stream opened on a publisher connection.
@@ -114,6 +116,28 @@ type InternalForwardingHeader struct {
 	PublicUrlExpiresAt           time.Time  `json:"public_url_expires_at"`
 	LeaseExpiresAt               time.Time  `json:"lease_expires_at"`
 	IPPolicyDenied               bool       `json:"ip_policy_denied,omitempty"`
+}
+
+// AdmissionHeader binds a publisher decision to one active visitor stream.
+// relay-owned identity fields appear only on the relay-to-ingress stream.
+type AdmissionHeader struct {
+	ProtocolVersion              uint32     `json:"protocol_version"`
+	Kind                         StreamKind `json:"kind"`
+	VisitorConnectionID          string     `json:"visitor_connection_id"`
+	PublicURLID                  string     `json:"public_url_id"`
+	PublishRunID                 string     `json:"publish_run_id"`
+	PublishRunNumber             uint64     `json:"publish_run_number"`
+	PublisherConnectionID        string     `json:"publisher_connection_id"`
+	ConnectionAssignmentRevision uint64     `json:"connection_assignment_revision"`
+	RelayServiceID               string     `json:"relay_service_id"`
+	RelayID                      string     `json:"relay_id,omitempty"`
+	RelayRunID                   string     `json:"relay_run_id,omitempty"`
+	RelayLeaseRevision           uint64     `json:"relay_lease_revision,omitempty"`
+}
+
+type AdmissionResult struct {
+	Type StreamResponseType `json:"type"`
+	Code ErrorCode          `json:"code,omitempty"`
 }
 
 type StreamResponseType string
@@ -181,6 +205,42 @@ func ReadInternalForwardingHeader(reader io.Reader) (InternalForwardingHeader, e
 		return InternalForwardingHeader{}, err
 	}
 	return header, nil
+}
+
+func WriteAdmissionHeader(writer io.Writer, header AdmissionHeader) error {
+	if err := header.Validate(); err != nil {
+		return err
+	}
+	return writeJSONFrame(writer, header, MaxHeaderBytes)
+}
+
+func ReadAdmissionHeader(reader io.Reader) (AdmissionHeader, error) {
+	var header AdmissionHeader
+	if err := readJSONFrame(reader, &header, MaxHeaderBytes); err != nil {
+		return AdmissionHeader{}, err
+	}
+	if err := header.Validate(); err != nil {
+		return AdmissionHeader{}, err
+	}
+	return header, nil
+}
+
+func WriteAdmissionResult(writer io.Writer, result AdmissionResult) error {
+	if err := result.Validate(); err != nil {
+		return err
+	}
+	return writeJSONFrame(writer, result, MaxHeaderBytes)
+}
+
+func ReadAdmissionResult(reader io.Reader) (AdmissionResult, error) {
+	var result AdmissionResult
+	if err := readJSONFrame(reader, &result, MaxHeaderBytes); err != nil {
+		return AdmissionResult{}, err
+	}
+	if err := result.Validate(); err != nil {
+		return AdmissionResult{}, err
+	}
+	return result, nil
 }
 
 func WriteStreamResponse(writer io.Writer, response StreamResponse) error {
@@ -269,6 +329,24 @@ func (h InternalForwardingHeader) Validate() error {
 		return errors.New("tunnelv1: invalid internal forwarding header")
 	}
 	return nil
+}
+
+func (h AdmissionHeader) Validate() error {
+	if h.ProtocolVersion != Version || (h.Kind != PublisherAdmissionStream && h.Kind != IngressAdmissionStream) ||
+		!validIdentifier(h.VisitorConnectionID) || !validIdentifier(h.PublicURLID) || !validIdentifier(h.PublishRunID) ||
+		h.PublishRunNumber == 0 || !validIdentifier(h.PublisherConnectionID) || h.ConnectionAssignmentRevision == 0 ||
+		!validIdentifier(h.RelayServiceID) {
+		return errors.New("tunnelv1: invalid admission header")
+	}
+	if h.Kind == PublisherAdmissionStream && (h.RelayID != "" || h.RelayRunID != "" || h.RelayLeaseRevision != 0) ||
+		h.Kind == IngressAdmissionStream && (!validIdentifier(h.RelayID) || !validIdentifier(h.RelayRunID) || h.RelayLeaseRevision == 0) {
+		return errors.New("tunnelv1: invalid admission relay identity")
+	}
+	return nil
+}
+
+func (r AdmissionResult) Validate() error {
+	return StreamResponse(r).Validate()
 }
 
 func (r StreamResponse) Validate() error {

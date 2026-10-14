@@ -1,0 +1,14 @@
+{
+  "protocol_version": 1,
+  "kind": "ingress_admission",
+  "visitor_connection_id": "visitor_connection_1",
+  "public_url_id": "public_url_1",
+  "publish_run_id": "publish_run_1",
+  "publish_run_number": 2,
+  "publisher_connection_id": "publisher_connection_1",
+  "connection_assignment_revision": 3,
+  "relay_service_id": "relay_service_1",
+  "relay_id": "relay_1",
+  "relay_run_id": "relay_run_1",
+  "relay_lease_revision": 4
+}

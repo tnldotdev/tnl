@@ -68,6 +68,54 @@ func TestDeniedPolicyMarkerSurvivesBothStreamHeaders(t *testing.T) {
 	}
 }
 
+func TestAdmissionDecisionRequiresCurrentPublisherAndRelayIdentity(t *testing.T) {
+	publisher := AdmissionHeader{
+		ProtocolVersion: Version, Kind: PublisherAdmissionStream,
+		VisitorConnectionID: "visitor_connection_1", PublicURLID: "public_url_1", PublishRunID: "publish_run_1",
+		PublishRunNumber: 2, PublisherConnectionID: "publisher_connection_1",
+		ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1",
+	}
+	var wire bytes.Buffer
+	if err := WriteAdmissionHeader(&wire, publisher); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadAdmissionHeader(&wire); err != nil || got != publisher {
+		t.Fatalf("publisher decision = %+v, %v", got, err)
+	}
+	ingress := publisher
+	ingress.Kind, ingress.RelayID, ingress.RelayRunID, ingress.RelayLeaseRevision = IngressAdmissionStream, "relay_1", "relay_run_1", 4
+	if err := WriteAdmissionHeader(&wire, ingress); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadAdmissionHeader(&wire); err != nil || got != ingress {
+		t.Fatalf("ingress decision = %+v, %v", got, err)
+	}
+	for _, invalid := range []AdmissionHeader{
+		{Kind: PublisherAdmissionStream},
+		{ProtocolVersion: Version + 1, Kind: PublisherAdmissionStream, VisitorConnectionID: publisher.VisitorConnectionID,
+			PublicURLID: publisher.PublicURLID, PublishRunID: publisher.PublishRunID, PublishRunNumber: publisher.PublishRunNumber,
+			PublisherConnectionID: publisher.PublisherConnectionID, ConnectionAssignmentRevision: publisher.ConnectionAssignmentRevision,
+			RelayServiceID: publisher.RelayServiceID},
+		func() AdmissionHeader { value := publisher; value.RelayID = "relay_1"; return value }(),
+		func() AdmissionHeader { value := ingress; value.RelayLeaseRevision = 0; return value }(),
+	} {
+		if err := WriteAdmissionHeader(&wire, invalid); err == nil {
+			t.Fatalf("invalid admission header was accepted: %+v", invalid)
+		}
+	}
+	for _, result := range []AdmissionResult{{Type: StreamAccepted}, {Type: StreamRejected, Code: CapacityExceeded}} {
+		if err := WriteAdmissionResult(&wire, result); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := ReadAdmissionResult(&wire); err != nil || got != result {
+			t.Fatalf("admission acknowledgement = %+v, %v", got, err)
+		}
+	}
+	if err := WriteAdmissionResult(&wire, AdmissionResult{Type: StreamAccepted, Code: Internal}); err == nil {
+		t.Fatal("accepted decision carried an error code")
+	}
+}
+
 func TestReadersRejectInvalidMessages(t *testing.T) {
 	for _, test := range []struct {
 		name, payload string

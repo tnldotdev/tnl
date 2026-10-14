@@ -37,6 +37,15 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 	assertGoldenFrame(t, "stream-response", StreamResponse{
 		Type: StreamRejected, Code: StaleConnectionAssignment,
 	}, WriteStreamResponse, ReadStreamResponse)
+	admission := AdmissionHeader{
+		ProtocolVersion: Version, Kind: PublisherAdmissionStream, VisitorConnectionID: "visitor_connection_1",
+		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
+		PublisherConnectionID: "publisher_connection_1", ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1",
+	}
+	assertGoldenFrame(t, "publisher-admission-header", admission, WriteAdmissionHeader, ReadAdmissionHeader)
+	admission.Kind, admission.RelayID, admission.RelayRunID, admission.RelayLeaseRevision = IngressAdmissionStream, "relay_1", "relay_run_1", 4
+	assertGoldenFrame(t, "ingress-admission-header", admission, WriteAdmissionHeader, ReadAdmissionHeader)
+	assertGoldenFrame(t, "admission-result", AdmissionResult{Type: StreamAccepted}, WriteAdmissionResult, ReadAdmissionResult)
 }
 
 func TestInvalidFixtures(t *testing.T) {
@@ -46,6 +55,7 @@ func TestInvalidFixtures(t *testing.T) {
 	}{
 		{"invalid-control-unknown-field", readControl},
 		{"invalid-visitor-missing-field", readVisitor},
+		{"invalid-admission-missing-relay", readAdmission},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := test.read(frame(string(readFixture(t, test.name+".json")))); err == nil {

@@ -149,3 +149,89 @@ func TestInternalForwardingStream(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAdmissionUsesSeparateAuthenticatedStreamsAndAcknowledgement(t *testing.T) {
+	client, server := newAuthenticatedPair(t)
+	ctx := tunnelContext(t)
+	publisher := tunnelv1.AdmissionHeader{
+		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.PublisherAdmissionStream,
+		VisitorConnectionID: "visitor_1", PublicURLID: "url_1", PublishRunID: "run_1", PublishRunNumber: 2,
+		PublisherConnectionID: "connection_1", ConnectionAssignmentRevision: 3, RelayServiceID: "service_1",
+	}
+	respond := tunnelWorker(t, func() { _ = server.Close() }, func() error {
+		incoming, err := server.AcceptPublisherAdmissionStream(ctx)
+		if err != nil {
+			return err
+		}
+		defer incoming.Stream.Close()
+		if incoming.Header != publisher {
+			return errors.New("publisher admission header changed")
+		}
+		if err := incoming.Accept(); err != nil {
+			return err
+		}
+		return tunnelv1.WriteAdmissionResult(incoming.Stream, tunnelv1.AdmissionResult{Type: tunnelv1.StreamRejected, Code: tunnelv1.CapacityExceeded})
+	})
+	stream, err := client.OpenPublisherAdmissionStream(ctx, publisher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	if result, err := tunnelv1.ReadAdmissionResult(stream); err != nil || result.Type != tunnelv1.StreamRejected || result.Code != tunnelv1.CapacityExceeded {
+		t.Fatalf("relay decision = %+v, %v", result, err)
+	}
+	if err := await(t, respond); err != nil {
+		t.Fatal(err)
+	}
+	ingress := publisher
+	ingress.Kind, ingress.RelayID, ingress.RelayRunID, ingress.RelayLeaseRevision = tunnelv1.IngressAdmissionStream, "relay_1", "relay_run_1", 4
+	forward := tunnelWorker(t, func() { _ = client.Close() }, func() error {
+		incoming, err := client.AcceptIngressAdmissionStream(ctx)
+		if err != nil {
+			return err
+		}
+		defer incoming.Stream.Close()
+		if incoming.Header != ingress {
+			return errors.New("ingress admission header changed")
+		}
+		if err := incoming.Accept(); err != nil {
+			return err
+		}
+		return tunnelv1.WriteAdmissionResult(incoming.Stream, tunnelv1.AdmissionResult{Type: tunnelv1.StreamAccepted})
+	})
+	back, err := server.OpenIngressAdmissionStream(ctx, ingress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer back.Close()
+	if result, err := tunnelv1.ReadAdmissionResult(back); err != nil || result.Type != tunnelv1.StreamAccepted {
+		t.Fatalf("ingress acknowledgement = %+v, %v", result, err)
+	}
+	if err := await(t, forward); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAdmissionRejectsWrongStreamDirection(t *testing.T) {
+	client, server := newAuthenticatedPair(t)
+	ctx := tunnelContext(t)
+	header := tunnelv1.AdmissionHeader{
+		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.IngressAdmissionStream,
+		VisitorConnectionID: "visitor_1", PublicURLID: "url_1", PublishRunID: "run_1", PublishRunNumber: 2,
+		PublisherConnectionID: "connection_1", ConnectionAssignmentRevision: 3, RelayServiceID: "service_1",
+		RelayID: "relay_1", RelayRunID: "relay_run_1", RelayLeaseRevision: 4,
+	}
+	serverError := tunnelWorker(t, func() { _ = server.Close() }, func() error {
+		_, err := server.AcceptPublisherAdmissionStream(ctx)
+		return err
+	})
+	_, err := client.OpenIngressAdmissionStream(ctx, header)
+	var protocol *ProtocolError
+	if !errors.As(err, &protocol) || protocol.Code != tunnelv1.InvalidMessage {
+		t.Fatalf("wrong-direction admission stream = %v", err)
+	}
+	var headerError *StreamHeaderError
+	if err := await(t, serverError); !errors.As(err, &headerError) {
+		t.Fatalf("relay did not isolate malformed sideband: %v", err)
+	}
+}

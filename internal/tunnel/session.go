@@ -159,6 +159,26 @@ func (s *Session) OpenInternalForwardingStream(
 	})
 }
 
+// OpenPublisherAdmissionStream sends one admission decision on a separate
+// authenticated stream, leaving visitor TLS and target bytes untouched.
+func (s *Session) OpenPublisherAdmissionStream(ctx context.Context, header tunnelv1.AdmissionHeader) (muxsession.Stream, error) {
+	if header.Kind != tunnelv1.PublisherAdmissionStream {
+		return nil, errors.New("tunnel: publisher admission stream kind is required")
+	}
+	return s.openAcknowledgedStream(ctx, "publisher admission", func(stream muxsession.Stream) error {
+		return tunnelv1.WriteAdmissionHeader(stream, header)
+	})
+}
+
+func (s *Session) OpenIngressAdmissionStream(ctx context.Context, header tunnelv1.AdmissionHeader) (muxsession.Stream, error) {
+	if header.Kind != tunnelv1.IngressAdmissionStream {
+		return nil, errors.New("tunnel: ingress admission stream kind is required")
+	}
+	return s.openAcknowledgedStream(ctx, "ingress admission", func(stream muxsession.Stream) error {
+		return tunnelv1.WriteAdmissionHeader(stream, header)
+	})
+}
+
 // RequestPublisherDrain asks a relay to stop admitting visitor streams and
 // waits until all streams already admitted by that relay have closed.
 func (s *Session) RequestPublisherDrain(ctx context.Context, requestID string) error {
@@ -330,6 +350,46 @@ func (r *IncomingInternalForwardingStream) Accept() error {
 }
 
 func (r *IncomingInternalForwardingStream) Reject(code tunnelv1.ErrorCode) error {
+	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
+}
+
+type IncomingAdmissionStream struct {
+	Stream muxsession.Stream
+	Header tunnelv1.AdmissionHeader
+
+	response incomingStreamResponse
+}
+
+func (s *Session) AcceptPublisherAdmissionStream(ctx context.Context) (*IncomingAdmissionStream, error) {
+	return s.acceptAdmissionStream(ctx, tunnelv1.PublisherAdmissionStream)
+}
+
+func (s *Session) AcceptIngressAdmissionStream(ctx context.Context) (*IncomingAdmissionStream, error) {
+	return s.acceptAdmissionStream(ctx, tunnelv1.IngressAdmissionStream)
+}
+
+func (s *Session) acceptAdmissionStream(ctx context.Context, kind tunnelv1.StreamKind) (*IncomingAdmissionStream, error) {
+	stream, err := s.acceptStream(ctx, string(kind))
+	if err != nil {
+		return nil, err
+	}
+	header, err := tunnelv1.ReadAdmissionHeader(stream)
+	if err == nil && header.Kind != kind {
+		err = errors.New("tunnel: unexpected admission stream kind")
+	}
+	if err != nil {
+		_ = tunnelv1.WriteStreamResponse(stream, tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: tunnelv1.InvalidMessage})
+		_ = stream.Close()
+		return nil, &StreamHeaderError{Kind: string(kind), Err: err}
+	}
+	return &IncomingAdmissionStream{Stream: stream, Header: header, response: incomingStreamResponse{stream: stream}}, nil
+}
+
+func (r *IncomingAdmissionStream) Accept() error {
+	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted})
+}
+
+func (r *IncomingAdmissionStream) Reject(code tunnelv1.ErrorCode) error {
 	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
 }
 
