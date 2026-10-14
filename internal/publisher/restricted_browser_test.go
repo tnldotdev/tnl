@@ -48,7 +48,7 @@ func TestRestrictedBrowserDocumentKeeps403AndOffersOnlyAvailableAction(t *testin
 		status            int
 		action            string
 	}{
-		{name: "signed out", runtime: true, status: 403, action: "sign in"},
+		{name: "signed out", runtime: true, status: 303},
 		{name: "wrong account", runtime: true, signedIn: true, status: 403, action: "switch account"},
 		{name: "no OIDC runtime", status: 403},
 		{name: "authority unavailable", runtime: true, signedIn: true, err: controlclient.ErrUnavailable, status: 503},
@@ -70,8 +70,18 @@ func TestRestrictedBrowserDocumentKeeps403AndOffersOnlyAvailableAction(t *testin
 			}
 			response := restrictedRequest(server, "GET", path, "text/html", "document", "navigate", cookie, true)
 			body := response.Body.String()
-			if response.Code != test.status || response.Header().Get("Location") != "" || strings.Contains(body, "http-equiv") || strings.Contains(body, "<script") {
+			if response.Code != test.status || strings.Contains(body, "http-equiv") || strings.Contains(body, "<script") {
 				t.Fatalf("restricted document = %d %s", response.Code, body)
+			}
+			if test.status == 303 {
+				want := "/__tnl/team/login?automatic=1&return=" + url.QueryEscape(path)
+				if response.Header().Get("Location") != want || response.Header().Get("Cache-Control") != "no-store" {
+					t.Fatalf("missing automatic sign-in: %#v", response.Header())
+				}
+				return
+			}
+			if response.Header().Get("Location") != "" {
+				t.Fatalf("denial redirected: %#v", response.Header())
 			}
 			if test.status == 403 && (response.Header().Get("Tnl-Error-Code") != string(diagnostic.IPPolicyDenied) || !strings.Contains(body, diagnostic.HelpURL(diagnostic.IPPolicyDenied))) {
 				t.Fatal("restricted document lost its diagnostic code or help URL")
@@ -114,6 +124,55 @@ func TestRestrictedAssetsAndAPINeverStartBrowserSignIn(t *testing.T) {
 			t.Fatalf("asset/API got sign-in action: %s %s %d %s", test.method, test.path, response.Code, response.Body.String())
 		}
 	}
+	websocket := httptest.NewRequest(http.MethodGet, "/live", nil)
+	websocket.Host = "route.example"
+	websocket.TLS = &tls.ConnectionState{ServerName: "route.example"}
+	websocket.Header.Set("Accept", "text/html")
+	websocket.Header.Set("Sec-Fetch-Dest", "document")
+	websocket.Header.Set("Sec-Fetch-Mode", "navigate")
+	websocket.Header.Set("Upgrade", "websocket")
+	websocket = websocket.WithContext(context.WithValue(websocket.Context(), denialContextKey{}, true))
+	response := httptest.NewRecorder()
+	server.http.Handler.ServeHTTP(response, websocket)
+	if response.Code != 403 || response.Header().Get("Location") != "" {
+		t.Fatalf("websocket handshake redirected to sign-in: %d %#v", response.Code, response.Header())
+	}
+}
+
+func TestAutomaticBrowserReturnChecksPermissionOnce(t *testing.T) {
+	const original = "/settings?next=%2Ffoo%3Fa%3D1&tab=profile%26name"
+	path := "/__tnl/team/return?to=" + url.QueryEscape(original)
+	access := &browserAccessStub{visitAllowed: true}
+	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", BrowserAccess: &browserAccess{client: access},
+		Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("internal return path reached app") })})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	for _, test := range []struct {
+		name, cookie string
+		allowed      bool
+		status       int
+	}{
+		{name: "cookie did not stick", status: 403},
+		{name: "permitted identity", cookie: browserAccessCookieName + "=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", allowed: true, status: 303},
+		{name: "wrong identity", cookie: browserAccessCookieName + "=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", status: 403},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			access.visitAllowed = test.allowed
+			response := restrictedRequest(server, "GET", path, "text/html", "document", "navigate", test.cookie, true)
+			if response.Code != test.status {
+				t.Fatalf("automatic return = %d %s", response.Code, response.Body.String())
+			}
+			if test.allowed {
+				if response.Header().Get("Location") != original {
+					t.Fatalf("original path changed: %q", response.Header().Get("Location"))
+				}
+			} else if response.Header().Get("Location") != "" || !strings.Contains(response.Body.String(), "this public url is restricted") {
+				t.Fatalf("denied return restarted sign-in: %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
 }
 
 func TestAuthorizedBrowserIPAndShareStillProxyNormally(t *testing.T) {
@@ -152,8 +211,9 @@ func TestAuthorizedBrowserIPAndShareStillProxyNormally(t *testing.T) {
 
 type browserTLSFlowClient struct {
 	PublicURLControlClient
-	allowed atomic.Bool
-	revoked atomic.Bool
+	allowed    atomic.Bool
+	revoked    atomic.Bool
+	returnPath string
 }
 
 func (*browserTLSFlowClient) EnableBrowserAccess(context.Context, string, uint64, credentials.PublishRunToken) error {
@@ -161,7 +221,7 @@ func (*browserTLSFlowClient) EnableBrowserAccess(context.Context, string, uint64
 }
 func (c *browserTLSFlowClient) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
 	c.revoked.Store(false)
-	return controlv1.BrowserHandoffResponse{CookieSecret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", ReturnPath: "/settings?next=%2Ffoo%3Fa%3D1&tab=profile", ExpiresAt: time.Now().Add(time.Hour)}, nil
+	return controlv1.BrowserHandoffResponse{CookieSecret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", ReturnPath: c.returnPath, ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 func (c *browserTLSFlowClient) CheckBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserAccessResponse, error) {
 	if c.revoked.Load() {
@@ -182,7 +242,7 @@ func TestRestrictedBrowserSignInAndSwitchAccountOverRealTLS(t *testing.T) {
 		response.WriteHeader(200)
 	}))
 	defer upstream.Close()
-	control := &browserTLSFlowClient{}
+	control := &browserTLSFlowClient{returnPath: path}
 	control.allowed.Store(true)
 	setup := controlv1.PublishRunSetup{PublicUrl: controlv1.PublicURL{Id: "url_app", Purpose: controlv1.App, PublicUrlScope: controlv1.Member}, PublishRun: controlv1.PublishRun{Id: "pr_app", PublishRunNumber: 1}}
 	browser := browserAccessForRun(Config{Control: control, ControlURL: "https://control.example", BrowserLoginAvailable: true, Purpose: controlv1.App}, setup, "publisher-token")
@@ -244,21 +304,27 @@ func TestRestrictedBrowserSignInAndSwitchAccountOverRealTLS(t *testing.T) {
 		}
 		return response, string(body)
 	}
-	response, body := exchange("GET", path, "", "")
-	login := "/__tnl/team/login?return=" + url.QueryEscape(path)
-	if response.StatusCode != 403 || response.Header.Get("Location") != "" || !strings.Contains(html.UnescapeString(body), login) {
-		t.Fatalf("TLS document automatically authenticated: %d %s", response.StatusCode, body)
+	response, _ := exchange("GET", path, "", "")
+	login := "/__tnl/team/login?automatic=1&return=" + url.QueryEscape(path)
+	if response.StatusCode != 303 || response.Header.Get("Location") != login {
+		t.Fatalf("TLS document did not start sign-in: %d %q", response.StatusCode, response.Header.Get("Location"))
 	}
 	response, _ = exchange("GET", login, "", "")
 	authorize, err := url.Parse(response.Header.Get("Location"))
-	if err != nil || response.StatusCode != 303 || authorize.Host != "control.example" || authorize.Query().Get("return_path") != path || authorize.Query().Has("preview_id") {
+	automaticReturn := "/__tnl/team/return?to=" + url.QueryEscape(path)
+	if err != nil || response.StatusCode != 303 || authorize.Host != "control.example" || authorize.Query().Get("return_path") != automaticReturn || authorize.Query().Has("preview_id") {
 		t.Fatalf("ordinary publish login scope = %d %q", response.StatusCode, response.Header.Get("Location"))
 	}
+	control.returnPath = automaticReturn
 	response, _ = exchange("GET", "/__tnl/team/handoff/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", "")
-	if response.StatusCode != 303 || response.Header.Get("Location") != path || len(response.Cookies()) != 1 || !tracked.deadlineIsClear() {
+	if response.StatusCode != 303 || response.Header.Get("Location") != automaticReturn || len(response.Cookies()) != 1 || !tracked.deadlineIsClear() {
 		t.Fatal("handoff did not install a host-bound cookie and clear the denied TLS deadline")
 	}
 	cookie := "app_session=ok; " + response.Cookies()[0].Name + "=" + response.Cookies()[0].Value
+	response, _ = exchange("GET", automaticReturn, cookie, "")
+	if response.StatusCode != 303 || response.Header.Get("Location") != path {
+		t.Fatalf("authorized handoff did not return to original path: %d %q", response.StatusCode, response.Header.Get("Location"))
+	}
 	response, _ = exchange("GET", path, cookie, "")
 	if response.StatusCode != 200 {
 		t.Fatalf("owner browser did not reach app: %d", response.StatusCode)
@@ -267,6 +333,10 @@ func TestRestrictedBrowserSignInAndSwitchAccountOverRealTLS(t *testing.T) {
 		t.Fatalf("app received changed URL or browser secret: %q", got)
 	}
 	control.allowed.Store(false)
+	response, body := exchange("GET", automaticReturn, cookie, "")
+	if response.StatusCode != 403 || response.Header.Get("Location") != "" || !strings.Contains(body, "switch account") {
+		t.Fatalf("denied handoff looped to app: %d %s", response.StatusCode, body)
+	}
 	response, body = exchange("GET", path, cookie, "")
 	switchPath := "/__tnl/team/switch-account?return=" + url.QueryEscape(path)
 	if response.StatusCode != 403 || response.Header.Get("Location") != "" || !strings.Contains(body, `method="post"`) || !strings.Contains(html.UnescapeString(body), switchPath) || strings.Contains(body, "private account name") {
@@ -310,6 +380,8 @@ func TestBrowserSignInFailuresDoNotRedirectOrClearSession(t *testing.T) {
 		{name: "switch logout unavailable", method: "POST", path: "/__tnl/team/switch-account?return=%2Fsettings", client: browserAccessStub{logoutErr: controlclient.ErrUnavailable}, status: 503},
 		{name: "invalid switch path", method: "POST", path: "/__tnl/team/switch-account?return=%2F%252Fother.example", status: 400},
 		{name: "invalid login prompt", method: "GET", path: "/__tnl/team/login?return=%2Fsettings&prompt=login", status: 400},
+		{name: "invalid automatic login mode", method: "GET", path: "/__tnl/team/login?return=%2Fsettings&automatic=maybe", status: 400},
+		{name: "unsafe automatic return", method: "GET", path: "/__tnl/team/return?to=%2F%2Fother.example", status: 400},
 		{name: "unsafe next host", method: "GET", path: "/__tnl/team/handoff/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", client: browserAccessStub{next: "http://other.example/"}, status: 503},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -104,6 +105,17 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			http.Error(response, "invalid return path", http.StatusBadRequest)
 			return true
 		}
+		if automatic := request.URL.Query().Get("automatic"); automatic != "" {
+			if automatic != "1" {
+				http.Error(response, "invalid browser sign-in mode", http.StatusBadRequest)
+				return true
+			}
+			path = root + "return?to=" + url.QueryEscape(path)
+			if !validBrowserPath(path) {
+				http.Error(response, "browser return path is too long", http.StatusBadRequest)
+				return true
+			}
+		}
 		endpoint, err := url.Parse(a.controlURL + "/v1/browser/login")
 		if err != nil {
 			http.Error(response, "sign-in is unavailable", http.StatusServiceUnavailable)
@@ -124,6 +136,27 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 		}
 		endpoint.RawQuery = query.Encode()
 		http.Redirect(response, request, endpoint.String(), http.StatusSeeOther)
+		return true
+	case request.URL.Path == root+"return" && request.Method == http.MethodGet:
+		path := request.URL.Query().Get("to")
+		if !validBrowserPath(path) {
+			http.Error(response, "invalid browser return path", http.StatusBadRequest)
+			return true
+		}
+		access, signedIn, err := a.check(request)
+		if err != nil {
+			http.Error(response, "browser access is unavailable", http.StatusServiceUnavailable)
+			return true
+		}
+		if !signedIn || !access.VisitAllowed {
+			action := diagnostic.SecondaryAction{Label: "sign in", Path: root + "login?return=" + url.QueryEscape(path)}
+			if signedIn {
+				action.Label, action.Path, action.Post = "switch account", root+"switch-account?return="+url.QueryEscape(path), true
+			}
+			diagnostic.WriteRestrictedBrowserHTTP(response, request, action)
+			return true
+		}
+		http.Redirect(response, request, path, http.StatusSeeOther)
 		return true
 	case strings.HasPrefix(request.URL.Path, root+"handoff/") && request.Method == http.MethodGet:
 		ticket := strings.TrimPrefix(request.URL.Path, root+"handoff/")
@@ -220,4 +253,13 @@ func validBrowserPath(path string) bool {
 	}
 	parsed, err := url.ParseRequestURI(path)
 	return err == nil && !parsed.IsAbs() && parsed.Host == "" && !strings.HasPrefix(parsed.Path, "//") && !strings.ContainsAny(parsed.Path, "\\\r\n")
+}
+
+func automaticBrowserNavigation(request *http.Request) bool {
+	if request.Header.Get("Sec-Fetch-Mode") != "navigate" || request.Header.Get("Sec-Fetch-Dest") != "document" ||
+		request.Header.Get("Upgrade") != "" || strings.HasPrefix(request.URL.Path, "/__tnl/") ||
+		!diagnostic.IsHTMLDocumentRequest(request) || !validBrowserPath(request.URL.RequestURI()) {
+		return false
+	}
+	return validBrowserPath("/__tnl/team/return?to=" + url.QueryEscape(request.URL.RequestURI()))
 }

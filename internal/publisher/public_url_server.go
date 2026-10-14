@@ -313,6 +313,12 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				}
 				if !allowed {
 					if config.BrowserAccess != nil && diagnostic.IsHTMLDocumentRequest(request) && validBrowserPath(request.URL.RequestURI()) {
+						if !browserSignedIn && automaticBrowserNavigation(request) {
+							response.Header().Set("Cache-Control", "no-store")
+							response.Header().Set("Referrer-Policy", "no-referrer")
+							http.Redirect(response, request, "/__tnl/team/login?automatic=1&return="+url.QueryEscape(request.URL.RequestURI()), http.StatusSeeOther)
+							return
+						}
 						action := diagnostic.SecondaryAction{Label: "sign in", Path: "/__tnl/team/login?return=" + url.QueryEscape(request.URL.RequestURI())}
 						if browserSignedIn {
 							action.Label, action.Path, action.Post = "switch account", "/__tnl/team/switch-account?return="+url.QueryEscape(request.URL.RequestURI()), true

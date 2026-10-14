@@ -135,9 +135,11 @@ association.
 
 `browserVisitAllowed` makes the separate visit decision from the enabled public
 URL and current membership. A member public URL admits its owning membership;
-a shared public URL admits current team admins and owners. Other members need
-the session preview's current team access grant. Team administration alone does
-not admit someone to another member's public URL. The control response calls
+a shared public URL admits current team admins and owners. An exact team share
+admits current members, while an accepted exact identity invitation admits its
+recipient without team membership. Other members need the session preview's
+current HTTP team access grant. Team administration alone does not admit
+someone to another member's public URL. The control response calls
 this decision `visit_allowed`; a signed-in
 identity without that permission may still visit through IP policy or a share.
 
@@ -157,13 +159,17 @@ capability, identity, and visit permission through commit. A run that stops or
 is replaced during authority I/O cannot use the earlier capability preflight to
 admit a visitor. `BrowserAuthorization` remains a URL-scoped datastore helper.
 
-Denied browser documents keep the policy diagnostic's 403 status and help URL.
-When the app publisher installed browser access, the diagnostic offers a small
-sign-in action; it never starts authentication automatically. A signed-in
-identity without visit permission gets a same-origin POST account-switch action.
-The publisher revokes the browser session before starting control login with
-`prompt=select_account`. API, asset, and non-navigation requests retain the
-ordinary diagnostic. Browser authorization failures remain unavailable responses.
+For a restricted top-level HTML navigation without a browser cookie, the app
+publisher redirects through control and the configured OIDC provider. The one-time
+handoff installs a host-bound cookie, then the publisher checks current access
+on an internal return path before redirecting to the original page. If the
+cookie is missing or the identity lacks access, that path returns a 403 with a
+sign-in or account-switch action instead of restarting the redirect. The
+publisher revokes the browser session before switching accounts with
+`prompt=select_account`. HTML requests without navigation metadata keep the
+403 and a manual sign-in action. API calls, assets, and WebSocket handshakes
+retain the ordinary diagnostic. Browser authorization failures remain
+unavailable responses.
 
 `reviewerAccess` in `reviewer_access.go` composes those decisions for feedback.
 An allowed IP or current share admits a signed-in nonmember with verified
