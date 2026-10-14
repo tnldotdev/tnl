@@ -19,8 +19,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"go.yaml.in/yaml/v3"
 )
 
