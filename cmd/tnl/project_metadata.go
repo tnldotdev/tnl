@@ -16,7 +16,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
+	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func runConfigGenerate(
@@ -142,13 +144,53 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 		if err != nil {
 			return projectmeta.Metadata{}, err
 		}
-		_, serviceContext, err := r.resolveContext(ctx, effective)
+		client, serviceContext, err := r.resolveContext(ctx, effective)
 		if err != nil {
 			return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 		}
 		serviceMetadata, err := configuredProjectService(name, r.project.Worktree, effective, serviceContext)
 		if err != nil {
 			return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
+		}
+		protocol := config.ServiceProtocol(effective.Publish)
+		if protocol != "http" {
+			if effective.Tunnel != nil && effective.Tunnel.Ephemeral != nil && *effective.Tunnel.Ephemeral {
+				return projectmeta.Metadata{}, fmt.Errorf("service %q: ephemeral TCP public URLs cannot have saved project metadata", name)
+			}
+			server, err := r.server(ctx, effective.Server)
+			if err != nil {
+				return projectmeta.Metadata{}, err
+			}
+			selectedTeam := ""
+			if effective.Team != nil {
+				selectedTeam = *effective.Team
+			}
+			services, err := preparePublisherServices(ctx, r.state, server, serviceMetadata.URL, "", "", selectedTeam, false, client)
+			if err != nil {
+				return projectmeta.Metadata{}, fmt.Errorf("service %q: select public URL: %w", name, err)
+			}
+			flags := tunnelFlags{}
+			applyTunnelConfiguration(&flags, effective.Tunnel, protocol)
+			policy, err := resolveIPPolicy(ctx, client.Control, flags.AllowIP, flags.AllowAllIPs)
+			if err != nil {
+				return projectmeta.Metadata{}, fmt.Errorf("service %q: resolve visitor policy: %w", name, err)
+			}
+			target := ""
+			if effective.Publish != nil && effective.Publish.Target != nil {
+				target = string(*effective.Publish.Target)
+			}
+			publication := services.config(target, policy.prefixes, publisher.ApplicationLimits{})
+			publication.ServiceProtocol = controlv1.PublicURLServiceProtocol(protocol)
+			saved, err := publisher.ReservePublicURL(ctx, publication)
+			if err != nil {
+				return projectmeta.Metadata{}, fmt.Errorf("service %q: reserve public URL: %w", name, err)
+			}
+			serviceMetadata.URL, err = savedPublicAddress(saved)
+			if err != nil {
+				return projectmeta.Metadata{}, err
+			}
+			serviceMetadata.Protocol = protocol
+			serviceMetadata.Port = saved.PublicPort
 		}
 		if paths := config.ServicePaths(r.project.Config.Services[name]); len(paths) > 0 {
 			serviceMetadata.Paths = make(map[string]projectmeta.Path, len(paths))

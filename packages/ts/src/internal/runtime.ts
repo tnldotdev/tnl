@@ -4,12 +4,24 @@ const maximumRuntimeBytes = 64 * 1024;
 const maximumServices = 32;
 const serviceNamePattern = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
-export interface ProjectServiceMetadata {
+export interface ProjectHTTPServiceMetadata {
   readonly namespace: string;
   readonly hostname: string;
   readonly url: `https://${string}`;
+  readonly protocol?: "http";
   readonly paths?: Readonly<Record<string, ProjectPathMetadata | undefined>>;
 }
+
+export interface ProjectTCPServiceMetadata {
+  readonly namespace: string;
+  readonly hostname: string;
+  readonly url: string;
+  readonly protocol: "postgres" | "mysql" | "redis" | "ssh";
+  readonly port: number;
+  readonly paths?: never;
+}
+
+export type ProjectServiceMetadata = ProjectHTTPServiceMetadata | ProjectTCPServiceMetadata;
 
 export interface ProjectPathMetadata {
   readonly service: string;
@@ -91,7 +103,12 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     const service = record(value, `${description} service ${JSON.stringify(name)}`);
     exactKeys(
       service,
-      ["hostname", "namespace", "url", ...["paths"].filter((key) => Object.hasOwn(service, key))],
+      [
+        "hostname",
+        "namespace",
+        "url",
+        ...["paths", "protocol", "port"].filter((key) => Object.hasOwn(service, key)),
+      ],
       `${description} service ${JSON.stringify(name)}`,
     );
     const serviceNamespace = requiredHostname(
@@ -102,8 +119,24 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       service.hostname,
       `${description} service ${JSON.stringify(name)} hostname`,
     );
-    const url: `https://${string}` = `https://${hostname}`;
-    if (service.url !== url) {
+    const protocol = service.protocol ?? "http";
+    const tcp =
+      protocol === "postgres" || protocol === "mysql" || protocol === "redis" || protocol === "ssh";
+    if (protocol !== "http" && !tcp) {
+      throw new TnlError("sdk.runtime_invalid");
+    }
+    const port = service.port;
+    const url = tcp ? `${hostname}:${port}` : `https://${hostname}`;
+    if (
+      service.url !== url ||
+      (tcp &&
+        (!Number.isInteger(port) ||
+          typeof port !== "number" ||
+          port < 1024 ||
+          port > 65535 ||
+          service.paths !== undefined)) ||
+      (!tcp && port !== undefined)
+    ) {
       throw new TnlError("sdk.runtime_invalid");
     }
     if (hostnames.has(hostname)) {
@@ -146,12 +179,21 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       }
       paths = Object.freeze(parsedPaths);
     }
-    services[name] = Object.freeze({
-      namespace: serviceNamespace,
-      hostname,
-      url,
-      ...(paths === undefined ? {} : { paths }),
-    });
+    services[name] = tcp
+      ? (Object.freeze({
+          namespace: serviceNamespace,
+          hostname,
+          url,
+          protocol,
+          port: port as number,
+        }) as ProjectTCPServiceMetadata)
+      : Object.freeze({
+          namespace: serviceNamespace,
+          hostname,
+          url: url as `https://${string}`,
+          ...(service.protocol === undefined ? {} : { protocol: "http" as const }),
+          ...(paths === undefined ? {} : { paths }),
+        });
   }
   for (const service of Object.values(services)) {
     for (const mount of Object.values(service.paths ?? {})) {

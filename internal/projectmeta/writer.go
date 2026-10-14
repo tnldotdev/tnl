@@ -140,6 +140,12 @@ func renderDeclarations(metadata Metadata) []byte {
 		output.WriteString(";\n        readonly url: ")
 		output.WriteString(typeScriptString(service.URL))
 		output.WriteString(";\n")
+		if service.Protocol != "" {
+			output.WriteString("        readonly protocol: " + typeScriptString(service.Protocol) + ";\n")
+		}
+		if service.Port != nil {
+			output.WriteString("        readonly port: " + fmt.Sprint(*service.Port) + ";\n")
+		}
 		if len(service.Paths) > 0 {
 			output.WriteString("        readonly paths: {\n")
 			prefixes := make([]string, 0, len(service.Paths))

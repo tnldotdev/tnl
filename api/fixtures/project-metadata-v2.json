@@ -165,6 +165,44 @@
       }
     },
     {
+      "name": "saved postgres public address",
+      "valid": true,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "version": 2,
+        "serviceDirectories": { "orders": "." },
+        "services": {
+          "orders": {
+            "namespace": "member.example",
+            "hostname": "orders.member.example",
+            "url": "orders.member.example:15432",
+            "protocol": "postgres",
+            "port": 15432
+          }
+        }
+      }
+    },
+    {
+      "name": "postgres address cannot use private docker port",
+      "valid": false,
+      "metadata": {
+        "namespace": "member.example",
+        "dev": false,
+        "version": 2,
+        "serviceDirectories": { "orders": "." },
+        "services": {
+          "orders": {
+            "namespace": "member.example",
+            "hostname": "orders.member.example",
+            "url": "orders.member.example:5432",
+            "protocol": "postgres",
+            "port": 15432
+          }
+        }
+      }
+    },
+    {
       "name": "one service",
       "valid": true,
       "metadata": {

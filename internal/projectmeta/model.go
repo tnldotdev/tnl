@@ -4,15 +4,18 @@ package projectmeta
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
 const Version = 2
@@ -25,6 +28,8 @@ type Service struct {
 	Namespace string          `json:"namespace"`
 	Hostname  string          `json:"hostname"`
 	URL       string          `json:"url"`
+	Protocol  string          `json:"protocol,omitempty"`
+	Port      *int            `json:"port,omitempty"`
 	Paths     map[string]Path `json:"paths,omitempty"`
 }
 
@@ -186,10 +191,17 @@ func (m Metadata) Validate() error {
 			return fmt.Errorf("services %q and %q resolve to duplicate hostname %s", previous, name, service.Hostname)
 		}
 		seenHostnames[service.Hostname] = name
-		parsed, err := url.Parse(service.URL)
-		if err != nil || parsed.Scheme != "https" || parsed.Host != service.Hostname || parsed.Path != "" ||
-			parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
-			return fmt.Errorf("service %q URL must be exactly https://%s", name, service.Hostname)
+		if service.Protocol == "" || service.Protocol == "http" {
+			parsed, err := url.Parse(service.URL)
+			if service.Port != nil || err != nil || parsed.Scheme != "https" || parsed.Host != service.Hostname || parsed.Path != "" ||
+				parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
+				return fmt.Errorf("service %q URL must be exactly https://%s", name, service.Hostname)
+			}
+		} else {
+			if !validTCPProtocol(service.Protocol) || service.Port == nil || !tcpport.Valid(*service.Port) ||
+				service.URL != net.JoinHostPort(service.Hostname, strconv.Itoa(*service.Port)) || len(service.Paths) != 0 {
+				return fmt.Errorf("service %q URL must be a public TCP hostname and port without HTTP paths", name)
+			}
 		}
 		if len(service.Paths) > 32 {
 			return fmt.Errorf("service %q may contain at most 32 path mounts", name)
@@ -239,6 +251,14 @@ func (m Metadata) Validate() error {
 		seenHostnames[alias.Hostname] = "alias " + name
 	}
 	return nil
+}
+
+func validTCPProtocol(value string) bool {
+	switch value {
+	case "postgres", "mysql", "redis", "ssh":
+		return true
+	}
+	return false
 }
 
 func canonicalHostname(kind, value string) error {

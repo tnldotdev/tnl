@@ -39,10 +39,10 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	}
 	for _, command := range []string{
 		"init", "publish", "status", "wait", "watch", "auth status", "auth login start", "auth login wait", "auth login inspect", "auth login cancel", "auth logout",
-		"config path", "config check", "config generate", "telemetry on", "telemetry off", "telemetry status",
+		"config path", "config check", "config generate", "project label", "telemetry on", "telemetry off", "telemetry status",
 		"team current", "team list", "team use", "team create", "team members", "team invite create",
 		"team invite list", "team invite revoke", "team join", "team member set-role", "team member remove",
-		"domain claim", "domain default", "domain list", "domain status", "domain release", "url list", "url delete",
+		"domain claim", "domain default", "domain list", "domain status", "domain release", "url list", "url show", "url delete",
 		"admin server status", "admin relays list", "admin relays drain", "admin maintenance list",
 		"admin maintenance allow", "admin maintenance block",
 	} {
@@ -68,7 +68,7 @@ func TestTeamScopedCommandsAcceptExplicitTeam(t *testing.T) {
 		{"domain", "list"}, {"domain", "claim", "example.test"},
 		{"domain", "default", "example.test"}, {"domain", "status", "example.test"},
 		{"domain", "release", "example.test"},
-		{"url", "list"}, {"url", "delete", "url_1"},
+		{"url", "list"}, {"url", "show", "orders"}, {"url", "delete", "url_1"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var flags cli
