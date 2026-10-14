@@ -161,13 +161,22 @@ app registration, status, and resumable events.
 The owner and app-registration credentials have different scopes. An accepted
 registration reports a bound listener; public readiness remains a separate
 observation. The API returns browser-safe project metadata but does not carry
-visitor bytes or expose the control session to an app. The app runtime still
-uses its existing private Unix socket until the following transport change
-adopts this contract. Status and event pages share one project journal: a
-cursor marks an exclusive position, not a TCP-specific event counter. Once a
-cursor has fallen out of retention, the client reads a fresh status snapshot
-before resuming. The wire cursor stays opaque when the local journal moves to
-SQLite.
+visitor bytes or expose the control session to an app. Status and event pages
+share one project journal: a cursor marks an exclusive position, not a
+TCP-specific counter. Expired cursors require a fresh status snapshot; the
+wire cursor remains opaque when the local journal moves to SQLite. The host
+publisher also binds an OS-assigned loopback TCP port with a private endpoint
+descriptor. Existing SDK calls use the Unix socket until their clients adopt
+the local publisher API.
+
+The host lock, owner descriptor, and per-app service descriptors live in the
+verified private `run/` directory under canonical client state. Each app
+credential can prepare and maintain only its own service; the owner credential
+can read project status and events. Processes running as the same OS user can
+also read the owner's private file, so file placement is the OS trust boundary.
+The Unix socket stays under `/tmp` to fit macOS socket path limits until that
+transport is retired.
+
 Named CLI publication leases need the same manager ownership and journal as
 app registrations; add their API operations when those workers use the unified
 SQLite journal, rather than introducing a second TCP event history.

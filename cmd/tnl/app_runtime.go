@@ -106,6 +106,14 @@ func runtimeSocket(project, state string) (string, error) {
 	return filepath.Join(directory, "app-"+clientruntime.Identity(project, state)+".sock"), nil
 }
 
+func runtimeKey(project, state string) (string, error) {
+	directory, err := clientstate.RuntimeDir(state)
+	if err != nil {
+		return "", failure.Wrap("open local publisher runtime directory", failure.ClientStateUnavailable, err)
+	}
+	return filepath.Join(directory, "app-"+clientruntime.Identity(project, filepath.Dir(directory))), nil
+}
+
 func privateRuntimeDirectoryAt(base string) (string, error) {
 	directory := filepath.Join(base, fmt.Sprintf("tnl-%d", os.Getuid()))
 	if err := os.Mkdir(directory, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
@@ -212,7 +220,11 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	if err != nil {
 		return err
 	}
-	lock, err := filelock.Acquire(socket+".lock", filelock.Nonblocking, os.Getuid())
+	key, err := runtimeKey(project.Root, root)
+	if err != nil {
+		return err
+	}
+	lock, err := filelock.Acquire(key+".lock", filelock.Nonblocking, os.Getuid())
 	if errors.Is(err, filelock.ErrLocked) {
 		return nil
 	}
@@ -253,6 +265,15 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	defer runtime.manager.Close()
 	runtime.adhoc = clientruntime.NewAdHocManager(ctx, runtime.publishAdHoc, runtime.manager.Alive, runtime.manager.BeginPreparation)
 	defer runtime.adhoc.Close()
+	appServices := make([]string, 0)
+	for _, service := range configuredRuntimeServices(project) {
+		appServices = append(appServices, service.Name)
+	}
+	tcpServer, tcpDone, err := startRuntimeTCP(key, runtime.localHandler(), appServices...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stopRuntimeTCP(context.Background(), tcpServer, key, appServices...) }()
 	server := &http.Server{Handler: runtime.handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
@@ -273,6 +294,8 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 				return nil
 			}
 			return err
+		case err := <-tcpDone:
+			return fmt.Errorf("serve local publisher TCP API: %w", err)
 		case <-ticker.C:
 			if os.Getppid() != parentPID {
 				return nil
