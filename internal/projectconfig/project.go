@@ -162,12 +162,6 @@ func (p Project) EffectiveService(name string) (config.TNL, error) {
 		}
 		result.Tunnel.Open = service.HTTP.Open
 	}
-	if service.TCP != nil && service.TCP.VisitorTLS != nil {
-		if result.Tunnel == nil {
-			result.Tunnel = &config.Tunnel{}
-		}
-		result.Tunnel.VisitorTLS = service.TCP.VisitorTLS
-	}
 	return result, nil
 }
 
@@ -203,9 +197,6 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 	}
 	if override.Ephemeral != nil {
 		result.Ephemeral = override.Ephemeral
-	}
-	if override.VisitorTLS != nil {
-		result.VisitorTLS = override.VisitorTLS
 	}
 	if override.Limits != nil {
 		if result.Limits == nil {

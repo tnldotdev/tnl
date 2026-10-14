@@ -146,7 +146,6 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, output *publi
 	configuration.ServiceProtocol = protocol
 	configuration.TargetOptions = targetOptions
 	configuration.TargetTLS, configuration.TargetTLSName = flags.TargetTLS, flags.TargetTLSName
-	configuration.VisitorTLSPassthrough = flags.VisitorTLSPassthrough
 	configuration.PreserveSavedURLSettings = true
 	configuration.ControlURL = auth.ServerEndpoint
 	configuration.BrowserLoginAvailable = auth.Discovery.BrowserLoginAvailable != nil && *auth.Discovery.BrowserLoginAvailable
@@ -157,7 +156,7 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, output *publi
 	}
 	defer recorder.Close()
 	configuration.ObserveRequest = httpObservation(recorder)
-	if (protocol == controlv1.Mysql || protocol == controlv1.Postgres) && !configuration.VisitorTLSPassthrough {
+	if protocol == controlv1.Mysql || protocol == controlv1.Postgres {
 		configuration.ObserveDatabase = sqlObservation(recorder, flags.InspectionMode)
 	}
 	configuration.Logf = output.logf
@@ -176,7 +175,7 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, output *publi
 
 func runEnrolledAdHoc(ctx context.Context, flags publishCommand, output *publishOutput, telemetry telemetryReporter,
 	state *clientstate.Database, auth *clientauth.Client, owner *publisherauth.Owner, namespace publisherauth.Namespace, server string) (result error) {
-	if flags.Protocol != "" && flags.Protocol != "http" || flags.TargetCAFile != "" || flags.TargetTLS || flags.VisitorTLSPassthrough {
+	if flags.Protocol != "" && flags.Protocol != "http" || flags.TargetCAFile != "" || flags.TargetTLS {
 		return failure.Wrap("validate namespace publisher", failure.InvalidTunnelFlags,
 			errors.New("a namespace enrollment publishes an HTTP target"))
 	}

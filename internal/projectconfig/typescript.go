@@ -261,7 +261,6 @@ var typeScriptKeyMappings = map[string]string{
 	"container_port":        "containerPort",
 	"target_tls":            "targetTLS",
 	"target_tls_name":       "targetTLSName",
-	"visitor_tls":           "visitorTLS",
 	"strip_prefix":          "stripPrefix",
 	"public_url":            "publicURL",
 }

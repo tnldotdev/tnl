@@ -198,11 +198,6 @@ func servicesSchema() *jsonschema.Schema {
 		if allowTCP {
 			limitProperties.Set("tcp", workLimitsSchema())
 			variant.Set("target", &jsonschema.Schema{OneOf: targetVariants[1:]})
-			if protocol == "postgres" || protocol == "mysql" {
-				tcp := jsonschema.NewProperties()
-				tcp.Set("visitor_tls", &jsonschema.Schema{Type: "string", Enum: []any{"terminate", "passthrough"}})
-				variant.Set("tcp", &jsonschema.Schema{Type: "object", Properties: tcp, AdditionalProperties: jsonschema.FalseSchema})
-			}
 		}
 		tunnel.Properties.Set("limits", &jsonschema.Schema{Type: "object", Properties: limitProperties, AdditionalProperties: jsonschema.FalseSchema})
 		variant.Set("tunnel", tunnel)

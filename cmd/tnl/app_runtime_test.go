@@ -199,9 +199,9 @@ func TestDatabaseServicesWaitForPublicReadinessWithoutHTTPProbe(t *testing.T) {
 		return clientruntime.Observation{}
 	}
 	publicReady := true
-	tcpProbe := func(_ context.Context, service clientruntime.Service, passthrough bool) error {
-		if service.PublicURL != "orders.example:15432" || service.ServiceProtocol != "postgres" || passthrough {
-			t.Errorf("public TCP probe used the wrong run or protocol: %+v, passthrough=%t", service, passthrough)
+	tcpProbe := func(_ context.Context, service clientruntime.Service) error {
+		if service.PublicURL != "orders.example:15432" || service.ServiceProtocol != "postgres" {
+			t.Errorf("public TCP probe used the wrong run or protocol: %+v", service)
 		}
 		if !publicReady {
 			return errors.New("public visitor path unavailable")

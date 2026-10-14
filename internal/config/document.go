@@ -76,7 +76,6 @@ type Service struct {
 	Protocol   *string              `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh" jsonschema_description:"Local service protocol; defaults to http."`
 	Target     *ServiceTarget       `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"How the publisher finds this service."`
 	HTTP       *HTTPService         `json:"http,omitempty" yaml:"http,omitempty" jsonschema_description:"HTTP path mounts and browser opening."`
-	TCP        *TCPService          `json:"tcp,omitempty" yaml:"tcp,omitempty"`
 	Tunnel     *Tunnel              `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
 	Publish    *Publish             `json:"-" yaml:"-"`
 	Readiness  *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty"`
@@ -94,11 +93,6 @@ type ServiceTarget struct {
 type HTTPService struct {
 	Open  *bool                `json:"open,omitempty" yaml:"open,omitempty"`
 	Paths map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty"`
-}
-
-// TCPService selects visitor TLS behavior for PostgreSQL and MySQL.
-type TCPService struct {
-	VisitorTLS *string `json:"visitor_tls,omitempty" yaml:"visitor_tls,omitempty" jsonschema:"enum=terminate,enum=passthrough"`
 }
 
 // TargetTLS enables verified TLS to a private target.
@@ -168,7 +162,6 @@ type Tunnel struct {
 	AllowIP     []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
 	AllowAllIPs *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
 	Ephemeral   *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
-	VisitorTLS  *string  `json:"-" yaml:"-"`
 	Limits      *Limits  `json:"limits,omitempty" yaml:"limits,omitempty"`
 }
 

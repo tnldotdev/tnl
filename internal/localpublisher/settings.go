@@ -215,8 +215,3 @@ func presentFailure(err error) presentedFailure {
 	definition, _ := failure.DefinitionFor(failure.Unexpected)
 	return presentedFailure{failure.Unexpected, definition.Message}
 }
-
-func tcpVisitorTLSPassthrough(project projectConfiguration, name string) bool {
-	service := project.Config.Services[name]
-	return service.TCP != nil && service.TCP.VisitorTLS != nil && *service.TCP.VisitorTLS == "passthrough"
-}

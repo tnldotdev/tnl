@@ -7,6 +7,5 @@
   "public_url": "publicURL",
   "server_name": "serverName",
   "source_ips": "sourceIPs",
-  "strip_prefix": "stripPrefix",
-  "visitor_tls": "visitorTLS"
+  "strip_prefix": "stripPrefix"
 }

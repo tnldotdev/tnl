@@ -577,25 +577,18 @@ func TestProjectDatabaseServiceAppliesProtocolAndTargetTLS(t *testing.T) {
 	}
 }
 
-func TestProjectServiceTargetAppliesAddressAndVisitorTLS(t *testing.T) {
-	protocol, mode, tlsName, caFile := "postgres", "terminate", "db.internal", "./ca.pem"
+func TestProjectServiceTargetAppliesAddressAndTargetTLS(t *testing.T) {
+	protocol, tlsName, caFile := "postgres", "db.internal", "./ca.pem"
 	target := config.Target("db.internal:5432")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
 		"orders": {
 			Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{ServerName: &tlsName, CAFile: &caFile}},
-			TCP: &config.TCPService{VisitorTLS: &mode},
 		},
 	}}}}
 	flags := publishCommand{Target: "orders"}
 	if err := project.applyPublish(&flags); err != nil || flags.Protocol != "postgres" || flags.Target != "db.internal:5432" || !flags.TargetTLS ||
-		flags.TargetTLSName != tlsName || flags.TargetCAFile != caFile || flags.VisitorTLSPassthrough {
+		flags.TargetTLSName != tlsName || flags.TargetCAFile != caFile {
 		t.Fatalf("named target = %+v, %v", flags, err)
-	}
-	mode = "passthrough"
-	project.Config.Services["orders"] = config.Service{Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}, TCP: &config.TCPService{VisitorTLS: &mode}}
-	flags = publishCommand{Target: "orders"}
-	if err := project.applyPublish(&flags); err != nil || !flags.VisitorTLSPassthrough {
-		t.Fatalf("passthrough = %+v, %v", flags, err)
 	}
 }
 

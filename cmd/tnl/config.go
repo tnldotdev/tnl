@@ -136,9 +136,6 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits, flags.Protocol)
 	}
 	applyInspection(&flags.tunnelFlags, effective)
-	if service != "" && c.Config.Services[service].TCP != nil && c.Config.Services[service].TCP.VisitorTLS != nil && !flags.visitorTLSFromCLI {
-		flags.VisitorTLSPassthrough = *c.Config.Services[service].TCP.VisitorTLS == "passthrough"
-	}
 	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
 	if flags.EnrollKey == "" {
 		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)

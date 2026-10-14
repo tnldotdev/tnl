@@ -19,8 +19,8 @@ var postgresSSLRequest = [8]byte{0, 0, 0, 8, 4, 210, 22, 47}
 
 // ProbeTCP checks the public visitor path without sending credentials or
 // application commands. its result is transport readiness, not login or SQL
-// query success. a passthrough database target owns its own TLS identity.
-func ProbeTCP(ctx context.Context, publicAddress, protocol string, passthrough bool, roots *x509.CertPool) error {
+// query success.
+func ProbeTCP(ctx context.Context, publicAddress, protocol string, roots *x509.CertPool) error {
 	host, port, err := net.SplitHostPort(publicAddress)
 	if err != nil || host == "" || port == "" {
 		return errors.New("public TCP address is missing a hostname and port")
@@ -56,11 +56,6 @@ func ProbeTCP(ctx context.Context, publicAddress, protocol string, passthrough b
 		}
 		if response[0] != 'S' {
 			return errors.New("public PostgreSQL endpoint did not accept TLS negotiation")
-		}
-		if passthrough {
-			// this proves public forwarding and TLS negotiation. the visitor's
-			// own client must verify its private database certificate.
-			return nil
 		}
 		return verifyTLS()
 	case "mysql":

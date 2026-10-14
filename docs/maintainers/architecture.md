@@ -116,14 +116,7 @@ PostgreSQL GSS request gets a refusal so the client can request TLS instead.
 PostgreSQL clients requiring SCRAM channel binding can use separate visitor
 and target TLS only when both present the same certificate. with a plaintext
 target or different certificates, use `channel_binding=disable`; the publisher
-rejects a PLUS choice before forwarding its proof. `--visitor-tls-passthrough`
-passes the visitor TLS handshake to a PostgreSQL or MySQL target that accepts
-TLS, without requiring `--target-tls`. the client sees the target's certificate and
-must verify it; the publisher cannot inspect database commands in this mode.
-passthrough requires the public hostname in visitor SNI. a client that cannot
-send SNI must use split visitor TLS or switch to a client implementation that
-can; for example, mysql-connector-python's pure-Python mode sends SNI where
-its C extension did not in the tested version.
+rejects a PLUS choice before forwarding its proof.
 a MySQL target with no TLS advertises visitor TLS through a rewritten greeting;
 the publisher preserves its challenge and plugin, adjusts the authentication
 packet sequence, and handles the private server's RSA password exchange when
@@ -237,8 +230,7 @@ certificate names the Compose service rather than the mapped loopback address.
 HTTP by default, or one of the supported TCP protocols. a root
 `tunnel.limits` can provide both HTTP request and TCP session defaults; a
 service may override only its own protocol's limits. `target.tls` describes
-the publisher's private target TLS; PostgreSQL and MySQL `tcp.visitor_tls`
-describes the separate visitor TLS boundary. `readiness` on an HTTP service
+the publisher's private target TLS. `readiness` on an HTTP service
 checks its public URL, not the private target, while `http.open` is a local
 browser action. the publisher refills request or session rate tokens within
 one publish run; an optional total drains that run after admitted work ends.
@@ -350,10 +342,9 @@ responses always fail. service readiness can select a path. checks use normal
 DNS/TLS, send no app credentials, follow no redirects, and read headers only
 with a five-second deadline. TCP readiness probes the public hostname and port,
 not the private target: PostgreSQL negotiates visitor TLS and verifies the
-public certificate when tnl terminates it, MySQL checks a bounded greeting,
-Redis verifies visitor TLS, and SSH checks a bounded server banner. PostgreSQL
-passthrough only confirms that TLS negotiation starts; the visitor must verify
-the target's certificate. none of these checks attempts database or SSH login.
+public certificate, MySQL checks a bounded greeting, Redis verifies visitor
+TLS, and SSH checks a bounded server banner. none of these checks attempts
+database or SSH login.
 retries start at
 500 milliseconds and double to two seconds for up to two minutes. each new run
 gets an automatic check; `tnl wait` checks again. a failed check leaves the

@@ -18,7 +18,6 @@ import (
 
 type Selection struct {
 	Address, Protocol, Path string
-	Passthrough             bool
 	HTTPTransport           http.RoundTripper
 }
 
@@ -36,9 +35,6 @@ func (s Selection) Validate() error {
 		s.Protocol = "http"
 	}
 	if s.Protocol == "http" {
-		if s.Passthrough {
-			return errors.New("--visitor-tls-passthrough needs a database protocol")
-		}
 		origin, err := url.Parse(s.Address)
 		if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.User != nil ||
 			origin.RawQuery != "" || origin.Fragment != "" || origin.Path != "" && origin.Path != "/" ||
@@ -55,9 +51,6 @@ func (s Selection) Validate() error {
 	}
 	if s.Path != "" || s.Protocol != "ssh" && s.Protocol != "postgres" && s.Protocol != "mysql" && s.Protocol != "redis" && s.Protocol != "mongodb" {
 		return errors.New("pass --protocol ssh, postgres, mysql, redis, or mongodb for a public TCP address")
-	}
-	if s.Passthrough && s.Protocol != "postgres" && s.Protocol != "mysql" {
-		return errors.New("--visitor-tls-passthrough needs a database protocol")
 	}
 	host, port, err := net.SplitHostPort(s.Address)
 	if err != nil || host == "" {
@@ -81,7 +74,7 @@ func Probe(ctx context.Context, selected Selection) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if selected.Protocol != "http" {
-		if err := clientruntime.ProbeTCP(ctx, selected.Address, selected.Protocol, selected.Passthrough, nil); err != nil {
+		if err := clientruntime.ProbeTCP(ctx, selected.Address, selected.Protocol, nil); err != nil {
 			if ctx.Err() == context.Canceled {
 				return Result{}, ctx.Err()
 			}

@@ -49,7 +49,6 @@ const namedTargets = defineConfig({
     orders: {
       protocol: "postgres",
       target: { type: "address", address: "db.internal:5432" },
-      tcp: { visitorTLS: "passthrough" },
     },
   },
 });
@@ -69,10 +68,10 @@ defineConfig({
 });
 ({
   services: {
-    shell: {
-      protocol: "ssh",
-      target: { type: "address", address: "sshd:22" },
-      // @ts-expect-error SSH does not have visitor TLS to terminate.
+    orders: {
+      protocol: "postgres",
+      target: { type: "address", address: "db:5432" },
+      // @ts-expect-error visitor TLS passthrough is not a service setting.
       tcp: { visitorTLS: "passthrough" },
     },
   },

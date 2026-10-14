@@ -26,19 +26,17 @@ import (
 )
 
 type publishCommand struct {
-	openOptions           `embed:""`
-	remoteFlags           `embed:""`
-	tunnelFlags           `embed:""`
-	Target                string `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or TCP host:port."`
-	Protocol              string `name:"protocol" env:"TNL_PROTOCOL" help:"Local service protocol; defaults to http."`
-	TargetTLSName         string `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the target's TLS certificate; defaults to the target host."`
-	TargetTLS             bool   `name:"target-tls" env:"TNL_TARGET_TLS" help:"Use verified TLS for the TCP target."`
-	VisitorTLSPassthrough bool   `name:"visitor-tls-passthrough" help:"Pass database visitor TLS to the private target; the client verifies its certificate and tnl cannot inspect it."`
-	visitorTLSFromCLI     bool
-	EnrollKey             string            `name:"enroll-key" env:"TNL_ENROLL_KEY" help:"Redeem a one-use publisher enrollment key on this machine; pass - to read stdin."`
-	Background            bool              `name:"bg" help:"Install the enrolled saved URL as a system publisher that restarts after reboot."`
-	Output                publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
-	Demo                  bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
+	openOptions   `embed:""`
+	remoteFlags   `embed:""`
+	tunnelFlags   `embed:""`
+	Target        string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or TCP host:port."`
+	Protocol      string            `name:"protocol" env:"TNL_PROTOCOL" help:"Local service protocol; defaults to http."`
+	TargetTLSName string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the target's TLS certificate; defaults to the target host."`
+	TargetTLS     bool              `name:"target-tls" env:"TNL_TARGET_TLS" help:"Use verified TLS for the TCP target."`
+	EnrollKey     string            `name:"enroll-key" env:"TNL_ENROLL_KEY" help:"Redeem a one-use publisher enrollment key on this machine; pass - to read stdin."`
+	Background    bool              `name:"bg" help:"Install the enrolled saved URL as a system publisher that restarts after reboot."`
+	Output        publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
+	Demo          bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
 	serverFromConfig bool
 	selectedTeam     string
@@ -284,7 +282,6 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	publisherConfig.ServiceProtocol = protocol
 	publisherConfig.TargetTLSName = flags.TargetTLSName
 	publisherConfig.TargetTLS = flags.TargetTLS
-	publisherConfig.VisitorTLSPassthrough = flags.VisitorTLSPassthrough
 	publisherConfig.TargetOptions = targetOptions
 	recorder, err := newInspectionRecorder(ctx, tunnel, flags.projectRoot, flags.Service, flags.tunnelFlags)
 	if err != nil {
@@ -292,7 +289,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	defer recorder.Close()
 	publisherConfig.ObserveRequest = httpObservation(recorder)
-	if (protocol == controlv1.Mysql || protocol == controlv1.Postgres) && !flags.VisitorTLSPassthrough {
+	if protocol == controlv1.Mysql || protocol == controlv1.Postgres {
 		publisherConfig.ObserveDatabase = sqlObservation(recorder, flags.InspectionMode)
 	}
 	publisherConfig.InspectionMode = flags.InspectionMode

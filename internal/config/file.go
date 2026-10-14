@@ -238,28 +238,12 @@ func ValidateTNL(config TNL) error {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 		protocol := ServiceProtocol(effectivePublish)
-		visitorTLS := (*string)(nil)
-		if service.TCP != nil {
-			visitorTLS = service.TCP.VisitorTLS
-		}
-		if protocol == "http" && service.TCP != nil || protocol != "http" && service.HTTP != nil {
-			return fmt.Errorf("services.%s: http and tcp settings must match the service protocol", name)
-		}
-		if service.TCP != nil && protocol != "postgres" && protocol != "mysql" {
-			return fmt.Errorf("services.%s: tcp.visitor_tls is available only for PostgreSQL and MySQL", name)
+		if protocol != "http" && service.HTTP != nil {
+			return fmt.Errorf("services.%s: http settings require an HTTP service protocol", name)
 		}
 		if service.Tunnel != nil && service.Tunnel.Limits != nil &&
 			(protocol == "http" && service.Tunnel.Limits.TCP != nil || protocol != "http" && service.Tunnel.Limits.HTTP != nil) {
 			return fmt.Errorf("services.%s.tunnel.limits: select only the service protocol's limits", name)
-		}
-		if visitorTLS != nil {
-			if *visitorTLS != "terminate" && *visitorTLS != "passthrough" || protocol != "postgres" && protocol != "mysql" {
-				return fmt.Errorf("services.%s: tcp.visitor_tls requires PostgreSQL or MySQL and must be terminate or passthrough", name)
-			}
-			if *visitorTLS == "passthrough" && effectivePublish != nil &&
-				(effectivePublish.TargetTLS != nil && *effectivePublish.TargetTLS || effectivePublish.TargetTLSName != nil || effectivePublish.TargetCAFile != nil) {
-				return fmt.Errorf("services.%s: visitor TLS passthrough cannot use private target TLS settings", name)
-			}
 		}
 		paths := service.Paths
 		if service.HTTP != nil {

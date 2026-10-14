@@ -833,16 +833,6 @@
                   "protocol": {
                     "const": "postgres"
                   },
-                  "tcp": {
-                    "properties": {
-                      "visitor_tls": {
-                        "type": "string",
-                        "enum": ["terminate", "passthrough"]
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object"
-                  },
                   "tunnel": {
                     "allOf": [
                       {
@@ -1148,16 +1138,6 @@
                   },
                   "protocol": {
                     "const": "mysql"
-                  },
-                  "tcp": {
-                    "properties": {
-                      "visitor_tls": {
-                        "type": "string",
-                        "enum": ["terminate", "passthrough"]
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object"
                   },
                   "tunnel": {
                     "allOf": [

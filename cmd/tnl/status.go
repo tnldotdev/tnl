@@ -39,8 +39,8 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 		}
 		return runRemoteStatus(ctx, flags.remoteProbeFlags, flags.Output, output)
 	}
-	if flags.Protocol != "" || flags.Path != "" || flags.VisitorTLSPassthrough {
-		return failure.Wrap("select remote status", failure.InvalidCommand, errors.New("--protocol, --path, and --visitor-tls-passthrough require --remote"))
+	if flags.Protocol != "" || flags.Path != "" {
+		return failure.Wrap("select remote status", failure.InvalidCommand, errors.New("--protocol and --path require --remote"))
 	}
 	root, err := clientStateRoot(flags.StateDir)
 	if err != nil {

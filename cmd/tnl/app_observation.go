@@ -239,8 +239,8 @@ func runAppObservation(ctx context.Context, flags cli, command string, output io
 		}
 		return runRemoteWait(ctx, flags.Wait, output)
 	}
-	if command == "wait" && (flags.Wait.Protocol != "" || flags.Wait.Path != "" || flags.Wait.VisitorTLSPassthrough) {
-		return failure.Wrap("select remote wait", failure.InvalidCommand, errors.New("--protocol, --path, and --visitor-tls-passthrough require --remote"))
+	if command == "wait" && (flags.Wait.Protocol != "" || flags.Wait.Path != "") {
+		return failure.Wrap("select remote wait", failure.InvalidCommand, errors.New("--protocol and --path require --remote"))
 	}
 	stateDir := flags.Wait.StateDir
 	if command == "watch" {
@@ -272,7 +272,7 @@ func runAppWait(ctx context.Context, project projectConfiguration, state string,
 	})
 }
 
-func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, state string, flags waitCommand, output io.Writer, probe func(context.Context, clientruntime.Service) clientruntime.Observation, tcpProbes ...func(context.Context, clientruntime.Service, bool) error) error {
+func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, state string, flags waitCommand, output io.Writer, probe func(context.Context, clientruntime.Service) clientruntime.Observation, tcpProbes ...func(context.Context, clientruntime.Service) error) error {
 	if flags.Timeout <= 0 {
 		return failure.Wrap("wait for apps", failure.InvalidCommand, errors.New("timeout must be positive"))
 	}
@@ -306,14 +306,13 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 					if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
 						service.Ready = probeRemoteTarget(ctx, project, service.Name)
 					} else {
-						passthrough := tcpVisitorTLSPassthrough(project, service.Name)
-						probeTCP := func(ctx context.Context, service clientruntime.Service, passthrough bool) error {
-							return clientruntime.ProbeTCP(ctx, service.PublicURL, service.ServiceProtocol, passthrough, nil)
+						probeTCP := func(ctx context.Context, service clientruntime.Service) error {
+							return clientruntime.ProbeTCP(ctx, service.PublicURL, service.ServiceProtocol, nil)
 						}
 						if len(tcpProbes) != 0 {
 							probeTCP = tcpProbes[0]
 						}
-						service.Ready = probeTCP(ctx, *service, passthrough) == nil
+						service.Ready = probeTCP(ctx, *service) == nil
 					}
 					return
 				}
@@ -381,11 +380,6 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 		return err
 	}
 	return failure.Wrap("wait for public readiness", failure.AppReadinessTimeout, ctx.Err())
-}
-
-func tcpVisitorTLSPassthrough(project projectConfiguration, name string) bool {
-	service := project.Config.Services[name]
-	return service.TCP != nil && service.TCP.VisitorTLS != nil && *service.TCP.VisitorTLS == "passthrough"
 }
 
 func writeAppWait(output io.Writer, mode string, snapshot clientruntime.Snapshot, state string) error {

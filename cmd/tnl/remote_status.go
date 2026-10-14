@@ -15,15 +15,13 @@ import (
 )
 
 type remoteProbeFlags struct {
-	Remote                string `name:"remote" help:"Probe this public HTTPS origin or TCP hostname:port from this machine."`
-	Protocol              string `name:"protocol" help:"Protocol for a TCP address: ssh, postgres, mysql, redis, or mongodb."`
-	Path                  string `name:"path" help:"HTTP path to probe; defaults to /."`
-	VisitorTLSPassthrough bool   `name:"visitor-tls-passthrough" help:"Do not verify a database target's separate visitor TLS certificate."`
+	Remote   string `name:"remote" help:"Probe this public HTTPS origin or TCP hostname:port from this machine."`
+	Protocol string `name:"protocol" help:"Protocol for a TCP address: ssh, postgres, mysql, redis, or mongodb."`
+	Path     string `name:"path" help:"HTTP path to probe; defaults to /."`
 }
 
 func (flags remoteProbeFlags) selection() remoteprobe.Selection {
-	return remoteprobe.Selection{Address: flags.Remote, Protocol: flags.Protocol,
-		Path: flags.Path, Passthrough: flags.VisitorTLSPassthrough}
+	return remoteprobe.Selection{Address: flags.Remote, Protocol: flags.Protocol, Path: flags.Path}
 }
 
 func runRemoteStatus(ctx context.Context, flags remoteProbeFlags, outputMode statusOutputMode, output io.Writer) error {

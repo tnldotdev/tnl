@@ -612,8 +612,7 @@ func (a *appRuntime) handler() http.Handler {
 			for index := range snapshot.Services {
 				service := &snapshot.Services[index]
 				if service.Name == probe && service.Registered && service.Routable && service.ServiceProtocol != "" && service.ServiceProtocol != "http" {
-					service.Ready = clientruntime.ProbeTCP(r.Context(), service.PublicURL, service.ServiceProtocol,
-						tcpVisitorTLSPassthrough(a.project, service.Name), nil) == nil
+					service.Ready = clientruntime.ProbeTCP(r.Context(), service.PublicURL, service.ServiceProtocol, nil) == nil
 				}
 			}
 		}
@@ -822,9 +821,6 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 			configuration.TargetTLSName = *effective.Publish.TargetTLSName
 		}
 	}
-	if effective.Tunnel != nil && effective.Tunnel.VisitorTLS != nil {
-		configuration.VisitorTLSPassthrough = *effective.Tunnel.VisitorTLS == "passthrough"
-	}
 	configuration.ControlURL = server
 	configuration.BrowserLoginAvailable = services.Authenticated.Discovery.BrowserLoginAvailable != nil && *services.Authenticated.Discovery.BrowserLoginAvailable
 	configuration.PreviewID, configuration.ProjectRoot, configuration.Service = previewID, a.project.Root, service.Name
@@ -848,7 +844,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	}
 	defer recorder.Close()
 	configuration.ObserveRequest = httpObservation(recorder)
-	if (service.ServiceProtocol == "mysql" || service.ServiceProtocol == "postgres") && !configuration.VisitorTLSPassthrough {
+	if service.ServiceProtocol == "mysql" || service.ServiceProtocol == "postgres" {
 		configuration.ObserveDatabase = sqlObservation(recorder, flags.InspectionMode)
 	}
 	configuration.Logf = func(_ string, _ ...any) {
@@ -943,7 +939,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 				probes.Add(1)
 				go func() {
 					defer probes.Done()
-					a.checkTCP(probeCtx, copy, tcpVisitorTLSPassthrough(a.project, service.Name))
+					a.checkTCP(probeCtx, copy)
 				}()
 			}
 		}
@@ -974,11 +970,11 @@ func (a *appRuntime) check(ctx context.Context, service clientruntime.Service) {
 	}
 }
 
-func (a *appRuntime) checkTCP(ctx context.Context, service clientruntime.Service, passthrough bool) {
+func (a *appRuntime) checkTCP(ctx context.Context, service clientruntime.Service) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	for attempt := 0; ctx.Err() == nil; attempt++ {
-		err := clientruntime.ProbeTCP(ctx, service.PublicURL, service.ServiceProtocol, passthrough, nil)
+		err := clientruntime.ProbeTCP(ctx, service.PublicURL, service.ServiceProtocol, nil)
 		observation := clientruntime.Observation{
 			RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber,
 			CheckedAt: time.Now().UTC(), Ready: err == nil, Readiness: service.Readiness,

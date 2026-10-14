@@ -726,7 +726,7 @@ func canonicalParsedCommand(command string) string {
 }
 
 func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
-	publicURL, name, domain, allowIP, allowAllIPs, ephemeral, open, visitorTLS := false, false, false, false, false, false, false, false
+	publicURL, name, domain, allowIP, allowAllIPs, ephemeral, open := false, false, false, false, false, false, false
 	inspectionMode, inspectionRetention, inspectionMaxBytes := false, false, false
 	for _, path := range parsed.Path {
 		if path.Flag == nil {
@@ -753,8 +753,6 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 			inspectionRetention = true
 		case "inspection-max-bytes":
 			inspectionMaxBytes = true
-		case "visitor-tls-passthrough":
-			visitorTLS = true
 		}
 	}
 	apply := func(tunnel *tunnelFlags) {
@@ -778,7 +776,6 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 	case "publish <service-or-target>":
 		apply(&flags.Publish.tunnelFlags)
 		flags.Publish.openFromCLI = open
-		flags.Publish.visitorTLSFromCLI = visitorTLS
 		flags.Publish.demoNameFromCLI = name
 	}
 }

@@ -46,7 +46,7 @@ func namedPublishOverrides(parsed *kong.Context) []string {
 			"server", "access-token", "team", "domain", "name", "public-url", "allow-ip", "allow-all-ips",
 			"ephemeral", "total", "rate-count", "rate-per", "rate-burst", "concurrency", "protocol", "target-ca-file",
 			"traffic-connections", "traffic-rate-count", "traffic-rate-per", "traffic-rate-burst", "traffic-upload", "traffic-download",
-			"target-tls-name", "target-tls", "visitor-tls-passthrough", "inspection-mode",
+			"target-tls-name", "target-tls", "inspection-mode",
 			"inspection-retention", "inspection-max-bytes",
 		}, flag.Name) {
 			continue

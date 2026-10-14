@@ -64,7 +64,7 @@ func TestResolveTypedServiceTargetAndHTTPOptions(t *testing.T) {
   services: {
     web: {target: {type: "app"}, readiness: {path: "/health"}, http: {paths: {"/api": "api"}}},
     api: {target: {type: "address", address: 3000}},
-    orders: {protocol: "postgres", target: {type: "address", address: "db.internal:5432"}, tcp: {visitorTLS: "passthrough"}},
+    orders: {protocol: "postgres", target: {type: "address", address: "db.internal:5432"}},
   },
 };`
 	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
@@ -79,8 +79,7 @@ func TestResolveTypedServiceTargetAndHTTPOptions(t *testing.T) {
 	}
 	web, err := project.EffectiveService("web")
 	if err != nil || web.Readiness == nil || web.Readiness.Path != "/health" ||
-		config.ServicePaths(project.Config.Services["web"])["/api"].Service != "api" ||
-		project.Config.Services["orders"].TCP.VisitorTLS == nil || *project.Config.Services["orders"].TCP.VisitorTLS != "passthrough" {
+		config.ServicePaths(project.Config.Services["web"])["/api"].Service != "api" {
 		t.Fatalf("typed TypeScript service settings = %+v, %+v, %v", web, project.Config.Services, err)
 	}
 	orders, err := project.EffectiveService("orders")
@@ -254,6 +253,7 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 		"service team":      {`export default {services: {api: {team: "studio"}}};`, `unknown TypeScript configuration field "team"`},
 		"concurrency":       {`export default {services: {api: {tunnel: {limits: {http: {concurrency: 0}}}}}};`, "services.api: tunnel.limits.http total and concurrency must be positive"},
 		"old request limit": {`export default {services: {api: {tunnel: {requestLimit: 2}}}};`, "unknown TypeScript configuration field"},
+		"visitor TLS mode":  {`export default {services: {orders: {protocol: "postgres", target: {type: "address", address: "db:5432"}, tcp: {visitorTLS: "passthrough"}}}};`, `unknown TypeScript configuration field "tcp"`},
 		"inspection":        {`export default {services: {api: {inspection: {mode: "all"}}}};`, "services.api.inspection: mode must be summary or detailed"},
 		"retired dev":       {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "dev"},
 		"target":            {`export default {services: {api: {target: {type: "address", address: "https://example.com/path"}}}};`, "services.api: publish.target:"},

@@ -37,34 +37,15 @@ func TestDatabasePublishAndPublisherEnrollmentFlags(t *testing.T) {
 	}
 }
 
-func TestVisitorTLSPassthroughFlagUsesClientVerification(t *testing.T) {
+func TestRetiredVisitorTLSPassthroughFlagIsRejected(t *testing.T) {
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parser.Parse([]string{"publish", "db.internal:5432", "--protocol", "postgres", "--visitor-tls-passthrough"}); err != nil {
-		t.Fatal(err)
-	}
-	if !flags.Publish.VisitorTLSPassthrough || flags.Publish.TargetTLS ||
-		validateTCPPublishOptions(flags.Publish, controlv1.Postgres) != nil {
-		t.Fatalf("passthrough unexpectedly required target TLS: %+v", flags.Publish)
-	}
-	if _, err := parser.Parse([]string{"publish", "db.internal:5432", "--protocol", "postgres", "--database-tls-passthrough"}); err == nil {
-		t.Fatal("retired flag was accepted")
-	}
-	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Http, controlv1.Redis, controlv1.Ssh} {
-		if err := validateTCPPublishOptions(publishCommand{VisitorTLSPassthrough: true}, protocol); err == nil {
-			t.Fatalf("%s accepted database TLS passthrough", protocol)
-		}
-	}
-	for _, invalid := range []publishCommand{
-		{VisitorTLSPassthrough: true, TargetTLS: true},
-		{VisitorTLSPassthrough: true, TargetTLSName: "db.internal"},
-		{VisitorTLSPassthrough: true, tunnelFlags: tunnelFlags{TargetCAFile: "private.pem"}},
-	} {
-		if err := validateTCPPublishOptions(invalid, controlv1.Postgres); err == nil {
-			t.Fatalf("passthrough accepted conflicting target TLS options: %+v", invalid)
+	for _, command := range []string{"publish", "status", "wait"} {
+		if _, err := parser.Parse([]string{command, "--visitor-tls-passthrough"}); err == nil {
+			t.Fatalf("%s accepted retired visitor TLS flag", command)
 		}
 	}
 }
@@ -200,15 +181,9 @@ func TestDatabasePublicAddressAndFlags(t *testing.T) {
 		t.Fatal("database --open was silently ignored")
 	}
 	if err := validateTCPPublishOptions(publishCommand{tunnelFlags: tunnelFlags{InspectionMode: "detailed"}}, controlv1.Mysql); err != nil {
-		t.Fatalf("MySQL split visitor TLS rejected detailed inspection: %v", err)
+		t.Fatalf("MySQL rejected detailed inspection: %v", err)
 	}
 	if err := validateTCPPublishOptions(publishCommand{tunnelFlags: tunnelFlags{InspectionMode: "detailed"}}, controlv1.Postgres); err != nil {
-		t.Fatalf("PostgreSQL split visitor TLS rejected detailed inspection: %v", err)
-	}
-	if err := validateTCPPublishOptions(publishCommand{tunnelFlags: tunnelFlags{InspectionMode: "detailed"}, VisitorTLSPassthrough: true}, controlv1.Mysql); err == nil {
-		t.Fatal("opaque MySQL passthrough accepted detailed inspection")
-	}
-	if err := validateTCPPublishOptions(publishCommand{tunnelFlags: tunnelFlags{InspectionMode: "detailed"}, VisitorTLSPassthrough: true}, controlv1.Postgres); err == nil {
-		t.Fatal("opaque PostgreSQL passthrough accepted detailed inspection")
+		t.Fatalf("PostgreSQL rejected detailed inspection: %v", err)
 	}
 }

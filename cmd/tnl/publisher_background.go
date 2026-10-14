@@ -53,7 +53,7 @@ func installBackgroundPublisher(ctx context.Context, job localpublisher.ServiceJ
 
 func validateBackgroundPublishOptions(flags publishCommand) error {
 	if flags.Output != publishOutputHuman || flags.Open || flags.TargetCAFile != "" || flags.TargetTLS ||
-		flags.TargetTLSName != "" || flags.VisitorTLSPassthrough || flags.resolveTarget != nil ||
+		flags.TargetTLSName != "" || flags.resolveTarget != nil ||
 		flags.Requests != nil || flags.RateRequests != nil || flags.RateBurst != nil || flags.RatePer != "" ||
 		flags.Concurrency != nil || flags.TrafficConnections != nil || flags.TrafficRateCount != nil ||
 		flags.TrafficRateBurst != nil || flags.TrafficRatePer != "" || flags.TrafficUpload != "" ||

@@ -203,8 +203,8 @@ func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
 
 func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 	for filename, source := range map[string]string{
-		"tnl.json": `{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"},"readiness":{"path":"/health"},"http":{"paths":{"/api":"api"}}},"api":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"docker","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"database"},"container_port":5432},"tcp":{"visitor_tls":"passthrough"}}}}}`,
-		"tnl.yml":  "version: 1\ntnl:\n  services:\n    web:\n      target: {type: app}\n      readiness: {path: /health}\n      http:\n        paths: {/api: api}\n    api:\n      target: {type: address, address: 3000}\n    orders:\n      protocol: postgres\n      target: {type: docker, compose: {file: compose.yaml, project: shop-k7n2p9, service: database}, container_port: 5432}\n      tcp: {visitor_tls: passthrough}\n",
+		"tnl.json": `{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"},"readiness":{"path":"/health"},"http":{"paths":{"/api":"api"}}},"api":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"docker","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"database"},"container_port":5432}}}}}`,
+		"tnl.yml":  "version: 1\ntnl:\n  services:\n    web:\n      target: {type: app}\n      readiness: {path: /health}\n      http:\n        paths: {/api: api}\n    api:\n      target: {type: address, address: 3000}\n    orders:\n      protocol: postgres\n      target: {type: docker, compose: {file: compose.yaml, project: shop-k7n2p9, service: database}, container_port: 5432}\n",
 	} {
 		path := filepath.Join(t.TempDir(), filename)
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
@@ -217,8 +217,7 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 		web, api, orders := document.TNL.Services["web"], document.TNL.Services["api"], document.TNL.Services["orders"]
 		if web.Target.Type != "app" || web.Readiness.Path != "/health" || ServicePaths(web)["/api"].Service != "api" ||
 			api.Target.Type != "address" || string(*api.Target.Address) != "3000" ||
-			orders.Protocol == nil || *orders.Protocol != "postgres" || orders.Target.Type != "docker" || orders.Target.Compose == nil || orders.Target.Compose.Service != "database" || *orders.Target.ContainerPort != 5432 ||
-			*orders.TCP.VisitorTLS != "passthrough" {
+			orders.Protocol == nil || *orders.Protocol != "postgres" || orders.Target.Type != "docker" || orders.Target.Compose == nil || orders.Target.Compose.Service != "database" || *orders.Target.ContainerPort != 5432 {
 			t.Fatalf("%s: services = %#v", filename, document.TNL.Services)
 		}
 	}
@@ -238,9 +237,9 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","container":"db","container_port":5432,"address":"db:5432"}}}}`, "docker cannot use address"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"docker","container":"db","compose":{"file":"compose.yaml","project":"shop-k7n2p9","service":"db"},"container_port":5432}}}}`, "exactly one"},
 		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432","container_port":5432}}}}`, "address cannot"},
-		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"http":{"paths":{}}}}}`, "http and tcp settings"},
-		{`{"services":{"web":{"target":{"type":"app"},"tcp":{"visitor_tls":"passthrough"}}}}`, "http and tcp settings"},
-		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432","tls":{}},"tcp":{"visitor_tls":"passthrough"}}}}`, "cannot use private target TLS"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"http":{"paths":{}}}}}`, "http settings require an HTTP"},
+		{`{"services":{"web":{"target":{"type":"app"},"tcp":{"visitor_tls":"passthrough"}}}}`, "tcp"},
+		{`{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"tcp":{"visitor_tls":"terminate"}}}}`, "tcp"},
 	} {
 		path := filepath.Join(t.TempDir(), "tnl.json")
 		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":`+test.source+`}`), 0o600); err != nil {
@@ -248,6 +247,21 @@ func TestNamedServiceTargetsAndHTTPOptions(t *testing.T) {
 		}
 		if _, err := LoadDocument(path); err == nil || !strings.Contains(err.Error(), test.detail) {
 			t.Fatalf("%s: error = %v, want %q", test.source, err, test.detail)
+		}
+	}
+}
+
+func TestRetiredVisitorTLSSettingRejected(t *testing.T) {
+	for filename, source := range map[string]string{
+		"tnl.json": `{"version":1,"tnl":{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"tcp":{"visitor_tls":"passthrough"}}}}}`,
+		"tnl.yml":  "version: 1\ntnl:\n  services:\n    orders:\n      protocol: postgres\n      target: {type: address, address: 'db:5432'}\n      tcp: {visitor_tls: passthrough}\n",
+	} {
+		path := filepath.Join(t.TempDir(), filename)
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadDocument(path); err == nil || !strings.Contains(err.Error(), "tcp") {
+			t.Fatalf("%s: retired visitor TLS setting error = %v", filename, err)
 		}
 	}
 }

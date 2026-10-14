@@ -49,14 +49,11 @@ func TestPublicTCPReadinessChecksPostgresVisitorTLS(t *testing.T) {
 		_, _ = visitor.Write([]byte{'S'})
 		_ = tls.Server(visitor, certificate.TLS).Handshake()
 	})
-	if err := ProbeTCP(t.Context(), address, "postgres", false, roots); err != nil {
+	if err := ProbeTCP(t.Context(), address, "postgres", roots); err != nil {
 		t.Fatalf("public PostgreSQL TLS: %v", err)
 	}
-	if err := ProbeTCP(t.Context(), address, "postgres", false, x509.NewCertPool()); err == nil {
+	if err := ProbeTCP(t.Context(), address, "postgres", x509.NewCertPool()); err == nil {
 		t.Fatal("untrusted public certificate passed readiness")
-	}
-	if err := ProbeTCP(t.Context(), address, "postgres", true, nil); err != nil {
-		t.Fatalf("passthrough negotiation should not impose the public certificate: %v", err)
 	}
 }
 
@@ -64,22 +61,22 @@ func TestPublicTCPReadinessBoundsAndQualifiesProtocolChecks(t *testing.T) {
 	mysql := readinessTCPServer(t, func(visitor net.Conn) {
 		_, _ = visitor.Write([]byte{4, 0, 0, 0, 10, '8', '.', 0})
 	})
-	if err := ProbeTCP(t.Context(), mysql, "mysql", false, nil); err != nil {
+	if err := ProbeTCP(t.Context(), mysql, "mysql", nil); err != nil {
 		t.Fatalf("public MySQL greeting: %v", err)
 	}
 	ssh := readinessTCPServer(t, func(visitor net.Conn) {
 		_, _ = visitor.Write([]byte("SSH-2.0-test\r\n"))
 	})
-	if err := ProbeTCP(t.Context(), ssh, "ssh", false, nil); err != nil {
+	if err := ProbeTCP(t.Context(), ssh, "ssh", nil); err != nil {
 		t.Fatalf("public SSH banner: %v", err)
 	}
 	bad := readinessTCPServer(t, func(visitor net.Conn) {
 		_, _ = visitor.Write([]byte{4, 0, 0, 0, 9, '8', '.', 0})
 	})
-	if err := ProbeTCP(t.Context(), bad, "mysql", false, nil); err == nil {
+	if err := ProbeTCP(t.Context(), bad, "mysql", nil); err == nil {
 		t.Fatal("invalid public greeting passed readiness")
 	}
-	if err := ProbeTCP(t.Context(), ssh, "unknown", false, nil); err == nil {
+	if err := ProbeTCP(t.Context(), ssh, "unknown", nil); err == nil {
 		t.Fatal("unknown service protocol passed readiness")
 	}
 }
@@ -92,10 +89,10 @@ func TestPublicTCPReadinessVerifiesRedisCertificate(t *testing.T) {
 	address := readinessTCPServer(t, func(visitor net.Conn) {
 		_ = tls.Server(visitor, certificate.TLS).Handshake()
 	})
-	if err := ProbeTCP(t.Context(), address, "redis", false, roots); err != nil {
+	if err := ProbeTCP(t.Context(), address, "redis", roots); err != nil {
 		t.Fatalf("public Redis visitor TLS: %v", err)
 	}
-	if err := ProbeTCP(t.Context(), address, "redis", false, x509.NewCertPool()); err == nil {
+	if err := ProbeTCP(t.Context(), address, "redis", x509.NewCertPool()); err == nil {
 		t.Fatal("untrusted Redis public certificate passed readiness")
 	}
 }

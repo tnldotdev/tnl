@@ -287,9 +287,6 @@ export interface TnlConfig {
                 containerPort: number;
               };
           protocol: "postgres";
-          tcp?: {
-            visitorTLS?: "terminate" | "passthrough";
-          };
           tunnel?: {
             /**
              * Ready team domain used for generated public URL hostnames.
@@ -385,9 +382,6 @@ export interface TnlConfig {
                 containerPort: number;
               };
           protocol: "mysql";
-          tcp?: {
-            visitorTLS?: "terminate" | "passthrough";
-          };
           tunnel?: {
             /**
              * Ready team domain used for generated public URL hostnames.
