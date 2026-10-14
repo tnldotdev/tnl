@@ -128,10 +128,6 @@ func TestRuntimeEndpointReturnsPathWithoutStartingPublisher(t *testing.T) {
 		Version int    `json:"version"`
 		Path    string `json:"path"`
 	}
-	key, err := runtimeKey(project, state)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := json.Unmarshal(output.Bytes(), &endpoint); err != nil || endpoint.Version != 1 ||
 		endpoint.Path != runtimeTCPEndpointPath(key) {
 		t.Fatalf("runtime endpoint = %s, %v", output.String(), err)
