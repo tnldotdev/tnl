@@ -199,7 +199,7 @@ func configuredRuntimeServices(project projectConfiguration) []clientruntime.Ser
 		effective, _ := project.EffectiveService(name)
 		service := project.Config.Services[name]
 		protocol := config.ServiceProtocol(effective.Publish)
-		named := service.Target != nil && (service.Target.Type == "address" || service.Target.Type == "compose")
+		named := service.Target != nil && (service.Target.Type == "address" || service.Target.Type == "compose" || service.Target.Type == "docker")
 		if !named && protocol != "http" {
 			continue
 		}
@@ -637,8 +637,8 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	}
 	configuration := services.config(service.Target, preparation.policy.prefixes, flags.limits())
 	definition := project.Config.Services[service.Name]
-	if preparation.named && definition.Target != nil && definition.Target.Type == "compose" {
-		configuration.ResolveTarget = composeTarget(project.Project, definition.Target, service.ServiceProtocol)
+	if preparation.named {
+		configuration.ResolveTarget = namedDynamicTarget(project.Project, definition.Target, service.ServiceProtocol)
 	}
 	if preparation.named {
 		configuration.ServiceProtocol = controlv1.PublicURLServiceProtocol(service.ServiceProtocol)
@@ -768,7 +768,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 			copy.PublicURL, copy.PublishRunNumber, copy.Routable = event.PublicURL, event.PublishRunNumber, true
 			probes.Add(1)
 			if configuration.ResolveTarget != nil {
-				go func() { defer probes.Done(); a.checkCompose(probeCtx, copy, configuration.ResolveTarget) }()
+				go func() { defer probes.Done(); a.checkDynamicTarget(probeCtx, copy, configuration.ResolveTarget) }()
 			} else if service.ServiceProtocol != "" && service.ServiceProtocol != "http" {
 				go func() { defer probes.Done(); a.checkNamedTCP(probeCtx, copy) }()
 			} else {
@@ -784,7 +784,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	return publisher.Run(ctx, configuration)
 }
 
-func (a *appRuntime) checkCompose(ctx context.Context, service clientruntime.Service, resolve func(context.Context) (string, error)) {
+func (a *appRuntime) checkDynamicTarget(ctx context.Context, service clientruntime.Service, resolve func(context.Context) (string, error)) {
 	for ctx.Err() == nil && a.manager.Current(service.Name, service.RegistrationID, service.Target, service.PublishRunNumber) {
 		address, err := resolve(ctx)
 		observation := clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber,

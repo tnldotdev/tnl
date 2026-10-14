@@ -122,10 +122,15 @@ func servicesSchema() *jsonschema.Schema {
 	composeProperties.Set("file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
 	composeProperties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z0-9][a-z0-9_-]*$`})
 	composeProperties.Set("port", &jsonschema.Schema{Type: "integer", Minimum: "1", Maximum: "65535"})
+	dockerProperties := jsonschema.NewProperties()
+	dockerProperties.Set("type", &jsonschema.Schema{Const: "docker"})
+	dockerProperties.Set("container", &jsonschema.Schema{Type: "string", Pattern: config.ContainerSelectorPattern})
+	dockerProperties.Set("port", &jsonschema.Schema{Type: "integer", Minimum: "1", Maximum: "65535"})
 	targetVariants := []*jsonschema.Schema{
 		{Type: "object", Required: []string{"type"}, Properties: appTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
 		{Type: "object", Required: []string{"type", "address"}, Properties: addressTargetProperties, AdditionalProperties: jsonschema.FalseSchema},
 		{Type: "object", Required: []string{"type", "project", "file", "service", "port"}, Properties: composeProperties, AdditionalProperties: jsonschema.FalseSchema},
+		{Type: "object", Required: []string{"type", "container", "port"}, Properties: dockerProperties, AdditionalProperties: jsonschema.FalseSchema},
 	}
 	properties.Set("target", &jsonschema.Schema{OneOf: targetVariants})
 	tunnel := tunnelSchema()

@@ -258,6 +258,25 @@
                         "additionalProperties": false,
                         "type": "object",
                         "required": ["type", "project", "file", "service", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container", "port"]
                       }
                     ]
                   },
@@ -483,6 +502,25 @@
                         "additionalProperties": false,
                         "type": "object",
                         "required": ["type", "project", "file", "service", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container", "port"]
                       }
                     ]
                   },
@@ -663,6 +701,25 @@
                         "additionalProperties": false,
                         "type": "object",
                         "required": ["type", "project", "file", "service", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container", "port"]
                       }
                     ]
                   },
@@ -843,6 +900,25 @@
                         "additionalProperties": false,
                         "type": "object",
                         "required": ["type", "project", "file", "service", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container", "port"]
                       }
                     ]
                   },
@@ -1023,6 +1099,25 @@
                         "additionalProperties": false,
                         "type": "object",
                         "required": ["type", "project", "file", "service", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "docker"
+                          },
+                          "container": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container", "port"]
                       }
                     ]
                   },

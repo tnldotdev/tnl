@@ -60,15 +60,16 @@ type Service struct {
 	Paths      map[string]PathMount `json:"-" yaml:"-"`
 }
 
-// ServiceTarget chooses an app listener, private address, or Compose binding.
+// ServiceTarget chooses an app listener, private address, Compose binding, or Docker container.
 type ServiceTarget struct {
-	Type    string     `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=compose"`
-	Address *Target    `json:"address,omitempty" yaml:"address,omitempty" jsonschema_description:"Private HTTP origin, TCP host:port, or local port reached by the publisher."`
-	TLS     *TargetTLS `json:"tls,omitempty" yaml:"tls,omitempty" jsonschema_description:"Verified private target TLS settings."`
-	Project *string    `json:"project,omitempty" yaml:"project,omitempty" jsonschema_description:"Explicit Docker Compose project name for this worktree."`
-	File    *string    `json:"file,omitempty" yaml:"file,omitempty" jsonschema_description:"Compose file relative to the project root."`
-	Service *string    `json:"service,omitempty" yaml:"service,omitempty" jsonschema_description:"Docker Compose service name."`
-	Port    *int       `json:"port,omitempty" yaml:"port,omitempty" jsonschema_description:"Private TCP port published by the Compose service."`
+	Type      string     `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=compose,enum=docker"`
+	Address   *Target    `json:"address,omitempty" yaml:"address,omitempty" jsonschema_description:"Private HTTP origin, TCP host:port, or local port reached by the publisher."`
+	TLS       *TargetTLS `json:"tls,omitempty" yaml:"tls,omitempty" jsonschema_description:"Verified private target TLS settings."`
+	Project   *string    `json:"project,omitempty" yaml:"project,omitempty" jsonschema_description:"Explicit Docker Compose project name for this worktree."`
+	File      *string    `json:"file,omitempty" yaml:"file,omitempty" jsonschema_description:"Compose file relative to the project root."`
+	Service   *string    `json:"service,omitempty" yaml:"service,omitempty" jsonschema_description:"Docker Compose service name."`
+	Port      *int       `json:"port,omitempty" yaml:"port,omitempty" jsonschema_description:"Private TCP port published by the Compose service or Docker container."`
+	Container *string    `json:"container,omitempty" yaml:"container,omitempty" jsonschema_description:"Exact Docker container ID or name with a matching tnl.worktree label."`
 }
 
 type HTTPService struct {
@@ -197,7 +198,7 @@ func ServicePublish(base *Publish, service Service) *Publish {
 	if result == nil {
 		result = &Publish{}
 	}
-	if service.Target.Type == "app" || service.Target.Type == "compose" {
+	if service.Target.Type == "app" || service.Target.Type == "compose" || service.Target.Type == "docker" {
 		result.Target = nil
 		result.TargetTLS, result.TargetTLSName, result.TargetCAFile = nil, nil, nil
 	} else {

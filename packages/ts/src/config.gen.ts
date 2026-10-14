@@ -103,6 +103,11 @@ export interface TnlConfig {
                 file: string;
                 service: string;
                 port: number;
+              }
+            | {
+                type: "docker";
+                container: string;
+                port: number;
               };
           tunnel?: {
             /**
@@ -178,6 +183,11 @@ export interface TnlConfig {
                 file: string;
                 service: string;
                 port: number;
+              }
+            | {
+                type: "docker";
+                container: string;
+                port: number;
               };
           tunnel?: {
             /**
@@ -234,6 +244,11 @@ export interface TnlConfig {
                 project: string;
                 file: string;
                 service: string;
+                port: number;
+              }
+            | {
+                type: "docker";
+                container: string;
                 port: number;
               };
           tunnel?: {
@@ -292,6 +307,11 @@ export interface TnlConfig {
                 file: string;
                 service: string;
                 port: number;
+              }
+            | {
+                type: "docker";
+                container: string;
+                port: number;
               };
           tunnel?: {
             /**
@@ -348,6 +368,11 @@ export interface TnlConfig {
                 project: string;
                 file: string;
                 service: string;
+                port: number;
+              }
+            | {
+                type: "docker";
+                container: string;
                 port: number;
               };
           tunnel?: {

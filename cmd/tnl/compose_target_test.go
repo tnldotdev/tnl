@@ -129,7 +129,7 @@ func TestComposeReadinessFollowsCurrentBindingWithoutReplacingLease(t *testing.T
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan struct{})
-	go func() { defer close(done); a.checkCompose(ctx, service, resolve) }()
+	go func() { defer close(done); a.checkDynamicTarget(ctx, service, resolve) }()
 	wait := func(ready bool) {
 		t.Helper()
 		deadline := time.After(6 * time.Second)

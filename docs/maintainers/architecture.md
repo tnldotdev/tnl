@@ -96,6 +96,15 @@ replacement binding changes the local upstream without replacing the saved
 public URL or publish run. Readiness follows the current binding (including
 after a container stops) rather than trusting the host port from startup.
 
+For a directly selected container, `target: {type: docker, container: db-dev,
+port: 5432}` names the exact container and its private port. It must be running
+with a `tnl.worktree` label equal to this project's worktree label (shown by
+`tnl project values`). The owner checks the label and current published host
+binding before starting the named publication, then checks them again for each
+new visitor and readiness probe. Replacing a container by name can change its
+host port without replacing the publish run. An ID selects only that container;
+if it stops, the binding stays unavailable until a new named publication starts.
+
 `internal/ingresspool` names the pool across control and ingress without making
 the stateless ingress role depend on control's database package.
 

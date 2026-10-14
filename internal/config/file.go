@@ -26,6 +26,14 @@ const MaxDocumentBytes = 1 << 20
 
 var composeName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
+// ContainerSelectorPattern accepts a Docker container ID or exact name, never a CLI option.
+const ContainerSelectorPattern = `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`
+
+var containerSelector = regexp.MustCompile(ContainerSelectorPattern)
+
+// ValidContainerSelector checks an exact container ID or name before passing it to Docker.
+func ValidContainerSelector(value string) bool { return containerSelector.MatchString(value) }
+
 // LoadDocument strictly loads one versioned static configuration document.
 func LoadDocument(path string) (Document, error) {
 	data, err := readDocument(path)
@@ -177,13 +185,15 @@ func ValidateTNL(config TNL) error {
 	for _, name := range names {
 		service := config.Services[name]
 		if service.Protocol != nil && *service.Protocol != "http" && service.Target == nil {
-			return fmt.Errorf("services.%s: TCP service requires an address or Compose target", name)
+			return fmt.Errorf("services.%s: TCP service requires an address, Compose, or Docker target", name)
 		}
 		effectivePublish := ServicePublish(config.Publish, service)
 		if service.Target != nil {
-			compose := service.Target
-			if compose.Type != "compose" && (compose.Project != nil || compose.File != nil || compose.Service != nil || compose.Port != nil) {
-				return fmt.Errorf("services.%s.target: Compose fields require type compose", name)
+			target := service.Target
+			if target.Type != "compose" && (target.Project != nil || target.File != nil || target.Service != nil) ||
+				target.Type != "compose" && target.Type != "docker" && target.Port != nil ||
+				target.Type != "docker" && target.Container != nil {
+				return fmt.Errorf("services.%s.target: select fields for the configured target type only", name)
 			}
 			if tls := service.Target.TLS; tls != nil {
 				if tls.ServerName != nil && (*tls.ServerName == "" || strings.TrimSpace(*tls.ServerName) != *tls.ServerName) {
@@ -206,14 +216,19 @@ func ValidateTNL(config TNL) error {
 					return fmt.Errorf("services.%s.target.tls requires an HTTPS address", name)
 				}
 			case "compose":
-				if compose.Address != nil || compose.TLS != nil || compose.Project == nil || !composeName.MatchString(*compose.Project) ||
-					compose.Service == nil || !composeName.MatchString(*compose.Service) || compose.Port == nil || *compose.Port < 1 || *compose.Port > 65535 ||
-					compose.File == nil || *compose.File == "" || filepath.IsAbs(*compose.File) || filepath.Clean(*compose.File) != *compose.File ||
-					*compose.File == "." || *compose.File == ".." || strings.HasPrefix(*compose.File, ".."+string(filepath.Separator)) {
+				if target.Address != nil || target.TLS != nil || target.Project == nil || !composeName.MatchString(*target.Project) ||
+					target.Service == nil || !composeName.MatchString(*target.Service) || target.Port == nil || *target.Port < 1 || *target.Port > 65535 ||
+					target.File == nil || *target.File == "" || filepath.IsAbs(*target.File) || filepath.Clean(*target.File) != *target.File ||
+					*target.File == "." || *target.File == ".." || strings.HasPrefix(*target.File, ".."+string(filepath.Separator)) {
 					return fmt.Errorf("services.%s.target: compose requires a project, relative file, service, and private port (1-65535), without address or TLS", name)
 				}
+			case "docker":
+				if target.Address != nil || target.TLS != nil || target.Container == nil || !ValidContainerSelector(*target.Container) ||
+					target.Port == nil || *target.Port < 1 || *target.Port > 65535 {
+					return fmt.Errorf("services.%s.target: docker requires an exact container ID or name and private port (1-65535), without address or TLS", name)
+				}
 			default:
-				return fmt.Errorf("services.%s.target: type must be app, address, or compose", name)
+				return fmt.Errorf("services.%s.target: type must be app, address, compose, or docker", name)
 			}
 		}
 		if service.HTTP != nil {

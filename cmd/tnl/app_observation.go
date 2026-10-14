@@ -256,9 +256,9 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 				defer workers.Done()
 				if service.ServiceProtocol != "" && service.ServiceProtocol != "http" {
 					target := service.Target
-					if selected := project.Config.Services[service.Name].Target; selected != nil && selected.Type == "compose" {
+					if resolve := namedDynamicTarget(project.Project, project.Config.Services[service.Name].Target, service.ServiceProtocol); resolve != nil {
 						var err error
-						target, err = composeTarget(project.Project, selected, service.ServiceProtocol)(ctx)
+						target, err = resolve(ctx)
 						if err != nil {
 							return
 						}
