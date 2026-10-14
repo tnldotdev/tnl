@@ -58,8 +58,9 @@ func (h *handler) CreateShare(response http.ResponseWriter, request *http.Reques
 			writeControlStateProblem(response, "read share public URL", err)
 			return
 		}
-		if route.TeamID != preview.TeamID || route.LifecycleState != controlstate.PublicURLLifecycleEnabled {
-			writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not enabled for sharing")
+		if route.TeamID != preview.TeamID || route.LifecycleState != controlstate.PublicURLLifecycleEnabled ||
+			route.Purpose != controlstate.PublicURLPurposeApp || route.ServiceProtocol != controlstate.PublicURLServiceHTTP {
+			writeProblem(response, http.StatusConflict, controlv1.Conflict, "share links require HTTP app public URLs")
 			return
 		}
 		prefixes := make([]string, len(route.AllowedIPPrefixes))

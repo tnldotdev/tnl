@@ -52,6 +52,30 @@ func TestShareSelectsOnlyConfiguredPublicURLFromProject(t *testing.T) {
 	}
 }
 
+func TestTeamShareSelectsExactDatabaseAddress(t *testing.T) {
+	port := 5432
+	webID, dbID := "url_0123456789abcdefghijkl", "url_abcdefghijkl0123456789"
+	routes := []controlv1.PublicURL{
+		{Id: webID, CanonicalHostname: "orders.example.test", ServiceProtocol: controlv1.Http},
+		{Id: dbID, CanonicalHostname: "orders.example.test", ServiceProtocol: controlv1.Postgres, PublicPort: &port},
+	}
+	for _, selector := range []string{dbID, "orders.example.test:5432"} {
+		selected, err := selectTeamSharePublicURL(selector, routes)
+		if err != nil || selected.Id != dbID {
+			t.Fatalf("database selector %q = %+v, %v", selector, selected, err)
+		}
+	}
+	selected, err := selectTeamSharePublicURL("https://orders.example.test", routes)
+	if err != nil || selected.Id != webID {
+		t.Fatalf("HTTP selector = %+v, %v", selected, err)
+	}
+	for _, selector := range []string{"orders.example.test", "orders.example.test:05432", "orders.example.test:443", "https://orders.example.test:5432"} {
+		if _, err := selectTeamSharePublicURL(selector, routes); err == nil {
+			t.Fatalf("ambiguous or malformed selector %q was accepted", selector)
+		}
+	}
+}
+
 func TestShareCreateRejectsInvalidExpiryBeforeAuthentication(t *testing.T) {
 	err := run(t.Context(), []string{"--no-config", "share", "link", "create", "--state-dir", filepath.Join(t.TempDir(), "state"), "--expires-in", "0d"}, io.Discard, io.Discard)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ShareInputInvalid {
@@ -73,6 +97,19 @@ func TestShareServiceURLsUseConfiguredNames(t *testing.T) {
 	encoded, err := json.Marshal(services)
 	if err != nil || strings.Contains(string(encoded), "__tnl/share") {
 		t.Fatalf("unexpected share URL in ordinary service mapping: %s, %v", encoded, err)
+	}
+}
+
+func TestPreviewShareServiceNamesExcludeDatabaseServices(t *testing.T) {
+	postgres := "postgres"
+	project := projectConfiguration{}
+	project.Config.Services = config.Services{
+		"database": {Publish: &config.Publish{Protocol: &postgres}},
+		"web":      {},
+	}
+	services := shareServiceURLs(project, []controlv1.PublicURL{{Id: "url_web", CanonicalHostname: "web.example.test"}})
+	if len(services) != 1 || services["web"].PublicURLID != "url_web" {
+		t.Fatalf("database entered HTTP preview share: %+v", services)
 	}
 }
 

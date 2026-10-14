@@ -186,6 +186,49 @@ func (c *Client) RevokeShare(ctx context.Context, id string) (controlv1.Share, e
 	})
 }
 
+func (c *Client) CreateShareGrant(ctx context.Context, key string, body controlv1.CreateShareGrantRequest) (controlv1.ShareGrant, error) {
+	params := &controlv1.CreateShareGrantParams{IdempotencyKey: key}
+	return requestWithAccess[controlv1.ShareGrant](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateShareGrant(ctx, params, body, editors...)
+	})
+}
+
+func (c *Client) ListShareGrants(ctx context.Context, teamID string) ([]controlv1.ShareGrant, error) {
+	var shares []controlv1.ShareGrant
+	cursor := ""
+	for {
+		params := &controlv1.ListShareGrantsParams{TeamId: teamID}
+		if cursor != "" {
+			params.Cursor = &cursor
+		}
+		page, err := requestWithAccess[controlv1.ShareGrantPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+			return c.api.ListShareGrants(ctx, params, editors...)
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, share := range page.Shares {
+			if share.Id == "" || share.Id <= cursor || len(shares) != 0 && share.Id <= shares[len(shares)-1].Id || share.TeamId != teamID {
+				return nil, failure.Wrap("list share grants", failure.ServerResponseInvalid, errors.New("controlclient: invalid share grant"))
+			}
+			shares = append(shares, share)
+		}
+		if page.NextCursor == nil {
+			return shares, nil
+		}
+		if len(page.Shares) == 0 || *page.NextCursor != page.Shares[len(page.Shares)-1].Id {
+			return nil, failure.Wrap("list share grants", failure.ServerResponseInvalid, errors.New("controlclient: invalid share grant cursor"))
+		}
+		cursor = *page.NextCursor
+	}
+}
+
+func (c *Client) RevokeShareGrant(ctx context.Context, id string) (controlv1.ShareGrant, error) {
+	return requestWithAccess[controlv1.ShareGrant](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RevokeShareGrant(ctx, id, editors...)
+	})
+}
+
 func (c *Client) EnableShareAccess(ctx context.Context, runID string, version uint64, previewID string, token credentials.PublishRunToken) error {
 	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.EnableShareAccess(ctx, runID, controlv1.EnableShareAccessRequest{

@@ -577,6 +577,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runShareList(ctx, flags.Share.List, project, stdout, stderr)
 	case "share link revoke <share-id>":
 		return runShareRevoke(ctx, flags.Share.Link.Revoke, stdout, stderr)
+	case "share revoke <share-id>":
+		return runShareAnyRevoke(ctx, flags.Share.Revoke, stdout, stderr)
 	case "share team create <url>":
 		return runShareTeamCreate(ctx, flags.Share.Team.Create, project, stdout, stderr)
 	case "share team revoke":

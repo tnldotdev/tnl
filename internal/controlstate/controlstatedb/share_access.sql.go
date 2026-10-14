@@ -67,6 +67,7 @@ func (q *Queries) CountActiveShareCookiesForPublicURL(ctx context.Context, arg C
 const countActiveSharesForPublicURL = `-- name: CountActiveSharesForPublicURL :one
 SELECT count(*)::bigint FROM control.shares AS share
 JOIN control.share_public_urls AS included ON included.share_id = share.id
+JOIN control.public_urls AS url ON url.id = included.public_url_id AND url.purpose = 'app' AND url.service_protocol = 'http'
 WHERE included.public_url_id = $1
   AND share.revoked_at IS NULL AND share.expires_at > $2
 `
@@ -153,6 +154,7 @@ const getActiveShareForPublicURL = `-- name: GetActiveShareForPublicURL :one
 SELECT share.id, share.secret_fingerprint, share.expires_at
 FROM control.shares AS share
 JOIN control.share_public_urls AS included ON included.share_id = share.id
+JOIN control.public_urls AS url ON url.id = included.public_url_id AND url.purpose = 'app' AND url.service_protocol = 'http'
 WHERE share.id = $1
   AND included.public_url_id = $2
   AND share.revoked_at IS NULL
@@ -324,6 +326,7 @@ const listActiveSharesForPublicURL = `-- name: ListActiveSharesForPublicURL :man
 SELECT share.id, share.secret_fingerprint, share.expires_at
 FROM control.shares AS share
 JOIN control.share_public_urls AS included ON included.share_id = share.id
+JOIN control.public_urls AS url ON url.id = included.public_url_id AND url.purpose = 'app' AND url.service_protocol = 'http'
 WHERE included.public_url_id = $1
   AND share.revoked_at IS NULL
   AND share.expires_at > $2
@@ -367,7 +370,7 @@ FROM control.share_public_urls AS included
 JOIN control.public_urls AS url ON url.id = included.public_url_id
 JOIN control.publish_runs AS run ON run.public_url_id = url.id
 WHERE included.share_id = $1
-  AND url.lifecycle_state = 'enabled'
+  AND url.lifecycle_state = 'enabled' AND url.purpose = 'app' AND url.service_protocol = 'http'
   AND run.state = 'ready'
   AND run.publisher_expires_at > $2
   AND run.share_capable = true

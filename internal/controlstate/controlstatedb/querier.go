@@ -13,6 +13,7 @@ import (
 type Querier interface {
 	AcceptTeamInvitation(ctx context.Context, arg AcceptTeamInvitationParams) (int64, error)
 	ActivateMemberSlug(ctx context.Context, arg ActivateMemberSlugParams) (int64, error)
+	ActiveTeamURLVisitorGrant(ctx context.Context, arg ActiveTeamURLVisitorGrantParams) (bool, error)
 	AddPreviewPublicURL(ctx context.Context, arg AddPreviewPublicURLParams) (string, error)
 	AddPublishRunPreviewURL(ctx context.Context, arg AddPublishRunPreviewURLParams) error
 	AddSharePublicURL(ctx context.Context, arg AddSharePublicURLParams) (string, error)
@@ -90,6 +91,7 @@ type Querier interface {
 	CreateShare(ctx context.Context, arg CreateShareParams) (ControlShare, error)
 	CreateTeamInvitation(ctx context.Context, arg CreateTeamInvitationParams) (ControlTeamInvitation, error)
 	CreateTeamMembership(ctx context.Context, arg CreateTeamMembershipParams) error
+	CreateTeamURLVisitorGrant(ctx context.Context, arg CreateTeamURLVisitorGrantParams) (ControlVisitorAccessGrant, error)
 	DNSAuthorityReleaseReady(ctx context.Context, arg DNSAuthorityReleaseReadyParams) (pgtype.Bool, error)
 	DeleteControlTLSCacheEntry(ctx context.Context, arg DeleteControlTLSCacheEntryParams) error
 	DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error
@@ -205,6 +207,7 @@ type Querier interface {
 	GetShareCapablePublishRun(ctx context.Context, arg GetShareCapablePublishRunParams) (string, error)
 	GetTeamActorContext(ctx context.Context, arg GetTeamActorContextParams) (GetTeamActorContextRow, error)
 	GetTeamMembershipContext(ctx context.Context, arg GetTeamMembershipContextParams) (GetTeamMembershipContextRow, error)
+	GetTeamURLVisitorGrant(ctx context.Context, id string) (ControlVisitorAccessGrant, error)
 	GuestForPublicURL(ctx context.Context, publicUrlID string) (string, error)
 	GuestNamespaceReserved(ctx context.Context, label string) (bool, error)
 	GuestOwnsPublicURL(ctx context.Context, arg GuestOwnsPublicURLParams) (bool, error)
@@ -270,6 +273,7 @@ type Querier interface {
 	// fetch bounded metadata; exact replays load histogram payloads separately.
 	ListLatestIngressUsageReports(ctx context.Context, arg ListLatestIngressUsageReportsParams) ([]ListLatestIngressUsageReportsRow, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
+	ListPreviewHTTPPublicURLs(ctx context.Context, previewID string) ([]string, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
 	ListPublicURLPublishCredentials(ctx context.Context, publicUrlID pgtype.Text) ([]ControlPublicUrlPublishCredential, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
@@ -288,6 +292,7 @@ type Querier interface {
 	ListTeamPublicURLPublishCredentials(ctx context.Context, arg ListTeamPublicURLPublishCredentialsParams) ([]ListTeamPublicURLPublishCredentialsRow, error)
 	ListTeamPublisherIdentities(ctx context.Context, arg ListTeamPublisherIdentitiesParams) ([]ListTeamPublisherIdentitiesRow, error)
 	ListTeamShares(ctx context.Context, arg ListTeamSharesParams) ([]ControlShare, error)
+	ListTeamURLVisitorGrants(ctx context.Context, arg ListTeamURLVisitorGrantsParams) ([]ControlVisitorAccessGrant, error)
 	ListValidReadyPublisherConnections(ctx context.Context, arg ListValidReadyPublisherConnectionsParams) ([]ListValidReadyPublisherConnectionsRow, error)
 	ListVisitorAccessInventory(ctx context.Context, arg ListVisitorAccessInventoryParams) ([]ListVisitorAccessInventoryRow, error)
 	LockACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)
@@ -362,6 +367,7 @@ type Querier interface {
 	LockTeamForInvitationAcceptance(ctx context.Context, teamID string) (string, error)
 	LockTeamInvitation(ctx context.Context, arg LockTeamInvitationParams) (LockTeamInvitationRow, error)
 	LockTeamMembership(ctx context.Context, arg LockTeamMembershipParams) (LockTeamMembershipRow, error)
+	LockTeamURLVisitorGrant(ctx context.Context, id string) (ControlVisitorAccessGrant, error)
 	MarkACMEAuthorizationsPresented(ctx context.Context, arg MarkACMEAuthorizationsPresentedParams) (int64, error)
 	MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderInstalledParams) (ControlAcmeOrder, error)
 	MarkCustomDomainReleasing(ctx context.Context, arg MarkCustomDomainReleasingParams) (int64, error)
@@ -432,6 +438,7 @@ type Querier interface {
 	RevokePublisherIdentityGrant(ctx context.Context, arg RevokePublisherIdentityGrantParams) (int64, error)
 	RevokeShare(ctx context.Context, arg RevokeShareParams) (ControlShare, error)
 	RevokeTeamInvitation(ctx context.Context, arg RevokeTeamInvitationParams) (int64, error)
+	RevokeTeamURLVisitorGrant(ctx context.Context, arg RevokeTeamURLVisitorGrantParams) error
 	RotateACMEAccountKey(ctx context.Context, arg RotateACMEAccountKeyParams) error
 	RotateBrowserAccessSession(ctx context.Context, arg RotateBrowserAccessSessionParams) error
 	RotateControlSessionCredentials(ctx context.Context, arg RotateControlSessionCredentialsParams) (int64, error)

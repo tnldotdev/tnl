@@ -152,7 +152,8 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 			return Share{}, fmt.Errorf("controlstate: create share: lock public URL: %w", err)
 		}
 		if route.TeamID != request.TeamID || route.LifecycleState != string(PublicURLLifecycleEnabled) ||
-			route.MutationRevision != int64(authorized.ExpectedMutationRevision) || route.PolicyRevision > policyRevision {
+			route.MutationRevision != int64(authorized.ExpectedMutationRevision) || route.PolicyRevision > policyRevision ||
+			route.ServiceProtocol != string(PublicURLServiceHTTP) || route.Purpose != string(PublicURLPurposeApp) {
 			return Share{}, ErrShareStale
 		}
 		if route.PublicURLScope == string(PublicURLScopeMember) &&

@@ -122,6 +122,33 @@ func (q *Queries) GetPreview(ctx context.Context, id string) (GetPreviewRow, err
 	return i, err
 }
 
+const listPreviewHTTPPublicURLs = `-- name: ListPreviewHTTPPublicURLs :many
+SELECT included.public_url_id FROM control.preview_public_urls AS included
+JOIN control.public_urls AS url ON url.id = included.public_url_id
+WHERE included.preview_id = $1 AND url.service_protocol = 'http' AND url.purpose = 'app'
+ORDER BY included.public_url_id
+`
+
+func (q *Queries) ListPreviewHTTPPublicURLs(ctx context.Context, previewID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listPreviewHTTPPublicURLs, previewID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var public_url_id string
+		if err := rows.Scan(&public_url_id); err != nil {
+			return nil, err
+		}
+		items = append(items, public_url_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPreviewPublicURLs = `-- name: ListPreviewPublicURLs :many
 SELECT public_url_id FROM control.preview_public_urls
 WHERE preview_id = $1 ORDER BY public_url_id

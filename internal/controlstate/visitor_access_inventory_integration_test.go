@@ -86,6 +86,21 @@ func TestIntegrationVisitorInventoryDistinguishesMembershipAndShares(t *testing.
 	}, now); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.SetPreviewTeamAccess(t.Context(), SetPreviewTeamAccessRequest{
+		PreviewID: preview.ID, TeamID: request.TeamID, IdentityID: request.ActingIdentityID,
+		Enabled: true, PolicyRevision: uint64(team.PolicyRevision),
+		PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: web.ID, ExpectedMutationRevision: web.MutationRevision}},
+	}, now); err != nil {
+		t.Fatalf("share mixed preview's HTTP app: %v", err)
+	}
+	if page := list(member.IdentityID, now); access(page)[web.ID] != "team" || access(page)[postgres.ID] != "inventory" {
+		t.Fatalf("mixed preview enabled database access = %+v", page)
+	}
+	if _, err := database.SetPreviewTeamAccess(t.Context(), SetPreviewTeamAccessRequest{
+		PreviewID: preview.ID, TeamID: request.TeamID, IdentityID: request.ActingIdentityID,
+	}, now); err != nil {
+		t.Fatal(err)
+	}
 	insert("grant-preview", "team_preview", preview.ID, "", "", now.Add(time.Hour))
 	if page := list(member.IdentityID, now); len(page.PublicURLs) != 2 || access(page)[web.ID] != "team" || access(page)[postgres.ID] != "inventory" {
 		t.Fatalf("preview share reached database = %+v", page)

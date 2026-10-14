@@ -23,7 +23,7 @@ FROM control.browser_access_sessions WHERE token_digest = $1;
 -- name: BrowserSessionPublicURLIncluded :one
 SELECT url.id AS public_url_id
 FROM control.browser_access_sessions AS session
-JOIN control.public_urls AS url ON url.id = sqlc.arg(public_url_id) AND url.purpose = 'app'
+JOIN control.public_urls AS url ON url.id = sqlc.arg(public_url_id) AND url.purpose = 'app' AND url.service_protocol = 'http'
 WHERE session.token_digest = sqlc.arg(token_digest)
   AND ((session.preview_id IS NULL AND session.public_url_id = url.id)
        OR EXISTS (SELECT 1 FROM control.preview_public_urls AS included
@@ -34,7 +34,7 @@ SELECT url.canonical_hostname, run.id AS publish_run_id, run.publish_run_number
 FROM control.public_urls AS url
 JOIN control.publish_runs AS run ON run.public_url_id = url.id
 JOIN control.publish_run_browser_capabilities AS browser ON browser.publish_run_id = run.id
-WHERE url.id = sqlc.arg(public_url_id) AND url.purpose = 'app' AND url.lifecycle_state = 'enabled'
+WHERE url.id = sqlc.arg(public_url_id) AND url.purpose = 'app' AND url.service_protocol = 'http' AND url.lifecycle_state = 'enabled'
   AND run.state = 'ready' AND run.closed_at IS NULL AND run.publisher_expires_at > sqlc.arg(now)
   AND (sqlc.narg(preview_id)::text IS NULL OR EXISTS (
       SELECT 1 FROM control.preview_public_urls AS included
@@ -55,7 +55,7 @@ JOIN control.public_urls AS url ON url.id = included.public_url_id
 JOIN control.publish_runs AS run ON run.public_url_id = url.id
 JOIN control.publish_run_browser_capabilities AS browser ON browser.publish_run_id = run.id
 WHERE included.preview_id = sqlc.arg(preview_id)
-  AND url.lifecycle_state = 'enabled' AND url.purpose = 'app'
+  AND url.lifecycle_state = 'enabled' AND url.purpose = 'app' AND url.service_protocol = 'http'
   AND run.state = 'ready' AND run.closed_at IS NULL AND run.publisher_expires_at > sqlc.arg(now)
 ORDER BY url.id LIMIT 32;
 
@@ -67,7 +67,7 @@ FROM control.browser_access_sessions WHERE token_digest = $1 FOR UPDATE;
 -- name: ShareBrowserAccessSession :one
 SELECT session.*
 FROM control.browser_access_sessions AS session
-JOIN control.public_urls AS url ON url.id = sqlc.arg(public_url_id) AND url.purpose = 'app'
+JOIN control.public_urls AS url ON url.id = sqlc.arg(public_url_id) AND url.purpose = 'app' AND url.service_protocol = 'http'
 WHERE session.token_digest = sqlc.arg(token_digest)
   AND ((session.preview_id IS NULL AND session.public_url_id = sqlc.arg(public_url_id))
        OR EXISTS (SELECT 1 FROM control.preview_public_urls AS included

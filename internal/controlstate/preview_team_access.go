@@ -63,7 +63,7 @@ func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewT
 		return Preview{}, ErrPreviewAccess
 	}
 	if request.Enabled {
-		ids, err := queries.ListPreviewPublicURLs(ctx, preview.ID)
+		ids, err := queries.ListPreviewHTTPPublicURLs(ctx, preview.ID)
 		if err != nil {
 			return Preview{}, fmt.Errorf("controlstate: list preview public URLs: %w", err)
 		}
@@ -92,7 +92,8 @@ func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewT
 				return Preview{}, fmt.Errorf("controlstate: lock team public URL: %w", err)
 			}
 			if route.TeamID != request.TeamID || route.LifecycleState != string(PublicURLLifecycleEnabled) ||
-				route.MutationRevision != int64(selected.ExpectedMutationRevision) || route.PolicyRevision > positive(request.PolicyRevision) {
+				route.MutationRevision != int64(selected.ExpectedMutationRevision) || route.PolicyRevision > positive(request.PolicyRevision) ||
+				route.ServiceProtocol != string(PublicURLServiceHTTP) || route.Purpose != string(PublicURLPurposeApp) {
 				return Preview{}, ErrPreviewStale
 			}
 			if route.PublicURLScope == string(PublicURLScopeMember) &&

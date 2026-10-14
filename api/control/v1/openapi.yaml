@@ -438,6 +438,63 @@ paths:
                 $ref: "#/components/schemas/SharePage"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/shares/grants:
+    post:
+      operationId: createShareGrant
+      summary: Give current team members access to one exact app public URL
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateShareGrantRequest"
+      responses:
+        "201":
+          description: Created share grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareGrant"
+        default:
+          $ref: "#/components/responses/Problem"
+    get:
+      operationId: listShareGrants
+      summary: List manageable exact-URL shares for a team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamIDQuery"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Share grant page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareGrantPage"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/shares/grants/{share_id}/revoke:
+    post:
+      operationId: revokeShareGrant
+      summary: Revoke one exact-URL share
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ShareID"
+      responses:
+        "200":
+          description: Revoked share grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareGrant"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/shares/{share_id}:
     get:
       operationId: getShare
@@ -2418,6 +2475,54 @@ components:
         secret_fingerprint:
           type: string
           pattern: "^[0-9a-f]{64}$"
+    CreateShareGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, public_url_id]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        expires_at:
+          type: string
+          format: date-time
+    ShareGrant:
+      type: object
+      additionalProperties: false
+      required: [id, team_id, kind, public_url_id, created_by_identity_id, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ShareID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        kind:
+          type: string
+          enum: [team_url]
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        created_by_identity_id:
+          $ref: "#/components/schemas/IdentityID"
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+    ShareGrantPage:
+      type: object
+      additionalProperties: false
+      required: [shares]
+      properties:
+        shares:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShareGrant"
+        next_cursor:
+          $ref: "#/components/schemas/ShareID"
     Share:
       type: object
       additionalProperties: false

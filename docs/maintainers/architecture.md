@@ -628,6 +628,12 @@ its access label distinguishes ownership, a visitor grant, and team inventory
 visibility, which by itself cannot authorize a visit or a mutation. control
 rechecks current membership and grants when admitting visitors.
 
+anonymous share links snapshot only HTTP app public URL IDs. preview-wide team
+access likewise covers HTTP app URLs; a database URL requires its own exact
+team share. control stores the exact grant independently of its publish run,
+checks the current team membership for every signed-in browser request, and
+leaves database visitor authorization to the publisher's TLS handshake.
+
 control creates guest trials against its own managed domain. it reserves each
 guest namespace in the managed-label pool in the same
 transaction as the trial; team creation cannot reuse a guest namespace. managed

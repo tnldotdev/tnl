@@ -740,6 +740,21 @@ func (e ReadinessResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for ShareGrantKind.
+const (
+	TeamUrl ShareGrantKind = "team_url"
+)
+
+// Valid indicates whether the value is a known member of the ShareGrantKind enum.
+func (e ShareGrantKind) Valid() bool {
+	switch e {
+	case TeamUrl:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SourceFileStateStatus.
 const (
 	Added    SourceFileStateStatus = "added"
@@ -1219,6 +1234,13 @@ type CreatePublisherGrantRequest struct {
 	PublicUrlId    *PublicURLID    `json:"public_url_id,omitempty"`
 	PublicUrlScope *PublicURLScope `json:"public_url_scope,omitempty"`
 	TeamId         TeamID          `json:"team_id"`
+}
+
+// CreateShareGrantRequest defines model for CreateShareGrantRequest.
+type CreateShareGrantRequest struct {
+	ExpiresAt   *time.Time  `json:"expires_at,omitempty"`
+	PublicUrlId PublicURLID `json:"public_url_id"`
+	TeamId      TeamID      `json:"team_id"`
 }
 
 // CreateShareRequest defines model for CreateShareRequest.
@@ -1857,6 +1879,27 @@ type Share struct {
 	TeamId        TeamID              `json:"team_id"`
 }
 
+// ShareGrant defines model for ShareGrant.
+type ShareGrant struct {
+	CreatedAt           time.Time      `json:"created_at"`
+	CreatedByIdentityId IdentityID     `json:"created_by_identity_id"`
+	ExpiresAt           *time.Time     `json:"expires_at,omitempty"`
+	Id                  ShareID        `json:"id"`
+	Kind                ShareGrantKind `json:"kind"`
+	PublicUrlId         PublicURLID    `json:"public_url_id"`
+	RevokedAt           *time.Time     `json:"revoked_at,omitempty"`
+	TeamId              TeamID         `json:"team_id"`
+}
+
+// ShareGrantKind defines model for ShareGrant.Kind.
+type ShareGrantKind string
+
+// ShareGrantPage defines model for ShareGrantPage.
+type ShareGrantPage struct {
+	NextCursor *ShareID     `json:"next_cursor,omitempty"`
+	Shares     []ShareGrant `json:"shares"`
+}
+
 // ShareID defines model for ShareID.
 type ShareID = ResourceID
 
@@ -2111,6 +2154,17 @@ type ListTeamSharesParams struct {
 	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// ListShareGrantsParams defines parameters for ListShareGrants.
+type ListShareGrantsParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// CreateShareGrantParams defines parameters for CreateShareGrant.
+type CreateShareGrantParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
 // SetMaintenanceControlJSONRequestBody defines body for SetMaintenanceControl for application/json ContentType.
 type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 
@@ -2206,6 +2260,9 @@ type CreatePublisherGrantJSONRequestBody = CreatePublisherGrantRequest
 
 // CreatePublisherEnrollmentJSONRequestBody defines body for CreatePublisherEnrollment for application/json ContentType.
 type CreatePublisherEnrollmentJSONRequestBody = CreatePublisherEnrollmentRequest
+
+// CreateShareGrantJSONRequestBody defines body for CreateShareGrant for application/json ContentType.
+type CreateShareGrantJSONRequestBody = CreateShareGrantRequest
 
 // AsWebhookProviderSourceResponseSource0 returns the union data inside the WebhookProviderSourceResponse_Source as a WebhookProviderSourceResponseSource0
 func (t WebhookProviderSourceResponse_Source) AsWebhookProviderSourceResponseSource0() (WebhookProviderSourceResponseSource0, error) {
@@ -2970,6 +3027,30 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
 	ListTeamShares(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListShareGrants List manageable exact-URL shares for a team
+	//
+	// Corresponds with GET /v1/shares/grants (the `ListShareGrants` operationId).
+	ListShareGrants(ctx context.Context, params *ListShareGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateShareGrantWithBody Give current team members access to one exact app public URL
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/shares/grants (the `CreateShareGrant` operationId).
+	CreateShareGrantWithBody(ctx context.Context, params *CreateShareGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateShareGrant Give current team members access to one exact app public URL
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/shares/grants (the `CreateShareGrant` operationId).
+	CreateShareGrant(ctx context.Context, params *CreateShareGrantParams, body CreateShareGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeShareGrant Revoke one exact-URL share
+	//
+	// Corresponds with POST /v1/shares/grants/{share_id}/revoke (the `RevokeShareGrant` operationId).
+	RevokeShareGrant(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetShare Read one share
 	//
@@ -4605,6 +4686,70 @@ func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn
 // Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
 func (c *Client) ListTeamShares(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListTeamSharesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListShareGrants List manageable exact-URL shares for a team
+//
+// Corresponds with GET /v1/shares/grants (the `ListShareGrants` operationId).
+func (c *Client) ListShareGrants(ctx context.Context, params *ListShareGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListShareGrantsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateShareGrantWithBody Give current team members access to one exact app public URL
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/shares/grants (the `CreateShareGrant` operationId).
+func (c *Client) CreateShareGrantWithBody(ctx context.Context, params *CreateShareGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateShareGrantRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateShareGrant Give current team members access to one exact app public URL
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/shares/grants (the `CreateShareGrant` operationId).
+func (c *Client) CreateShareGrant(ctx context.Context, params *CreateShareGrantParams, body CreateShareGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateShareGrantRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeShareGrant Revoke one exact-URL share
+//
+// Corresponds with POST /v1/shares/grants/{share_id}/revoke (the `RevokeShareGrant` operationId).
+func (c *Client) RevokeShareGrant(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeShareGrantRequest(c.Server, shareId)
 	if err != nil {
 		return nil, err
 	}
@@ -7849,6 +7994,155 @@ func NewListTeamSharesRequest(server string, params *ListTeamSharesParams) (*htt
 	return req, nil
 }
 
+// NewListShareGrantsRequest constructs an http.Request for the ListShareGrants method
+func NewListShareGrantsRequest(server string, params *ListShareGrantsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/shares/grants")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateShareGrantRequest calls the generic CreateShareGrant builder with application/json body
+func NewCreateShareGrantRequest(server string, params *CreateShareGrantParams, body CreateShareGrantJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateShareGrantRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreateShareGrantRequestWithBody constructs an http.Request for the CreateShareGrant method, with any body, and a specified content type
+func NewCreateShareGrantRequestWithBody(server string, params *CreateShareGrantParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/shares/grants")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewRevokeShareGrantRequest constructs an http.Request for the RevokeShareGrant method
+func NewRevokeShareGrantRequest(server string, shareId ShareID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "share_id", shareId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/shares/grants/%s/revoke", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetShareRequest constructs an http.Request for the GetShare method
 func NewGetShareRequest(server string, shareId ShareID) (*http.Request, error) {
 	var err error
@@ -8694,6 +8988,34 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
 	ListTeamSharesWithResponse(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*ListTeamSharesResponse, error)
+
+	// ListShareGrantsWithResponse List manageable exact-URL shares for a team
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/shares/grants (the `ListShareGrants` operationId).
+	ListShareGrantsWithResponse(ctx context.Context, params *ListShareGrantsParams, reqEditors ...RequestEditorFn) (*ListShareGrantsResponse, error)
+
+	// CreateShareGrantWithBodyWithResponse Give current team members access to one exact app public URL
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/shares/grants (the `CreateShareGrant` operationId).
+	CreateShareGrantWithBodyWithResponse(ctx context.Context, params *CreateShareGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateShareGrantResponse, error)
+
+	// CreateShareGrantWithResponse Give current team members access to one exact app public URL
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/shares/grants (the `CreateShareGrant` operationId).
+	CreateShareGrantWithResponse(ctx context.Context, params *CreateShareGrantParams, body CreateShareGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateShareGrantResponse, error)
+
+	// RevokeShareGrantWithResponse Revoke one exact-URL share
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/shares/grants/{share_id}/revoke (the `RevokeShareGrant` operationId).
+	RevokeShareGrantWithResponse(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*RevokeShareGrantResponse, error)
 
 	// GetShareWithResponse Read one share
 	//
@@ -11915,6 +12237,150 @@ func (r ListTeamSharesResponse) ContentType() string {
 	return ""
 }
 
+type ListShareGrantsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ShareGrantPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListShareGrantsResponse) GetJSON200() *ShareGrantPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListShareGrantsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListShareGrantsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListShareGrantsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListShareGrantsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListShareGrantsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateShareGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ShareGrant
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateShareGrantResponse) GetJSON201() *ShareGrant {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateShareGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateShareGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateShareGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateShareGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateShareGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeShareGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ShareGrant
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RevokeShareGrantResponse) GetJSON200() *ShareGrant {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeShareGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeShareGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeShareGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeShareGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeShareGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetShareResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -13365,6 +13831,58 @@ func (c *ClientWithResponses) ListTeamSharesWithResponse(ctx context.Context, pa
 		return nil, err
 	}
 	return ParseListTeamSharesResponse(rsp)
+}
+
+// ListShareGrantsWithResponse List manageable exact-URL shares for a team
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/shares/grants (the `ListShareGrants` operationId).
+func (c *ClientWithResponses) ListShareGrantsWithResponse(ctx context.Context, params *ListShareGrantsParams, reqEditors ...RequestEditorFn) (*ListShareGrantsResponse, error) {
+	rsp, err := c.ListShareGrants(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListShareGrantsResponse(rsp)
+}
+
+// CreateShareGrantWithBodyWithResponse Give current team members access to one exact app public URL
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/shares/grants (the `CreateShareGrant` operationId).
+func (c *ClientWithResponses) CreateShareGrantWithBodyWithResponse(ctx context.Context, params *CreateShareGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateShareGrantResponse, error) {
+	rsp, err := c.CreateShareGrantWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateShareGrantResponse(rsp)
+}
+
+// CreateShareGrantWithResponse Give current team members access to one exact app public URL
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/shares/grants (the `CreateShareGrant` operationId).
+func (c *ClientWithResponses) CreateShareGrantWithResponse(ctx context.Context, params *CreateShareGrantParams, body CreateShareGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateShareGrantResponse, error) {
+	rsp, err := c.CreateShareGrant(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateShareGrantResponse(rsp)
+}
+
+// RevokeShareGrantWithResponse Revoke one exact-URL share
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/shares/grants/{share_id}/revoke (the `RevokeShareGrant` operationId).
+func (c *ClientWithResponses) RevokeShareGrantWithResponse(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*RevokeShareGrantResponse, error) {
+	rsp, err := c.RevokeShareGrant(ctx, shareId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeShareGrantResponse(rsp)
 }
 
 // GetShareWithResponse Read one share
@@ -15615,6 +16133,105 @@ func ParseListTeamSharesResponse(rsp *http.Response) (*ListTeamSharesResponse, e
 	return response, nil
 }
 
+// ParseListShareGrantsResponse parses an HTTP response from a ListShareGrantsWithResponse call
+func ParseListShareGrantsResponse(rsp *http.Response) (*ListShareGrantsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListShareGrantsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ShareGrantPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateShareGrantResponse parses an HTTP response from a CreateShareGrantWithResponse call
+func ParseCreateShareGrantResponse(rsp *http.Response) (*CreateShareGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateShareGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ShareGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeShareGrantResponse parses an HTTP response from a RevokeShareGrantWithResponse call
+func ParseRevokeShareGrantResponse(rsp *http.Response) (*RevokeShareGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeShareGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ShareGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetShareResponse parses an HTTP response from a GetShareWithResponse call
 func ParseGetShareResponse(rsp *http.Response) (*GetShareResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -15943,6 +16560,15 @@ type ServerInterface interface {
 	// ListTeamShares List manageable shares for one team
 	// (GET /v1/shares)
 	ListTeamShares(w http.ResponseWriter, r *http.Request, params ListTeamSharesParams)
+	// ListShareGrants List manageable exact-URL shares for a team
+	// (GET /v1/shares/grants)
+	ListShareGrants(w http.ResponseWriter, r *http.Request, params ListShareGrantsParams)
+	// CreateShareGrant Give current team members access to one exact app public URL
+	// (POST /v1/shares/grants)
+	CreateShareGrant(w http.ResponseWriter, r *http.Request, params CreateShareGrantParams)
+	// RevokeShareGrant Revoke one exact-URL share
+	// (POST /v1/shares/grants/{share_id}/revoke)
+	RevokeShareGrant(w http.ResponseWriter, r *http.Request, shareId ShareID)
 	// GetShare Read one share
 	// (GET /v1/shares/{share_id})
 	GetShare(w http.ResponseWriter, r *http.Request, shareId ShareID)
@@ -18132,6 +18758,123 @@ func (siw *ServerInterfaceWrapper) ListTeamShares(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// ListShareGrants operation middleware
+func (siw *ServerInterfaceWrapper) ListShareGrants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListShareGrantsParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListShareGrants(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateShareGrant operation middleware
+func (siw *ServerInterfaceWrapper) CreateShareGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateShareGrantParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateShareGrant(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeShareGrant operation middleware
+func (siw *ServerInterfaceWrapper) RevokeShareGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "share_id" -------------
+	var shareId ShareID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "share_id", r.PathValue("share_id"), &shareId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "share_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeShareGrant(w, r, shareId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetShare operation middleware
 func (siw *ServerInterfaceWrapper) GetShare(w http.ResponseWriter, r *http.Request) {
 
@@ -18351,6 +19094,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.ListShares)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.CreateShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares", wrapper.ListTeamShares)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/grants", wrapper.ListShareGrants)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/grants", wrapper.CreateShareGrant)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/grants/{share_id}/revoke", wrapper.RevokeShareGrant)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/{share_id}", wrapper.GetShare)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/{share_id}/revoke", wrapper.RevokeShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback", wrapper.ListFeedbackThreads)

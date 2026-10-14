@@ -75,7 +75,7 @@ func (d *Database) reviewerAccess(ctx context.Context, queries *controlstatedb.Q
 	}
 	if !allowed && identity.IdentityID != "" {
 		var err error
-		allowed, err = browserVisitAllowed(ctx, queries, publicURL, identity)
+		allowed, err = browserVisitAllowed(ctx, queries, publicURL, identity, now)
 		if err != nil {
 			return FeedbackActor{}, "", err
 		}

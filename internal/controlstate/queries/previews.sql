@@ -41,6 +41,12 @@ WHERE included.public_url_id = sqlc.arg(public_url_id)
 SELECT public_url_id FROM control.preview_public_urls
 WHERE preview_id = $1 ORDER BY public_url_id;
 
+-- name: ListPreviewHTTPPublicURLs :many
+SELECT included.public_url_id FROM control.preview_public_urls AS included
+JOIN control.public_urls AS url ON url.id = included.public_url_id
+WHERE included.preview_id = $1 AND url.service_protocol = 'http' AND url.purpose = 'app'
+ORDER BY included.public_url_id;
+
 -- name: AddPreviewPublicURL :one
 INSERT INTO control.preview_public_urls (
     preview_id, team_id, public_url_id, added_at

@@ -606,7 +606,7 @@ func (d *Database) browserAuthorization(ctx context.Context, publicURLID string,
 	if err != nil {
 		return BrowserAuthorization{}, err
 	}
-	allowed, err := browserVisitAllowed(ctx, queries, publicURL, identity)
+	allowed, err := browserVisitAllowed(ctx, queries, publicURL, identity, now)
 	if err != nil {
 		return BrowserAuthorization{}, err
 	}
@@ -659,8 +659,9 @@ func (d *Database) browserIdentity(ctx context.Context, queries *controlstatedb.
 
 // browserVisitAllowed owns current ownership and team-grant decisions. callers
 // have already locked the team before the public URL; identity alone is not permission.
-func browserVisitAllowed(ctx context.Context, queries *controlstatedb.Queries, publicURL controlstatedb.ControlPublicUrl, identity BrowserIdentity) (bool, error) {
-	if identity.IdentityID == "" || publicURL.LifecycleState != string(PublicURLLifecycleEnabled) || publicURL.Purpose != "app" {
+func browserVisitAllowed(ctx context.Context, queries *controlstatedb.Queries, publicURL controlstatedb.ControlPublicUrl, identity BrowserIdentity, now time.Time) (bool, error) {
+	if identity.IdentityID == "" || publicURL.LifecycleState != string(PublicURLLifecycleEnabled) || publicURL.Purpose != "app" ||
+		publicURL.ServiceProtocol != string(PublicURLServiceHTTP) {
 		return false, nil
 	}
 	membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
@@ -674,6 +675,15 @@ func browserVisitAllowed(ctx context.Context, queries *controlstatedb.Queries, p
 	}
 	if publicURL.PublicURLScope == "member" && publicURL.MembershipID.Valid && publicURL.MembershipID.String == membership.ID ||
 		publicURL.PublicURLScope == "shared" && (membership.Role == "admin" || membership.Role == "owner") {
+		return true, nil
+	}
+	granted, err := queries.ActiveTeamURLVisitorGrant(ctx, controlstatedb.ActiveTeamURLVisitorGrantParams{
+		TeamID: publicURL.TeamID, PublicURLID: nullableText(publicURL.ID), Now: timestamptz(now),
+	})
+	if err != nil {
+		return false, fmt.Errorf("read browser team share: %w", err)
+	}
+	if granted {
 		return true, nil
 	}
 	if identity.PreviewID == "" {

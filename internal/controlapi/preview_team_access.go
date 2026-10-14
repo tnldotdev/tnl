@@ -36,7 +36,7 @@ func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *ht
 		PreviewID: preview.ID, TeamID: preview.TeamID, IdentityID: principal.identityID, Enabled: body.Enabled,
 	}
 	if body.Enabled {
-		if len(preview.PublicURLIDs) == 0 || len(preview.PublicURLIDs) > 32 {
+		if len(preview.PublicURLIDs) == 0 || len(preview.PublicURLIDs) > 64 {
 			writeProblem(response, http.StatusConflict, controlv1.Conflict, "start a configured app service to add public URLs to this preview")
 			return
 		}
@@ -50,6 +50,9 @@ func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *ht
 			if err != nil {
 				writeControlStateProblem(response, "read team preview public URL", err)
 				return
+			}
+			if route.ServiceProtocol != controlstate.PublicURLServiceHTTP || route.Purpose != controlstate.PublicURLPurposeApp {
+				continue
 			}
 			if route.TeamID != preview.TeamID || route.LifecycleState != controlstate.PublicURLLifecycleEnabled {
 				writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not enabled for team access")
@@ -79,6 +82,10 @@ func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *ht
 			write.PublicURLs = append(write.PublicURLs, controlstate.AuthorizedSharePublicURL{
 				PublicURLID: route.ID, ExpectedMutationRevision: route.MutationRevision,
 			})
+		}
+		if len(write.PublicURLs) == 0 || len(write.PublicURLs) > 32 {
+			writeProblem(response, http.StatusConflict, controlv1.Conflict, "preview team access requires an HTTP app public URL")
+			return
 		}
 	}
 	updated, err := h.previewTeamAccess.SetPreviewTeamAccess(request.Context(), write, time.Now())
