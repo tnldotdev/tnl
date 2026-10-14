@@ -485,6 +485,14 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Credential.List.remoteFlags, true)
 	case "url credential revoke <credential-id>":
 		apply(&flags.URL.Credential.Revoke.remoteFlags, true)
+	case "url ip set <public-url-id>":
+		apply(&flags.URL.IP.Set.remoteFlags, true)
+	case "url ip add <public-url-id> <ip>":
+		apply(&flags.URL.IP.Add.remoteFlags, true)
+	case "url ip list <public-url-id>":
+		apply(&flags.URL.IP.List.remoteFlags, true)
+	case "url ip remove <public-url-id> <entry-id>":
+		apply(&flags.URL.IP.Remove.remoteFlags, true)
 	case "share link create <url>":
 		apply(&flags.Share.Link.Create.remoteFlags, true)
 	case "share list <url>":

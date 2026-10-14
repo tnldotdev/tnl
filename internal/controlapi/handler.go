@@ -66,6 +66,8 @@ type PublicURLStore interface {
 	GetAuthorizedPublicURLByHostname(context.Context, string, string) (controlstate.PublicURL, error)
 	CreatePublicURL(context.Context, controlstate.CreatePublicURLRequest, time.Time) (controlstate.PublicURL, error)
 	UpdateAuthorizedPublicURL(context.Context, controlstate.AuthorizedPublicURLUpdateRequest, time.Time) (controlstate.PublicURL, error)
+	ChangeLiveIPPolicy(context.Context, controlstate.LiveIPPolicyChange, time.Time) (controlstate.PublicURL, *controlstate.OperatorIPGrant, error)
+	ListOperatorIPEntries(context.Context, string, time.Time) ([]controlstate.OperatorIPGrant, error)
 	GetPublicURLForAuthorization(context.Context, string) (controlstate.PublicURL, error)
 	GetPublicURLForFeedbackAuthorization(context.Context, string) (controlstate.PublicURL, error)
 	GetPublicURLForPublishRunAuthorization(context.Context, string, string) (controlstate.PublicURL, error)

@@ -305,6 +305,38 @@ func (c *Client) UpdatePublicURL(ctx context.Context, publicURLID string, body c
 	})
 }
 
+func (c *Client) ReplacePublicURLIPPolicy(ctx context.Context, publicURLID string, prefixes []string) (controlv1.PublicURL, error) {
+	return requestWithAccess[controlv1.PublicURL](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ReplacePublicURLIPPolicy(ctx, publicURLID, controlv1.ReplacePublicURLIPPolicyRequest{
+			AllowedIpPrefixes: prefixes,
+		}, editors...)
+	})
+}
+
+func (c *Client) AddOperatorIP(ctx context.Context, publicURLID, prefix string, lifetime time.Duration) (controlv1.OperatorIPEntry, error) {
+	return requestWithAccess[controlv1.OperatorIPEntry](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreatePublicURLOperatorIPEntry(ctx, publicURLID, controlv1.CreateOperatorIPEntryRequest{
+			Prefix: prefix, ExpiresInSeconds: int64(lifetime / time.Second),
+		}, editors...)
+	})
+}
+
+func (c *Client) ListOperatorIPs(ctx context.Context, publicURLID string) ([]controlv1.OperatorIPEntry, error) {
+	response, err := requestWithAccess[struct {
+		Entries []controlv1.OperatorIPEntry `json:"entries"`
+	}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ListPublicURLOperatorIPEntries(ctx, publicURLID, editors...)
+	})
+	return response.Entries, err
+}
+
+func (c *Client) RemoveOperatorIP(ctx context.Context, publicURLID, entryID string) error {
+	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.DeletePublicURLOperatorIPEntry(ctx, publicURLID, controlv1.IPEntryID(entryID), editors...)
+	})
+	return err
+}
+
 func (c *Client) DeletePublicURL(ctx context.Context, publicURLID string) error {
 	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.DeletePublicURL(ctx, publicURLID, editors...)

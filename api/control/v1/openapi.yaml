@@ -780,6 +780,89 @@ paths:
           description: PublicURL deleted
         default:
           $ref: "#/components/responses/Problem"
+  /v1/public-urls/{public_url_id}/ip-policy:
+    put:
+      operationId: replacePublicURLIPPolicy
+      summary: Replace the durable visitor IP policy while the public URL is published
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublicURLID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplacePublicURLIPPolicyRequest"
+      responses:
+        "200":
+          description: Updated public URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicURL"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/public-urls/{public_url_id}/ip-entries:
+    get:
+      operationId: listPublicURLOperatorIPEntries
+      summary: List current operator-owned visitor IP entries
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublicURLID"
+      responses:
+        "200":
+          description: Current operator IP entries
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [entries]
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OperatorIPEntry"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createPublicURLOperatorIPEntry
+      summary: Allow one operator IP or prefix for a limited time
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublicURLID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOperatorIPEntryRequest"
+      responses:
+        "201":
+          description: Operator IP entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorIPEntry"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/public-urls/{public_url_id}/ip-entries/{ip_entry_id}:
+    delete:
+      operationId: deletePublicURLOperatorIPEntry
+      summary: Revoke one operator-owned visitor IP entry
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublicURLID"
+        - $ref: "#/components/parameters/IPEntryID"
+      responses:
+        "204":
+          description: Operator IP entry revoked
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/public-urls/{public_url_id}/publish-runs:
     post:
       operationId: createPublishRun
@@ -1460,6 +1543,13 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/PublicURLID"
+    IPEntryID:
+      name: ip_entry_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^ipe_[A-Za-z0-9]{22}$"
     PreviewID:
       name: preview_id
       in: path
@@ -2917,6 +3007,47 @@ components:
             minLength: 1
             maxLength: 64
             pattern: "^\\S+$"
+    ReplacePublicURLIPPolicyRequest:
+      type: object
+      additionalProperties: false
+      required: [allowed_ip_prefixes]
+      properties:
+        allowed_ip_prefixes:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+    CreateOperatorIPEntryRequest:
+      type: object
+      additionalProperties: false
+      required: [prefix, expires_in_seconds]
+      properties:
+        prefix:
+          type: string
+          minLength: 1
+          maxLength: 64
+        expires_in_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 86400
+    OperatorIPEntry:
+      type: object
+      additionalProperties: false
+      required: [id, prefix, owner_id, expires_at]
+      properties:
+        id:
+          type: string
+          pattern: "^ipe_[A-Za-z0-9]{22}$"
+        prefix:
+          type: string
+        owner_id:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
     CertificateChallengeMethod:
       type: string
       enum: [dns-01, tls-alpn-01]

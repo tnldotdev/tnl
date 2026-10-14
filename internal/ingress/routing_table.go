@@ -284,7 +284,7 @@ func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {
 		hashes := make([]ippolicy.Entry, len(entry.AllowedIpHashes))
 		for index, hashed := range entry.AllowedIpHashes {
 			hashes[index] = ippolicy.Entry{
-				Family: string(hashed.Family), Bits: hashed.PrefixLength, Digest: hashed.Digest,
+				Family: string(hashed.Family), Bits: hashed.PrefixLength, Digest: hashed.Digest, ExpiresAt: hashed.ExpiresAt,
 			}
 		}
 		if _, err := ippolicy.New(key, hashes); err != nil {
@@ -347,6 +347,12 @@ func cloneRoutingTableEntry(source ingressv1.IngressRoutingTableEntry) ingressv1
 		result.PublicPort = &port
 	}
 	result.AllowedIpHashes = append([]ingressv1.HashedIPPrefix(nil), source.AllowedIpHashes...)
+	for i, hash := range source.AllowedIpHashes {
+		if hash.ExpiresAt != nil {
+			value := *hash.ExpiresAt
+			result.AllowedIpHashes[i].ExpiresAt = &value
+		}
+	}
 	if source.IpPolicyKey != nil {
 		key := append([]byte(nil), (*source.IpPolicyKey)...)
 		result.IpPolicyKey = &key

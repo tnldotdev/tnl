@@ -314,6 +314,7 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		for index, entry := range projection.AllowedIPHashes {
 			entries[index] = ingressv1.HashedIPPrefix{
 				Family: ingressv1.HashedIPPrefixFamily(entry.Family), PrefixLength: entry.Bits, Digest: entry.Digest,
+				ExpiresAt: entry.ExpiresAt,
 			}
 		}
 		hashed = entries

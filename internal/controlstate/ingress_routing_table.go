@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/ippolicy"
 )
 
 const MaximumIngressRoutingTablePageSize = 1000
@@ -231,7 +230,7 @@ func (d *Database) ingressRoutingTableEvent(
 			return IngressRoutingTableEvent{}, errors.New("controlstate: hashed IP policy is invalid")
 		}
 		if len(policyCiphertext) != 0 {
-			prefixes, err := d.openIPPolicy(publicURLID, policyStorageKeyID.String, policyCiphertext)
+			policy, err := d.openSavedIPPolicy(publicURLID, policyStorageKeyID.String, policyCiphertext)
 			if err != nil {
 				return IngressRoutingTableEvent{}, fmt.Errorf("controlstate: open routing policy: %w", err)
 			}
@@ -239,12 +238,9 @@ func (d *Database) ingressRoutingTableEvent(
 			if err != nil {
 				return IngressRoutingTableEvent{}, err
 			}
-			projection.AllowedIPHashes = make([]ippolicy.Entry, len(prefixes))
-			for index, prefix := range prefixes {
-				projection.AllowedIPHashes[index], err = ippolicy.Hash(key, prefix)
-				if err != nil {
-					return IngressRoutingTableEvent{}, err
-				}
+			projection.AllowedIPHashes, err = hashSavedIPPolicy(key, policy)
+			if err != nil {
+				return IngressRoutingTableEvent{}, err
 			}
 			projection.IPPolicyKeyID = d.storageKey.CurrentID()
 		}

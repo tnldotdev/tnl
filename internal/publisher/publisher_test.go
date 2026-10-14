@@ -60,7 +60,7 @@ func TestCreateOrLoadRouteReconcilesTargetAndIPPolicy(t *testing.T) {
 	}
 }
 
-func TestCredentialPublisherKeepsTargetlessPublicURLWithoutChangingPolicy(t *testing.T) {
+func TestEnrolledPublisherKeepsServerOwnedURLSettings(t *testing.T) {
 	allowed := []string{"192.0.2.0/24"}
 	want := controlv1.PublicURL{
 		Id: "public_url_existing", TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"),
@@ -71,20 +71,18 @@ func TestCredentialPublisherKeepsTargetlessPublicURLWithoutChangingPolicy(t *tes
 	got, created, err := createOrLoadPublicURL(t.Context(), Config{
 		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App,
-		Target: "http://127.0.0.1:3000", AllowedIPPrefixes: allowed, PreserveSavedURLTarget: true,
+		Target: "http://127.0.0.1:3000", AllowedIPPrefixes: allowed, PreserveSavedURLSettings: true,
 	})
 	if err != nil || created || got.Target != "" || control.updated != nil {
-		t.Fatalf("credential-backed URL changed: route = %#v, created = %t, update = %#v, err = %v", got, created, control.updated, err)
+		t.Fatalf("enrolled URL changed: route = %#v, created = %t, update = %#v, err = %v", got, created, control.updated, err)
 	}
-	control.allowed = append(control.allowed, "update")
-	control.updateErr = controlclient.ErrStatusConflict
-	_, _, err = createOrLoadPublicURL(t.Context(), Config{
+	got, created, err = createOrLoadPublicURL(t.Context(), Config{
 		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App,
-		Target: "http://127.0.0.1:3000", PreserveSavedURLTarget: true,
+		Target: "http://127.0.0.1:3000", PreserveSavedURLSettings: true,
 	})
-	if err == nil || control.updated == nil {
-		t.Fatalf("changed visitor policy was accepted: update = %#v, err = %v", control.updated, err)
+	if err != nil || created || control.updated != nil || got.AllowedIpPrefixes == nil || !slices.Equal(*got.AllowedIpPrefixes, allowed) {
+		t.Fatalf("server-owned visitor policy was overwritten: route = %#v, update = %#v, err = %v", got, control.updated, err)
 	}
 }
 

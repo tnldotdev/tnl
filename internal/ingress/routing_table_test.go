@@ -92,6 +92,57 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 	}
 }
 
+func TestLiveIPPageChangesNewVisitorsWithoutReplacingExistingConnection(t *testing.T) {
+	now := time.Now()
+	entry := forwardingTestEntry(now, "relay.internal:9445")
+	entry.CanonicalHostname = "live-ip.example.test"
+	entry.PolicyRevision = 1
+	hashedRoutingPolicyForTest(t, &entry, "192.0.2.0/24")
+	event := ingressv1.IngressRoutingTableEvent{
+		RoutingTableRevision: 1, Kind: ingressv1.PublicUrlUpsert, PublicUrlId: entry.PublicUrlId,
+		PublishRunNumber: entry.PublishRunNumber, CanonicalHostname: entry.CanonicalHostname,
+		EntryRevision: 1, Entry: entry, PublicUrlExpiresAt: &entry.PublicUrlExpiresAt, CreatedAt: now,
+	}
+	var table RoutingTable
+	if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{
+		ThroughRevision: 1, Entries: []ingressv1.IngressRoutingTableEvent{event},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	forwarder := newTestForwarder(t, newForwardingTestMaterial(t))
+	oldEntry, ok := table.Lookup(entry.CanonicalHostname, now)
+	if !ok {
+		t.Fatal("initial visitor route is missing")
+	}
+	oldConnection, err := forwarder.PublicURL(oldEntry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visitor := netip.MustParseAddr("192.0.2.7")
+	if !oldConnection.allowsIP(visitor) {
+		t.Fatal("initial visitor was denied")
+	}
+	updated := event
+	updated.RoutingTableRevision, updated.EntryRevision = 2, 2
+	hashedRoutingPolicyForTest(t, &updated.Entry, "198.51.100.0/24")
+	if err := table.ApplyPage(1, ingressv1.IngressRoutingTablePage{
+		ThroughRevision: 2, NextRevision: 2, Events: []ingressv1.IngressRoutingTableEvent{updated},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newEntry, ok := table.Lookup(entry.CanonicalHostname, now)
+	if !ok || newEntry.PublishRunId != oldEntry.PublishRunId || newEntry.PublishRunNumber != oldEntry.PublishRunNumber {
+		t.Fatalf("live IP edit changed the publish run: %+v", newEntry)
+	}
+	newConnection, err := forwarder.PublicURL(newEntry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !oldConnection.allowsIP(visitor) || newConnection.allowsIP(visitor) || !newConnection.allowsIP(netip.MustParseAddr("198.51.100.7")) {
+		t.Fatal("routing revision changed an existing admission or failed to protect a new one")
+	}
+}
+
 func TestRoutingTablePortClaimsStayAtomicAcrossPages(t *testing.T) {
 	now := time.Now().UTC()
 	event := func(revision int64, hostname, pool string, port int) ingressv1.IngressRoutingTableEvent {

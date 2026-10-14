@@ -457,6 +457,9 @@ components:
         digest:
           type: string
           pattern: "^[A-Za-z0-9_-]{43}$"
+        expires_at:
+          type: string
+          format: date-time
     PublishRunTrafficLimits:
       type: object
       additionalProperties: false

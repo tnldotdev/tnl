@@ -118,7 +118,7 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 		entries := make([]ippolicy.Entry, 0, len(entry.AllowedIpHashes))
 		for _, item := range entry.AllowedIpHashes {
 			entries = append(entries, ippolicy.Entry{
-				Family: string(item.Family), Bits: item.PrefixLength, Digest: item.Digest,
+				Family: string(item.Family), Bits: item.PrefixLength, Digest: item.Digest, ExpiresAt: item.ExpiresAt,
 			})
 		}
 		policy, err := ippolicy.New(key, entries)

@@ -245,6 +245,35 @@ func TestCredentialCommandsSelectOptionalServiceAndURLFilters(t *testing.T) {
 	}
 }
 
+func TestVisitorIPCommandsWorkWithoutStoppingPublication(t *testing.T) {
+	const id = "url_0123456789abcdefghijkl"
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"url", "ip", "set", id, "--allow-ip", "192.0.2.7"}, "url ip set <public-url-id>"},
+		{[]string{"url", "ip", "add", id, "198.51.100.10", "--for", "90m"}, "url ip add <public-url-id> <ip>"},
+		{[]string{"url", "ip", "list", id}, "url ip list <public-url-id>"},
+		{[]string{"url", "ip", "remove", id, "ipe_0123456789abcdefghijkl"}, "url ip remove <public-url-id> <entry-id>"},
+	} {
+		var flags cli
+		parser, err := kong.New(&flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := parser.Parse(test.args)
+		if err != nil {
+			t.Fatalf("parse visitor IP command: %v", err)
+		}
+		if got := canonicalParsedCommand(parsed.Command()); got != test.want {
+			t.Fatalf("visitor IP command = %q, want %q", got, test.want)
+		}
+		if test.want == "url ip add <public-url-id> <ip>" && flags.URL.IP.Add.For != 90*time.Minute {
+			t.Fatalf("operator IP expiry = %v", flags.URL.IP.Add.For)
+		}
+	}
+}
+
 func TestTunnelCLIUnitOverridesConflictingEnvironmentUnit(t *testing.T) {
 	t.Setenv("TNL_NAME", "environment-name")
 	t.Setenv("TNL_ALLOW_ALL_IPS", "true")

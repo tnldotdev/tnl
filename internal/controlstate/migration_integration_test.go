@@ -75,6 +75,64 @@ func TestIntegrationPublishRunTrafficMigrationKeepsExistingRunShape(t *testing.T
 	}
 }
 
+func TestIntegrationLiveIPMigrationKeepsOldPublicURLColumns(t *testing.T) {
+	ctx := t.Context()
+	url := newDisposableControlStateDatabaseURL(t, "live_ip_migration")
+	config, err := parseDirectConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct := stdlib.OpenDB(*config)
+	t.Cleanup(func() { _ = direct.Close() })
+	if err := ensureMigrationLock(ctx, direct); err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, direct, migrations,
+		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 32); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	columns := func() []string {
+		t.Helper()
+		rows, err := pool.Query(ctx, `SELECT column_name FROM information_schema.columns
+			WHERE table_schema = 'control' AND table_name = 'public_urls' ORDER BY ordinal_position`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		values, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return values
+	}
+	before := columns()
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatal(err)
+	}
+	after := columns()
+	if len(after) != len(before)+1 || !slices.Equal(before, after[:len(before)]) || after[len(before)] != "next_operator_ip_expiry" {
+		t.Fatalf("migration 33 changed old public URL columns: before=%v after=%v", before, after)
+	}
+	// generated queries in existing processes select the old explicit columns;
+	// their scan shapes are unchanged by the new nullable field.
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM control.public_urls WHERE next_operator_ip_expiry IS NOT NULL`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("new expiry column changed old rows: %d, %v", count, err)
+	}
+}
+
 func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	databaseURL := newDisposableControlStateDatabaseURL(t, "migration")
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)

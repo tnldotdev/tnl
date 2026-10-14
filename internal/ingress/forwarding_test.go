@@ -187,6 +187,8 @@ func TestForwarderConvertsRoutingPolicyWithoutSharingMutableState(t *testing.T) 
 	forwarder := newTestForwarder(t, material)
 	entry := forwardingTestEntry(time.Now(), "relay.internal:9445")
 	hashedRoutingPolicyForTest(t, &entry, "192.0.2.0/24")
+	expires := time.Now().Add(time.Hour)
+	entry.AllowedIpHashes[0].ExpiresAt = &expires
 
 	route, err := forwarder.PublicURL(entry)
 	if err != nil {
@@ -194,7 +196,8 @@ func TestForwarderConvertsRoutingPolicyWithoutSharingMutableState(t *testing.T) 
 	}
 	if route.ID != entry.PublicUrlId || route.PublishRunNumber != uint64(entry.PublishRunNumber) ||
 		len(route.Backends) != 1 || !route.allowsIP(netip.MustParseAddr("192.0.2.7")) ||
-		route.allowsIP(netip.MustParseAddr("192.0.3.7")) {
+		route.allowsIP(netip.MustParseAddr("192.0.3.7")) ||
+		route.HashedIPPolicy.AllowsAt(netip.MustParseAddr("192.0.2.7"), expires) {
 		t.Fatalf("route = %#v", route)
 	}
 	entry.AllowedIpHashes[0].Digest = "changed"

@@ -57,8 +57,7 @@ hostname and port. Existing HTTP URLs still have no public TCP port.
 
 The guest-domain change requires migration 11 because managed guest trials store
 an empty DNS authority reference that the old constraint rejected. Email delivery
-requires migration 12's queue table, including for storage-key rotation. The
-authority cleanup requires migration 13's renamed guest retry-key columns.
+requires migration 12's queue table, including for storage-key rotation.
 
 Migration 30 follows the publish-run traffic table in migration 29. It allows
 browser sessions without a preview and adds separate tables for publish-run
@@ -68,6 +67,16 @@ is unavailable and feedback sign-in is optional. Existing `publish_runs` and
 Deploy the migration before enabling preview-independent browser writers or
 sign-in policy enforcement. Browser writers use the nullable preview references
 for public-URL-only sessions.
+
+Migration 33 appends a nullable operator IP expiry to `control.public_urls` and
+indexes due enabled URLs. Existing rows have no expiry, and older generated
+queries select their original explicit columns. Apply the migration before
+starting control processes that edit live IP policy; update ingress processes
+before issuing expiring entries so each process enforces their deadlines. The
+cleanup worker takes bounded route locks, drops expired entries, and publishes a
+new routing-table revision. Ingress checks each temporary entry's deadline on
+every new visitor connection even if cleanup is delayed; established visitor
+streams stay open.
 
 The two publisher connection slots are stored in
 `control.publish_run_connection_slots`. A slot keeps its `id` and

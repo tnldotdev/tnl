@@ -550,7 +550,19 @@ func (d *Database) UpdateAuthorizedPublicURL(
 			return PublicURL{}, ErrPublicURLAccess
 		}
 	}
-	policyCiphertext, policyHashes, policyKeyID, err := d.storeIPPolicy(request.PublicURLID, prefixes, false)
+	previousPolicy, err := d.openSavedIPPolicy(request.PublicURLID, route.AllowedIpPolicyStorageKeyID.String, route.AllowedIpPolicyCiphertext)
+	if err != nil {
+		return PublicURL{}, err
+	}
+	operator := make([]operatorIPEntry, 0, len(previousPolicy.Operator))
+	if len(prefixes) != 0 {
+		for _, entry := range previousPolicy.Operator {
+			if entry.ExpiresAt.After(now) {
+				operator = append(operator, entry)
+			}
+		}
+	}
+	policyCiphertext, policyHashes, policyKeyID, err := d.storeIPPolicyWithOperator(request.PublicURLID, prefixes, operator, false)
 	if err != nil {
 		return PublicURL{}, fmt.Errorf("controlstate: protect updated IP policy: %w", err)
 	}
@@ -563,7 +575,8 @@ func (d *Database) UpdateAuthorizedPublicURL(
 		AllowedIpPolicyCiphertext:   policyCiphertext,
 		AllowedIpPolicyStorageKeyID: nullableText(policyStorageKeyID),
 		AllowedIpHashes:             policyHashes, AllowedIpHashKeyID: nullableText(policyKeyID),
-		UpdatedAt: timestamptz(now), PublicURLID: request.PublicURLID,
+		NextOperatorIpExpiry: nextOperatorIPExpiry(operator),
+		UpdatedAt:            timestamptz(now), PublicURLID: request.PublicURLID,
 		ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -589,7 +602,10 @@ func (d *Database) UpdateAuthorizedPublicURL(
 		return PublicURL{}, fmt.Errorf("controlstate: update public_url: commit: %w", err)
 	}
 	result = publicURLFromModel(updated, "")
-	result.AllowedIPPrefixes = append([]netip.Prefix(nil), prefixes...)
+	result.AllowedIPPrefixes, err = d.openIPPolicy(result.ID, policyStorageKeyID, policyCiphertext)
+	if err != nil {
+		return PublicURL{}, err
+	}
 	return result, nil
 }
 

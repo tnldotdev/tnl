@@ -28,6 +28,7 @@ const (
 	GuestPrefix                      = "gst_"
 	IdempotencyPrefix                = "ik_"
 	IdentityPrefix                   = "ident_"
+	IPPolicyEntryPrefix              = "ipe_"
 	IngressRunPrefix                 = "ir_"
 	InstallationPrefix               = "inst_"
 	InvitationPrefix                 = "ivt_"

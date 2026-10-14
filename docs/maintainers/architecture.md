@@ -396,6 +396,16 @@ allocating credential still owns that exact URL. process loss leaves the URL
 for the existing ephemeral expiry path; retention removes its ownership row
 when it eventually removes the public URL row.
 
+the saved public URL keeps the editor's durable IP source policy and the
+operator's expiring entries in one encrypted policy. changing either publishes
+a new hashed ingress entry without closing the publish run or granting the
+publisher permission to edit the policy. ingress checks each operator entry's
+deadline for every new visitor connection, even if control's cleanup is late;
+existing visitor streams continue. control removes expired entries in bounded
+batches and publishes the remaining policy. saved URL reads expose only the
+durable source prefixes; a separate API lists operator entries so a later
+target edit cannot turn temporary access into permanent policy.
+
 control owns hostname policy: a member may publish any valid descendant of
 their namespace, subject to the managed domain's configured depth limit.
 the member namespace apex is reserved. by default, a self-hosted built-in
