@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -33,6 +34,31 @@ func TestTCPPublishAndCredentialFlags(t *testing.T) {
 			}
 		} else if flags.URL.Credential.Create.Protocol != test.want || flags.URL.Credential.Create.Name != "orders" {
 			t.Fatalf("TCP credential flags = %+v", flags.URL.Credential.Create)
+		}
+	}
+}
+
+func TestTCPInspectionSelectionDefaultsToSummaryExceptSSH(t *testing.T) {
+	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql, controlv1.Redis} {
+		flags := publishCommand{tunnelFlags: tunnelFlags{InspectionMode: config.InspectionSummary}}
+		if err := selectPublishInspection(&flags, protocol); err != nil || flags.InspectionMode != config.InspectionSummary {
+			t.Fatalf("%s default inspection = %q, %v", protocol, flags.InspectionMode, err)
+		}
+		flags.InspectionMode = config.InspectionNone
+		flags.inspectionModeFromCLI = true
+		if err := selectPublishInspection(&flags, protocol); err != nil || flags.InspectionMode != config.InspectionNone {
+			t.Fatalf("%s explicit none inspection = %q, %v", protocol, flags.InspectionMode, err)
+		}
+	}
+	flags := publishCommand{tunnelFlags: tunnelFlags{InspectionMode: config.InspectionSummary}}
+	if err := selectPublishInspection(&flags, controlv1.Ssh); err != nil || flags.InspectionMode != config.InspectionNone {
+		t.Fatalf("SSH default inspection = %q, %v", flags.InspectionMode, err)
+	}
+	for _, explicit := range []tunnelFlags{{InspectionMode: config.InspectionSummary, inspectionModeFromCLI: true},
+		{InspectionMode: config.InspectionSummary, inspectionModeFromConfig: true}} {
+		flags := publishCommand{tunnelFlags: explicit}
+		if err := selectPublishInspection(&flags, controlv1.Ssh); err == nil {
+			t.Fatal("SSH accepted explicit summary inspection")
 		}
 	}
 }

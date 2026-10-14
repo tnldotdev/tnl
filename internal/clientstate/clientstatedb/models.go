@@ -115,13 +115,12 @@ type LocalInspection struct {
 	Status              int64
 	DurationMs          int64
 	Origin              string
-	CaptureMode         string
-	DetailJson          sql.NullString
-	DatabaseOperation   string
-	DatabaseResult      string
+	SqlOperation        string
+	Result              string
+	RedisCommand        string
 	SqlState            string
-	DatabaseRows        int64
-	DatabaseResultSets  int64
+	SqlRows             int64
+	MysqlResultSets     int64
 	MysqlErrorCode      int64
 }
 

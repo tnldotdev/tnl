@@ -6,7 +6,7 @@
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["summary", "detailed"]
+          "enum": ["none", "summary"]
         }
       },
       "additionalProperties": false,

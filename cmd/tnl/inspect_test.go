@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -35,7 +34,7 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 		SchemaVersion int                `json:"schema_version"`
 		Inspections   []inspectionRecord `json:"inspections"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &list); err != nil || list.SchemaVersion != 1 || len(list.Inspections) != 0 {
+	if err := json.Unmarshal(stdout.Bytes(), &list); err != nil || list.SchemaVersion != 2 || len(list.Inspections) != 0 {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
 	stdout.Reset()
@@ -78,15 +77,15 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 	recorder := tunnel.NewInspectionRecorder(primary, project, shared, "web", inspection.Policy{Retention: 24 * time.Hour, MaxBytes: 64 << 20})
 	recorder.Observe(clientstate.InspectionRecord{
 		ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/health", Status: 200,
-		Origin: "local_service", CaptureMode: "summary", DurationMS: 12,
+		Origin: "local_service", DurationMS: 12,
 	})
 	recorder.Observe(clientstate.InspectionRecord{
 		ReceivedAt: time.Now().UTC(), Method: "POST", Path: "/checkout", Status: 500,
-		Origin: "local_service", CaptureMode: "summary", DurationMS: 25,
+		Origin: "local_service", DurationMS: 25,
 	})
 	recorder.Observe(clientstate.InspectionRecord{
 		ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/missing", Status: 404,
-		Origin: "tnl", CaptureMode: "summary", DurationMS: 1,
+		Origin: "tnl", DurationMS: 1,
 	})
 	recorder.Close()
 	var listOutput bytes.Buffer
@@ -136,7 +135,7 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 	}
 }
 
-func TestInspectSQLListAndShowKeepStatementsInDetails(t *testing.T) {
+func TestInspectSQLAndRedisListAndShowSummaries(t *testing.T) {
 	project, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -166,12 +165,14 @@ func TestInspectSQLListAndShowKeepStatementsInDetails(t *testing.T) {
 	recorder.Observe(clientstate.InspectionRecord{
 		Protocol: controlv1.Postgres, ReceivedAt: time.Now().UTC(), Origin: "tnl",
 		Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "42703",
-		CaptureMode: config.InspectionDetailed, Detail: json.RawMessage(`{"statement":"SELECT missing_column"}`),
 	})
 	recorder.Observe(clientstate.InspectionRecord{
 		Protocol: controlv1.Mysql, ReceivedAt: time.Now().UTC().Add(time.Second), Origin: "tnl",
 		Operation: inspection.OperationQuery, Result: inspection.ResultError, SQLState: "42S22", MySQLErrorCode: 1054,
-		CaptureMode: config.InspectionSummary,
+	})
+	recorder.Observe(clientstate.InspectionRecord{
+		Protocol: controlv1.Redis, ReceivedAt: time.Now().UTC().Add(2 * time.Second), Origin: "tnl",
+		RedisCommand: "PING", Result: inspection.ResultOK,
 	})
 	recorder.Close()
 	var output bytes.Buffer
@@ -183,9 +184,13 @@ func TestInspectSQLListAndShowKeepStatementsInDetails(t *testing.T) {
 	}
 	if err := json.Unmarshal(output.Bytes(), &list); err != nil || len(list.Inspections) != 1 ||
 		list.Inspections[0].Protocol != controlv1.Postgres || list.Inspections[0].Result != inspection.ResultError ||
-		list.Inspections[0].Postgres == nil || list.Inspections[0].Postgres.SQLState != "42703" ||
-		list.Inspections[0].Postgres.Statement != "" || !list.Inspections[0].DetailAvailable {
+		list.Inspections[0].Postgres == nil || list.Inspections[0].Postgres.SQLState != "42703" {
 		t.Fatalf("PostgreSQL inspection list = %s, %v", output.String(), err)
+	}
+	for _, absent := range []string{`"capture_mode"`, `"detail_available"`, `"detail_hint"`, `"statement"`} {
+		if bytes.Contains(output.Bytes(), []byte(absent)) {
+			t.Fatalf("obsolete inspection detail %s: %s", absent, output.String())
+		}
 	}
 	output.Reset()
 	if err := run(t.Context(), []string{"inspect", "show", "1", "--output=json"}, &output, &bytes.Buffer{}, nil); err != nil {
@@ -195,17 +200,32 @@ func TestInspectSQLListAndShowKeepStatementsInDetails(t *testing.T) {
 		Inspection inspectionRecord `json:"inspection"`
 	}
 	if err := json.Unmarshal(output.Bytes(), &show); err != nil || show.Inspection.Postgres == nil ||
-		show.Inspection.Postgres.Statement != "SELECT missing_column" || show.Inspection.CaptureMode != "detailed" {
-		t.Fatalf("PostgreSQL inspection detail = %s, %v", output.String(), err)
+		show.Inspection.Postgres.Operation != inspection.OperationExecute || show.Inspection.Postgres.SQLState != "42703" {
+		t.Fatalf("PostgreSQL inspection summary = %s, %v", output.String(), err)
 	}
 	output.Reset()
 	if err := run(t.Context(), []string{"inspect", "show", "2", "--output=json"}, &output, &bytes.Buffer{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal(output.Bytes(), &show); err != nil || show.Inspection.MySQL == nil ||
-		show.Inspection.MySQL.ErrorCode != 1054 || show.Inspection.MySQL.SQLState != "42S22" ||
-		show.Inspection.MySQL.Statement != "" || show.Inspection.DetailAvailable {
+		show.Inspection.MySQL.ErrorCode != 1054 || show.Inspection.MySQL.SQLState != "42S22" {
 		t.Fatalf("MySQL summary inspection = %s, %v", output.String(), err)
+	}
+	output.Reset()
+	if err := run(t.Context(), []string{"inspect", "list", "--protocol=redis", "--result=ok", "--output=json"}, &output, &bytes.Buffer{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(output.Bytes(), &list); err != nil || len(list.Inspections) != 1 ||
+		list.Inspections[0].Redis == nil || list.Inspections[0].Redis.Command != "PING" || list.Inspections[0].Result != inspection.ResultOK {
+		t.Fatalf("Redis inspection list = %s, %v", output.String(), err)
+	}
+	output.Reset()
+	if err := run(t.Context(), []string{"inspect", "show", "3", "--output=json"}, &output, &bytes.Buffer{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(output.Bytes(), &show); err != nil || show.Inspection.Redis == nil ||
+		show.Inspection.Redis.Command != "PING" || show.Inspection.Result != inspection.ResultOK {
+		t.Fatalf("Redis inspection summary = %s, %v", output.String(), err)
 	}
 	if err := run(t.Context(), []string{"inspect", "list", "--protocol=mysql", "--status=500"}, &bytes.Buffer{}, &bytes.Buffer{}, nil); err == nil {
 		t.Fatal("HTTP-only status filter was accepted for MySQL")

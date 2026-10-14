@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -19,7 +19,10 @@ func inspectionRoots(ctx context.Context, project string) (string, string, error
 	return worktree.PrimaryCheckoutRoot(), projectconfig.SharedProjectIdentity(worktree, project), nil
 }
 
-func newInspectionRecorder(ctx context.Context, tunnel *clientstate.Tunnel, project, service string) (*clientstate.InspectionRecorder, error) {
+func newInspectionRecorder(ctx context.Context, tunnel *clientstate.Tunnel, project, service string, mode config.InspectionMode) (*clientstate.InspectionRecorder, error) {
+	if mode == config.InspectionNone {
+		return nil, nil
+	}
 	primary, shared, err := inspectionRoots(ctx, project)
 	if err != nil {
 		return nil, err
@@ -29,15 +32,13 @@ func newInspectionRecorder(ctx context.Context, tunnel *clientstate.Tunnel, proj
 }
 
 func httpObservation(recorder *clientstate.InspectionRecorder) func(publisher.RequestObservation) {
+	if recorder == nil {
+		return nil
+	}
 	return func(event publisher.RequestObservation) {
-		var detail json.RawMessage
-		if event.Detail != nil {
-			detail, _ = json.Marshal(event.Detail)
-		}
 		recorder.Observe(clientstate.InspectionRecord{
 			ReceivedAt: event.ReceivedAt, Method: event.Method, Path: event.Path,
 			Status: event.Status, DurationMS: event.Duration.Milliseconds(), Origin: event.Origin,
-			CaptureMode: event.CaptureMode, Detail: detail,
 		})
 	}
 }

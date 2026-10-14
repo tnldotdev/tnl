@@ -48,7 +48,6 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	output.setInspectionMode(flags.InspectionMode)
 	defer func() { result = output.finish(ctx, result) }()
 	if flags.PublishCredential != "" {
 		if flags.Demo {
@@ -58,6 +57,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	protocol, err := publishProtocol(flags.Protocol)
 	if err != nil {
+		return err
+	}
+	if err := selectPublishInspection(&flags, protocol); err != nil {
 		return err
 	}
 	if protocol != controlv1.Http && flags.Demo {
@@ -214,7 +216,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	publisherConfig.TargetTLS = flags.TargetTLS
 	publisherConfig.VisitorTLSPassthrough = flags.VisitorTLSPassthrough
 	publisherConfig.TargetOptions = targetOptions
-	recorder, err := newInspectionRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
+	recorder, err := newInspectionRecorder(ctx, tunnel, flags.projectRoot, flags.Service, flags.InspectionMode)
 	if err != nil {
 		return err
 	}

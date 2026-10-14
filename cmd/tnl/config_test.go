@@ -176,7 +176,7 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 }
 
 func TestInspectionServiceAndFlagPrecedence(t *testing.T) {
-	rootMode, serviceMode := config.InspectionDetailed, config.InspectionSummary
+	rootMode, serviceMode := config.InspectionNone, config.InspectionSummary
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
 		Inspection: &config.Inspection{Mode: &rootMode}, Services: config.Services{"web": {
@@ -188,7 +188,7 @@ func TestInspectionServiceAndFlagPrecedence(t *testing.T) {
 		want config.InspectionMode
 	}{
 		{[]string{"publish", "web"}, "summary"},
-		{[]string{"publish", "web", "--inspection-mode=detailed"}, "detailed"},
+		{[]string{"publish", "web", "--inspection-mode=none"}, "none"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)

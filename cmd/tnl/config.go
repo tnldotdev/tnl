@@ -229,6 +229,7 @@ func applyInspection(flags *tunnelFlags, effective config.TNL) {
 	if effective.Inspection != nil {
 		if !flags.inspectionModeFromCLI && effective.Inspection.Mode != nil {
 			flags.InspectionMode = *effective.Inspection.Mode
+			flags.inspectionModeFromConfig = true
 		}
 	}
 	if flags.InspectionMode == "" {
@@ -238,7 +239,7 @@ func applyInspection(flags *tunnelFlags, effective config.TNL) {
 
 func validateTunnelFlags(flags tunnelFlags) error {
 	if !flags.InspectionMode.Valid() {
-		return errors.New("--inspection-mode must be summary or detailed")
+		return errors.New("--inspection-mode must be none or summary")
 	}
 	if flags.Requests != nil && *flags.Requests <= 0 || flags.Concurrency != nil && *flags.Concurrency <= 0 {
 		return errors.New("--requests and --concurrency must be greater than zero")

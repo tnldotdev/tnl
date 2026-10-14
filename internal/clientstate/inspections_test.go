@@ -3,14 +3,12 @@ package clientstate
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -36,10 +34,11 @@ func TestInspectionNumbersAndTypedResultsAcrossWorktrees(t *testing.T) {
 		{project, InspectionRecord{ReceivedAt: now, Method: "POST", Path: "/checkout", Status: 500,
 			Origin: "local_service"}},
 		{otherWorktree, InspectionRecord{ReceivedAt: now.Add(time.Second), Protocol: controlv1.Postgres,
-			Origin: "tnl", CaptureMode: config.InspectionDetailed, Operation: inspection.OperationExecute,
-			Result: inspection.ResultError, SQLState: "42703", Detail: json.RawMessage(`{"statement":"SELECT missing_column"}`)}},
+			Origin: "tnl", Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "42703"}},
 		{project, InspectionRecord{ReceivedAt: now.Add(2 * time.Second), Protocol: controlv1.Mysql,
 			Origin: "tnl", Operation: inspection.OperationQuery, Result: inspection.ResultOK, Rows: 2, ResultSets: 1}},
+		{project, InspectionRecord{ReceivedAt: now.Add(3 * time.Second), Protocol: controlv1.Redis,
+			Origin: "tnl", RedisCommand: "PING", Result: inspection.ResultOK}},
 	} {
 		if err := state.saveInspection(t.Context(), "tun_test", primary, entry.project, project, "orders", entry.record, testInspectionPolicy()); err != nil {
 			t.Fatal(err)
@@ -47,13 +46,12 @@ func TestInspectionNumbersAndTypedResultsAcrossWorktrees(t *testing.T) {
 	}
 	filter := InspectionFilter{Project: project, SharedProject: project, Limit: 10, Result: inspection.ResultError}
 	items, err := state.ListInspections(t.Context(), filter)
-	if err != nil || len(items) != 1 || items[0].Number != 1 || items[0].Protocol != controlv1.Http || items[0].DetailAvailable {
+	if err != nil || len(items) != 1 || items[0].Number != 1 || items[0].Protocol != controlv1.Http {
 		t.Fatalf("current worktree errors = %+v, %v", items, err)
 	}
 	filter.AllWorktrees = true
 	items, err = state.ListInspections(t.Context(), filter)
-	if err != nil || len(items) != 2 || items[0].Number != 2 || items[0].Protocol != controlv1.Postgres ||
-		!items[0].DetailAvailable || len(items[0].Detail) != 0 || items[1].Number != 1 {
+	if err != nil || len(items) != 2 || items[0].Number != 2 || items[0].Protocol != controlv1.Postgres || items[1].Number != 1 {
 		t.Fatalf("linked worktree failures = %+v, %v", items, err)
 	}
 	filter.Result = inspection.ResultOK
@@ -63,9 +61,20 @@ func TestInspectionNumbersAndTypedResultsAcrossWorktrees(t *testing.T) {
 		t.Fatalf("MySQL outcomes = %+v, %v", items, err)
 	}
 	show, err := state.GetInspection(t.Context(), primary, 2)
-	if err != nil || string(show.Detail) != `{"statement":"SELECT missing_column"}` {
-		t.Fatalf("local SQL detail = %+v, %v", show, err)
+	if err != nil || show.SQLState != "42703" || show.Operation != inspection.OperationExecute {
+		t.Fatalf("local SQL summary = %+v, %v", show, err)
 	}
+	filter.Protocol = controlv1.Redis
+	filter.Method = ""
+	items, err = state.ListInspections(t.Context(), filter)
+	if err != nil || len(items) != 1 || items[0].Number != 4 || items[0].RedisCommand != "PING" || items[0].Result != inspection.ResultOK {
+		t.Fatalf("Redis summary = %+v, %v", items, err)
+	}
+	invalid := InspectionRecord{Protocol: controlv1.Redis, ReceivedAt: now, Origin: "tnl", Result: inspection.ResultOK, RedisCommand: "AUTH password"}
+	if err := state.saveInspection(t.Context(), "tun_test", primary, project, project, "orders", invalid, testInspectionPolicy()); err == nil {
+		t.Fatal("Redis inspection retained command arguments")
+	}
+	filter.Protocol = controlv1.Mysql
 	if _, err := state.GetInspection(t.Context(), filepath.Join(t.TempDir(), "different"), 2); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("another checkout found inspection: %v", err)
 	}
@@ -104,15 +113,9 @@ func TestInspectionRetentionAndByteBudgetArePerServiceAndWorktree(t *testing.T) 
 	if err := state.saveInspection(t.Context(), "tun_test", project, project, project, "web", observation, short); err != nil {
 		t.Fatal(err)
 	}
-	const repeatedSQL = "SELECT "
-	largeDetail, err := json.Marshal(map[string]string{"statement": strings.Repeat(repeatedSQL, 1100)})
-	if err != nil {
-		t.Fatal(err)
-	}
 	for index := range 150 {
-		record := InspectionRecord{ReceivedAt: now.Add(time.Duration(index) * time.Second), Protocol: controlv1.Mysql,
-			Origin: "tnl", CaptureMode: config.InspectionDetailed, Operation: inspection.OperationQuery,
-			Result: inspection.ResultOK, Detail: largeDetail}
+		record := InspectionRecord{ReceivedAt: now.Add(time.Duration(index) * time.Second), Method: "GET",
+			Path: "/" + strings.Repeat("x", 8<<10), Status: 200, Origin: "local_service"}
 		if err := state.saveInspection(t.Context(), "tun_test", project, project, project, "orders", record, long); err != nil {
 			t.Fatal(err)
 		}

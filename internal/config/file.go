@@ -189,15 +189,16 @@ func ValidateTNL(config TNL) error {
 		if err := validateServiceValues(service.Tunnel, effectivePublish); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
-		if ServiceProtocol(effectivePublish) != "http" {
+		protocol := ServiceProtocol(effectivePublish)
+		if protocol != "http" {
 			if service.Readiness != nil || config.Readiness != nil || len(service.Paths) != 0 ||
 				service.Tunnel != nil && service.Tunnel.Open != nil && *service.Tunnel.Open ||
 				config.Tunnel != nil && config.Tunnel.Open != nil && *config.Tunnel.Open {
 				return fmt.Errorf("services.%s: TCP services cannot use HTTP readiness, path mounts, or browser opening", name)
 			}
 			selected := MergeInspection(config.Inspection, service.Inspection)
-			if selected != nil && selected.Mode != nil && *selected.Mode == InspectionDetailed {
-				return fmt.Errorf("services.%s: detailed inspection requires an HTTP service", name)
+			if protocol == "ssh" && selected != nil && selected.Mode != nil && *selected.Mode != InspectionNone {
+				return fmt.Errorf("services.%s: SSH inspection supports none only", name)
 			}
 			for _, definition := range config.Webhooks {
 				if definition.Service == name {

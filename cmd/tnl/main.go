@@ -66,12 +66,13 @@ type tunnelFlags struct {
 	RatePer            string                `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
 	Concurrency        *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous application requests, streams, and upgrades. Defaults to 500."`
 	TargetCAFile       string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or TCP target."`
-	InspectionMode     config.InspectionMode `name:"inspection-mode" enum:"summary,detailed" default:"summary" help:"Local HTTP and TCP inspection: summary (default) or detailed."`
+	InspectionMode     config.InspectionMode `name:"inspection-mode" enum:"none,summary" default:"summary" help:"Local HTTP and TCP inspection: summary (default) or none."`
 
-	allowAllIPsFromCLI    bool
-	ephemeralFromCLI      bool
-	domainFromCLI         bool
-	inspectionModeFromCLI bool
+	allowAllIPsFromCLI       bool
+	ephemeralFromCLI         bool
+	domainFromCLI            bool
+	inspectionModeFromCLI    bool
+	inspectionModeFromConfig bool
 }
 
 type remoteFlags struct {

@@ -95,7 +95,6 @@ type responseOriginKey struct{}
 type observedResponseWriter struct {
 	http.ResponseWriter
 	status int
-	body   *bodyCapture
 }
 
 func (w *observedResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -112,22 +111,17 @@ func (w *observedResponseWriter) Write(data []byte) (int, error) {
 		w.status = http.StatusOK
 	}
 	n, err := w.ResponseWriter.Write(data)
-	if w.body != nil {
-		w.body.append(data[:n])
-	}
 	return n, err
 }
 
 // RequestObservation holds local HTTP observations for the CLI inspector.
 type RequestObservation struct {
-	ReceivedAt  time.Time
-	Method      string
-	Path        string
-	Status      int
-	Duration    time.Duration
-	Origin      string
-	CaptureMode projectconfig.InspectionMode
-	Detail      *RequestDetail
+	ReceivedAt time.Time
+	Method     string
+	Path       string
+	Status     int
+	Duration   time.Duration
+	Origin     string
 }
 
 // NewPublicURLServer creates a public URL server served by publisher connections.
@@ -137,7 +131,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		return nil, errors.New("publisher: public URL hostname must be canonical")
 	}
 	if config.InspectionMode != "" && !config.InspectionMode.Valid() {
-		return nil, errors.New("publisher: request inspection mode must be summary or detailed")
+		return nil, errors.New("publisher: request inspection mode must be none or summary")
 	}
 	if config.RequestLimit < 0 {
 		return nil, errors.New("publisher: request limit cannot be negative")
@@ -200,23 +194,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		},
 		http: &http.Server{
 			Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				if config.ObserveRequest != nil && !sharePath(request.URL.EscapedPath()) {
+				if config.ObserveRequest != nil && config.InspectionMode != projectconfig.InspectionNone && !sharePath(request.URL.EscapedPath()) {
 					started := time.Now()
 					forwarded := &atomic.Bool{}
 					request = request.WithContext(context.WithValue(request.Context(), responseOriginKey{}, forwarded))
 					tracked := &observedResponseWriter{ResponseWriter: response}
-					var detail *RequestDetail
-					var incoming, outgoing *bodyCapture
-					if config.InspectionMode == projectconfig.InspectionDetailed {
-						detail = &RequestDetail{}
-						detail.Query, detail.QueryTruncated = boundedRequestText(request.URL.RawQuery, 8<<10)
-						detail.RequestHeaders, detail.RequestHeadersTruncated = boundedRequestHeaders(request.Header, 16<<10)
-						incoming, outgoing = &bodyCapture{}, &bodyCapture{}
-						if request.Body != nil {
-							request.Body = &observedBodyReader{ReadCloser: request.Body, body: incoming}
-						}
-						tracked.body = outgoing
-					}
 					response = tracked
 					defer func() {
 						path := request.URL.EscapedPath()
@@ -231,21 +213,8 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						if status == 0 {
 							status = http.StatusOK
 						}
-						mode := projectconfig.InspectionSummary
-						if detail != nil {
-							mode = projectconfig.InspectionDetailed
-							detail.RequestBody, detail.ResponseBody = incoming.snapshot(), outgoing.snapshot()
-							if request.ContentLength > incoming.total {
-								detail.RequestBody.Incomplete = true
-							}
-							if status == http.StatusSwitchingProtocols {
-								detail.RequestBody.Unavailable, detail.ResponseBody.Unavailable = "upgrade", "upgrade"
-							}
-							detail.ResponseHeaders, detail.ResponseHeadersTruncated = boundedRequestHeaders(tracked.Header(), 16<<10)
-						}
 						config.ObserveRequest(RequestObservation{ReceivedAt: started.UTC(), Method: request.Method,
-							Path: path, Status: status, Duration: time.Since(started), Origin: origin,
-							CaptureMode: mode, Detail: detail})
+							Path: path, Status: status, Duration: time.Since(started), Origin: origin})
 					}()
 				}
 				if code := localproxy.ValidateRequest(request, hostname); code != "" {

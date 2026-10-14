@@ -106,6 +106,9 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		return failure.Wrap("read scoped publish protocol", failure.ServerResponseInvalid,
 			errors.New("control returned an invalid service protocol"))
 	}
+	if err := selectPublishInspection(&flags, protocol); err != nil {
+		return err
+	}
 	if protocol == controlv1.Http && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
 		return failure.Wrap("validate scoped publish project", failure.InvalidTunnelFlags, errors.New("project integration URLs require a signed-in tnl session"))
 	}
@@ -176,7 +179,7 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		QUICConnector: muxsession.QUICConnector{TLSConfig: connectionTLS},
 		TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: connectionTLS},
 	}
-	recorder, err := newInspectionRecorder(ctx, tunnel, flags.projectRoot, flags.Service)
+	recorder, err := newInspectionRecorder(ctx, tunnel, flags.projectRoot, flags.Service, flags.InspectionMode)
 	if err != nil {
 		return err
 	}

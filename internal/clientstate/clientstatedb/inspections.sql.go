@@ -7,7 +7,6 @@ package clientstatedb
 
 import (
 	"context"
-	"database/sql"
 )
 
 const deleteExpiredInspections = `-- name: DeleteExpiredInspections :exec
@@ -23,15 +22,15 @@ const insertInspection = `-- name: InsertInspection :exec
 INSERT INTO local_inspections (
     number, primary_checkout_root, tunnel_id, project_root, shared_project_root,
     service, service_protocol, received_at, expires_at, stored_bytes,
-    method, path, status, duration_ms, origin, capture_mode, detail_json,
-    database_operation, database_result, sql_state, database_rows, database_result_sets, mysql_error_code
+    method, path, status, duration_ms, origin,
+    sql_operation, result, redis_command, sql_state, sql_rows, mysql_result_sets, mysql_error_code
 ) VALUES (
     ?1, ?2, ?3,
     ?4, ?5, ?6, ?7,
     ?8, ?9, ?10,
     ?11, ?12, ?13, ?14, ?15,
     ?16, ?17, ?18, ?19,
-    ?20, ?21, ?22, ?23
+    ?20, ?21, ?22
 )
 `
 
@@ -51,13 +50,12 @@ type InsertInspectionParams struct {
 	Status              int64
 	DurationMs          int64
 	Origin              string
-	CaptureMode         string
-	DetailJson          sql.NullString
-	DatabaseOperation   string
-	DatabaseResult      string
+	SqlOperation        string
+	Result              string
+	RedisCommand        string
 	SqlState            string
-	DatabaseRows        int64
-	DatabaseResultSets  int64
+	SqlRows             int64
+	MysqlResultSets     int64
 	MysqlErrorCode      int64
 }
 
@@ -78,13 +76,12 @@ func (q *Queries) InsertInspection(ctx context.Context, arg InsertInspectionPara
 		arg.Status,
 		arg.DurationMs,
 		arg.Origin,
-		arg.CaptureMode,
-		arg.DetailJson,
-		arg.DatabaseOperation,
-		arg.DatabaseResult,
+		arg.SqlOperation,
+		arg.Result,
+		arg.RedisCommand,
 		arg.SqlState,
-		arg.DatabaseRows,
-		arg.DatabaseResultSets,
+		arg.SqlRows,
+		arg.MysqlResultSets,
 		arg.MysqlErrorCode,
 	)
 	return err
