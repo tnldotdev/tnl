@@ -153,6 +153,25 @@ and connection assignment identities before accepting each visitor stream.
 Public URL DNS points to ingress, never to a relay. Placement can therefore
 change without changing public URL DNS.
 
+## coordinate a local publisher
+
+The [local publisher API](../../api/local-publisher/v1/openapi.yaml) describes
+the project-scoped requests that an SDK and the CLI send to the publisher:
+app registration, status, and resumable events.
+The owner and app-registration credentials have different scopes. An accepted
+registration reports a bound listener; public readiness remains a separate
+observation. The API returns browser-safe project metadata but does not carry
+visitor bytes or expose the control session to an app. The app runtime still
+uses its existing private Unix socket until the following transport change
+adopts this contract. Status and event pages share one project journal: a
+cursor marks an exclusive position, not a TCP-specific event counter. Once a
+cursor has fallen out of retention, the client reads a fresh status snapshot
+before resuming. The wire cursor stays opaque when the local journal moves to
+SQLite.
+Named CLI publication leases need the same manager ownership and journal as
+app registrations; add their API operations when those workers use the unified
+SQLite journal, rather than introducing a second TCP event history.
+
 ## resolve project configuration
 
 config factories receive the project's directory relative to its worktree and
