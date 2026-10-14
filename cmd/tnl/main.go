@@ -605,6 +605,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
 	case "url delete <public-url-id>":
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
+	case "url ip set <public-url-id>":
+		return runURLIPSet(ctx, flags.URL.IP.Set, stdout, stderr)
+	case "url ip add <public-url-id> <ip>":
+		return runURLIPAdd(ctx, flags.URL.IP.Add, stdout, stderr)
+	case "url ip list <public-url-id>":
+		return runURLIPList(ctx, flags.URL.IP.List, stdout, stderr)
+	case "url ip remove <public-url-id> <entry-id>":
+		return runURLIPRemove(ctx, flags.URL.IP.Remove, stdout, stderr)
 	case "publisher enroll <service-or-public-url-id>":
 		return runPublisherEnroll(ctx, flags.Publisher.Enroll, project, stdout, stderr)
 	case "publisher stop <public-url-id>":

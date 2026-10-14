@@ -158,6 +158,7 @@ type Querier interface {
 	GetInvitationByIdempotency(ctx context.Context, arg GetInvitationByIdempotencyParams) (GetInvitationByIdempotencyRow, error)
 	GetOpenPublicURLRecoveryEpisode(ctx context.Context, arg GetOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	GetOpenPublishRun(ctx context.Context, publicUrlID string) (ControlPublishRun, error)
+	GetOperatorIPPolicy(ctx context.Context, publicUrlID string) (GetOperatorIPPolicyRow, error)
 	GetOrganizationTeamByIdempotency(ctx context.Context, arg GetOrganizationTeamByIdempotencyParams) (GetOrganizationTeamByIdempotencyRow, error)
 	GetPreview(ctx context.Context, id string) (GetPreviewRow, error)
 	GetPublicURLByCreatorIdempotency(ctx context.Context, arg GetPublicURLByCreatorIdempotencyParams) (GetPublicURLByCreatorIdempotencyRow, error)
@@ -286,6 +287,7 @@ type Querier interface {
 	LockDNSAuthorityLocalDomain(ctx context.Context, authorityReference pgtype.Text) error
 	LockDNSAuthorityLocalTeam(ctx context.Context, authorityReference pgtype.Text) error
 	LockDomainPublicURLs(ctx context.Context, arg LockDomainPublicURLsParams) ([]ControlPublicUrl, error)
+	LockDueOperatorIPPublicURLs(ctx context.Context, arg LockDueOperatorIPPublicURLsParams) ([]ControlPublicUrl, error)
 	LockEligibleRelayLeases(ctx context.Context, arg LockEligibleRelayLeasesParams) ([]LockEligibleRelayLeasesRow, error)
 	LockExpiredEphemeralPublicURLs(ctx context.Context, arg LockExpiredEphemeralPublicURLsParams) ([]ControlPublicUrl, error)
 	// lock public URLs before publish runs, as heartbeat and closure do. the
@@ -455,6 +457,7 @@ type Querier interface {
 	UpdateACMEAccountRegistration(ctx context.Context, arg UpdateACMEAccountRegistrationParams) (ControlAcmeAccount, error)
 	UpdateFeedbackThreadState(ctx context.Context, arg UpdateFeedbackThreadStateParams) (ControlFeedbackThread, error)
 	UpdateGuestTransferredBytes(ctx context.Context, arg UpdateGuestTransferredBytesParams) (int64, error)
+	UpdateLivePublicURLIPPolicy(ctx context.Context, arg UpdateLivePublicURLIPPolicyParams) (ControlPublicUrl, error)
 	UpdateLocalDomainForDNSAuthority(ctx context.Context, arg UpdateLocalDomainForDNSAuthorityParams) (UpdateLocalDomainForDNSAuthorityRow, error)
 	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) (int64, error)
 	UpdateOIDCIdentity(ctx context.Context, arg UpdateOIDCIdentityParams) (ControlIdentity, error)

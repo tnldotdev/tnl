@@ -1082,6 +1082,12 @@ type CreateFeedbackReportRequest struct {
 	SourceAtReport SourceState `json:"source_at_report"`
 }
 
+// CreateOperatorIPEntryRequest defines model for CreateOperatorIPEntryRequest.
+type CreateOperatorIPEntryRequest struct {
+	ExpiresInSeconds int64  `json:"expires_in_seconds"`
+	Prefix           string `json:"prefix"`
+}
+
 // CreatePreviewRequest defines model for CreatePreviewRequest.
 type CreatePreviewRequest struct {
 	TeamId TeamID `json:"team_id"`
@@ -1403,6 +1409,14 @@ type OIDCAuthenticationFacts struct {
 // OIDCAuthenticationFactsLoginFlow defines model for OIDCAuthenticationFacts.LoginFlow.
 type OIDCAuthenticationFactsLoginFlow string
 
+// OperatorIPEntry defines model for OperatorIPEntry.
+type OperatorIPEntry struct {
+	ExpiresAt time.Time `json:"expires_at"`
+	Id        string    `json:"id"`
+	OwnerId   string    `json:"owner_id"`
+	Prefix    string    `json:"prefix"`
+}
+
 // Preview defines model for Preview.
 type Preview struct {
 	CreatedAt    time.Time     `json:"created_at"`
@@ -1699,6 +1713,11 @@ type RelayID = ResourceID
 // RelayServiceID defines model for RelayServiceID.
 type RelayServiceID = ResourceID
 
+// ReplacePublicURLIPPolicyRequest defines model for ReplacePublicURLIPPolicyRequest.
+type ReplacePublicURLIPPolicyRequest struct {
+	AllowedIpPrefixes []string `json:"allowed_ip_prefixes"`
+}
+
 // ResourceID defines model for ResourceID.
 type ResourceID = string
 
@@ -1850,6 +1869,9 @@ type Cursor = ResourceID
 
 // FeedbackAfterCursor defines model for FeedbackAfterCursor.
 type FeedbackAfterCursor = int64
+
+// IPEntryID defines model for IPEntryID.
+type IPEntryID = string
 
 // TeamIDQuery defines model for TeamIDQuery.
 type TeamIDQuery = TeamID
@@ -2004,6 +2026,12 @@ type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
 
 // UpdatePublicURLJSONRequestBody defines body for UpdatePublicURL for application/json ContentType.
 type UpdatePublicURLJSONRequestBody = UpdatePublicURLRequest
+
+// CreatePublicURLOperatorIPEntryJSONRequestBody defines body for CreatePublicURLOperatorIPEntry for application/json ContentType.
+type CreatePublicURLOperatorIPEntryJSONRequestBody = CreateOperatorIPEntryRequest
+
+// ReplacePublicURLIPPolicyJSONRequestBody defines body for ReplacePublicURLIPPolicy for application/json ContentType.
+type ReplacePublicURLIPPolicyJSONRequestBody = ReplacePublicURLIPPolicyRequest
 
 // CreatePublishRunJSONRequestBody defines body for CreatePublishRun for application/json ContentType.
 type CreatePublishRunJSONRequestBody = CreatePublishRunRequest
@@ -2469,6 +2497,44 @@ type ClientInterface interface {
 	//
 	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 	UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPublicURLOperatorIPEntries List current operator-owned visitor IP entries
+	//
+	// Corresponds with GET /v1/public-urls/{public_url_id}/ip-entries (the `ListPublicURLOperatorIPEntries` operationId).
+	ListPublicURLOperatorIPEntries(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublicURLOperatorIPEntryWithBody Allow one operator IP or prefix for a limited time
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/ip-entries (the `CreatePublicURLOperatorIPEntry` operationId).
+	CreatePublicURLOperatorIPEntryWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublicURLOperatorIPEntry Allow one operator IP or prefix for a limited time
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/ip-entries (the `CreatePublicURLOperatorIPEntry` operationId).
+	CreatePublicURLOperatorIPEntry(ctx context.Context, publicUrlId PublicURLID, body CreatePublicURLOperatorIPEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeletePublicURLOperatorIPEntry Revoke one operator-owned visitor IP entry
+	//
+	// Corresponds with DELETE /v1/public-urls/{public_url_id}/ip-entries/{ip_entry_id} (the `DeletePublicURLOperatorIPEntry` operationId).
+	DeletePublicURLOperatorIPEntry(ctx context.Context, publicUrlId PublicURLID, ipEntryId IPEntryID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplacePublicURLIPPolicyWithBody Replace the durable visitor IP policy while the public URL is published
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/public-urls/{public_url_id}/ip-policy (the `ReplacePublicURLIPPolicy` operationId).
+	ReplacePublicURLIPPolicyWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplacePublicURLIPPolicy Replace the durable visitor IP policy while the public URL is published
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/public-urls/{public_url_id}/ip-policy (the `ReplacePublicURLIPPolicy` operationId).
+	ReplacePublicURLIPPolicy(ctx context.Context, publicUrlId PublicURLID, body ReplacePublicURLIPPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreatePublishRunWithBody Create a publish run and allocate its publish run number
 	//
@@ -3510,6 +3576,104 @@ func (c *Client) UpdatePublicURLWithBody(ctx context.Context, publicUrlId Public
 // Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 func (c *Client) UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdatePublicURLRequest(c.Server, publicUrlId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPublicURLOperatorIPEntries List current operator-owned visitor IP entries
+//
+// Corresponds with GET /v1/public-urls/{public_url_id}/ip-entries (the `ListPublicURLOperatorIPEntries` operationId).
+func (c *Client) ListPublicURLOperatorIPEntries(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPublicURLOperatorIPEntriesRequest(c.Server, publicUrlId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublicURLOperatorIPEntryWithBody Allow one operator IP or prefix for a limited time
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/ip-entries (the `CreatePublicURLOperatorIPEntry` operationId).
+func (c *Client) CreatePublicURLOperatorIPEntryWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublicURLOperatorIPEntryRequestWithBody(c.Server, publicUrlId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublicURLOperatorIPEntry Allow one operator IP or prefix for a limited time
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/ip-entries (the `CreatePublicURLOperatorIPEntry` operationId).
+func (c *Client) CreatePublicURLOperatorIPEntry(ctx context.Context, publicUrlId PublicURLID, body CreatePublicURLOperatorIPEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublicURLOperatorIPEntryRequest(c.Server, publicUrlId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeletePublicURLOperatorIPEntry Revoke one operator-owned visitor IP entry
+//
+// Corresponds with DELETE /v1/public-urls/{public_url_id}/ip-entries/{ip_entry_id} (the `DeletePublicURLOperatorIPEntry` operationId).
+func (c *Client) DeletePublicURLOperatorIPEntry(ctx context.Context, publicUrlId PublicURLID, ipEntryId IPEntryID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeletePublicURLOperatorIPEntryRequest(c.Server, publicUrlId, ipEntryId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplacePublicURLIPPolicyWithBody Replace the durable visitor IP policy while the public URL is published
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/public-urls/{public_url_id}/ip-policy (the `ReplacePublicURLIPPolicy` operationId).
+func (c *Client) ReplacePublicURLIPPolicyWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplacePublicURLIPPolicyRequestWithBody(c.Server, publicUrlId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplacePublicURLIPPolicy Replace the durable visitor IP policy while the public URL is published
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/public-urls/{public_url_id}/ip-policy (the `ReplacePublicURLIPPolicy` operationId).
+func (c *Client) ReplacePublicURLIPPolicy(ctx context.Context, publicUrlId PublicURLID, body ReplacePublicURLIPPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplacePublicURLIPPolicyRequest(c.Server, publicUrlId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5866,6 +6030,175 @@ func NewUpdatePublicURLRequestWithBody(server string, publicUrlId PublicURLID, c
 	return req, nil
 }
 
+// NewListPublicURLOperatorIPEntriesRequest constructs an http.Request for the ListPublicURLOperatorIPEntries method
+func NewListPublicURLOperatorIPEntriesRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/public-urls/%s/ip-entries", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreatePublicURLOperatorIPEntryRequest calls the generic CreatePublicURLOperatorIPEntry builder with application/json body
+func NewCreatePublicURLOperatorIPEntryRequest(server string, publicUrlId PublicURLID, body CreatePublicURLOperatorIPEntryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePublicURLOperatorIPEntryRequestWithBody(server, publicUrlId, "application/json", bodyReader)
+}
+
+// NewCreatePublicURLOperatorIPEntryRequestWithBody constructs an http.Request for the CreatePublicURLOperatorIPEntry method, with any body, and a specified content type
+func NewCreatePublicURLOperatorIPEntryRequestWithBody(server string, publicUrlId PublicURLID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/public-urls/%s/ip-entries", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeletePublicURLOperatorIPEntryRequest constructs an http.Request for the DeletePublicURLOperatorIPEntry method
+func NewDeletePublicURLOperatorIPEntryRequest(server string, publicUrlId PublicURLID, ipEntryId IPEntryID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "ip_entry_id", ipEntryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/public-urls/%s/ip-entries/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReplacePublicURLIPPolicyRequest calls the generic ReplacePublicURLIPPolicy builder with application/json body
+func NewReplacePublicURLIPPolicyRequest(server string, publicUrlId PublicURLID, body ReplacePublicURLIPPolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReplacePublicURLIPPolicyRequestWithBody(server, publicUrlId, "application/json", bodyReader)
+}
+
+// NewReplacePublicURLIPPolicyRequestWithBody constructs an http.Request for the ReplacePublicURLIPPolicy method, with any body, and a specified content type
+func NewReplacePublicURLIPPolicyRequestWithBody(server string, publicUrlId PublicURLID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/public-urls/%s/ip-policy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCreatePublishRunRequest calls the generic CreatePublishRun builder with application/json body
 func NewCreatePublishRunRequest(server string, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -7665,6 +7998,48 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 	UpdatePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error)
+
+	// ListPublicURLOperatorIPEntriesWithResponse List current operator-owned visitor IP entries
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/public-urls/{public_url_id}/ip-entries (the `ListPublicURLOperatorIPEntries` operationId).
+	ListPublicURLOperatorIPEntriesWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListPublicURLOperatorIPEntriesResponse, error)
+
+	// CreatePublicURLOperatorIPEntryWithBodyWithResponse Allow one operator IP or prefix for a limited time
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/ip-entries (the `CreatePublicURLOperatorIPEntry` operationId).
+	CreatePublicURLOperatorIPEntryWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLOperatorIPEntryResponse, error)
+
+	// CreatePublicURLOperatorIPEntryWithResponse Allow one operator IP or prefix for a limited time
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/ip-entries (the `CreatePublicURLOperatorIPEntry` operationId).
+	CreatePublicURLOperatorIPEntryWithResponse(ctx context.Context, publicUrlId PublicURLID, body CreatePublicURLOperatorIPEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLOperatorIPEntryResponse, error)
+
+	// DeletePublicURLOperatorIPEntryWithResponse Revoke one operator-owned visitor IP entry
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/public-urls/{public_url_id}/ip-entries/{ip_entry_id} (the `DeletePublicURLOperatorIPEntry` operationId).
+	DeletePublicURLOperatorIPEntryWithResponse(ctx context.Context, publicUrlId PublicURLID, ipEntryId IPEntryID, reqEditors ...RequestEditorFn) (*DeletePublicURLOperatorIPEntryResponse, error)
+
+	// ReplacePublicURLIPPolicyWithBodyWithResponse Replace the durable visitor IP policy while the public URL is published
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/public-urls/{public_url_id}/ip-policy (the `ReplacePublicURLIPPolicy` operationId).
+	ReplacePublicURLIPPolicyWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplacePublicURLIPPolicyResponse, error)
+
+	// ReplacePublicURLIPPolicyWithResponse Replace the durable visitor IP policy while the public URL is published
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/public-urls/{public_url_id}/ip-policy (the `ReplacePublicURLIPPolicy` operationId).
+	ReplacePublicURLIPPolicyWithResponse(ctx context.Context, publicUrlId PublicURLID, body ReplacePublicURLIPPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplacePublicURLIPPolicyResponse, error)
 
 	// CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 	//
@@ -9615,6 +9990,195 @@ func (r UpdatePublicURLResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r UpdatePublicURLResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPublicURLOperatorIPEntriesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *struct {
+		Entries []OperatorIPEntry `json:"entries"`
+	}
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPublicURLOperatorIPEntriesResponse) GetJSON200() *struct {
+	Entries []OperatorIPEntry `json:"entries"`
+} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPublicURLOperatorIPEntriesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPublicURLOperatorIPEntriesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPublicURLOperatorIPEntriesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPublicURLOperatorIPEntriesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPublicURLOperatorIPEntriesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreatePublicURLOperatorIPEntryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *OperatorIPEntry
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePublicURLOperatorIPEntryResponse) GetJSON201() *OperatorIPEntry {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePublicURLOperatorIPEntryResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePublicURLOperatorIPEntryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePublicURLOperatorIPEntryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePublicURLOperatorIPEntryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePublicURLOperatorIPEntryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeletePublicURLOperatorIPEntryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeletePublicURLOperatorIPEntryResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeletePublicURLOperatorIPEntryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeletePublicURLOperatorIPEntryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeletePublicURLOperatorIPEntryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeletePublicURLOperatorIPEntryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReplacePublicURLIPPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicURL
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReplacePublicURLIPPolicyResponse) GetJSON200() *PublicURL {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReplacePublicURLIPPolicyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReplacePublicURLIPPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReplacePublicURLIPPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReplacePublicURLIPPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReplacePublicURLIPPolicyResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -11619,6 +12183,84 @@ func (c *ClientWithResponses) UpdatePublicURLWithResponse(ctx context.Context, p
 	return ParseUpdatePublicURLResponse(rsp)
 }
 
+// ListPublicURLOperatorIPEntriesWithResponse List current operator-owned visitor IP entries
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/public-urls/{public_url_id}/ip-entries (the `ListPublicURLOperatorIPEntries` operationId).
+func (c *ClientWithResponses) ListPublicURLOperatorIPEntriesWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListPublicURLOperatorIPEntriesResponse, error) {
+	rsp, err := c.ListPublicURLOperatorIPEntries(ctx, publicUrlId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPublicURLOperatorIPEntriesResponse(rsp)
+}
+
+// CreatePublicURLOperatorIPEntryWithBodyWithResponse Allow one operator IP or prefix for a limited time
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/ip-entries (the `CreatePublicURLOperatorIPEntry` operationId).
+func (c *ClientWithResponses) CreatePublicURLOperatorIPEntryWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublicURLOperatorIPEntryResponse, error) {
+	rsp, err := c.CreatePublicURLOperatorIPEntryWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublicURLOperatorIPEntryResponse(rsp)
+}
+
+// CreatePublicURLOperatorIPEntryWithResponse Allow one operator IP or prefix for a limited time
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/ip-entries (the `CreatePublicURLOperatorIPEntry` operationId).
+func (c *ClientWithResponses) CreatePublicURLOperatorIPEntryWithResponse(ctx context.Context, publicUrlId PublicURLID, body CreatePublicURLOperatorIPEntryJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLOperatorIPEntryResponse, error) {
+	rsp, err := c.CreatePublicURLOperatorIPEntry(ctx, publicUrlId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublicURLOperatorIPEntryResponse(rsp)
+}
+
+// DeletePublicURLOperatorIPEntryWithResponse Revoke one operator-owned visitor IP entry
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/public-urls/{public_url_id}/ip-entries/{ip_entry_id} (the `DeletePublicURLOperatorIPEntry` operationId).
+func (c *ClientWithResponses) DeletePublicURLOperatorIPEntryWithResponse(ctx context.Context, publicUrlId PublicURLID, ipEntryId IPEntryID, reqEditors ...RequestEditorFn) (*DeletePublicURLOperatorIPEntryResponse, error) {
+	rsp, err := c.DeletePublicURLOperatorIPEntry(ctx, publicUrlId, ipEntryId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeletePublicURLOperatorIPEntryResponse(rsp)
+}
+
+// ReplacePublicURLIPPolicyWithBodyWithResponse Replace the durable visitor IP policy while the public URL is published
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/public-urls/{public_url_id}/ip-policy (the `ReplacePublicURLIPPolicy` operationId).
+func (c *ClientWithResponses) ReplacePublicURLIPPolicyWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplacePublicURLIPPolicyResponse, error) {
+	rsp, err := c.ReplacePublicURLIPPolicyWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplacePublicURLIPPolicyResponse(rsp)
+}
+
+// ReplacePublicURLIPPolicyWithResponse Replace the durable visitor IP policy while the public URL is published
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/public-urls/{public_url_id}/ip-policy (the `ReplacePublicURLIPPolicy` operationId).
+func (c *ClientWithResponses) ReplacePublicURLIPPolicyWithResponse(ctx context.Context, publicUrlId PublicURLID, body ReplacePublicURLIPPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplacePublicURLIPPolicyResponse, error) {
+	rsp, err := c.ReplacePublicURLIPPolicy(ctx, publicUrlId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplacePublicURLIPPolicyResponse(rsp)
+}
+
 // CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -13375,6 +14017,136 @@ func ParseUpdatePublicURLResponse(rsp *http.Response) (*UpdatePublicURLResponse,
 	return response, nil
 }
 
+// ParseListPublicURLOperatorIPEntriesResponse parses an HTTP response from a ListPublicURLOperatorIPEntriesWithResponse call
+func ParseListPublicURLOperatorIPEntriesResponse(rsp *http.Response) (*ListPublicURLOperatorIPEntriesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPublicURLOperatorIPEntriesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Entries []OperatorIPEntry `json:"entries"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePublicURLOperatorIPEntryResponse parses an HTTP response from a CreatePublicURLOperatorIPEntryWithResponse call
+func ParseCreatePublicURLOperatorIPEntryResponse(rsp *http.Response) (*CreatePublicURLOperatorIPEntryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePublicURLOperatorIPEntryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest OperatorIPEntry
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeletePublicURLOperatorIPEntryResponse parses an HTTP response from a DeletePublicURLOperatorIPEntryWithResponse call
+func ParseDeletePublicURLOperatorIPEntryResponse(rsp *http.Response) (*DeletePublicURLOperatorIPEntryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeletePublicURLOperatorIPEntryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReplacePublicURLIPPolicyResponse parses an HTTP response from a ReplacePublicURLIPPolicyWithResponse call
+func ParseReplacePublicURLIPPolicyResponse(rsp *http.Response) (*ReplacePublicURLIPPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReplacePublicURLIPPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicURL
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreatePublishRunResponse parses an HTTP response from a CreatePublishRunWithResponse call
 func ParseCreatePublishRunResponse(rsp *http.Response) (*CreatePublishRunResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -14475,6 +15247,18 @@ type ServerInterface interface {
 	// UpdatePublicURL Update a public URL's target and IP policy
 	// (PATCH /v1/public-urls/{public_url_id})
 	UpdatePublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
+	// ListPublicURLOperatorIPEntries List current operator-owned visitor IP entries
+	// (GET /v1/public-urls/{public_url_id}/ip-entries)
+	ListPublicURLOperatorIPEntries(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
+	// CreatePublicURLOperatorIPEntry Allow one operator IP or prefix for a limited time
+	// (POST /v1/public-urls/{public_url_id}/ip-entries)
+	CreatePublicURLOperatorIPEntry(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
+	// DeletePublicURLOperatorIPEntry Revoke one operator-owned visitor IP entry
+	// (DELETE /v1/public-urls/{public_url_id}/ip-entries/{ip_entry_id})
+	DeletePublicURLOperatorIPEntry(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, ipEntryId IPEntryID)
+	// ReplacePublicURLIPPolicy Replace the durable visitor IP policy while the public URL is published
+	// (PUT /v1/public-urls/{public_url_id}/ip-policy)
+	ReplacePublicURLIPPolicy(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
 	// CreatePublishRun Create a publish run and allocate its publish run number
 	// (POST /v1/public-urls/{public_url_id}/publish-runs)
 	CreatePublishRun(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreatePublishRunParams)
@@ -15624,6 +16408,119 @@ func (siw *ServerInterfaceWrapper) UpdatePublicURL(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// ListPublicURLOperatorIPEntries operation middleware
+func (siw *ServerInterfaceWrapper) ListPublicURLOperatorIPEntries(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPublicURLOperatorIPEntries(w, r, publicUrlId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePublicURLOperatorIPEntry operation middleware
+func (siw *ServerInterfaceWrapper) CreatePublicURLOperatorIPEntry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePublicURLOperatorIPEntry(w, r, publicUrlId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeletePublicURLOperatorIPEntry operation middleware
+func (siw *ServerInterfaceWrapper) DeletePublicURLOperatorIPEntry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "ip_entry_id" -------------
+	var ipEntryId IPEntryID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ip_entry_id", r.PathValue("ip_entry_id"), &ipEntryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ip_entry_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeletePublicURLOperatorIPEntry(w, r, publicUrlId, ipEntryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReplacePublicURLIPPolicy operation middleware
+func (siw *ServerInterfaceWrapper) ReplacePublicURLIPPolicy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReplacePublicURLIPPolicy(w, r, publicUrlId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreatePublishRun operation middleware
 func (siw *ServerInterfaceWrapper) CreatePublishRun(w http.ResponseWriter, r *http.Request) {
 
@@ -16749,6 +17646,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.GetPublicURL)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/public-urls/{public_url_id}", wrapper.UpdatePublicURL)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/publish-runs", wrapper.CreatePublishRun)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/ip-policy", wrapper.ReplacePublicURLIPPolicy)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/ip-entries", wrapper.ListPublicURLOperatorIPEntries)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/ip-entries", wrapper.CreatePublicURLOperatorIPEntry)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/ip-entries/{ip_entry_id}", wrapper.DeletePublicURLOperatorIPEntry)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/ephemeral-public-urls", wrapper.AllocateEphemeralPublicURL)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/ephemeral-public-urls/{public_url_id}", wrapper.DeleteEphemeralPublicURL)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/heartbeat", wrapper.HeartbeatPublishRun)

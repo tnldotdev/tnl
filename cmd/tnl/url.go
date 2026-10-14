@@ -22,6 +22,7 @@ type publicURLCommand struct {
 	Show   publicURLShowCommand   `cmd:"" help:"Show one saved public URL for a configured service or ID."`
 	Update publicURLUpdateCommand `cmd:"" help:"Change a saved public URL target or visitor policy."`
 	Delete publicURLDeleteCommand `cmd:"" help:"Delete a public URL by ID; use tnl url list to find it."`
+	IP     publicURLIPCommand     `cmd:"" name:"ip" help:"Change visitor IP access while a public URL is published."`
 }
 
 type publicURLShowCommand struct {

@@ -138,6 +138,7 @@ SET target = sqlc.arg(target),
     allowed_ip_policy_storage_key_id = sqlc.narg(allowed_ip_policy_storage_key_id),
     allowed_ip_hashes = sqlc.narg(allowed_ip_hashes),
     allowed_ip_hash_key_id = sqlc.narg(allowed_ip_hash_key_id),
+    next_operator_ip_expiry = sqlc.narg(next_operator_ip_expiry),
     mutation_revision = mutation_revision + 1,
     updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(public_url_id)
@@ -145,6 +146,36 @@ WHERE id = sqlc.arg(public_url_id)
   AND mutation_revision = sqlc.arg(expected_mutation_revision)
   AND mutation_revision < 9223372036854775807
 RETURNING *;
+
+-- name: UpdateLivePublicURLIPPolicy :one
+UPDATE control.public_urls
+SET policy_revision = sqlc.arg(policy_revision),
+    ip_policy = sqlc.arg(ip_policy),
+    allowed_ip_policy_ciphertext = sqlc.narg(allowed_ip_policy_ciphertext),
+    allowed_ip_policy_storage_key_id = sqlc.narg(allowed_ip_policy_storage_key_id),
+    allowed_ip_hashes = sqlc.narg(allowed_ip_hashes),
+    allowed_ip_hash_key_id = sqlc.narg(allowed_ip_hash_key_id),
+    next_operator_ip_expiry = sqlc.narg(next_operator_ip_expiry),
+    mutation_revision = mutation_revision + 1,
+    updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(public_url_id)
+  AND lifecycle_state = 'enabled'
+  AND mutation_revision = sqlc.arg(expected_mutation_revision)
+  AND mutation_revision < 9223372036854775807
+RETURNING *;
+
+-- name: LockDueOperatorIPPublicURLs :many
+SELECT * FROM control.public_urls
+WHERE next_operator_ip_expiry <= sqlc.arg(now)
+  AND lifecycle_state = 'enabled'
+ORDER BY next_operator_ip_expiry, id
+FOR NO KEY UPDATE SKIP LOCKED
+LIMIT sqlc.arg(batch_size);
+
+-- name: GetOperatorIPPolicy :one
+SELECT allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id
+FROM control.public_urls
+WHERE id = sqlc.arg(public_url_id) AND lifecycle_state = 'enabled';
 
 -- name: RenewEphemeralPublicURLExpiry :one
 UPDATE control.public_urls

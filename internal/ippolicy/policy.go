@@ -7,12 +7,14 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/netip"
+	"time"
 )
 
 type Entry struct {
-	Family string `json:"family"`
-	Bits   int    `json:"prefix_length"`
-	Digest string `json:"digest"`
+	Family    string     `json:"family"`
+	Bits      int        `json:"prefix_length"`
+	Digest    string     `json:"digest"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 type length struct {
@@ -22,7 +24,7 @@ type length struct {
 
 type Policy struct {
 	key     [32]byte
-	allowed map[length]map[[32]byte]struct{}
+	allowed map[length]map[[32]byte]time.Time
 }
 
 var ErrInvalidPolicy = errors.New("ippolicy: invalid allowed IP policy")
@@ -51,7 +53,7 @@ func New(key [32]byte, entries []Entry) (Policy, error) {
 	if key == [32]byte{} || len(entries) == 0 {
 		return Policy{}, ErrInvalidPolicy
 	}
-	policy := Policy{key: key, allowed: make(map[length]map[[32]byte]struct{})}
+	policy := Policy{key: key, allowed: make(map[length]map[[32]byte]time.Time)}
 	for _, entry := range entries {
 		family := byte(6)
 		maximum := 128
@@ -69,16 +71,30 @@ func New(key [32]byte, entries []Entry) (Policy, error) {
 		}
 		group := length{family: family, bits: uint8(entry.Bits)}
 		if policy.allowed[group] == nil {
-			policy.allowed[group] = make(map[[32]byte]struct{})
+			policy.allowed[group] = make(map[[32]byte]time.Time)
 		}
 		var digest [32]byte
 		copy(digest[:], bytes)
-		policy.allowed[group][digest] = struct{}{}
+		var expiresAt time.Time
+		if entry.ExpiresAt != nil {
+			if entry.ExpiresAt.IsZero() {
+				return Policy{}, ErrInvalidPolicy
+			}
+			expiresAt = *entry.ExpiresAt
+		}
+		old, exists := policy.allowed[group][digest]
+		if !exists || !old.IsZero() && (expiresAt.IsZero() || expiresAt.After(old)) {
+			policy.allowed[group][digest] = expiresAt
+		}
 	}
 	return policy, nil
 }
 
 func (p Policy) Allows(source netip.Addr) bool {
+	return p.AllowsAt(source, time.Now())
+}
+
+func (p Policy) AllowsAt(source netip.Addr, now time.Time) bool {
 	if !source.IsValid() || source.Zone() != "" {
 		return false
 	}
@@ -92,7 +108,7 @@ func (p Policy) Allows(source netip.Addr) bool {
 			continue
 		}
 		masked := netip.PrefixFrom(source, int(size.bits)).Masked()
-		if _, ok := digests[hash(p.key, masked)]; ok {
+		if until, ok := digests[hash(p.key, masked)]; ok && (until.IsZero() || now.Before(until)) {
 			return true
 		}
 	}

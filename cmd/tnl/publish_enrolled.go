@@ -147,7 +147,7 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, output *publi
 	configuration.TargetOptions = targetOptions
 	configuration.TargetTLS, configuration.TargetTLSName = flags.TargetTLS, flags.TargetTLSName
 	configuration.VisitorTLSPassthrough = flags.VisitorTLSPassthrough
-	configuration.PreserveSavedURLTarget = true
+	configuration.PreserveSavedURLSettings = true
 	configuration.ControlURL = auth.ServerEndpoint
 	configuration.BrowserLoginAvailable = auth.Discovery.BrowserLoginAvailable != nil && *auth.Discovery.BrowserLoginAvailable
 	configuration.InspectionMode = flags.InspectionMode

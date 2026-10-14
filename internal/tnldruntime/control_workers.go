@@ -57,6 +57,9 @@ func (d *daemon) startControlWorkers(
 	d.start("clean up ephemeral public URLs", func() error {
 		return runEphemeralPublicURLCleanup(lifetime, database, metrics)
 	})
+	d.start("expire operator IP entries", func() error {
+		return runOperatorIPEntryCleanup(lifetime, database, metrics)
+	})
 	d.start("release quarantined TCP ports", func() error {
 		return runTCPPortClaimCleanup(lifetime, database, metrics)
 	})

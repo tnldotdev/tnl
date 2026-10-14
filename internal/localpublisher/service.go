@@ -215,7 +215,7 @@ func runInstalledJob(ctx context.Context, state *clientstate.Database, job clien
 	configuration := services.Config(job.Target, allowed, publisher.ApplicationLimits{})
 	configuration.Control = &publisherauth.RunControl{Client: auth.PublisherControl, Owner: owner}
 	configuration.ServiceProtocol = route.ServiceProtocol
-	configuration.PreserveSavedURLTarget = true
+	configuration.PreserveSavedURLSettings = true
 	configuration.ControlURL = auth.ServerEndpoint
 	return publisher.Run(ctx, configuration)
 }

@@ -3,6 +3,7 @@ package ippolicy
 import (
 	"net/netip"
 	"testing"
+	"time"
 )
 
 func TestHashedPrefixesMatchTheirNetworksWithoutTheOriginalAddress(t *testing.T) {
@@ -37,6 +38,31 @@ func TestHashedPrefixesMatchTheirNetworksWithoutTheOriginalAddress(t *testing.T)
 	other, _ := New([32]byte{2}, entries)
 	if other.Allows(netip.MustParseAddr("192.0.2.41")) {
 		t.Fatal("policy accepted an address with the wrong verifier key")
+	}
+}
+
+func TestTemporaryIPEntryStopsAdmittingNewVisitorsAtExpiry(t *testing.T) {
+	key := [32]byte{1}
+	address := netip.MustParseAddr("192.0.2.7")
+	entry, err := Hash(key, netip.PrefixFrom(address, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	entry.ExpiresAt = &expires
+	policy, err := New(key, []Entry{entry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.AllowsAt(address, expires.Add(-time.Nanosecond)) || policy.AllowsAt(address, expires) ||
+		policy.AllowsAt(address, expires.Add(time.Minute)) {
+		t.Fatal("expired entry still admits new visitors")
+	}
+	permanent := entry
+	permanent.ExpiresAt = nil
+	policy, err = New(key, []Entry{entry, permanent})
+	if err != nil || !policy.AllowsAt(address, expires.Add(time.Minute)) {
+		t.Fatalf("durable source entry lost to expiring duplicate: %v", err)
 	}
 }
 

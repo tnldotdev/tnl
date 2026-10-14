@@ -519,6 +519,7 @@ type ControlPublicUrl struct {
 	IngressPoolID               string
 	ServiceProtocol             string
 	PublicPort                  pgtype.Int4
+	NextOperatorIpExpiry        pgtype.Timestamptz
 }
 
 type ControlPublicUrlRecoveryEpisode struct {

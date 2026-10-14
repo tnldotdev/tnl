@@ -66,7 +66,7 @@ type Config struct {
 	TargetTLSName            string
 	TargetTLS                bool
 	VisitorTLSPassthrough    bool
-	PreserveSavedURLTarget   bool
+	PreserveSavedURLSettings bool
 	TargetOptions            localproxy.TargetOptions
 	Handler                  http.Handler // integration URL handler; no local target is dialed.
 	AdmitRequest             func(*http.Request, PublishRunIdentity) error
@@ -382,6 +382,13 @@ func reconcilePublicURL(ctx context.Context, config Config, route controlv1.Publ
 			fmt.Errorf("publisher: public URL %s is not enabled", route.Id),
 		)
 	}
+	if config.PreserveSavedURLSettings {
+		if route.Target != "" && route.Target != config.Target {
+			return controlv1.PublicURL{}, diagnostic.Wrap(diagnostic.PublicURLConflict,
+				errors.New("publisher: saved public URL target changed outside this publisher"))
+		}
+		return route, nil
+	}
 	currentPolicy := []string{}
 	if route.AllowedIpPrefixes != nil {
 		currentPolicy = *route.AllowedIpPrefixes
@@ -404,9 +411,6 @@ func reconcilePublicURL(ctx context.Context, config Config, route controlv1.Publ
 			Target: config.Target, AllowedIpPrefixes: slices.Clone(desiredPolicy),
 		})
 		return updated, classifyPublicURLConflict(err)
-	}
-	if config.PreserveSavedURLTarget && route.Target == "" {
-		return route, nil
 	}
 	if route.Target == config.Target {
 		return route, nil

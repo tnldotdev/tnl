@@ -408,6 +408,14 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Update.remoteFlags, true)
 	case "url delete <public-url-id>":
 		apply(&flags.URL.Delete.remoteFlags, true)
+	case "url ip set <public-url-id>":
+		apply(&flags.URL.IP.Set.remoteFlags, true)
+	case "url ip add <public-url-id> <ip>":
+		apply(&flags.URL.IP.Add.remoteFlags, true)
+	case "url ip list <public-url-id>":
+		apply(&flags.URL.IP.List.remoteFlags, true)
+	case "url ip remove <public-url-id> <entry-id>":
+		apply(&flags.URL.IP.Remove.remoteFlags, true)
 	case "publisher enroll <service-or-public-url-id>":
 		apply(&flags.Publisher.Enroll.remoteFlags, true)
 	case "publisher list":

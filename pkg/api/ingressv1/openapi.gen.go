@@ -168,6 +168,7 @@ func (e ProblemCode) Valid() bool {
 // HashedIPPrefix defines model for HashedIPPrefix.
 type HashedIPPrefix struct {
 	Digest       string               `json:"digest"`
+	ExpiresAt    *time.Time           `json:"expires_at,omitempty"`
 	Family       HashedIPPrefixFamily `json:"family"`
 	PrefixLength int                  `json:"prefix_length"`
 }

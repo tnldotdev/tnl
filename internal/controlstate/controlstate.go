@@ -25,10 +25,10 @@ import (
 
 const (
 	// schemaVersion is the newest embedded migration; update it when adding a migration.
-	schemaVersion int64 = 32
+	schemaVersion int64 = 33
 	// minimumSchemaVersion is the oldest schema this runtime can serve safely.
 	// advance it only when runtime reads or writes require a newer migration.
-	minimumSchemaVersion int64 = 32
+	minimumSchemaVersion int64 = 33
 	versionTable               = "control.goose_db_version"
 	bootstrapRetryDelay        = 25 * time.Millisecond
 )

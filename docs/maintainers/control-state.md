@@ -57,15 +57,12 @@ hostname and port. Existing HTTP URLs still have no public TCP port.
 
 The guest-domain change requires migration 11 because managed guest trials store
 an empty DNS authority reference that the old constraint rejected. Email delivery
-requires migration 12's queue table, including for storage-key rotation. The
-authority cleanup requires migration 13's renamed guest retry-key columns.
+requires migration 12's queue table, including for storage-key rotation.
 
-Migration 18 prepares nullable browser preview references, the publish run's
+Migration 30 prepares nullable browser preview references, the publish run's
 `browser_capable` flag, and the team's `feedback_require_sign_in` policy. Both
 flags default to false. Browser writers use nullable preview references for
-URL-only sessions, and generated reads require schema 18. Deploy the migration
-and compatible serving processes before enabling these writers or sign-in policy
-enforcement.
+URL-only sessions, and generated reads require schema 30.
 
 The two publisher connection slots are stored in
 `control.publish_run_connection_slots`. A slot keeps its `id` and

@@ -73,6 +73,8 @@ func TestIntegrationPublisherIdentityAPIFromEnrollmentToRevokedRun(t *testing.T)
 		t.Fatalf("publisher public URL = %s, %v", bound.Body.String(), err)
 	}
 	f.call(http.MethodPatch, "/v1/public-urls/"+selected.Id, `{"target":"http://127.0.0.1:1","allowed_ip_prefixes":[]}`, token.AccessToken, "", http.StatusUnauthorized)
+	f.call(http.MethodPut, "/v1/public-urls/"+selected.Id+"/ip-policy", `{"allowed_ip_prefixes":["192.0.2.7"]}`, token.AccessToken, "", http.StatusUnauthorized)
+	f.call(http.MethodPost, "/v1/public-urls/"+selected.Id+"/ip-entries", `{"prefix":"192.0.2.7","expires_in_seconds":3600}`, token.AccessToken, "", http.StatusUnauthorized)
 	f.call(http.MethodPost, "/v1/publish-runs/"+f.run.PublishRunID+"/heartbeat",
 		fmt.Sprintf(`{"publish_run_number":%d}`, f.run.PublishRunNumber), f.run.PublishRunToken.String(), "", http.StatusUnauthorized)
 	const idempotency = "ik_publisher_run"
