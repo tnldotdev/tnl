@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -30,6 +31,14 @@ func runtimeAppTCPEndpointPath(key, service string) string {
 	return key + ".app." + service + ".endpoint.json"
 }
 
+type localPublisherAuthorization struct {
+	mu      sync.RWMutex
+	key     string
+	owner   localPublisherEndpoint
+	handler http.Handler
+	apps    map[string]string
+}
+
 func startRuntimeTCP(key string, handler http.Handler, appServices ...string) (*http.Server, <-chan error, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -45,25 +54,15 @@ func startRuntimeTCP(key string, handler http.Handler, appServices ...string) (*
 		listener.Close()
 		return nil, nil, err
 	}
-	appTokens := make(map[string]string, len(appServices))
+	auth := &localPublisherAuthorization{key: key, owner: endpoint, handler: handler, apps: make(map[string]string, len(appServices))}
 	for _, service := range appServices {
-		if !naming.ValidServiceName(service) {
-			listener.Close()
-			removeRuntimeTCPEndpoints(key, appServices)
-			return nil, nil, errors.New("invalid local publisher app service")
-		}
-		token, err := runtimeCredential()
-		if err == nil {
-			err = writeRuntimeTCPEndpoint(runtimeAppTCPEndpointPath(key, service), localPublisherEndpoint{Version: privateprotocol.Version, URL: endpoint.URL, Credential: token})
-		}
-		if err != nil {
+		if err := auth.issueApp(service); err != nil {
 			listener.Close()
 			removeRuntimeTCPEndpoints(key, appServices)
 			return nil, nil, err
 		}
-		appTokens[token] = service
 	}
-	server := &http.Server{Handler: authorizeLocalPublisher(handler, credential, listener.Addr().String(), appTokens), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
+	server := &http.Server{Handler: auth, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	return server, done, nil
@@ -84,38 +83,69 @@ func runtimeCredential() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(secret), nil
 }
 
-func authorizeLocalPublisher(handler http.Handler, credential, address string, apps map[string]string) http.Handler {
-	expected := []byte("Bearer " + credential)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != address || r.Header.Get("Origin") != "" {
-			localUnauthorized(w)
-			return
+func (a *localPublisherAuthorization) issueApp(service string) error {
+	if !naming.ValidServiceName(service) {
+		return errors.New("invalid local publisher app service")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	token := a.apps[service]
+	if token == "" {
+		var err error
+		token, err = runtimeCredential()
+		if err != nil {
+			return err
 		}
-		if r.URL.Path == "/v1/health" && r.Method == http.MethodGet {
-			handler.ServeHTTP(w, r)
-			return
-		}
-		provided := []byte(r.Header.Get("Authorization"))
-		if len(provided) == len(expected) && subtle.ConstantTimeCompare(provided, expected) == 1 {
-			if r.URL.Path != "/v1/status" && r.URL.Path != "/v1/events" && r.URL.Path != "/v1/observe" && !strings.HasPrefix(r.URL.Path, "/v1/ad-hoc/") {
-				localUnauthorized(w)
+	}
+	if err := writeRuntimeTCPEndpoint(runtimeAppTCPEndpointPath(a.key, service), localPublisherEndpoint{
+		Version: privateprotocol.Version, URL: a.owner.URL, Credential: token,
+	}); err != nil {
+		return err
+	}
+	a.apps[service] = token
+	return nil
+}
+
+func (a *localPublisherAuthorization) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Host != strings.TrimPrefix(a.owner.URL, "http://") || r.Header.Get("Origin") != "" {
+		localUnauthorized(w)
+		return
+	}
+	if r.URL.Path == "/v1/health" && r.Method == http.MethodGet {
+		a.handler.ServeHTTP(w, r)
+		return
+	}
+	provided := []byte(r.Header.Get("Authorization"))
+	expected := []byte("Bearer " + a.owner.Credential)
+	if len(provided) == len(expected) && subtle.ConstantTimeCompare(provided, expected) == 1 {
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/scopes/app/") {
+			if err := a.issueApp(strings.TrimPrefix(r.URL.Path, "/v1/scopes/app/")); err != nil {
+				runtimeProblem(w, err)
 				return
 			}
-			handler.ServeHTTP(w, r)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		for token, service := range apps {
-			app := []byte("Bearer " + token)
-			if len(provided) == len(app) && subtle.ConstantTimeCompare(provided, app) == 1 {
-				if r.URL.Path != "/v1/prepare" && !strings.HasPrefix(r.URL.Path, "/v1/registrations/") {
-					break
-				}
-				handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), localPublisherScopeKey{}, service)))
-				return
-			}
+		if r.URL.Path == "/v1/status" || r.URL.Path == "/v1/events" || r.URL.Path == "/v1/observe" || strings.HasPrefix(r.URL.Path, "/v1/ad-hoc/") {
+			a.handler.ServeHTTP(w, r)
+			return
 		}
 		localUnauthorized(w)
-	})
+		return
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for service, token := range a.apps {
+		app := []byte("Bearer " + token)
+		if len(provided) == len(app) && subtle.ConstantTimeCompare(provided, app) == 1 {
+			if r.URL.Path == "/v1/prepare" || r.URL.Path == "/v1/status" || strings.HasPrefix(r.URL.Path, "/v1/registrations/") {
+				a.handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), localPublisherScopeKey{}, service)))
+				return
+			}
+			break
+		}
+	}
+	localUnauthorized(w)
 }
 
 func localUnauthorized(w http.ResponseWriter) {
@@ -186,5 +216,13 @@ func stopRuntimeTCP(ctx context.Context, server *http.Server, key string, apps .
 	closeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	err := server.Shutdown(closeCtx)
+	if auth, ok := server.Handler.(*localPublisherAuthorization); ok {
+		auth.mu.RLock()
+		apps = apps[:0]
+		for name := range auth.apps {
+			apps = append(apps, name)
+		}
+		auth.mu.RUnlock()
+	}
 	return errors.Join(err, removeRuntimeTCPEndpoints(key, apps))
 }

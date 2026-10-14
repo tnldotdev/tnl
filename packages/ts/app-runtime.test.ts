@@ -35,7 +35,7 @@ else if (process.argv.includes("owner-endpoint")) process.stdout.write(JSON.stri
 else if (process.argv.includes("serve")) {
   const credential = "a".repeat(43);
   const server = http.createServer((request, response) => {
-    response.writeHead(request.url === "/v1/health" ? 204 : request.url === "/v1/status" && request.headers.authorization === "Bearer " + "c".repeat(43) ? 200 : 401).end();
+    response.writeHead(request.url === "/v1/health" ? 204 : request.url === "/v1/status" && (request.headers.authorization === "Bearer " + credential || request.headers.authorization === "Bearer " + "c".repeat(43)) ? 200 : 401).end();
   });
   server.listen(0, "127.0.0.1", () => {
     writeFileSync(path, JSON.stringify({ version: 1, url: "http://127.0.0.1:" + server.address().port, credential }));

@@ -178,6 +178,10 @@ credential can prepare and maintain only its own service; the owner credential
 can read project status and events, submit readiness observations, and manage
 ad-hoc invocations. Processes running as the same OS user can also read the
 owner's private file, so file placement is the OS trust boundary.
+When a configured app joins an already running owner, the endpoint command asks
+that owner to issue its credential. App status is authenticated and includes
+only the app's service; SDKs check it before reusing a descriptor after an owner
+restart.
 
 Named CLI publication leases need the same manager ownership and journal as
 app registrations; add their API operations when those workers use the unified

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -168,6 +169,16 @@ func runRuntimeEndpoint(ctx context.Context, options runtimeEndpointOptions, out
 	}
 	if !slices.ContainsFunc(configuredRuntimeServices(project), func(candidate clientruntime.Service) bool { return candidate.Name == service }) {
 		return errors.New("local publisher endpoint needs a configured app service")
+	}
+	if runtimeAvailable(ctx, key) {
+		response, err := localOwnerRequest(ctx, key, http.MethodPost, "/v1/scopes/app/"+url.PathEscape(service), nil)
+		if err != nil {
+			return err
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusNoContent {
+			return fmt.Errorf("issue local publisher app credential: HTTP %d", response.StatusCode)
+		}
 	}
 	return json.NewEncoder(output).Encode(struct {
 		Version int    `json:"version"`

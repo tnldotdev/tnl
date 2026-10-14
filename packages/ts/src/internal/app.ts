@@ -537,12 +537,13 @@ function runtimeHealthy(endpointPath: string): Promise<boolean> {
       {
         hostname: "127.0.0.1",
         port: Number(endpoint.url.port),
-        path: "/v1/health",
+        path: "/v1/status",
         timeout: 1_000,
+        headers: { Authorization: `Bearer ${endpoint.credential}` },
       },
       (response) => {
         response.resume();
-        resolve(response.statusCode === 204);
+        resolve(response.statusCode === 200);
       },
     );
     request.on("error", () => resolve(false));

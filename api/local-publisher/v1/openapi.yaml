@@ -78,6 +78,8 @@ paths:
     get:
       operationId: getLocalProjectStatus
       summary: Read one publisher-owned snapshot for the selected project
+      description: An app credential sees only its configured service; the owner sees the project.
+      security: [{ ownerAuth: [] }, { appAuth: [] }]
       responses:
         "200":
           description: Configured and currently publishing services

@@ -746,6 +746,8 @@ type ClientInterface interface {
 
 	// GetLocalProjectStatus Read one publisher-owned snapshot for the selected project
 	//
+	// An app credential sees only its configured service; the owner sees the project.
+	//
 	// Corresponds with GET /v1/status (the `GetLocalProjectStatus` operationId).
 	GetLocalProjectStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
@@ -983,6 +985,8 @@ func (c *Client) RenewAppRegistration(ctx context.Context, registrationId Regist
 }
 
 // GetLocalProjectStatus Read one publisher-owned snapshot for the selected project
+//
+// An app credential sees only its configured service; the owner sees the project.
 //
 // Corresponds with GET /v1/status (the `GetLocalProjectStatus` operationId).
 func (c *Client) GetLocalProjectStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1566,6 +1570,8 @@ type ClientWithResponsesInterface interface {
 	RenewAppRegistrationWithResponse(ctx context.Context, registrationId RegistrationID, params *RenewAppRegistrationParams, reqEditors ...RequestEditorFn) (*RenewAppRegistrationResponse, error)
 
 	// GetLocalProjectStatusWithResponse Read one publisher-owned snapshot for the selected project
+	//
+	// An app credential sees only its configured service; the owner sees the project.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -2210,6 +2216,8 @@ func (c *ClientWithResponses) RenewAppRegistrationWithResponse(ctx context.Conte
 }
 
 // GetLocalProjectStatusWithResponse Read one publisher-owned snapshot for the selected project
+//
+// An app credential sees only its configured service; the owner sees the project.
 //
 // Returns a wrapper object for the known response body format(s).
 //

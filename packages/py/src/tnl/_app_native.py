@@ -122,12 +122,14 @@ class AppRuntime:
 
     async def healthy(self, endpoint_path: str) -> bool:
         try:
-            url, _ = self._endpoint(endpoint_path)
+            url, credential = self._endpoint(endpoint_path)
             async with httpx.AsyncClient(
                 timeout=1, follow_redirects=False, trust_env=False
             ) as client:
-                response = await client.get(url + "/v1/health")
-                return response.status_code == 204
+                response = await client.get(
+                    url + "/v1/status", headers={"Authorization": "Bearer " + credential}
+                )
+                return response.status_code == 200
         except (httpx.HTTPError, InvalidResponse):
             return False
 

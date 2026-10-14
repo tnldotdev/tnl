@@ -57,7 +57,7 @@ func TestLocalPublisherTCPRequiresCredentialOnPrivateOperations(t *testing.T) {
 		{path: "/v1/status", token: "wrong", status: http.StatusUnauthorized},
 		{path: "/v1/status", token: endpoint.Credential, origin: "https://other.example", status: http.StatusUnauthorized},
 		{path: "/v1/status", token: endpoint.Credential, status: http.StatusNoContent},
-		{path: "/v1/status", token: app.Credential, status: http.StatusUnauthorized},
+		{path: "/v1/status", token: app.Credential, status: http.StatusNoContent},
 		{method: http.MethodPost, path: "/v1/prepare", token: endpoint.Credential, status: http.StatusUnauthorized},
 		{method: http.MethodPost, path: "/v1/prepare", token: app.Credential, status: http.StatusNoContent},
 		{method: http.MethodPost, path: "/v1/ad-hoc/register", token: app.Credential, status: http.StatusUnauthorized},
@@ -103,6 +103,73 @@ func TestLocalPublisherTCPRequiresCredentialOnPrivateOperations(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("endpoint %s survived shutdown: %v", path, err)
 		}
+	}
+}
+
+func TestLocalPublisherIssuesLiveAppCredentialWithoutGrantingOwnerAccess(t *testing.T) {
+	key := filepath.Join(t.TempDir(), "publisher")
+	server, _, err := startRuntimeTCP(key, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/prepare" && localPublisherService(r.Context()) == "web" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}), "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	owner, err := readRuntimeTCPEndpoint(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(method, route, token string) int {
+		t.Helper()
+		r, err := http.NewRequestWithContext(t.Context(), method, owner.URL+route, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Header.Set("Authorization", "Bearer "+token)
+		response, err := (&http.Client{Timeout: time.Second, Transport: &http.Transport{DisableKeepAlives: true}}).Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		return response.StatusCode
+	}
+	if status := request(http.MethodPost, "/v1/scopes/app/web", owner.Credential); status != http.StatusNoContent {
+		t.Fatalf("issue web credential: %d", status)
+	}
+	data, err := os.ReadFile(runtimeAppTCPEndpointPath(key, "web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var web localPublisherEndpoint
+	if err := json.Unmarshal(data, &web); err != nil || web.Credential == owner.Credential {
+		t.Fatalf("web credential: %+v, %v", web, err)
+	}
+	if status := request(http.MethodPost, "/v1/prepare", web.Credential); status != http.StatusNoContent {
+		t.Fatalf("web prepare: %d", status)
+	}
+	if status := request(http.MethodPost, "/v1/scopes/app/api", web.Credential); status != http.StatusUnauthorized {
+		t.Fatalf("web issued another credential: %d", status)
+	}
+	if status := request(http.MethodGet, "/v1/status", web.Credential); status != http.StatusForbidden {
+		t.Fatalf("web status handler: %d", status)
+	}
+	if status := request(http.MethodPost, "/v1/scopes/app/web", owner.Credential); status != http.StatusNoContent {
+		t.Fatalf("reissue web credential: %d", status)
+	}
+	data, err = os.ReadFile(runtimeAppTCPEndpointPath(key, "web"))
+	var again localPublisherEndpoint
+	if err != nil || json.Unmarshal(data, &again) != nil || again.Credential != web.Credential {
+		t.Fatalf("credential changed while owner was running: %+v, %v", again, err)
+	}
+	if err := stopRuntimeTCP(context.Background(), server, key, "api", "web"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(runtimeAppTCPEndpointPath(key, "web")); !os.IsNotExist(err) {
+		t.Fatalf("web descriptor survived owner shutdown: %v", err)
 	}
 }
 

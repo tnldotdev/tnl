@@ -105,6 +105,41 @@ func TestRuntimeOwnerEndpointReturnsDescriptorWithoutStartingPublisher(t *testin
 	}
 }
 
+func TestRuntimeAppStatusContainsOnlyItsService(t *testing.T) {
+	a, state, _ := testAppRuntime(t)
+	key, err := runtimeKey(a.project.Root, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(runtimeAppTCPEndpointPath(key, "api"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var app localPublisherEndpoint
+	if err := json.Unmarshal(data, &app); err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, app.URL+"/v1/status", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+app.Credential)
+	response, err := (&http.Client{Timeout: time.Second, Transport: &http.Transport{DisableKeepAlives: true}}).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var snapshot struct {
+		Services []struct {
+			Service string `json:"service"`
+		} `json:"services"`
+	}
+	if response.StatusCode != http.StatusOK || json.NewDecoder(response.Body).Decode(&snapshot) != nil ||
+		len(snapshot.Services) != 1 || snapshot.Services[0].Service != "api" {
+		t.Fatalf("app status = %d, %+v", response.StatusCode, snapshot)
+	}
+}
+
 func TestRuntimeOwnerEndpointWorksWithoutProjectConfiguration(t *testing.T) {
 	t.Setenv("TNL_CONFIG", "")
 	directory := t.TempDir()

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -14,8 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/localpublisherv1"
 )
 
-// localHandler is the project API on loopback. the Unix handler remains the
-// existing SDK transport; TCP never exposes its ad-hoc or observation routes.
+// localHandler serves project operations behind the scoped TCP credentials.
 func (a *appRuntime) localHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
@@ -93,8 +93,12 @@ func (a *appRuntime) localHandler() http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 		})
 	}
-	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
-		privateprotocol.Write(w, http.StatusOK, localProjectSnapshot(a.manager.Snapshot()))
+	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+		snapshot := a.manager.Snapshot()
+		if service := localPublisherService(r.Context()); service != "" {
+			snapshot.Services = slices.DeleteFunc(snapshot.Services, func(entry clientruntime.Service) bool { return entry.Name != service })
+		}
+		privateprotocol.Write(w, http.StatusOK, localProjectSnapshot(snapshot))
 	})
 	mux.HandleFunc("GET /v1/events", a.localEvents)
 	// the owner credential can observe readiness and manage ad-hoc invocations;
