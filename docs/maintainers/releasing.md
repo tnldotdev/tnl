@@ -85,6 +85,6 @@ the archives and npm packages. Each wheel includes the required license files.
 `task release:snapshot` followed by `task py:build` checks the four wheels and
 installs and runs the local platform wheel without publishing anything.
 
-Do not create an `npm/tnl/v<version>` tag. The private development socket and
+Do not create an `npm/tnl/v<version>` tag. The private development endpoint and
 framework integrations ship with the same root release as the native client and
 server.

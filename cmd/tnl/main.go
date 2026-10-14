@@ -379,8 +379,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	var project projectConfiguration
 	projectStateRoot := ""
 	switch parsedCommand {
-	case "runtime address":
-		return runRuntimeAddress(ctx, flags.Runtime.Address, stdout)
+	case "runtime owner-endpoint":
+		return runRuntimeOwnerEndpoint(ctx, flags.Runtime.OwnerEndpoint, stdout)
 	case "runtime endpoint":
 		return runRuntimeEndpoint(ctx, flags.Runtime.Endpoint, stdout)
 	case "runtime serve":

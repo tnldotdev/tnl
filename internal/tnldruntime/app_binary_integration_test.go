@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -72,48 +71,75 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			t.Logf("local publisher output:\n%s", runtimeProcess.output.String())
 		}
 	})
-	socket := filepath.Join("/tmp", fmt.Sprintf("tnl-%d", os.Getuid()), "app-"+clientruntime.Identity(project, fixture.stateDirectory)+".sock")
-	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
-		connection, err := (&net.Dialer{}).DialContext(ctx, "unix", socket)
-		if err == nil {
-			_ = connection.Close()
-			return true, nil
-		}
-		select {
-		case <-runtimeProcess.done:
-			t.Fatalf("local publisher exited before registration: %v\n%s", runtimeProcess.result(), runtimeProcess.output.String())
-		default:
-		}
-		return false, err
-	})
-	started := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "runtime", "address", "--directory", project)
+	started := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "runtime", "endpoint", "--directory", project, "--service", "api")
 	if err := waitForDoneWithin(started.done, 30*time.Second); err != nil {
 		t.Fatal("local publisher did not start")
 	}
 	assertIntegrationBinaryProcessResult(t, started)
 	var endpoint struct {
 		Version int    `json:"version"`
-		Socket  string `json:"socket"`
+		Path    string `json:"path"`
 	}
-	if err := json.Unmarshal([]byte(started.output.String()), &endpoint); err != nil || endpoint.Version != privateprotocol.Version || endpoint.Socket == "" {
-		t.Fatalf("runtime address response = %q, error %v", started.output.String(), err)
+	if err := json.Unmarshal([]byte(started.output.String()), &endpoint); err != nil || endpoint.Version != privateprotocol.Version || endpoint.Path == "" {
+		t.Fatalf("runtime endpoint response = %q, error %v", started.output.String(), err)
 	}
-	client := &http.Client{Timeout: 35 * time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", endpoint.Socket)
-	}}}
+	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
+		if _, err := os.Stat(endpoint.Path); err == nil {
+			return true, nil
+		} else {
+			select {
+			case <-runtimeProcess.done:
+				t.Fatalf("local publisher exited before registration: %v\n%s", runtimeProcess.result(), runtimeProcess.output.String())
+			default:
+			}
+			return false, err
+		}
+	})
+	var address struct {
+		Version    int    `json:"version"`
+		URL        string `json:"url"`
+		Credential string `json:"credential"`
+	}
+	data, err := os.ReadFile(endpoint.Path)
+	if err != nil || json.Unmarshal(data, &address) != nil || address.Version != 1 || address.URL == "" || address.Credential == "" {
+		t.Fatalf("read service endpoint: %v", err)
+	}
+	client := &http.Client{Timeout: 35 * time.Second}
 	request := func(operation string, value any, target any) int {
 		t.Helper()
-		body, err := json.Marshal(value)
-		if err != nil {
-			t.Fatal(err)
+		method, route := http.MethodPost, "/v1/prepare"
+		bodyValue := value
+		if operation != "prepare" {
+			registration := value.(privateprotocol.Registration)
+			route = "/v1/registrations/" + registration.RegistrationID
+			if operation == "register" {
+				method = http.MethodPut
+				bodyValue = map[string]string{"owner": registration.Owner, "target": registration.Target}
+			} else {
+				method = http.MethodDelete
+				bodyValue = nil
+			}
+		}
+		var body []byte
+		if bodyValue != nil {
+			body, err = json.Marshal(bodyValue)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 		operationCtx, cancel := context.WithTimeout(t.Context(), 35*time.Second)
 		defer cancel()
-		call, err := http.NewRequestWithContext(operationCtx, http.MethodPost, "http://localhost/v1/"+operation, bytes.NewReader(body))
+		call, err := http.NewRequestWithContext(operationCtx, method, address.URL+route, bytes.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
-		call.Header.Set("Content-Type", "application/json")
+		if bodyValue != nil {
+			call.Header.Set("Content-Type", "application/json")
+		}
+		call.Header.Set("Authorization", "Bearer "+address.Credential)
+		if operation == "unregister" {
+			call.Header.Set("X-Registration-Owner", value.(privateprotocol.Registration).Owner)
+		}
 		response, err := client.Do(call)
 		if err != nil {
 			t.Fatal(err)
@@ -135,7 +161,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 	for index := 1; index <= 2; index++ {
 		owner := fmt.Sprintf("%032x", index)
 		var assigned privateprotocol.Assignment
-		if status := request("prepare", privateprotocol.Prepare{Version: 1, Directory: project, Service: "api", Framework: "node", Owner: owner, PID: os.Getpid()}, &assigned); status != http.StatusOK {
+		if status := request("prepare", map[string]any{"directory": project, "service": "api", "framework": "node", "owner": owner, "pid": os.Getpid()}, &assigned); status != http.StatusOK {
 			t.Fatalf("prepare status %d", status)
 		}
 		registration := privateprotocol.Registration{Version: 1, RegistrationID: assigned.RegistrationID, Owner: owner, Target: app.URL}
@@ -160,12 +186,12 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 				case <-stopRenewal:
 					return
 				case <-ticker.C:
-					payload, _ := json.Marshal(privateprotocol.Registration{Version: 1, RegistrationID: assigned.RegistrationID, Owner: owner})
-					call, err := http.NewRequest(http.MethodPost, "http://localhost/v1/renew", bytes.NewReader(payload))
+					call, err := http.NewRequest(http.MethodPost, address.URL+"/v1/registrations/"+assigned.RegistrationID+"/renew", nil)
 					if err != nil {
 						return
 					}
-					call.Header.Set("Content-Type", "application/json")
+					call.Header.Set("Authorization", "Bearer "+address.Credential)
+					call.Header.Set("X-Registration-Owner", owner)
 					response, err := client.Do(call)
 					if err != nil {
 						return

@@ -5,7 +5,7 @@ info:
   license: { name: MIT, identifier: MIT }
   description: >-
     Project-scoped API used by the tnl CLI and application integrations to
-    register bound app listeners and observe local
+    register bound app listeners, manage ad-hoc invocations, and observe local
     service state. One publisher owns the project, worktree, and client state
     directory. The owner credential cannot be replaced by a control access
     token; app credentials are scoped to one configured app service. This API
@@ -114,6 +114,56 @@ paths:
               schema: { $ref: "#/components/schemas/ProjectEventPage" }
         "410": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
+  /v1/observe:
+    post:
+      operationId: reportLocalReadiness
+      summary: Record a current readiness check from the owner CLI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReadinessObservation" }
+      responses:
+        "204": { description: Current observation recorded }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/ad-hoc/register:
+    post:
+      operationId: registerAdHocPublication
+      summary: Start a temporary public URL using an ephemeral credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdHocRegistration" }
+      responses:
+        "200":
+          description: Invocation accepted; public readiness is not implied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdHocStatus" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/ad-hoc/{operation}:
+    parameters:
+      - name: operation
+        in: path
+        required: true
+        schema: { type: string, enum: [status, renew, unregister] }
+    post:
+      operationId: updateAdHocPublication
+      summary: Read, renew, or stop an owned temporary publication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdHocOwner" }
+      responses:
+        "200":
+          description: Invocation status for the status operation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdHocStatus" }
+        "204": { description: Invocation renewed or stopped }
+        default: { $ref: "#/components/responses/Problem" }
 components:
   securitySchemes:
     ownerAuth:
@@ -127,6 +177,8 @@ components:
         Credential authorized to prepare and maintain exactly one configured
         app service. The request's service and registration must match its scope;
         supplying another owner ID does not grant access to another service.
+    # ownerAuth is required for ad-hoc and readiness operations; appAuth never
+    # grants access to those paths.
   parameters:
     RegistrationID:
       name: registration_id
@@ -145,6 +197,70 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    ReadinessObservation:
+      type: object
+      additionalProperties: false
+      required: [registration_id, publish_run_number, checked_at, ready, readiness]
+      properties:
+        registration_id: { type: string }
+        publish_run_number: { type: integer, minimum: 1 }
+        checked_at: { type: string, format: date-time }
+        status: { type: integer }
+        ready: { type: boolean }
+        reason: { type: string }
+        readiness:
+          type: object
+          required: [path]
+          properties:
+            path: { type: string }
+    AdHocOwner:
+      type: object
+      additionalProperties: false
+      required: [version, registration_id, owner]
+      properties:
+        version: { type: integer, const: 1 }
+        registration_id: { type: string, minLength: 1, maxLength: 128 }
+        owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+    AdHocRegistration:
+      type: object
+      additionalProperties: false
+      required: [version, registration_id, owner, pid, target, credential]
+      properties:
+        version: { type: integer, const: 1 }
+        registration_id: { type: string, minLength: 1, maxLength: 128 }
+        owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+        pid: { type: integer, minimum: 1 }
+        target: { type: string }
+        credential: { type: string }
+        server_url: { type: string }
+        allow_ip: { type: array, items: { type: string } }
+        allow_all_ips: { type: boolean }
+        limits:
+          type: object
+          additionalProperties: false
+          properties:
+            requests: { type: integer, minimum: 1 }
+            concurrency: { type: integer, minimum: 1 }
+            rate:
+              type: object
+              additionalProperties: false
+              required: [requests, per]
+              properties:
+                requests: { type: integer, minimum: 1 }
+                per: { type: string }
+                burst: { type: integer, minimum: 1 }
+    AdHocStatus:
+      type: object
+      additionalProperties: false
+      required: [version, registration_id, state]
+      properties:
+        version: { type: integer, const: 1 }
+        registration_id: { type: string }
+        state: { type: string, enum: [starting, publishing, routable, draining, stopped, failed] }
+        public_url_id: { type: string }
+        public_url: { type: string }
+        publish_run_number: { type: integer, minimum: 1 }
+        failure_code: { type: string }
     Problem:
       type: object
       additionalProperties: false

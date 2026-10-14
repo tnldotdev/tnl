@@ -451,8 +451,7 @@ export async function startRuntime(
   }
 }
 
-// ad-hoc invocations still use the private Unix transport until the host API
-// provides a separately authorized credential scope for them.
+// ad-hoc invocations use the owner descriptor, never a service credential.
 export async function startAdHocRuntime(
   directory: string,
   binary: string = resolveNativeBinary(),
@@ -460,20 +459,21 @@ export async function startAdHocRuntime(
   try {
     const { stdout } = await promisify(execFile)(
       binary,
-      ["--no-telemetry", "runtime", "address", "--directory", directory],
+      ["--no-telemetry", "runtime", "owner-endpoint", "--directory", directory],
       { timeout: 30_000, maxBuffer: 64 * 1024, encoding: "utf8" },
     );
     const value: unknown = JSON.parse(stdout);
-    const object = record(value, "local publisher socket");
-    exactKeys(object, ["version", "socket"], "local publisher socket");
+    const object = record(value, "local publisher owner endpoint");
+    exactKeys(object, ["version", "path"], "local publisher owner endpoint");
     if (
       object.version !== 1 ||
-      typeof object.socket !== "string" ||
-      !path.isAbsolute(object.socket) ||
-      object.socket.includes("\0")
+      typeof object.path !== "string" ||
+      !path.isAbsolute(object.path) ||
+      !object.path.endsWith(".endpoint.json") ||
+      object.path.includes("\0")
     )
       throw new TnlError("sdk.response_invalid");
-    if (!(await adHocRuntimeHealthy(object.socket))) {
+    if (!(await ownerRuntimeHealthy(object.path))) {
       const worker = spawn(
         binary,
         ["--no-telemetry", "runtime", "serve", "--directory", directory],
@@ -485,25 +485,38 @@ export async function startAdHocRuntime(
       worker.once("error", () => {});
       worker.unref();
       const deadline = Date.now() + 15_000;
-      while (!(await adHocRuntimeHealthy(object.socket))) {
+      while (!(await ownerRuntimeHealthy(object.path))) {
         if (Date.now() >= deadline) throw new TnlError("sdk.dev_unavailable");
         await new Promise<void>((resolve) => setTimeout(resolve, 50));
       }
     }
-    return object.socket;
+    return object.path;
   } catch (cause) {
     if (cause instanceof TnlError) throw cause;
     throw new TnlError("sdk.dev_unavailable", { cause });
   }
 }
 
-function adHocRuntimeHealthy(socket: string): Promise<boolean> {
+function ownerRuntimeHealthy(endpointPath: string): Promise<boolean> {
   return new Promise((resolve) => {
+    let endpoint;
+    try {
+      endpoint = readLocalEndpoint(endpointPath);
+    } catch {
+      resolve(false);
+      return;
+    }
     const request = http.get(
-      { socketPath: socket, path: "/v1/health", timeout: 1_000 },
+      {
+        hostname: "127.0.0.1",
+        port: Number(endpoint.url.port),
+        path: "/v1/status",
+        timeout: 1_000,
+        headers: { Authorization: `Bearer ${endpoint.credential}` },
+      },
       (response) => {
         response.resume();
-        resolve(response.statusCode === 204);
+        resolve(response.statusCode === 200);
       },
     );
     request.on("error", () => resolve(false));
@@ -590,7 +603,7 @@ export function runtimeRequest(socket: string, operation: string, body: unknown)
                 },
           )
         : "";
-    const endpoint = adHoc ? undefined : readLocalEndpoint(socket);
+    const endpoint = readLocalEndpoint(socket);
     const registration = adHoc ? undefined : record(body, "registration");
     const id = registration?.registration_id;
     if (
@@ -617,9 +630,8 @@ export function runtimeRequest(socket: string, operation: string, body: unknown)
             : "DELETE";
     const request = http.request(
       {
-        ...(adHoc
-          ? { socketPath: socket }
-          : { hostname: "127.0.0.1", port: Number(endpoint?.url.port) }),
+        hostname: "127.0.0.1",
+        port: Number(endpoint.url.port),
         path: route,
         method,
         headers: {
@@ -629,7 +641,7 @@ export function runtimeRequest(socket: string, operation: string, body: unknown)
           ...(operation === "renew" || operation === "unregister"
             ? { "X-Registration-Owner": registration?.owner as string }
             : {}),
-          ...(adHoc ? {} : { Authorization: `Bearer ${endpoint?.credential}` }),
+          Authorization: `Bearer ${endpoint.credential}`,
         },
       },
       (response) => {

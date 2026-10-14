@@ -1,4 +1,4 @@
-"""bounded private socket shapes shared with the native runtime."""
+"""bounded private request shapes shared with the native runtime."""
 
 from __future__ import annotations
 

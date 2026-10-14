@@ -17,7 +17,7 @@ const listener: NodeHTTPServer = {
 const credential = () =>
   `tnl_eph_${randomBytes(16).toString("base64url")}.${randomBytes(32).toString("base64url")}`;
 
-test("the ad-hoc Go, TypeScript, and Python socket fixture has the same bounded status", async () => {
+test("the ad-hoc Go, TypeScript, and Python protocol fixture has the same bounded status", async () => {
   const fixturePath = path.resolve(
     import.meta.dirname,
     "../../internal/privateprotocol/testdata/adhoc.json",
@@ -62,7 +62,7 @@ test("one supplied Node listener waits for its run and stays open on close", asy
       limits: { http: { total: 9, concurrency: 3, rate: { count: 2, per: "1s", burst: 4 } } },
     },
     {
-      start: async () => "/tmp/tnl-test.sock",
+      start: async () => "/tmp/tnl-test.endpoint.json",
       request: async (_socket, operation, body: unknown) => {
         calls.push(operation);
         if (
@@ -136,7 +136,7 @@ test("a strict total budget fails closed when the native manager disappears", as
       {
         start: async () => {
           starts++;
-          return "/tmp/tnl-test.sock";
+          return "/tmp/tnl-test.endpoint.json";
         },
         request: async (_socket, operation, body: unknown) => {
           if (operation === "ad-hoc/status") throw new TnlError("sdk.dev_unavailable");
@@ -162,7 +162,7 @@ test("an unlimited handle reuses its invocation after a native manager restart",
     {
       start: async () => {
         starts++;
-        return `/tmp/tnl-test-${starts}.sock`;
+        return `/tmp/tnl-test-${starts}.endpoint.json`;
       },
       request: async (_socket, operation, body: unknown) => {
         if (operation === "ad-hoc/unregister" || operation === "ad-hoc/renew") return undefined;
@@ -208,7 +208,7 @@ test("an authored native credential denial becomes a typed SDK error", async () 
       listener,
       { credential: credential() },
       {
-        start: async () => "/tmp/tnl-test.sock",
+        start: async () => "/tmp/tnl-test.endpoint.json",
         request: async (_socket, operation, body: unknown) => {
           if (operation === "ad-hoc/unregister") return undefined;
           if (body === null || typeof body !== "object" || !("registration_id" in body))

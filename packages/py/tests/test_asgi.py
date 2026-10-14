@@ -29,8 +29,8 @@ class FakeNative(NativeRuntime):
         self.fail_status = False
 
     async def start(self, directory: str) -> str:
-        self.events.append("socket")
-        return "/tmp/tnl-test.sock"
+        self.events.append("endpoint")
+        return "/tmp/tnl-test.endpoint.json"
 
     async def request(self, socket: str, operation: str, payload: dict[str, object]) -> object:
         if operation == "register":
@@ -61,7 +61,7 @@ class FakeNative(NativeRuntime):
         return None
 
 
-def test_python_uses_the_same_go_and_typescript_socket_fixture() -> None:
+def test_python_uses_the_same_go_and_typescript_protocol_fixture() -> None:
     path = Path(__file__).resolve().parents[3] / "internal/privateprotocol/testdata/adhoc.json"
     fixture: object = json.loads(path.read_text())
     assert isinstance(fixture, dict)
@@ -78,7 +78,7 @@ def test_python_uses_the_same_go_and_typescript_socket_fixture() -> None:
         parse_status({**ready, "state": "unknown"}, registration_id)
 
 
-def test_http_limits_validate_and_map_to_the_native_socket() -> None:
+def test_http_limits_validate_and_map_to_the_native_request() -> None:
     assert _asgi._limit_payload(
         tnl.Limits(
             http=tnl.WorkLimits(

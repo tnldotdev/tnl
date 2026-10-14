@@ -70,7 +70,7 @@ type Status = {
   failureCode?: string;
 };
 
-// all local bindings share the same native socket and the same wire contract.
+// ad-hoc bindings share the owner-scoped native endpoint and wire contract.
 export async function openServer(
   server: LocalHTTPServer,
   options: OpenOptions = {},

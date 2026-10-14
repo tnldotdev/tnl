@@ -1,4 +1,4 @@
-"""launch and call the app-owned tnl publisher over a bounded Unix socket."""
+"""call the owner-scoped local publisher API for ad-hoc ASGI tunnels."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import cast
 
 import httpx
 
+from ._app_native import AppRuntime
 from ._protocol import InvalidResponse, NativeUnavailable, RegistrationLost, TnlError
 
 
@@ -24,7 +25,7 @@ class NativeRuntime:
                 str(binary),
                 "--no-telemetry",
                 "runtime",
-                "address",
+                "owner-endpoint",
                 "--directory",
                 directory,
                 stdout=asyncio.subprocess.PIPE,
@@ -42,15 +43,16 @@ class NativeRuntime:
             result: object = json.loads(stdout)
             if (
                 not isinstance(result, dict)
-                or set(result) != {"version", "socket"}
+                or set(result) != {"version", "path"}
                 or result["version"] != 1
-                or not isinstance(result["socket"], str)
-                or not Path(result["socket"]).is_absolute()
-                or "\0" in result["socket"]
+                or not isinstance(result["path"], str)
+                or not Path(result["path"]).is_absolute()
+                or not result["path"].endswith(".endpoint.json")
+                or "\0" in result["path"]
             ):
                 raise InvalidResponse()
-            socket = cast(str, result["socket"])
-            if not await self.healthy(socket):
+            endpoint = cast(str, result["path"])
+            if not await self.healthy(endpoint):
                 await asyncio.create_subprocess_exec(
                     str(binary),
                     "--no-telemetry",
@@ -63,39 +65,44 @@ class NativeRuntime:
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 deadline = asyncio.get_running_loop().time() + 15
-                while not await self.healthy(socket):
+                while not await self.healthy(endpoint):
                     if asyncio.get_running_loop().time() >= deadline:
                         raise NativeUnavailable()
                     await asyncio.sleep(0.05)
-            return socket
+            return endpoint
         except (OSError, TimeoutError, ValueError) as cause:
             raise NativeUnavailable() from cause
 
-    async def healthy(self, socket: str) -> bool:
+    async def healthy(self, endpoint: str) -> bool:
         try:
+            url, credential = AppRuntime._endpoint(endpoint)
             async with httpx.AsyncClient(
-                transport=httpx.AsyncHTTPTransport(uds=socket),
                 timeout=1,
                 follow_redirects=False,
+                trust_env=False,
             ) as client:
-                response = await client.get("http://localhost/v1/health")
-                return response.status_code == 204
-        except httpx.HTTPError:
+                response = await client.get(
+                    url + "/v1/status", headers={"Authorization": "Bearer " + credential}
+                )
+                return response.status_code == 200
+        except (httpx.HTTPError, InvalidResponse):
             return False
 
-    async def request(self, socket: str, operation: str, payload: dict[str, object]) -> object:
+    async def request(self, endpoint: str, operation: str, payload: dict[str, object]) -> object:
         if operation not in {"register", "renew", "status", "unregister"}:
             raise InvalidResponse()
+        url, credential = AppRuntime._endpoint(endpoint)
         try:
             async with httpx.AsyncClient(
-                transport=httpx.AsyncHTTPTransport(uds=socket),
                 timeout=10,
                 follow_redirects=False,
+                trust_env=False,
             ) as client:
                 async with client.stream(
                     "POST",
-                    f"http://localhost/v1/ad-hoc/{operation}",
+                    f"{url}/v1/ad-hoc/{operation}",
                     json=payload,
+                    headers={"Authorization": "Bearer " + credential},
                 ) as response:
                     data = bytearray()
                     async for chunk in response.aiter_raw():

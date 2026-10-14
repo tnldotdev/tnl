@@ -334,7 +334,7 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/err
 - Use environment variables only for Task/Compose orchestration and resource limits; pass test-binary settings as flags.
 - Package `test` and `typecheck` scripts build explicitly; `*:run` variants reuse an existing build.
 - Author Node tooling and npm runtime code in TypeScript. Keep strict compiler and lint checks enabled; validate external data before narrowing it. The embedded project-config loader JavaScript is generated from `internal/projectconfig/loader.ts`.
-- Author the Python ASGI binding in `packages/py`, use the committed `uv.lock`, and run its Ruff, mypy, and pytest Task targets. Keep the app-owned native socket protocol shared with TypeScript and avoid storing ad-hoc credentials in snapshots or errors.
+- Author the Python ASGI binding in `packages/py`, use the committed `uv.lock`, and run its Ruff, mypy, and pytest Task targets. Keep the app-owned local publisher API shared with TypeScript and avoid storing ad-hoc credentials in snapshots or errors.
 
 # tests and benchmarks
 

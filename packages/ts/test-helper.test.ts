@@ -21,25 +21,21 @@ import { startTestProcess } from "./test-helper/process.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
-  return { ...original, chmod: vi.fn(original.chmod) };
+  return { ...original, writeFile: vi.fn(original.writeFile) };
 });
 
 describe("test resource ownership", () => {
-  test("closes the bootstrap and removes its directory if chmod fails", async () => {
-    vi.mocked(fs.chmod).mockRejectedValueOnce(new Error("chmod failed"));
-    await expect(startTestBootstrap()).rejects.toThrow("chmod failed");
-    const socket = vi.mocked(fs.chmod).mock.calls[0]?.[0];
-    expect(typeof socket).toBe("string");
-    await expect(fs.stat(path.dirname(String(socket)))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(socketRequest(String(socket), "{}")).rejects.toMatchObject({ code: "ENOENT" });
+  test("closes the bootstrap and removes its directory if descriptor writing fails", async () => {
+    vi.mocked(fs.writeFile).mockRejectedValueOnce(new Error("descriptor failed"));
+    await expect(startTestBootstrap()).rejects.toThrow("descriptor failed");
+    const endpoint = vi.mocked(fs.writeFile).mock.calls[0]?.[0];
+    expect(typeof endpoint).toBe("string");
+    await expect(fs.stat(path.dirname(String(endpoint)))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   test("surfaces malformed bootstrap requests through the waiter instead of throwing in an event handler", async () => {
     const bootstrap = await startTestBootstrap();
-    const socket = bootstrap.socket;
-    expect(socket).toBeDefined();
-    if (socket === undefined) throw new Error("test bootstrap did not provide a socket");
-    expect(await socketRequest(socket, "{")).toBe(400);
+    expect(await endpointRequest(bootstrap.endpointPath, "{")).toBe(400);
     await expect(waitForBootstrapRequest(bootstrap)).rejects.toBeInstanceOf(SyntaxError);
     await bootstrap.close();
     await bootstrap.close();
@@ -163,10 +159,20 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
   }
 });
 
-async function socketRequest(socketPath: string, body: string): Promise<number | undefined> {
+async function endpointRequest(endpointPath: string, body: string): Promise<number | undefined> {
+  const endpoint: { url: string; credential: string } = JSON.parse(
+    await fs.readFile(endpointPath, "utf8"),
+  );
+  const url = new URL(endpoint.url);
   return await new Promise((resolve, reject) => {
     const request = http.request(
-      { socketPath, method: "POST", path: "/v1/prepare" },
+      {
+        hostname: "127.0.0.1",
+        port: Number(url.port),
+        method: "POST",
+        path: "/v1/prepare",
+        headers: { Authorization: `Bearer ${endpoint.credential}` },
+      },
       (response) => {
         response.on("error", reject);
         response.on("end", () => resolve(response.statusCode));

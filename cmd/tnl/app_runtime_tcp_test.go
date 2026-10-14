@@ -13,7 +13,7 @@ import (
 )
 
 func TestLocalPublisherTCPRequiresCredentialOnPrivateOperations(t *testing.T) {
-	socket := filepath.Join(t.TempDir(), "publisher.sock")
+	key := filepath.Join(t.TempDir(), "publisher")
 	handler := http.NewServeMux()
 	handler.HandleFunc("GET /v1/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	handler.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
@@ -23,20 +23,22 @@ func TestLocalPublisherTCPRequiresCredentialOnPrivateOperations(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	server, _, err := startRuntimeTCP(socket, handler, "api")
+	handler.HandleFunc("POST /v1/ad-hoc/register", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	handler.HandleFunc("POST /v1/observe", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	server, _, err := startRuntimeTCP(key, handler, "api")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = server.Close() })
-	endpoint, err := readRuntimeTCPEndpoint(socket)
+	endpoint, err := readRuntimeTCPEndpoint(key)
 	if err != nil || endpoint.Credential == "" || !strings.HasPrefix(endpoint.URL, "http://127.0.0.1:") {
 		t.Fatalf("invalid loopback endpoint: %+v, %v", endpoint, err)
 	}
-	info, err := os.Stat(runtimeTCPEndpointPath(socket))
+	info, err := os.Stat(runtimeTCPEndpointPath(key))
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("endpoint descriptor mode = %v, %v", info, err)
 	}
-	data, err := os.ReadFile(runtimeAppTCPEndpointPath(socket, "api"))
+	data, err := os.ReadFile(runtimeAppTCPEndpointPath(key, "api"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +61,9 @@ func TestLocalPublisherTCPRequiresCredentialOnPrivateOperations(t *testing.T) {
 		{method: http.MethodPost, path: "/v1/prepare", token: endpoint.Credential, status: http.StatusUnauthorized},
 		{method: http.MethodPost, path: "/v1/prepare", token: app.Credential, status: http.StatusNoContent},
 		{method: http.MethodPost, path: "/v1/ad-hoc/register", token: app.Credential, status: http.StatusUnauthorized},
+		{method: http.MethodPost, path: "/v1/ad-hoc/register", token: endpoint.Credential, status: http.StatusNoContent},
+		{method: http.MethodPost, path: "/v1/observe", token: app.Credential, status: http.StatusUnauthorized},
+		{method: http.MethodPost, path: "/v1/observe", token: endpoint.Credential, status: http.StatusNoContent},
 		{method: http.MethodPost, path: "/v1/register", token: endpoint.Credential, status: http.StatusUnauthorized},
 	} {
 		method := test.method
@@ -91,10 +96,10 @@ func TestLocalPublisherTCPRequiresCredentialOnPrivateOperations(t *testing.T) {
 			t.Fatalf("%s %s with credential=%t and origin=%t: status %d, want %d", method, test.path, test.token != "", test.origin != "", response.StatusCode, test.status)
 		}
 	}
-	if err := stopRuntimeTCP(context.Background(), server, socket, "api"); err != nil {
+	if err := stopRuntimeTCP(context.Background(), server, key, "api"); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{runtimeTCPEndpointPath(socket), runtimeAppTCPEndpointPath(socket, "api")} {
+	for _, path := range []string{runtimeTCPEndpointPath(key), runtimeAppTCPEndpointPath(key, "api")} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("endpoint %s survived shutdown: %v", path, err)
 		}

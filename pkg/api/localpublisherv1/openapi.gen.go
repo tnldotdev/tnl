@@ -15,9 +15,85 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
 )
+
+// Defines values for AdHocOwnerVersion.
+const (
+	AdHocOwnerVersionN1 AdHocOwnerVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the AdHocOwnerVersion enum.
+func (e AdHocOwnerVersion) Valid() bool {
+	switch e {
+	case AdHocOwnerVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdHocRegistrationVersion.
+const (
+	AdHocRegistrationVersionN1 AdHocRegistrationVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the AdHocRegistrationVersion enum.
+func (e AdHocRegistrationVersion) Valid() bool {
+	switch e {
+	case AdHocRegistrationVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdHocStatusState.
+const (
+	AdHocStatusStateDraining   AdHocStatusState = "draining"
+	AdHocStatusStateFailed     AdHocStatusState = "failed"
+	AdHocStatusStatePublishing AdHocStatusState = "publishing"
+	AdHocStatusStateRoutable   AdHocStatusState = "routable"
+	AdHocStatusStateStarting   AdHocStatusState = "starting"
+	AdHocStatusStateStopped    AdHocStatusState = "stopped"
+)
+
+// Valid indicates whether the value is a known member of the AdHocStatusState enum.
+func (e AdHocStatusState) Valid() bool {
+	switch e {
+	case AdHocStatusStateDraining:
+		return true
+	case AdHocStatusStateFailed:
+		return true
+	case AdHocStatusStatePublishing:
+		return true
+	case AdHocStatusStateRoutable:
+		return true
+	case AdHocStatusStateStarting:
+		return true
+	case AdHocStatusStateStopped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdHocStatusVersion.
+const (
+	AdHocStatusVersionN1 AdHocStatusVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the AdHocStatusVersion enum.
+func (e AdHocStatusVersion) Valid() bool {
+	switch e {
+	case AdHocStatusVersionN1:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for AppPreparationFramework.
 const (
@@ -90,28 +166,28 @@ func (e ServiceStatusProtocol) Valid() bool {
 
 // Defines values for ServiceStatusState.
 const (
-	Draining   ServiceStatusState = "draining"
-	Failed     ServiceStatusState = "failed"
-	NotStarted ServiceStatusState = "not_started"
-	Publishing ServiceStatusState = "publishing"
-	Ready      ServiceStatusState = "ready"
-	Routable   ServiceStatusState = "routable"
+	ServiceStatusStateDraining   ServiceStatusState = "draining"
+	ServiceStatusStateFailed     ServiceStatusState = "failed"
+	ServiceStatusStateNotStarted ServiceStatusState = "not_started"
+	ServiceStatusStatePublishing ServiceStatusState = "publishing"
+	ServiceStatusStateReady      ServiceStatusState = "ready"
+	ServiceStatusStateRoutable   ServiceStatusState = "routable"
 )
 
 // Valid indicates whether the value is a known member of the ServiceStatusState enum.
 func (e ServiceStatusState) Valid() bool {
 	switch e {
-	case Draining:
+	case ServiceStatusStateDraining:
 		return true
-	case Failed:
+	case ServiceStatusStateFailed:
 		return true
-	case NotStarted:
+	case ServiceStatusStateNotStarted:
 		return true
-	case Publishing:
+	case ServiceStatusStatePublishing:
 		return true
-	case Ready:
+	case ServiceStatusStateReady:
 		return true
-	case Routable:
+	case ServiceStatusStateRoutable:
 		return true
 	default:
 		return false
@@ -174,6 +250,58 @@ func (e WebhookMetadataMethods) Valid() bool {
 		return false
 	}
 }
+
+// AdHocOwner defines model for AdHocOwner.
+type AdHocOwner struct {
+	Owner          string            `json:"owner"`
+	RegistrationId string            `json:"registration_id"`
+	Version        AdHocOwnerVersion `json:"version"`
+}
+
+// AdHocOwnerVersion defines model for AdHocOwner.Version.
+type AdHocOwnerVersion int
+
+// AdHocRegistration defines model for AdHocRegistration.
+type AdHocRegistration struct {
+	AllowAllIps *bool     `json:"allow_all_ips,omitempty"`
+	AllowIp     *[]string `json:"allow_ip,omitempty"`
+	Credential  string    `json:"credential"`
+	Limits      *struct {
+		Concurrency *int `json:"concurrency,omitempty"`
+		Rate        *struct {
+			Burst    *int   `json:"burst,omitempty"`
+			Per      string `json:"per"`
+			Requests int    `json:"requests"`
+		} `json:"rate,omitempty"`
+		Requests *int `json:"requests,omitempty"`
+	} `json:"limits,omitempty"`
+	Owner          string                   `json:"owner"`
+	Pid            int                      `json:"pid"`
+	RegistrationId string                   `json:"registration_id"`
+	ServerUrl      *string                  `json:"server_url,omitempty"`
+	Target         string                   `json:"target"`
+	Version        AdHocRegistrationVersion `json:"version"`
+}
+
+// AdHocRegistrationVersion defines model for AdHocRegistration.Version.
+type AdHocRegistrationVersion int
+
+// AdHocStatus defines model for AdHocStatus.
+type AdHocStatus struct {
+	FailureCode      *string            `json:"failure_code,omitempty"`
+	PublicUrl        *string            `json:"public_url,omitempty"`
+	PublicUrlId      *string            `json:"public_url_id,omitempty"`
+	PublishRunNumber *int               `json:"publish_run_number,omitempty"`
+	RegistrationId   string             `json:"registration_id"`
+	State            AdHocStatusState   `json:"state"`
+	Version          AdHocStatusVersion `json:"version"`
+}
+
+// AdHocStatusState defines model for AdHocStatus.State.
+type AdHocStatusState string
+
+// AdHocStatusVersion defines model for AdHocStatus.Version.
+type AdHocStatusVersion int
 
 // AliasMetadata defines model for AliasMetadata.
 type AliasMetadata struct {
@@ -293,6 +421,19 @@ type ProjectSnapshot struct {
 	Services []ServiceStatus `json:"services"`
 }
 
+// ReadinessObservation defines model for ReadinessObservation.
+type ReadinessObservation struct {
+	CheckedAt        time.Time `json:"checked_at"`
+	PublishRunNumber int       `json:"publish_run_number"`
+	Readiness        struct {
+		Path string `json:"path"`
+	} `json:"readiness"`
+	Ready          bool    `json:"ready"`
+	Reason         *string `json:"reason,omitempty"`
+	RegistrationId string  `json:"registration_id"`
+	Status         *int    `json:"status,omitempty"`
+}
+
 // ServiceName defines model for ServiceName.
 type ServiceName = string
 
@@ -359,6 +500,15 @@ type UnregisterAppListenerParams struct {
 type RenewAppRegistrationParams struct {
 	XRegistrationOwner RegistrationOwner `json:"X-Registration-Owner"`
 }
+
+// RegisterAdHocPublicationJSONRequestBody defines body for RegisterAdHocPublication for application/json ContentType.
+type RegisterAdHocPublicationJSONRequestBody = AdHocRegistration
+
+// UpdateAdHocPublicationJSONRequestBody defines body for UpdateAdHocPublication for application/json ContentType.
+type UpdateAdHocPublicationJSONRequestBody = AdHocOwner
+
+// ReportLocalReadinessJSONRequestBody defines body for ReportLocalReadiness for application/json ContentType.
+type ReportLocalReadinessJSONRequestBody = ReadinessObservation
 
 // PrepareAppServiceJSONRequestBody defines body for PrepareAppService for application/json ContentType.
 type PrepareAppServiceJSONRequestBody = AppPreparation
@@ -502,6 +652,34 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// RegisterAdHocPublicationWithBody Start a temporary public URL using an ephemeral credential
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/ad-hoc/register (the `RegisterAdHocPublication` operationId).
+	RegisterAdHocPublicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterAdHocPublication Start a temporary public URL using an ephemeral credential
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/ad-hoc/register (the `RegisterAdHocPublication` operationId).
+	RegisterAdHocPublication(ctx context.Context, body RegisterAdHocPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAdHocPublicationWithBody Read, renew, or stop an owned temporary publication
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/ad-hoc/{operation} (the `UpdateAdHocPublication` operationId).
+	UpdateAdHocPublicationWithBody(ctx context.Context, operation string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAdHocPublication Read, renew, or stop an owned temporary publication
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/ad-hoc/{operation} (the `UpdateAdHocPublication` operationId).
+	UpdateAdHocPublication(ctx context.Context, operation string, body UpdateAdHocPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListLocalProjectEvents Resume bounded project events after a local cursor
 	//
 	// The cursor is an opaque position in the project's one ordered local event journal, shared with status and CLI observation. A client first reads status, then passes its cursor as after. Events are strictly after that cursor; a page cursor is the last returned event, or the supplied cursor if the page is empty. Resume with the page cursor. An expired or future cursor returns 410; read status again to obtain a new position. The cursor's representation is not a protocol version or a promise about the journal's storage engine.
@@ -513,6 +691,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/health (the `GetLocalPublisherHealth` operationId).
 	GetLocalPublisherHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportLocalReadinessWithBody Record a current readiness check from the owner CLI
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/observe (the `ReportLocalReadiness` operationId).
+	ReportLocalReadinessWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportLocalReadiness Record a current readiness check from the owner CLI
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/observe (the `ReportLocalReadiness` operationId).
+	ReportLocalReadiness(ctx context.Context, body ReportLocalReadinessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PrepareAppServiceWithBody Prepare a configured app registration before it binds
 	//
@@ -558,6 +750,74 @@ type ClientInterface interface {
 	GetLocalProjectStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
+// RegisterAdHocPublicationWithBody Start a temporary public URL using an ephemeral credential
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/ad-hoc/register (the `RegisterAdHocPublication` operationId).
+func (c *Client) RegisterAdHocPublicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterAdHocPublicationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterAdHocPublication Start a temporary public URL using an ephemeral credential
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/ad-hoc/register (the `RegisterAdHocPublication` operationId).
+func (c *Client) RegisterAdHocPublication(ctx context.Context, body RegisterAdHocPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterAdHocPublicationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateAdHocPublicationWithBody Read, renew, or stop an owned temporary publication
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/ad-hoc/{operation} (the `UpdateAdHocPublication` operationId).
+func (c *Client) UpdateAdHocPublicationWithBody(ctx context.Context, operation string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAdHocPublicationRequestWithBody(c.Server, operation, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateAdHocPublication Read, renew, or stop an owned temporary publication
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/ad-hoc/{operation} (the `UpdateAdHocPublication` operationId).
+func (c *Client) UpdateAdHocPublication(ctx context.Context, operation string, body UpdateAdHocPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAdHocPublicationRequest(c.Server, operation, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListLocalProjectEvents Resume bounded project events after a local cursor
 //
 // The cursor is an opaque position in the project's one ordered local event journal, shared with status and CLI observation. A client first reads status, then passes its cursor as after. Events are strictly after that cursor; a page cursor is the last returned event, or the supplied cursor if the page is empty. Resume with the page cursor. An expired or future cursor returns 410; read status again to obtain a new position. The cursor's representation is not a protocol version or a promise about the journal's storage engine.
@@ -580,6 +840,40 @@ func (c *Client) ListLocalProjectEvents(ctx context.Context, params *ListLocalPr
 // Corresponds with GET /v1/health (the `GetLocalPublisherHealth` operationId).
 func (c *Client) GetLocalPublisherHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetLocalPublisherHealthRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportLocalReadinessWithBody Record a current readiness check from the owner CLI
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/observe (the `ReportLocalReadiness` operationId).
+func (c *Client) ReportLocalReadinessWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportLocalReadinessRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportLocalReadiness Record a current readiness check from the owner CLI
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/observe (the `ReportLocalReadiness` operationId).
+func (c *Client) ReportLocalReadiness(ctx context.Context, body ReportLocalReadinessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportLocalReadinessRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -703,6 +997,93 @@ func (c *Client) GetLocalProjectStatus(ctx context.Context, reqEditors ...Reques
 	return c.Client.Do(req)
 }
 
+// NewRegisterAdHocPublicationRequest calls the generic RegisterAdHocPublication builder with application/json body
+func NewRegisterAdHocPublicationRequest(server string, body RegisterAdHocPublicationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterAdHocPublicationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRegisterAdHocPublicationRequestWithBody constructs an http.Request for the RegisterAdHocPublication method, with any body, and a specified content type
+func NewRegisterAdHocPublicationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ad-hoc/register")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewUpdateAdHocPublicationRequest calls the generic UpdateAdHocPublication builder with application/json body
+func NewUpdateAdHocPublicationRequest(server string, operation string, body UpdateAdHocPublicationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateAdHocPublicationRequestWithBody(server, operation, "application/json", bodyReader)
+}
+
+// NewUpdateAdHocPublicationRequestWithBody constructs an http.Request for the UpdateAdHocPublication method, with any body, and a specified content type
+func NewUpdateAdHocPublicationRequestWithBody(server string, operation string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "operation", operation, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ad-hoc/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListLocalProjectEventsRequest constructs an http.Request for the ListLocalProjectEvents method
 func NewListLocalProjectEventsRequest(server string, params *ListLocalProjectEventsParams) (*http.Request, error) {
 	var err error
@@ -788,6 +1169,46 @@ func NewGetLocalPublisherHealthRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewReportLocalReadinessRequest calls the generic ReportLocalReadiness builder with application/json body
+func NewReportLocalReadinessRequest(server string, body ReportLocalReadinessJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReportLocalReadinessRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewReportLocalReadinessRequestWithBody constructs an http.Request for the ReportLocalReadiness method, with any body, and a specified content type
+func NewReportLocalReadinessRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/observe")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -1044,6 +1465,34 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// RegisterAdHocPublicationWithBodyWithResponse Start a temporary public URL using an ephemeral credential
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/ad-hoc/register (the `RegisterAdHocPublication` operationId).
+	RegisterAdHocPublicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterAdHocPublicationResponse, error)
+
+	// RegisterAdHocPublicationWithResponse Start a temporary public URL using an ephemeral credential
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/ad-hoc/register (the `RegisterAdHocPublication` operationId).
+	RegisterAdHocPublicationWithResponse(ctx context.Context, body RegisterAdHocPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterAdHocPublicationResponse, error)
+
+	// UpdateAdHocPublicationWithBodyWithResponse Read, renew, or stop an owned temporary publication
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/ad-hoc/{operation} (the `UpdateAdHocPublication` operationId).
+	UpdateAdHocPublicationWithBodyWithResponse(ctx context.Context, operation string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAdHocPublicationResponse, error)
+
+	// UpdateAdHocPublicationWithResponse Read, renew, or stop an owned temporary publication
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/ad-hoc/{operation} (the `UpdateAdHocPublication` operationId).
+	UpdateAdHocPublicationWithResponse(ctx context.Context, operation string, body UpdateAdHocPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAdHocPublicationResponse, error)
+
 	// ListLocalProjectEventsWithResponse Resume bounded project events after a local cursor
 	//
 	// The cursor is an opaque position in the project's one ordered local event journal, shared with status and CLI observation. A client first reads status, then passes its cursor as after. Events are strictly after that cursor; a page cursor is the last returned event, or the supplied cursor if the page is empty. Resume with the page cursor. An expired or future cursor returns 410; read status again to obtain a new position. The cursor's representation is not a protocol version or a promise about the journal's storage engine.
@@ -1059,6 +1508,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/health (the `GetLocalPublisherHealth` operationId).
 	GetLocalPublisherHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetLocalPublisherHealthResponse, error)
+
+	// ReportLocalReadinessWithBodyWithResponse Record a current readiness check from the owner CLI
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/observe (the `ReportLocalReadiness` operationId).
+	ReportLocalReadinessWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportLocalReadinessResponse, error)
+
+	// ReportLocalReadinessWithResponse Record a current readiness check from the owner CLI
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/observe (the `ReportLocalReadiness` operationId).
+	ReportLocalReadinessWithResponse(ctx context.Context, body ReportLocalReadinessJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportLocalReadinessResponse, error)
 
 	// PrepareAppServiceWithBodyWithResponse Prepare a configured app registration before it binds
 	//
@@ -1108,6 +1571,102 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/status (the `GetLocalProjectStatus` operationId).
 	GetLocalProjectStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetLocalProjectStatusResponse, error)
+}
+
+type RegisterAdHocPublicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdHocStatus
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RegisterAdHocPublicationResponse) GetJSON200() *AdHocStatus {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r RegisterAdHocPublicationResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterAdHocPublicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterAdHocPublicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterAdHocPublicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterAdHocPublicationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateAdHocPublicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdHocStatus
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateAdHocPublicationResponse) GetJSON200() *AdHocStatus {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r UpdateAdHocPublicationResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateAdHocPublicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateAdHocPublicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateAdHocPublicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateAdHocPublicationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type ListLocalProjectEventsResponse struct {
@@ -1200,6 +1759,47 @@ func (r GetLocalPublisherHealthResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetLocalPublisherHealthResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReportLocalReadinessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r ReportLocalReadinessResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReportLocalReadinessResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportLocalReadinessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportLocalReadinessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReportLocalReadinessResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1425,6 +2025,58 @@ func (r GetLocalProjectStatusResponse) ContentType() string {
 	return ""
 }
 
+// RegisterAdHocPublicationWithBodyWithResponse Start a temporary public URL using an ephemeral credential
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/ad-hoc/register (the `RegisterAdHocPublication` operationId).
+func (c *ClientWithResponses) RegisterAdHocPublicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterAdHocPublicationResponse, error) {
+	rsp, err := c.RegisterAdHocPublicationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterAdHocPublicationResponse(rsp)
+}
+
+// RegisterAdHocPublicationWithResponse Start a temporary public URL using an ephemeral credential
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/ad-hoc/register (the `RegisterAdHocPublication` operationId).
+func (c *ClientWithResponses) RegisterAdHocPublicationWithResponse(ctx context.Context, body RegisterAdHocPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterAdHocPublicationResponse, error) {
+	rsp, err := c.RegisterAdHocPublication(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterAdHocPublicationResponse(rsp)
+}
+
+// UpdateAdHocPublicationWithBodyWithResponse Read, renew, or stop an owned temporary publication
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/ad-hoc/{operation} (the `UpdateAdHocPublication` operationId).
+func (c *ClientWithResponses) UpdateAdHocPublicationWithBodyWithResponse(ctx context.Context, operation string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAdHocPublicationResponse, error) {
+	rsp, err := c.UpdateAdHocPublicationWithBody(ctx, operation, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAdHocPublicationResponse(rsp)
+}
+
+// UpdateAdHocPublicationWithResponse Read, renew, or stop an owned temporary publication
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/ad-hoc/{operation} (the `UpdateAdHocPublication` operationId).
+func (c *ClientWithResponses) UpdateAdHocPublicationWithResponse(ctx context.Context, operation string, body UpdateAdHocPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAdHocPublicationResponse, error) {
+	rsp, err := c.UpdateAdHocPublication(ctx, operation, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAdHocPublicationResponse(rsp)
+}
+
 // ListLocalProjectEventsWithResponse Resume bounded project events after a local cursor
 //
 // The cursor is an opaque position in the project's one ordered local event journal, shared with status and CLI observation. A client first reads status, then passes its cursor as after. Events are strictly after that cursor; a page cursor is the last returned event, or the supplied cursor if the page is empty. Resume with the page cursor. An expired or future cursor returns 410; read status again to obtain a new position. The cursor's representation is not a protocol version or a promise about the journal's storage engine.
@@ -1451,6 +2103,32 @@ func (c *ClientWithResponses) GetLocalPublisherHealthWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseGetLocalPublisherHealthResponse(rsp)
+}
+
+// ReportLocalReadinessWithBodyWithResponse Record a current readiness check from the owner CLI
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/observe (the `ReportLocalReadiness` operationId).
+func (c *ClientWithResponses) ReportLocalReadinessWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportLocalReadinessResponse, error) {
+	rsp, err := c.ReportLocalReadinessWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportLocalReadinessResponse(rsp)
+}
+
+// ReportLocalReadinessWithResponse Record a current readiness check from the owner CLI
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/observe (the `ReportLocalReadiness` operationId).
+func (c *ClientWithResponses) ReportLocalReadinessWithResponse(ctx context.Context, body ReportLocalReadinessJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportLocalReadinessResponse, error) {
+	rsp, err := c.ReportLocalReadiness(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportLocalReadinessResponse(rsp)
 }
 
 // PrepareAppServiceWithBodyWithResponse Prepare a configured app registration before it binds
@@ -1544,6 +2222,75 @@ func (c *ClientWithResponses) GetLocalProjectStatusWithResponse(ctx context.Cont
 	return ParseGetLocalProjectStatusResponse(rsp)
 }
 
+// ParseRegisterAdHocPublicationResponse parses an HTTP response from a RegisterAdHocPublicationWithResponse call
+func ParseRegisterAdHocPublicationResponse(rsp *http.Response) (*RegisterAdHocPublicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterAdHocPublicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdHocStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateAdHocPublicationResponse parses an HTTP response from a UpdateAdHocPublicationWithResponse call
+func ParseUpdateAdHocPublicationResponse(rsp *http.Response) (*UpdateAdHocPublicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateAdHocPublicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdHocStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListLocalProjectEventsResponse parses an HTTP response from a ListLocalProjectEventsWithResponse call
 func ParseListLocalProjectEventsResponse(rsp *http.Response) (*ListLocalProjectEventsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -1593,6 +2340,35 @@ func ParseGetLocalPublisherHealthResponse(rsp *http.Response) (*GetLocalPublishe
 	}
 
 	response := &GetLocalPublisherHealthResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReportLocalReadinessResponse parses an HTTP response from a ReportLocalReadinessWithResponse call
+func ParseReportLocalReadinessResponse(rsp *http.Response) (*ReportLocalReadinessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportLocalReadinessResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -1768,12 +2544,21 @@ func ParseGetLocalProjectStatusResponse(rsp *http.Response) (*GetLocalProjectSta
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// RegisterAdHocPublication Start a temporary public URL using an ephemeral credential
+	// (POST /v1/ad-hoc/register)
+	RegisterAdHocPublication(w http.ResponseWriter, r *http.Request)
+	// UpdateAdHocPublication Read, renew, or stop an owned temporary publication
+	// (POST /v1/ad-hoc/{operation})
+	UpdateAdHocPublication(w http.ResponseWriter, r *http.Request, operation string)
 	// ListLocalProjectEvents Resume bounded project events after a local cursor
 	// (GET /v1/events)
 	ListLocalProjectEvents(w http.ResponseWriter, r *http.Request, params ListLocalProjectEventsParams)
 	// GetLocalPublisherHealth Check whether the local publisher API is responding
 	// (GET /v1/health)
 	GetLocalPublisherHealth(w http.ResponseWriter, r *http.Request)
+	// ReportLocalReadiness Record a current readiness check from the owner CLI
+	// (POST /v1/observe)
+	ReportLocalReadiness(w http.ResponseWriter, r *http.Request)
 	// PrepareAppService Prepare a configured app registration before it binds
 	// (POST /v1/prepare)
 	PrepareAppService(w http.ResponseWriter, r *http.Request)
@@ -1799,6 +2584,46 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// RegisterAdHocPublication operation middleware
+func (siw *ServerInterfaceWrapper) RegisterAdHocPublication(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegisterAdHocPublication(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateAdHocPublication operation middleware
+func (siw *ServerInterfaceWrapper) UpdateAdHocPublication(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operation" -------------
+	var operation string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operation", r.PathValue("operation"), &operation, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operation", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateAdHocPublication(w, r, operation)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListLocalProjectEvents operation middleware
 func (siw *ServerInterfaceWrapper) ListLocalProjectEvents(w http.ResponseWriter, r *http.Request) {
@@ -1851,6 +2676,20 @@ func (siw *ServerInterfaceWrapper) GetLocalPublisherHealth(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetLocalPublisherHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReportLocalReadiness operation middleware
+func (siw *ServerInterfaceWrapper) ReportLocalReadiness(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReportLocalReadiness(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2149,6 +2988,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/registrations/{registration_id}/renew", wrapper.RenewAppRegistration)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/status", wrapper.GetLocalProjectStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/events", wrapper.ListLocalProjectEvents)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/observe", wrapper.ReportLocalReadiness)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/ad-hoc/register", wrapper.RegisterAdHocPublication)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/ad-hoc/{operation}", wrapper.UpdateAdHocPublication)
 
 	return m
 }

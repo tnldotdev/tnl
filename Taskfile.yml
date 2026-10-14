@@ -157,7 +157,7 @@ tasks:
       - uv run --frozen --project packages/py mypy packages/py/src packages/py/tests
 
   py:test:
-    desc: Run Python ASGI and private-socket tests
+    desc: Run Python ASGI and local publisher API tests
     cmds:
       - uv run --frozen --project packages/py pytest -q packages/py/tests
 

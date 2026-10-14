@@ -97,6 +97,10 @@ func (a *appRuntime) localHandler() http.Handler {
 		privateprotocol.Write(w, http.StatusOK, localProjectSnapshot(a.manager.Snapshot()))
 	})
 	mux.HandleFunc("GET /v1/events", a.localEvents)
+	// the owner credential can observe readiness and manage ad-hoc invocations;
+	// app service credentials cannot reach these private operations.
+	mux.Handle("POST /v1/observe", a.ownerOperations())
+	mux.Handle("POST /v1/ad-hoc/", a.ownerOperations())
 	return mux
 }
 
@@ -136,16 +140,16 @@ func localServiceStatus(service clientruntime.Service) localpublisherv1.ServiceS
 	if protocol == "" {
 		protocol = "http"
 	}
-	state := localpublisherv1.NotStarted
+	state := localpublisherv1.ServiceStatusStateNotStarted
 	switch {
 	case service.Ready:
-		state = localpublisherv1.Ready
+		state = localpublisherv1.ServiceStatusStateReady
 	case service.Routable:
-		state = localpublisherv1.Routable
+		state = localpublisherv1.ServiceStatusStateRoutable
 	case service.Registered:
-		state = localpublisherv1.Publishing
+		state = localpublisherv1.ServiceStatusStatePublishing
 	case service.Failure != "":
-		state = localpublisherv1.Failed
+		state = localpublisherv1.ServiceStatusStateFailed
 	}
 	result := localpublisherv1.ServiceStatus{Service: service.Name, Protocol: localpublisherv1.ServiceStatusProtocol(protocol), State: state}
 	if service.PublicURL != "" {

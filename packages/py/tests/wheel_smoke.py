@@ -19,7 +19,7 @@ class NativeStub(NativeRuntime):
         self.target = ""
 
     async def start(self, directory: str) -> str:
-        return "/unused/native.sock"
+        return "/unused/native.endpoint.json"
 
     async def request(self, socket: str, operation: str, payload: dict[str, object]) -> object:
         if operation == "register":

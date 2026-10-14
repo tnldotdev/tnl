@@ -3,7 +3,12 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
-import { createPreparedService, runtimeRequest, startRuntime } from "./dist/internal/app.js";
+import {
+  createPreparedService,
+  runtimeRequest,
+  startAdHocRuntime,
+  startRuntime,
+} from "./dist/internal/app.js";
 import { TnlError } from "./dist/errors.js";
 import { startTestBootstrap } from "./test-helper/bootstrap.js";
 import { testPublicProject } from "./test-helper/project.js";
@@ -23,15 +28,18 @@ import http from "node:http";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 const directory = process.argv[process.argv.indexOf("--directory") + 1];
-const path = join(directory, "manager.sock.endpoint.json");
+const path = join(directory, "manager.app.web.endpoint.json");
+const ownerPath = join(directory, "manager.endpoint.json");
 if (process.argv.includes("endpoint")) process.stdout.write(JSON.stringify({ version: 1, path }) + "\\n");
+else if (process.argv.includes("owner-endpoint")) process.stdout.write(JSON.stringify({ version: 1, path: ownerPath }) + "\\n");
 else if (process.argv.includes("serve")) {
   const credential = "a".repeat(43);
   const server = http.createServer((request, response) => {
-    response.writeHead(request.url === "/v1/health" ? 204 : 401).end();
+    response.writeHead(request.url === "/v1/health" ? 204 : request.url === "/v1/status" && request.headers.authorization === "Bearer " + "c".repeat(43) ? 200 : 401).end();
   });
   server.listen(0, "127.0.0.1", () => {
     writeFileSync(path, JSON.stringify({ version: 1, url: "http://127.0.0.1:" + server.address().port, credential }));
+    writeFileSync(ownerPath, JSON.stringify({ version: 1, url: "http://127.0.0.1:" + server.address().port, credential: "c".repeat(43) }));
     writeFileSync(join(directory, "pid"), String(process.pid));
   });
   process.on("SIGTERM", () => server.close(() => process.exit(0)));
@@ -40,7 +48,10 @@ else if (process.argv.includes("serve")) {
     );
     await chmod(binary, 0o700);
     const endpointPath = await startRuntime(directory, undefined, binary);
-    expect(endpointPath).toBe(join(directory, "manager.sock.endpoint.json"));
+    expect(endpointPath).toBe(join(directory, "manager.app.web.endpoint.json"));
+    expect(await startAdHocRuntime(directory, binary)).toBe(
+      join(directory, "manager.endpoint.json"),
+    );
     workerPID = Number(await readFile(join(directory, "pid"), "utf8"));
     expect(workerPID).toBeGreaterThan(0);
   } finally {
@@ -62,7 +73,7 @@ test("sends authenticated local publisher requests over loopback TCP", async () 
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("missing bound address");
-    const endpointPath = join(directory, "manager.sock.endpoint.json");
+    const endpointPath = join(directory, "manager.endpoint.json");
     await writeFile(
       endpointPath,
       JSON.stringify({ version: 1, url: `http://127.0.0.1:${address.port}`, credential }),
@@ -80,19 +91,31 @@ test("sends authenticated local publisher requests over loopback TCP", async () 
   }
 });
 
-test("keeps temporary publication requests on the app-owned Unix socket", async () => {
+test("authenticates temporary publication requests with the owner credential", async () => {
   const directory = await mkdtemp(join(tmpdir(), "tnl-sdk-adhoc-"));
-  const socket = join(directory, "manager.sock");
-  const requests: string[] = [];
+  const endpointPath = join(directory, "manager.endpoint.json");
+  const requests: Array<{ path: string; auth: string | undefined }> = [];
   const server = createServer((request, response) => {
-    requests.push(request.url ?? "");
+    requests.push({ path: request.url ?? "", auth: request.headers.authorization });
     request.resume();
     response.writeHead(204).end();
   });
   try {
-    await new Promise<void>((resolve) => server.listen(socket, resolve));
-    await expect(runtimeRequest(socket, "ad-hoc/renew", { version: 1 })).resolves.toBeUndefined();
-    expect(requests).toEqual(["/v1/ad-hoc/renew"]);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("missing bound address");
+    await writeFile(
+      endpointPath,
+      JSON.stringify({
+        version: 1,
+        url: `http://127.0.0.1:${address.port}`,
+        credential: "c".repeat(43),
+      }),
+    );
+    await expect(
+      runtimeRequest(endpointPath, "ad-hoc/renew", { version: 1 }),
+    ).resolves.toBeUndefined();
+    expect(requests).toEqual([{ path: "/v1/ad-hoc/renew", auth: `Bearer ${"c".repeat(43)}` }]);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
@@ -108,7 +131,7 @@ test("accepts the native private protocol golden assignment", async () => {
   );
   const fixtures = record(golden, "private protocol fixture");
   const handle = await createPreparedService({ service: "web" }, "node", {
-    start: async () => "/isolated/manager.sock",
+    start: async () => "/isolated/manager.app.web.endpoint.json",
     request: async (_socket, operation) =>
       operation === "prepare" ? fixtures.assignment : undefined,
   });
@@ -166,7 +189,7 @@ test("a surviving app reconnects and re-registers after the manager crashes", as
     }
     return undefined;
   });
-  const start = vi.fn(async () => "/isolated/manager.sock");
+  const start = vi.fn(async () => "/isolated/manager.app.api.endpoint.json");
   const handle = await createPreparedService({}, "node", { start, request });
   const listener = {
     listening: true,
@@ -189,7 +212,7 @@ test("Bun hot replacements retain ownership and an old listener stop cannot unre
     operation === "prepare" ? assignment() : undefined,
   );
   const handle = await createPreparedService({}, "bun", {
-    start: async () => "/isolated/manager.sock",
+    start: async () => "/isolated/manager.app.api.endpoint.json",
     request,
   });
   const firstStop = vi.fn();
@@ -220,7 +243,7 @@ test("Bun hot replacements retain ownership and an old listener stop cannot unre
 test("malformed metadata and duplicate live ownership are classified without provider text", async () => {
   await expect(
     createPreparedService({}, "node", {
-      start: async () => "/isolated/manager.sock",
+      start: async () => "/isolated/manager.app.api.endpoint.json",
       request: async () => ({ ...assignment(), access_token: "secret" }),
     }),
   ).rejects.toMatchObject({ code: "sdk.response_invalid" });

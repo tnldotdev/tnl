@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,9 +33,9 @@ import (
 )
 
 type runtimeCommand struct {
-	Address  runtimeOptions         `cmd:"" hidden:""`
-	Endpoint runtimeEndpointOptions `cmd:"" hidden:""`
-	Serve    runtimeOptions         `cmd:"" hidden:""`
+	OwnerEndpoint runtimeOptions         `cmd:"" hidden:""`
+	Endpoint      runtimeEndpointOptions `cmd:"" hidden:""`
+	Serve         runtimeOptions         `cmd:"" hidden:""`
 }
 type runtimeEndpointOptions struct {
 	runtimeOptions `embed:""`
@@ -101,16 +100,6 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 	return projectConfiguration{Project: project}, root, nil
 }
 
-func runtimeSocket(project, state string) (string, error) {
-	// a stable short directory keeps one identity across application environments
-	// and fits Darwin's Unix socket path limit.
-	directory, err := privateRuntimeDirectoryAt("/tmp")
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(directory, "app-"+clientruntime.Identity(project, state)+".sock"), nil
-}
-
 func runtimeKey(project, state string) (string, error) {
 	directory, err := clientstate.RuntimeDir(state)
 	if err != nil {
@@ -119,52 +108,44 @@ func runtimeKey(project, state string) (string, error) {
 	return filepath.Join(directory, "app-"+clientruntime.Identity(project, filepath.Dir(directory))), nil
 }
 
-func privateRuntimeDirectoryAt(base string) (string, error) {
-	directory := filepath.Join(base, fmt.Sprintf("tnl-%d", os.Getuid()))
-	if err := os.Mkdir(directory, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return "", failure.Wrap("create local publisher runtime directory", failure.ClientStateUnavailable, err)
-	}
-	info, err := os.Lstat(directory)
+func localOwnerRequest(ctx context.Context, key, method, route string, body io.Reader) (*http.Response, error) {
+	endpoint, err := readRuntimeTCPEndpoint(key)
 	if err != nil {
-		return "", failure.Wrap("inspect local publisher runtime directory", failure.ClientStateUnavailable, err)
+		return nil, err
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.IsDir() || info.Mode().Perm() != 0o700 || stat.Uid != uint32(os.Getuid()) {
-		return "", failure.Wrap("validate local publisher runtime directory", failure.ClientStateUnavailable,
-			errors.New("local publisher runtime directory must be user-owned with mode 0700"))
+	request, err := http.NewRequestWithContext(ctx, method, endpoint.URL+route, body)
+	if err != nil {
+		return nil, err
 	}
-	return directory, nil
+	request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	return (&http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}).Do(request)
 }
 
-func runtimeHTTP(socket string) *http.Client {
-	return &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-	}}}
-}
-
-func runtimeAvailable(ctx context.Context, socket string) bool {
-	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/v1/health", nil)
-	response, err := runtimeHTTP(socket).Do(request)
+func runtimeAvailable(ctx context.Context, key string) bool {
+	response, err := localOwnerRequest(ctx, key, http.MethodGet, "/v1/status", nil)
 	if err != nil {
 		return false
 	}
 	response.Body.Close()
-	return response.StatusCode == http.StatusNoContent
+	return response.StatusCode == http.StatusOK
 }
 
-func runRuntimeAddress(ctx context.Context, options runtimeOptions, output io.Writer) error {
+func runRuntimeOwnerEndpoint(ctx context.Context, options runtimeOptions, output io.Writer) error {
 	project, state, err := runtimeProject(ctx, options)
 	if err != nil {
 		return err
 	}
-	socket, err := runtimeSocket(project.Root, state)
+	key, err := runtimeKey(project.Root, state)
 	if err != nil {
 		return err
 	}
 	return json.NewEncoder(output).Encode(struct {
 		Version int    `json:"version"`
-		Socket  string `json:"socket"`
-	}{privateprotocol.Version, socket})
+		Path    string `json:"path"`
+	}{privateprotocol.Version, runtimeTCPEndpointPath(key)})
 }
 
 func runRuntimeEndpoint(ctx context.Context, options runtimeEndpointOptions, output io.Writer) error {
@@ -248,10 +229,6 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	if err != nil {
 		return err
 	}
-	socket, err := runtimeSocket(project.Root, root)
-	if err != nil {
-		return err
-	}
 	key, err := runtimeKey(project.Root, root)
 	if err != nil {
 		return err
@@ -264,25 +241,6 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		return err
 	}
 	defer lock.Close()
-	if info, err := os.Lstat(socket); err == nil {
-		if info.Mode()&os.ModeSocket == 0 {
-			return failure.Wrap("open local publisher socket", failure.ClientStateUnavailable, errors.New("local publisher socket path is occupied by a non-socket file"))
-		}
-		if err := os.Remove(socket); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	listener, err := net.Listen("unix", socket)
-	if err != nil {
-		return err
-	}
-	defer listener.Close()
-	defer os.Remove(socket)
-	if err := os.Chmod(socket, 0600); err != nil {
-		return err
-	}
 	state, err := clientstate.Open(ctx, root)
 	if err != nil {
 		return err
@@ -306,26 +264,12 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		return err
 	}
 	defer func() { _ = stopRuntimeTCP(context.Background(), tcpServer, key, appServices...) }()
-	server := &http.Server{Handler: runtime.handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
-	done := make(chan error, 1)
-	go func() { done <- server.Serve(listener) }()
-	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(closeCtx)
-		_ = server.Close()
-	}()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case err := <-done:
-			if errors.Is(err, http.ErrServerClosed) {
-				return nil
-			}
-			return err
 		case err := <-tcpDone:
 			return fmt.Errorf("serve local publisher TCP API: %w", err)
 		case <-ticker.C:
@@ -474,9 +418,8 @@ func valueOrEmpty(value *string) string {
 	return *value
 }
 
-func (a *appRuntime) handler() http.Handler {
+func (a *appRuntime) ownerOperations() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("POST /v1/ad-hoc/register", func(w http.ResponseWriter, r *http.Request) {
 		var request privateprotocol.AdHocRegister
 		if err := privateprotocol.Decode(w, r, &request); err != nil {
@@ -518,7 +461,6 @@ func (a *appRuntime) handler() http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 		})
 	}
-	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) { privateprotocol.Write(w, 200, a.manager.Snapshot()) })
 	mux.HandleFunc("POST /v1/observe", func(w http.ResponseWriter, r *http.Request) {
 		var observation clientruntime.Observation
 		if err := privateprotocol.Decode(w, r, &observation); err != nil {
@@ -531,53 +473,6 @@ func (a *appRuntime) handler() http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("POST /v1/prepare", func(w http.ResponseWriter, r *http.Request) {
-		var request privateprotocol.Prepare
-		if err := privateprotocol.Decode(w, r, &request); err != nil {
-			runtimeProblem(w, err)
-			return
-		}
-		assignment, err := a.prepare(r.Context(), request)
-		if err != nil {
-			runtimeProblem(w, err)
-			return
-		}
-		privateprotocol.Write(w, 200, assignment)
-	})
-	for _, operation := range []string{"register", "renew", "unregister"} {
-		mux.HandleFunc("POST /v1/"+operation, func(w http.ResponseWriter, r *http.Request) {
-			var request privateprotocol.Registration
-			if err := privateprotocol.Decode(w, r, &request); err != nil {
-				runtimeProblem(w, err)
-				return
-			}
-			if request.Version != privateprotocol.Version {
-				runtimeProblem(w, errors.New("unsupported protocol"))
-				return
-			}
-			var err error
-			switch operation {
-			case "register":
-				a.mu.Lock()
-				preparation, found := a.prepared[request.RegistrationID]
-				a.mu.Unlock()
-				if !found {
-					err = clientruntime.ErrRegistrationStale
-				} else {
-					err = a.manager.Register(request.RegistrationID, request.Owner, request.Target, string(preparation.framework))
-				}
-			case "renew":
-				err = a.manager.Renew(request.RegistrationID, request.Owner)
-			case "unregister":
-				err = a.manager.Unregister(request.RegistrationID, request.Owner)
-			}
-			if err != nil {
-				runtimeProblem(w, err)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		})
-	}
 	return mux
 }
 
