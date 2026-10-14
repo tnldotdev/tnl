@@ -24,6 +24,10 @@ type postgresAuthChoiceConn struct {
 	phase     uint8
 }
 
+func (c *postgresAuthChoiceConn) CloseWrite() error {
+	return closeWrite(c.Conn)
+}
+
 func (c *postgresAuthChoiceConn) Read(data []byte) (int, error) {
 	if len(data) == 0 {
 		return 0, nil

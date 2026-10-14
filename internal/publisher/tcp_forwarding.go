@@ -349,6 +349,13 @@ func copyTCPConnections(visitor, securedVisitor, backend net.Conn, admission *ap
 	return err
 }
 
+func closeWrite(connection net.Conn) error {
+	if closer, ok := connection.(interface{ CloseWrite() error }); ok {
+		return closer.CloseWrite()
+	}
+	return errors.ErrUnsupported
+}
+
 func forwardVisitorTLSPassthrough(visitor, backend net.Conn, hostname string, admission *applicationAdmission) error {
 	hello, err := router.InspectClientHello(visitor)
 	serverName, nameErr := naming.CanonicalizeHostname(hello.ServerName)

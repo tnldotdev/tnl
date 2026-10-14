@@ -856,6 +856,8 @@ func (c *publicURLReaderConn) Read(destination []byte) (int, error) {
 	return c.reader.Read(destination)
 }
 
+func (c *publicURLReaderConn) CloseWrite() error { return closeWrite(c.Conn) }
+
 type metadataConn struct {
 	net.Conn
 	header proxyproto.Header
@@ -864,6 +866,7 @@ type metadataConn struct {
 
 func (c *metadataConn) RemoteAddr() net.Addr { return tcpAddress(c.header.Source) }
 func (c *metadataConn) LocalAddr() net.Addr  { return tcpAddress(c.header.Destination) }
+func (c *metadataConn) CloseWrite() error    { return closeWrite(c.Conn) }
 
 func tcpAddress(endpoint netip.AddrPort) net.Addr {
 	return &net.TCPAddr{IP: net.IP(endpoint.Addr().AsSlice()), Port: int(endpoint.Port())}
