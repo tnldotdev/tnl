@@ -170,6 +170,14 @@ type VisitorGrantStore interface {
 	RevokeTeamURLShareGrant(context.Context, string, string, string, time.Time) (controlstate.VisitorShareGrant, error)
 }
 
+type VisitorInvitationStore interface {
+	CreateVisitorShareInvitation(context.Context, controlstate.CreateVisitorShareInvitationRequest, time.Time) (controlstate.VisitorShareInvitation, error)
+	AcceptVisitorShareInvitation(context.Context, string, string, time.Time) (controlstate.VisitorShareInvitation, error)
+	ListVisitorShareInvitations(context.Context, string, string, string) (controlstate.VisitorShareInvitationPage, error)
+	GetVisitorShareInvitation(context.Context, string) (controlstate.VisitorShareInvitation, error)
+	RevokeVisitorShareInvitation(context.Context, string, string, string, time.Time) (controlstate.VisitorShareInvitation, error)
+}
+
 type ShareAccessStore interface {
 	EnableShareAccess(context.Context, controlstate.PublishRunAuthentication, string) error
 	PublishRunShareState(context.Context, controlstate.PublishRunAuthentication, time.Time) ([]controlstate.PublisherShare, error)
@@ -210,6 +218,7 @@ type handler struct {
 	browserAuthority    *authorityclient.Client
 	shares              ShareStore
 	visitorGrants       VisitorGrantStore
+	visitorInvitations  VisitorInvitationStore
 	shareAccess         ShareAccessStore
 	feedback            FeedbackStore
 	guests              interface {
@@ -265,6 +274,9 @@ func NewHandler(
 	}
 	if grants, ok := store.(VisitorGrantStore); ok {
 		h.visitorGrants = grants
+	}
+	if invitations, ok := store.(VisitorInvitationStore); ok {
+		h.visitorInvitations = invitations
 	}
 	if shareAccess, ok := store.(ShareAccessStore); ok {
 		h.shareAccess = shareAccess

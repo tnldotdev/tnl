@@ -664,6 +664,15 @@ func browserVisitAllowed(ctx context.Context, queries *controlstatedb.Queries, p
 		publicURL.ServiceProtocol != string(PublicURLServiceHTTP) {
 		return false, nil
 	}
+	invited, err := queries.ActiveIdentityURLVisitorGrant(ctx, controlstatedb.ActiveIdentityURLVisitorGrantParams{
+		PublicURLID: nullableText(publicURL.ID), IdentityID: nullableText(identity.IdentityID), Now: timestamptz(now),
+	})
+	if err != nil {
+		return false, fmt.Errorf("read browser identity share: %w", err)
+	}
+	if invited {
+		return true, nil
+	}
 	membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
 		TeamID: publicURL.TeamID, IdentityID: identity.IdentityID,
 	})

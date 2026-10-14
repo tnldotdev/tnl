@@ -634,6 +634,12 @@ team share. control stores the exact grant independently of its publish run,
 checks the current team membership for every signed-in browser request, and
 leaves database visitor authorization to the publisher's TLS handshake.
 
+a named share invitation stores only a digest of its one-use secret and the
+recipient's normalized email. the authenticated recipient accepts it with a
+currently verified matching email. acceptance stores an identity-bound grant
+for that exact public URL, without team membership; expiry and revocation stop
+new requests and remove it from the recipient's inventory.
+
 control creates guest trials against its own managed domain. it reserves each
 guest namespace in the managed-label pool in the same
 transaction as the trial; team creation cannot reuse a guest namespace. managed

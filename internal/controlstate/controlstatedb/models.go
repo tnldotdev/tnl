@@ -984,3 +984,20 @@ type ControlVisitorAccessGrant struct {
 	RevokedAt           pgtype.Timestamptz
 	RevokedByIdentityID pgtype.Text
 }
+
+type ControlVisitorShareInvitation struct {
+	ID                  string
+	TeamID              string
+	PublicURLID         string
+	NormalizedEmail     string
+	TokenDigest         []byte
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	RequestDigest       []byte
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	AcceptedIdentityID  pgtype.Text
+	AcceptedAt          pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+	RevokedByIdentityID pgtype.Text
+}

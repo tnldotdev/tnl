@@ -90,7 +90,8 @@ func (d *Database) CreateTeamURLShareGrant(ctx context.Context, request CreateTe
 		return VisitorShareGrant{}, fmt.Errorf("save team share grant: %w", err)
 	}
 	if stored.Kind != "team_url" || stored.TeamID != request.TeamID || stored.PublicURLID.String != request.PublicURLID ||
-		stored.RevokedAt.Valid || subtle.ConstantTimeCompare(stored.RequestDigest, digest[:]) != 1 {
+		stored.RevokedAt.Valid || stored.ExpiresAt.Valid && !stored.ExpiresAt.Time.After(now) ||
+		subtle.ConstantTimeCompare(stored.RequestDigest, digest[:]) != 1 {
 		return VisitorShareGrant{}, ErrShareIdempotency
 	}
 	if err := tx.Commit(ctx); err != nil {

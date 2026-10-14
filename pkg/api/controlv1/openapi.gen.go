@@ -902,6 +902,11 @@ func (e BeginPreviewBrowserLoginParamsPrompt) Valid() bool {
 	}
 }
 
+// AcceptVisitorInvitationRequest defines model for AcceptVisitorInvitationRequest.
+type AcceptVisitorInvitationRequest struct {
+	Secret string `json:"secret"`
+}
+
 // AddPreviewPublicURLRequest defines model for AddPreviewPublicURLRequest.
 type AddPreviewPublicURLRequest struct {
 	PublicUrlId PublicURLID `json:"public_url_id"`
@@ -1248,6 +1253,15 @@ type CreateShareRequest struct {
 	ExpiresAt         time.Time     `json:"expires_at"`
 	PublicUrlIds      []PublicURLID `json:"public_url_ids"`
 	SecretFingerprint string        `json:"secret_fingerprint"`
+}
+
+// CreateVisitorInvitationRequest defines model for CreateVisitorInvitationRequest.
+type CreateVisitorInvitationRequest struct {
+	Email             string      `json:"email"`
+	ExpiresAt         time.Time   `json:"expires_at"`
+	PublicUrlId       PublicURLID `json:"public_url_id"`
+	SecretFingerprint string      `json:"secret_fingerprint"`
+	TeamId            TeamID      `json:"team_id"`
 }
 
 // DomainID defines model for DomainID.
@@ -1974,6 +1988,26 @@ type UpdatePublicURLRequest struct {
 	Target string `json:"target"`
 }
 
+// VisitorInvitation defines model for VisitorInvitation.
+type VisitorInvitation struct {
+	AcceptedAt          *time.Time  `json:"accepted_at,omitempty"`
+	AcceptedIdentityId  *IdentityID `json:"accepted_identity_id,omitempty"`
+	CreatedAt           time.Time   `json:"created_at"`
+	CreatedByIdentityId IdentityID  `json:"created_by_identity_id"`
+	Email               string      `json:"email"`
+	ExpiresAt           time.Time   `json:"expires_at"`
+	Id                  ShareID     `json:"id"`
+	PublicUrlId         PublicURLID `json:"public_url_id"`
+	RevokedAt           *time.Time  `json:"revoked_at,omitempty"`
+	TeamId              TeamID      `json:"team_id"`
+}
+
+// VisitorInvitationPage defines model for VisitorInvitationPage.
+type VisitorInvitationPage struct {
+	Invitations []VisitorInvitation `json:"invitations"`
+	NextCursor  *ShareID            `json:"next_cursor,omitempty"`
+}
+
 // WebhookProvider defines model for WebhookProvider.
 type WebhookProvider string
 
@@ -2165,6 +2199,17 @@ type CreateShareGrantParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// ListVisitorInvitationsParams defines parameters for ListVisitorInvitations.
+type ListVisitorInvitationsParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// CreateVisitorInvitationParams defines parameters for CreateVisitorInvitation.
+type CreateVisitorInvitationParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
 // SetMaintenanceControlJSONRequestBody defines body for SetMaintenanceControl for application/json ContentType.
 type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 
@@ -2263,6 +2308,12 @@ type CreatePublisherEnrollmentJSONRequestBody = CreatePublisherEnrollmentRequest
 
 // CreateShareGrantJSONRequestBody defines body for CreateShareGrant for application/json ContentType.
 type CreateShareGrantJSONRequestBody = CreateShareGrantRequest
+
+// CreateVisitorInvitationJSONRequestBody defines body for CreateVisitorInvitation for application/json ContentType.
+type CreateVisitorInvitationJSONRequestBody = CreateVisitorInvitationRequest
+
+// AcceptVisitorInvitationJSONRequestBody defines body for AcceptVisitorInvitation for application/json ContentType.
+type AcceptVisitorInvitationJSONRequestBody = AcceptVisitorInvitationRequest
 
 // AsWebhookProviderSourceResponseSource0 returns the union data inside the WebhookProviderSourceResponse_Source as a WebhookProviderSourceResponseSource0
 func (t WebhookProviderSourceResponse_Source) AsWebhookProviderSourceResponseSource0() (WebhookProviderSourceResponseSource0, error) {
@@ -3051,6 +3102,44 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/shares/grants/{share_id}/revoke (the `RevokeShareGrant` operationId).
 	RevokeShareGrant(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListVisitorInvitations List manageable named visitor invitations for one team
+	//
+	// Corresponds with GET /v1/shares/invitations (the `ListVisitorInvitations` operationId).
+	ListVisitorInvitations(ctx context.Context, params *ListVisitorInvitationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateVisitorInvitationWithBody Offer exact-URL access to one verified email address
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/shares/invitations (the `CreateVisitorInvitation` operationId).
+	CreateVisitorInvitationWithBody(ctx context.Context, params *CreateVisitorInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateVisitorInvitation Offer exact-URL access to one verified email address
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/shares/invitations (the `CreateVisitorInvitation` operationId).
+	CreateVisitorInvitation(ctx context.Context, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcceptVisitorInvitationWithBody Bind a named visitor invitation to the signed-in recipient
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/shares/invitations/accept (the `AcceptVisitorInvitation` operationId).
+	AcceptVisitorInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcceptVisitorInvitation Bind a named visitor invitation to the signed-in recipient
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/shares/invitations/accept (the `AcceptVisitorInvitation` operationId).
+	AcceptVisitorInvitation(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeVisitorInvitation Stop pending acceptance and current visitor access through an invitation
+	//
+	// Corresponds with POST /v1/shares/invitations/{share_id}/revoke (the `RevokeVisitorInvitation` operationId).
+	RevokeVisitorInvitation(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetShare Read one share
 	//
@@ -4750,6 +4839,104 @@ func (c *Client) CreateShareGrant(ctx context.Context, params *CreateShareGrantP
 // Corresponds with POST /v1/shares/grants/{share_id}/revoke (the `RevokeShareGrant` operationId).
 func (c *Client) RevokeShareGrant(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeShareGrantRequest(c.Server, shareId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListVisitorInvitations List manageable named visitor invitations for one team
+//
+// Corresponds with GET /v1/shares/invitations (the `ListVisitorInvitations` operationId).
+func (c *Client) ListVisitorInvitations(ctx context.Context, params *ListVisitorInvitationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListVisitorInvitationsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateVisitorInvitationWithBody Offer exact-URL access to one verified email address
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/shares/invitations (the `CreateVisitorInvitation` operationId).
+func (c *Client) CreateVisitorInvitationWithBody(ctx context.Context, params *CreateVisitorInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVisitorInvitationRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateVisitorInvitation Offer exact-URL access to one verified email address
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/shares/invitations (the `CreateVisitorInvitation` operationId).
+func (c *Client) CreateVisitorInvitation(ctx context.Context, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVisitorInvitationRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcceptVisitorInvitationWithBody Bind a named visitor invitation to the signed-in recipient
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/shares/invitations/accept (the `AcceptVisitorInvitation` operationId).
+func (c *Client) AcceptVisitorInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcceptVisitorInvitationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcceptVisitorInvitation Bind a named visitor invitation to the signed-in recipient
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/shares/invitations/accept (the `AcceptVisitorInvitation` operationId).
+func (c *Client) AcceptVisitorInvitation(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcceptVisitorInvitationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeVisitorInvitation Stop pending acceptance and current visitor access through an invitation
+//
+// Corresponds with POST /v1/shares/invitations/{share_id}/revoke (the `RevokeVisitorInvitation` operationId).
+func (c *Client) RevokeVisitorInvitation(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeVisitorInvitationRequest(c.Server, shareId)
 	if err != nil {
 		return nil, err
 	}
@@ -8143,6 +8330,195 @@ func NewRevokeShareGrantRequest(server string, shareId ShareID) (*http.Request, 
 	return req, nil
 }
 
+// NewListVisitorInvitationsRequest constructs an http.Request for the ListVisitorInvitations method
+func NewListVisitorInvitationsRequest(server string, params *ListVisitorInvitationsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/shares/invitations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateVisitorInvitationRequest calls the generic CreateVisitorInvitation builder with application/json body
+func NewCreateVisitorInvitationRequest(server string, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateVisitorInvitationRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreateVisitorInvitationRequestWithBody constructs an http.Request for the CreateVisitorInvitation method, with any body, and a specified content type
+func NewCreateVisitorInvitationRequestWithBody(server string, params *CreateVisitorInvitationParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/shares/invitations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewAcceptVisitorInvitationRequest calls the generic AcceptVisitorInvitation builder with application/json body
+func NewAcceptVisitorInvitationRequest(server string, body AcceptVisitorInvitationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAcceptVisitorInvitationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAcceptVisitorInvitationRequestWithBody constructs an http.Request for the AcceptVisitorInvitation method, with any body, and a specified content type
+func NewAcceptVisitorInvitationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/shares/invitations/accept")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeVisitorInvitationRequest constructs an http.Request for the RevokeVisitorInvitation method
+func NewRevokeVisitorInvitationRequest(server string, shareId ShareID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "share_id", shareId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/shares/invitations/%s/revoke", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetShareRequest constructs an http.Request for the GetShare method
 func NewGetShareRequest(server string, shareId ShareID) (*http.Request, error) {
 	var err error
@@ -9016,6 +9392,48 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/shares/grants/{share_id}/revoke (the `RevokeShareGrant` operationId).
 	RevokeShareGrantWithResponse(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*RevokeShareGrantResponse, error)
+
+	// ListVisitorInvitationsWithResponse List manageable named visitor invitations for one team
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/shares/invitations (the `ListVisitorInvitations` operationId).
+	ListVisitorInvitationsWithResponse(ctx context.Context, params *ListVisitorInvitationsParams, reqEditors ...RequestEditorFn) (*ListVisitorInvitationsResponse, error)
+
+	// CreateVisitorInvitationWithBodyWithResponse Offer exact-URL access to one verified email address
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/shares/invitations (the `CreateVisitorInvitation` operationId).
+	CreateVisitorInvitationWithBodyWithResponse(ctx context.Context, params *CreateVisitorInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorInvitationResponse, error)
+
+	// CreateVisitorInvitationWithResponse Offer exact-URL access to one verified email address
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/shares/invitations (the `CreateVisitorInvitation` operationId).
+	CreateVisitorInvitationWithResponse(ctx context.Context, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorInvitationResponse, error)
+
+	// AcceptVisitorInvitationWithBodyWithResponse Bind a named visitor invitation to the signed-in recipient
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/shares/invitations/accept (the `AcceptVisitorInvitation` operationId).
+	AcceptVisitorInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error)
+
+	// AcceptVisitorInvitationWithResponse Bind a named visitor invitation to the signed-in recipient
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/shares/invitations/accept (the `AcceptVisitorInvitation` operationId).
+	AcceptVisitorInvitationWithResponse(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error)
+
+	// RevokeVisitorInvitationWithResponse Stop pending acceptance and current visitor access through an invitation
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/shares/invitations/{share_id}/revoke (the `RevokeVisitorInvitation` operationId).
+	RevokeVisitorInvitationWithResponse(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*RevokeVisitorInvitationResponse, error)
 
 	// GetShareWithResponse Read one share
 	//
@@ -12381,6 +12799,198 @@ func (r RevokeShareGrantResponse) ContentType() string {
 	return ""
 }
 
+type ListVisitorInvitationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VisitorInvitationPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListVisitorInvitationsResponse) GetJSON200() *VisitorInvitationPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListVisitorInvitationsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListVisitorInvitationsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListVisitorInvitationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListVisitorInvitationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListVisitorInvitationsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateVisitorInvitationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *VisitorInvitation
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateVisitorInvitationResponse) GetJSON201() *VisitorInvitation {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateVisitorInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateVisitorInvitationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateVisitorInvitationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateVisitorInvitationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateVisitorInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AcceptVisitorInvitationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VisitorInvitation
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AcceptVisitorInvitationResponse) GetJSON200() *VisitorInvitation {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AcceptVisitorInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AcceptVisitorInvitationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AcceptVisitorInvitationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AcceptVisitorInvitationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AcceptVisitorInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeVisitorInvitationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VisitorInvitation
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RevokeVisitorInvitationResponse) GetJSON200() *VisitorInvitation {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeVisitorInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeVisitorInvitationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeVisitorInvitationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeVisitorInvitationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeVisitorInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetShareResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -13883,6 +14493,84 @@ func (c *ClientWithResponses) RevokeShareGrantWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseRevokeShareGrantResponse(rsp)
+}
+
+// ListVisitorInvitationsWithResponse List manageable named visitor invitations for one team
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/shares/invitations (the `ListVisitorInvitations` operationId).
+func (c *ClientWithResponses) ListVisitorInvitationsWithResponse(ctx context.Context, params *ListVisitorInvitationsParams, reqEditors ...RequestEditorFn) (*ListVisitorInvitationsResponse, error) {
+	rsp, err := c.ListVisitorInvitations(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListVisitorInvitationsResponse(rsp)
+}
+
+// CreateVisitorInvitationWithBodyWithResponse Offer exact-URL access to one verified email address
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/shares/invitations (the `CreateVisitorInvitation` operationId).
+func (c *ClientWithResponses) CreateVisitorInvitationWithBodyWithResponse(ctx context.Context, params *CreateVisitorInvitationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorInvitationResponse, error) {
+	rsp, err := c.CreateVisitorInvitationWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateVisitorInvitationResponse(rsp)
+}
+
+// CreateVisitorInvitationWithResponse Offer exact-URL access to one verified email address
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/shares/invitations (the `CreateVisitorInvitation` operationId).
+func (c *ClientWithResponses) CreateVisitorInvitationWithResponse(ctx context.Context, params *CreateVisitorInvitationParams, body CreateVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorInvitationResponse, error) {
+	rsp, err := c.CreateVisitorInvitation(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateVisitorInvitationResponse(rsp)
+}
+
+// AcceptVisitorInvitationWithBodyWithResponse Bind a named visitor invitation to the signed-in recipient
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/shares/invitations/accept (the `AcceptVisitorInvitation` operationId).
+func (c *ClientWithResponses) AcceptVisitorInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error) {
+	rsp, err := c.AcceptVisitorInvitationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcceptVisitorInvitationResponse(rsp)
+}
+
+// AcceptVisitorInvitationWithResponse Bind a named visitor invitation to the signed-in recipient
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/shares/invitations/accept (the `AcceptVisitorInvitation` operationId).
+func (c *ClientWithResponses) AcceptVisitorInvitationWithResponse(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error) {
+	rsp, err := c.AcceptVisitorInvitation(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcceptVisitorInvitationResponse(rsp)
+}
+
+// RevokeVisitorInvitationWithResponse Stop pending acceptance and current visitor access through an invitation
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/shares/invitations/{share_id}/revoke (the `RevokeVisitorInvitation` operationId).
+func (c *ClientWithResponses) RevokeVisitorInvitationWithResponse(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*RevokeVisitorInvitationResponse, error) {
+	rsp, err := c.RevokeVisitorInvitation(ctx, shareId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeVisitorInvitationResponse(rsp)
 }
 
 // GetShareWithResponse Read one share
@@ -16232,6 +16920,138 @@ func ParseRevokeShareGrantResponse(rsp *http.Response) (*RevokeShareGrantRespons
 	return response, nil
 }
 
+// ParseListVisitorInvitationsResponse parses an HTTP response from a ListVisitorInvitationsWithResponse call
+func ParseListVisitorInvitationsResponse(rsp *http.Response) (*ListVisitorInvitationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListVisitorInvitationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VisitorInvitationPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateVisitorInvitationResponse parses an HTTP response from a CreateVisitorInvitationWithResponse call
+func ParseCreateVisitorInvitationResponse(rsp *http.Response) (*CreateVisitorInvitationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateVisitorInvitationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest VisitorInvitation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAcceptVisitorInvitationResponse parses an HTTP response from a AcceptVisitorInvitationWithResponse call
+func ParseAcceptVisitorInvitationResponse(rsp *http.Response) (*AcceptVisitorInvitationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AcceptVisitorInvitationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VisitorInvitation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeVisitorInvitationResponse parses an HTTP response from a RevokeVisitorInvitationWithResponse call
+func ParseRevokeVisitorInvitationResponse(rsp *http.Response) (*RevokeVisitorInvitationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeVisitorInvitationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VisitorInvitation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetShareResponse parses an HTTP response from a GetShareWithResponse call
 func ParseGetShareResponse(rsp *http.Response) (*GetShareResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -16569,6 +17389,18 @@ type ServerInterface interface {
 	// RevokeShareGrant Revoke one exact-URL share
 	// (POST /v1/shares/grants/{share_id}/revoke)
 	RevokeShareGrant(w http.ResponseWriter, r *http.Request, shareId ShareID)
+	// ListVisitorInvitations List manageable named visitor invitations for one team
+	// (GET /v1/shares/invitations)
+	ListVisitorInvitations(w http.ResponseWriter, r *http.Request, params ListVisitorInvitationsParams)
+	// CreateVisitorInvitation Offer exact-URL access to one verified email address
+	// (POST /v1/shares/invitations)
+	CreateVisitorInvitation(w http.ResponseWriter, r *http.Request, params CreateVisitorInvitationParams)
+	// AcceptVisitorInvitation Bind a named visitor invitation to the signed-in recipient
+	// (POST /v1/shares/invitations/accept)
+	AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request)
+	// RevokeVisitorInvitation Stop pending acceptance and current visitor access through an invitation
+	// (POST /v1/shares/invitations/{share_id}/revoke)
+	RevokeVisitorInvitation(w http.ResponseWriter, r *http.Request, shareId ShareID)
 	// GetShare Read one share
 	// (GET /v1/shares/{share_id})
 	GetShare(w http.ResponseWriter, r *http.Request, shareId ShareID)
@@ -18875,6 +19707,137 @@ func (siw *ServerInterfaceWrapper) RevokeShareGrant(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// ListVisitorInvitations operation middleware
+func (siw *ServerInterfaceWrapper) ListVisitorInvitations(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListVisitorInvitationsParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListVisitorInvitations(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateVisitorInvitation operation middleware
+func (siw *ServerInterfaceWrapper) CreateVisitorInvitation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateVisitorInvitationParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateVisitorInvitation(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptVisitorInvitation operation middleware
+func (siw *ServerInterfaceWrapper) AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptVisitorInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeVisitorInvitation operation middleware
+func (siw *ServerInterfaceWrapper) RevokeVisitorInvitation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "share_id" -------------
+	var shareId ShareID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "share_id", r.PathValue("share_id"), &shareId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "share_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeVisitorInvitation(w, r, shareId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetShare operation middleware
 func (siw *ServerInterfaceWrapper) GetShare(w http.ResponseWriter, r *http.Request) {
 
@@ -19097,6 +20060,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/grants", wrapper.ListShareGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/grants", wrapper.CreateShareGrant)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/grants/{share_id}/revoke", wrapper.RevokeShareGrant)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/invitations", wrapper.ListVisitorInvitations)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/invitations", wrapper.CreateVisitorInvitation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/invitations/accept", wrapper.AcceptVisitorInvitation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/invitations/{share_id}/revoke", wrapper.RevokeVisitorInvitation)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/{share_id}", wrapper.GetShare)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/{share_id}/revoke", wrapper.RevokeShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback", wrapper.ListFeedbackThreads)

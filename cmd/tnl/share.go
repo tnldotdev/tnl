@@ -30,7 +30,8 @@ import (
 type shareCommand struct {
 	Link   linkShareCommand   `cmd:"" help:"Create and revoke preview links."`
 	Team   teamShareCommand   `cmd:"" help:"Share a preview or exact public URL with its team."`
-	List   shareListCommand   `cmd:"" help:"List preview links and exact team shares."`
+	Invite inviteShareCommand `cmd:"" help:"Invite a named person to one public URL."`
+	List   shareListCommand   `cmd:"" help:"List preview links, team shares, and named invitations."`
 	Revoke shareRevokeCommand `cmd:"" help:"Revoke a share by ID."`
 }
 
@@ -343,6 +344,10 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 	if err != nil {
 		return err
 	}
+	invitations, err := session.authenticated.Control.ListVisitorInvitations(ctx, current.team.Id)
+	if err != nil {
+		return err
+	}
 	selectedID := ""
 	selectedHTTP := false
 	selector := flags.URL
@@ -365,6 +370,9 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 		})
 		grants = slices.DeleteFunc(grants, func(grant controlv1.ShareGrant) bool {
 			return grant.PublicUrlId != selected.Id
+		})
+		invitations = slices.DeleteFunc(invitations, func(invitation controlv1.VisitorInvitation) bool {
+			return invitation.PublicUrlId != selected.Id
 		})
 	}
 	blocks := make([]clioutput.Block, 0, len(shares))
@@ -420,15 +428,34 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 		}
 		blocks = append(blocks, clioutput.Section(grant.Id, clioutput.Fields(fields...)))
 	}
+	for _, invitation := range invitations {
+		state := "pending"
+		switch {
+		case invitation.RevokedAt != nil:
+			state = "revoked"
+		case !invitation.ExpiresAt.After(time.Now()):
+			state = "expired"
+		case invitation.AcceptedAt != nil:
+			state = "accepted"
+		}
+		blocks = append(blocks, clioutput.Section(invitation.Id, clioutput.Fields(
+			clioutput.Field{Label: "kind", Value: "invite"},
+			clioutput.Field{Label: "state", Value: state},
+			clioutput.Field{Label: "email", Value: invitation.Email},
+			clioutput.Field{Label: "public URL ID", Value: invitation.PublicUrlId},
+			clioutput.Field{Label: "expires", Value: invitation.ExpiresAt.UTC().Format(time.RFC3339)},
+		)))
+	}
 	if flags.Output == statusOutputJSON {
 		return failure.Wrap("write share list", failure.OutputUnavailable, json.NewEncoder(output).Encode(struct {
-			SchemaVersion     int                    `json:"schema_version"`
-			Shares            []controlv1.Share      `json:"shares"`
-			Grants            []controlv1.ShareGrant `json:"grants"`
-			TeamAccessEnabled bool                   `json:"team_access_enabled"`
-		}{1, shares, grants, teamGrant}))
+			SchemaVersion     int                           `json:"schema_version"`
+			Shares            []controlv1.Share             `json:"shares"`
+			Grants            []controlv1.ShareGrant        `json:"grants"`
+			Invitations       []controlv1.VisitorInvitation `json:"invitations"`
+			TeamAccessEnabled bool                          `json:"team_access_enabled"`
+		}{1, shares, grants, invitations, teamGrant}))
 	}
-	count := len(shares) + len(grants)
+	count := len(shares) + len(grants) + len(invitations)
 	if teamGrant {
 		count++
 	}
@@ -631,6 +658,23 @@ func runShareAnyRevoke(ctx context.Context, flags shareRevokeCommand, output, di
 			continue
 		}
 		revoked, err := session.authenticated.Control.RevokeShareGrant(ctx, grant.Id)
+		if err != nil {
+			return err
+		}
+		if flags.Output == statusOutputJSON {
+			return failure.Wrap("write share revocation", failure.OutputUnavailable, json.NewEncoder(output).Encode(revoked))
+		}
+		return writeHumanFrame(output, "tnl share revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "share ID", Value: revoked.Id}))
+	}
+	invitations, err := session.authenticated.Control.ListVisitorInvitations(ctx, current.team.Id)
+	if err != nil {
+		return err
+	}
+	for _, invitation := range invitations {
+		if invitation.Id != flags.ShareID {
+			continue
+		}
+		revoked, err := session.authenticated.Control.RevokeVisitorInvitation(ctx, invitation.Id)
 		if err != nil {
 			return err
 		}

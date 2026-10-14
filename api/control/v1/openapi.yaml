@@ -495,6 +495,84 @@ paths:
                 $ref: "#/components/schemas/ShareGrant"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/shares/invitations:
+    post:
+      operationId: createVisitorInvitation
+      summary: Offer exact-URL access to one verified email address
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVisitorInvitationRequest"
+      responses:
+        "201":
+          description: Pending invitation without its secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VisitorInvitation"
+        default:
+          $ref: "#/components/responses/Problem"
+    get:
+      operationId: listVisitorInvitations
+      summary: List manageable named visitor invitations for one team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamIDQuery"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Named invitation page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VisitorInvitationPage"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/shares/invitations/accept:
+    post:
+      operationId: acceptVisitorInvitation
+      summary: Bind a named visitor invitation to the signed-in recipient
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptVisitorInvitationRequest"
+      responses:
+        "200":
+          description: Accepted exact-URL invitation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VisitorInvitation"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/shares/invitations/{share_id}/revoke:
+    post:
+      operationId: revokeVisitorInvitation
+      summary: Stop pending acceptance and current visitor access through an invitation
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ShareID"
+      responses:
+        "200":
+          description: Revoked named invitation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VisitorInvitation"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/shares/{share_id}:
     get:
       operationId: getShare
@@ -2521,6 +2599,74 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ShareGrant"
+        next_cursor:
+          $ref: "#/components/schemas/ShareID"
+    CreateVisitorInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, public_url_id, email, expires_at, secret_fingerprint]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        email:
+          type: string
+          minLength: 3
+          maxLength: 320
+        expires_at:
+          type: string
+          format: date-time
+        secret_fingerprint:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+    AcceptVisitorInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [secret]
+      properties:
+        secret:
+          type: string
+          minLength: 60
+          maxLength: 128
+    VisitorInvitation:
+      type: object
+      additionalProperties: false
+      required: [id, team_id, public_url_id, email, created_by_identity_id, created_at, expires_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ShareID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        email:
+          type: string
+        created_by_identity_id:
+          $ref: "#/components/schemas/IdentityID"
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        accepted_identity_id:
+          $ref: "#/components/schemas/IdentityID"
+        accepted_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+    VisitorInvitationPage:
+      type: object
+      additionalProperties: false
+      required: [invitations]
+      properties:
+        invitations:
+          type: array
+          items:
+            $ref: "#/components/schemas/VisitorInvitation"
         next_cursor:
           $ref: "#/components/schemas/ShareID"
     Share:

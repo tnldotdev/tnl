@@ -229,6 +229,55 @@ func (c *Client) RevokeShareGrant(ctx context.Context, id string) (controlv1.Sha
 	})
 }
 
+func (c *Client) CreateVisitorInvitation(ctx context.Context, key string, body controlv1.CreateVisitorInvitationRequest) (controlv1.VisitorInvitation, error) {
+	params := &controlv1.CreateVisitorInvitationParams{IdempotencyKey: key}
+	return requestWithAccess[controlv1.VisitorInvitation](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateVisitorInvitation(ctx, params, body, editors...)
+	})
+}
+
+func (c *Client) AcceptVisitorInvitation(ctx context.Context, secret string) (controlv1.VisitorInvitation, error) {
+	return requestWithAccess[controlv1.VisitorInvitation](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.AcceptVisitorInvitation(ctx, controlv1.AcceptVisitorInvitationRequest{Secret: secret}, editors...)
+	})
+}
+
+func (c *Client) ListVisitorInvitations(ctx context.Context, teamID string) ([]controlv1.VisitorInvitation, error) {
+	var invitations []controlv1.VisitorInvitation
+	cursor := ""
+	for {
+		params := &controlv1.ListVisitorInvitationsParams{TeamId: teamID}
+		if cursor != "" {
+			params.Cursor = &cursor
+		}
+		page, err := requestWithAccess[controlv1.VisitorInvitationPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+			return c.api.ListVisitorInvitations(ctx, params, editors...)
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, invitation := range page.Invitations {
+			if invitation.Id == "" || invitation.Id <= cursor || len(invitations) != 0 && invitation.Id <= invitations[len(invitations)-1].Id || invitation.TeamId != teamID {
+				return nil, failure.Wrap("list named shares", failure.ServerResponseInvalid, errors.New("controlclient: invalid named share"))
+			}
+			invitations = append(invitations, invitation)
+		}
+		if page.NextCursor == nil {
+			return invitations, nil
+		}
+		if len(page.Invitations) == 0 || *page.NextCursor != page.Invitations[len(page.Invitations)-1].Id {
+			return nil, failure.Wrap("list named shares", failure.ServerResponseInvalid, errors.New("controlclient: invalid named share cursor"))
+		}
+		cursor = *page.NextCursor
+	}
+}
+
+func (c *Client) RevokeVisitorInvitation(ctx context.Context, id string) (controlv1.VisitorInvitation, error) {
+	return requestWithAccess[controlv1.VisitorInvitation](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RevokeVisitorInvitation(ctx, id, editors...)
+	})
+}
+
 func (c *Client) EnableShareAccess(ctx context.Context, runID string, version uint64, previewID string, token credentials.PublishRunToken) error {
 	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.EnableShareAccess(ctx, runID, controlv1.EnableShareAccessRequest{

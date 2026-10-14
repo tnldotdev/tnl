@@ -583,6 +583,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runShareTeamCreate(ctx, flags.Share.Team.Create, project, stdout, stderr)
 	case "share team revoke":
 		return runShareTeamRevoke(ctx, flags.Share.Team.Revoke, project, stdout, stderr)
+	case "share invite create <url>":
+		return runShareInviteCreate(ctx, flags.Share.Invite.Create, stdout, stderr)
+	case "share invite accept <secret>":
+		return runShareInviteAccept(ctx, flags.Share.Invite.Accept, stdout, stderr)
 	case "feedback list":
 		return runFeedbackList(ctx, flags.Feedback.List, project, stdout, stderr)
 	case "feedback inspect <feedback-id>":
@@ -670,6 +674,8 @@ func canonicalParsedCommand(command string) string {
 		return "share link create <url>"
 	case "share team create":
 		return "share team create <url>"
+	case "share invite create":
+		return "share invite create <url>"
 	case "share list":
 		return "share list <url>"
 	default:

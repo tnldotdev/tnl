@@ -83,6 +83,13 @@ func TestShareCreateRejectsInvalidExpiryBeforeAuthentication(t *testing.T) {
 	}
 }
 
+func TestShareInviteRejectsInvalidExpiryBeforeAuthentication(t *testing.T) {
+	err := run(t.Context(), []string{"--no-config", "share", "invite", "create", "web.example.test", "--email", "sam@example.test", "--expires-in", "0d", "--state-dir", filepath.Join(t.TempDir(), "state")}, io.Discard, io.Discard)
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ShareInputInvalid {
+		t.Fatalf("invalid named invite lifetime was accepted: %v", err)
+	}
+}
+
 func TestShareServiceURLsUseConfiguredNames(t *testing.T) {
 	project := projectConfiguration{}
 	project.Config.Services = config.Services{"web": {}, "api": {}}
