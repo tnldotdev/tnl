@@ -80,6 +80,7 @@ type ingressSettings struct {
 	standaloneControlConnectionLimit int
 	standaloneRelayConnectionLimit   int
 	visitorConnectionLimit           int64
+	traffic                          ingress.TrafficConfig
 	ingressPoolID                    ingresspool.ID
 	requireProxyHeader               bool
 	leaseRenewalInterval             time.Duration
@@ -95,11 +96,20 @@ func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
 		standaloneControlConnectionLimit: cfg.StandaloneControlConnectionLimit,
 		standaloneRelayConnectionLimit:   cfg.StandaloneRelayConnectionLimit,
 		visitorConnectionLimit:           cfg.VisitorConnectionLimit,
-		ingressPoolID:                    cfg.IngressPoolID,
-		requireProxyHeader:               cfg.RequireProxyHeader,
-		leaseRenewalInterval:             cfg.LeaseRenewalInterval,
-		controlRetryInterval:             cfg.ControlRetryInterval,
-		routingTableWait:                 cfg.RoutingTableWait,
+		traffic: ingress.TrafficConfig{
+			Default: ingress.TrafficLimits{Connections: cfg.TrafficDefaultConnections, Rate: cfg.TrafficDefaultRate,
+				Burst: cfg.TrafficDefaultBurst, UploadBytes: cfg.TrafficDefaultUploadBytes, DownloadBytes: cfg.TrafficDefaultDownloadBytes},
+			Ceiling: ingress.TrafficLimits{Connections: cfg.TrafficMaxConnections, Rate: cfg.TrafficMaxRate,
+				Burst: cfg.TrafficMaxBurst, UploadBytes: cfg.TrafficMaxUploadBytes, DownloadBytes: cfg.TrafficMaxDownloadBytes},
+			SourceRate: cfg.TrafficSourceRate, SourceBurst: cfg.TrafficSourceBurst,
+			ProcessRate: cfg.TrafficProcessRate, ProcessBurst: cfg.TrafficProcessBurst,
+			ProcessUpload: cfg.TrafficProcessUploadBytes, ProcessDownload: cfg.TrafficProcessDownloadBytes,
+		},
+		ingressPoolID:        cfg.IngressPoolID,
+		requireProxyHeader:   cfg.RequireProxyHeader,
+		leaseRenewalInterval: cfg.LeaseRenewalInterval,
+		controlRetryInterval: cfg.ControlRetryInterval,
+		routingTableWait:     cfg.RoutingTableWait,
 	}
 }
 
@@ -227,6 +237,7 @@ func (d *daemon) startIngressRuntime(
 		MaxHostnameChallengeConnections: settings.challengeHostnameConnectionLimit,
 		MaxControlConnections:           settings.standaloneControlConnectionLimit,
 		MaxRelayConnections:             settings.standaloneRelayConnectionLimit,
+		Traffic:                         settings.traffic,
 		Metrics:                         metrics, Observer: metrics,
 		OpenUsage:       usage.Open,
 		ObserveRecovery: recovery.Observe,

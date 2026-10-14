@@ -365,6 +365,8 @@ func (m *Metrics) SetCapacityLimit(resource string, limit int64) {
 func admissionResource(resource string) bool {
 	switch resource {
 	case "client_hello_connections", "public_connections", "public_url_connections",
+		"public_url_connection_rate", "source_connection_rate", "process_connection_rate",
+		"public_url_upload_rate", "public_url_download_rate", "process_upload_rate", "process_download_rate",
 		"denied_connections", "denied_public_url_connections", "challenge_connections",
 		"challenge_hostname_connections", "control_connections", "relay_tcp_connections",
 		"publisher_connections", "relay_streams":

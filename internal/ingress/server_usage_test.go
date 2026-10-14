@@ -53,6 +53,23 @@ func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
 	}
 }
 
+func TestIngressHTTPConnectionRateRejectsBeforeRelay(t *testing.T) {
+	backend := newTLSBackend(t)
+	config := publicURLConfig(backend)
+	config.Traffic.Default = TrafficLimits{Connections: 4, Rate: 1, Burst: 1,
+		UploadBytes: 64 << 10, DownloadBytes: 64 << 10}
+	_, address := startIngress(t, config)
+	first := ingressClient(t, address, "route.example", "")
+	exchangePing(t, first)
+	if result := ingressAwait(t, backend.result); result.err != nil {
+		t.Fatal(result.err)
+	}
+	second := ingressClient(t, address, "route.example", "")
+	if err := second.Handshake(); err == nil || backend.opens.Load() != 1 {
+		t.Fatalf("second HTTP connection used the relay: handshake=%v, opens=%d", err, backend.opens.Load())
+	}
+}
+
 func TestIngressUsesProvisioningRouteOnlyForACMETLSALPN(t *testing.T) {
 	backend := newTLSBackend(t, "acme-tls/1")
 	var opened atomic.Bool

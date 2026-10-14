@@ -143,6 +143,15 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 		return nil
 	}
 	defer release()
+	trafficKey := trafficKey{url: route.ID, run: route.PublishRunNumber}
+	if kind == visitorConnection && !s.traffic.allowConnection(trafficKey) {
+		s.rejectCapacity("public_url_connection_rate")
+		visitorOutcome = observability.VisitorCapacityDenied
+		if usage != nil {
+			usage.CapacityDenied(time.Now().UTC())
+		}
+		return nil
+	}
 	var challengeDeadline time.Time
 	if challenge {
 		challengeDeadline = time.Now().Add(challengeConnectionTimeout)
@@ -177,6 +186,23 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 		openTimeout = min(openTimeout, 2*time.Second)
 	}
 	openCtx, cancel := context.WithTimeout(s.openContext, openTimeout)
+	if kind == visitorConnection {
+		if err := s.traffic.waitBytes(openCtx, trafficKey, true, len(hello.Prefix)); err != nil {
+			cancel()
+			if errors.Is(err, errProcessBandwidth) || errors.Is(err, errPublicURLBandwidth) {
+				reason := "public_url_upload_rate"
+				if errors.Is(err, errProcessBandwidth) {
+					reason = "process_upload_rate"
+				}
+				s.rejectCapacity(reason)
+			}
+			visitorOutcome = observability.VisitorCapacityDenied
+			if usage != nil {
+				usage.CapacityDenied(time.Now().UTC())
+			}
+			return nil
+		}
+	}
 	opened, openErr := s.openVisitorStream(openCtx, backends, visitorID, kind, header, hello.Prefix, usage)
 	cancel()
 	if errors.Is(openErr, errBackendTrackingClosed) {
@@ -297,6 +323,32 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []routebackend.
 
 func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, route PublicURL, denied bool, usage UsageConnection) error {
 	replayed := &readerConn{Conn: public, reader: remainder}
+	var left, right net.Conn = replayed, upstream
+	if route.ID != "" && !denied {
+		key := trafficKey{url: route.ID, run: route.PublishRunNumber}
+		left = &budgetConn{Conn: replayed, ctx: s.openContext, beforeWrite: func(ctx context.Context, size int) error {
+			err := s.traffic.waitBytes(ctx, key, false, size)
+			if errors.Is(err, errProcessBandwidth) || errors.Is(err, errPublicURLBandwidth) {
+				reason := "public_url_download_rate"
+				if errors.Is(err, errProcessBandwidth) {
+					reason = "process_download_rate"
+				}
+				s.rejectCapacity(reason)
+			}
+			return err
+		}}
+		right = &budgetConn{Conn: upstream, ctx: s.openContext, beforeWrite: func(ctx context.Context, size int) error {
+			err := s.traffic.waitBytes(ctx, key, true, size)
+			if errors.Is(err, errProcessBandwidth) || errors.Is(err, errPublicURLBandwidth) {
+				reason := "public_url_upload_rate"
+				if errors.Is(err, errProcessBandwidth) {
+					reason = "process_upload_rate"
+				}
+				s.rejectCapacity(reason)
+			}
+			return err
+		}}
+	}
 	var observeIngress, observeEgress func(int64)
 	if usage != nil {
 		observeIngress = func(bytes int64) { usage.AddIngress(bytes, time.Now().UTC()) }
@@ -315,7 +367,7 @@ func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, rou
 			}
 		}
 	}
-	result, err := streamcopy.CopyObserved(replayed, upstream, observeIngress, observeEgress)
+	result, err := streamcopy.CopyObserved(left, right, observeIngress, observeEgress)
 	if s.config.Metrics != nil {
 		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", result.LeftToRight)
 		s.config.Metrics.AddForwardedBytes("publisher_to_visitor", result.RightToLeft)

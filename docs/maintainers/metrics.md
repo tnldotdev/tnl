@@ -15,6 +15,13 @@ start with `tnl_`. Prometheus also exports `go_*` and `process_*` metrics.
 
 Some limits apply **per public URL or hostname**; do not compare those with
 process-wide occupancy. Standalone sums the limits of its two logical relays.
+Ingress also reports fixed `public_url_connection_rate`, `source_connection_rate`,
+`process_connection_rate`, `public_url_upload_rate`, `public_url_download_rate`,
+`process_upload_rate`, and `process_download_rate` resources. Connection rates
+are new connections per second; byte rates are encrypted connection bytes per
+second. Rejections use the same fixed resource labels and never include a
+visitor address or public URL. Source-rate rejections before hostname lookup
+do not have a public URL usage bucket.
 
 ## ingress and relay
 

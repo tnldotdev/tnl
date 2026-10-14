@@ -75,7 +75,18 @@ visitor may use a separate, bounded forwarding budget to reach the publisher
 for an HTTPS 403, but never reaches the target. The publisher removes
 untrusted forwarding headers before proxying an allowed HTTP request.
 
-For a TCP public URL, ingress uses the original destination port in the
+ingress bounds new connections by the trusted visitor source and per-process
+rate before routing; standalone control and relay handoffs on the same public
+listener also pass this early budget. after selecting a public URL and applying
+IP policy, it also bounds concurrent and new connections per public URL. byte
+budgets count encrypted bytes in both directions before each write to the
+forwarding stream or visitor; a bounded wait paces compliant streams before a
+saturated transfer is closed. tokens belong to one public URL and publish run on each ingress
+process, not to a connected relay. denied HTTPS visitors and certificate
+challenges retain their separate admission classes. these limits are process
+local: replicas behind one ingress address do not share a token bucket.
+
+for a TCP public URL, ingress uses the original destination port in the
 trusted outer PROXY v2 header instead of inspecting a ClientHello. A routing
 entry binds that port to a saved public URL within one ingress pool; missing or
 conflicting entries fail closed. Ingress applies the same IP policy, admission,
@@ -124,8 +135,8 @@ supply that target locally. a bare port selects a loopback target, while a
 host:port such as `postgres:5432` reaches a service on the publisher's network.
 `--target-ca-file` extends the trust roots for an explicit `--target-tls`
 connection, while `--target-tls-name` sets its expected certificate hostname.
-TypeScript configuration uses `publish.targetTLS`, `publish.targetCAFile`, and
-`publish.targetTLSName` for the same settings.
+project configuration uses `services.NAME.target.tls` for the same private
+target trust settings, separate from `services.NAME.tcp.visitorTLS`.
 
 `tnl publish redis:6379 --protocol redis` uses the same saved TCP port and
 publisher-owned private target. Redis visitors start TLS immediately, before

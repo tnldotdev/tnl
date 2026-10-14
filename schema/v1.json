@@ -1452,6 +1452,86 @@
           "description": "Maximum concurrent visitor connections (default: automatic).",
           "default": -1
         },
+        "traffic_default_connections": {
+          "type": "integer",
+          "description": "Concurrent visitor connections per public URL and ingress process by default.",
+          "default": 32
+        },
+        "traffic_max_connections": {
+          "type": "integer",
+          "description": "Operator ceiling on concurrent visitor connections per public URL and ingress process.",
+          "default": 128
+        },
+        "traffic_default_rate": {
+          "type": "integer",
+          "description": "New visitor connections per second for one public URL by default.",
+          "default": 20
+        },
+        "traffic_default_burst": {
+          "type": "integer",
+          "description": "Initial and maximum new-connection burst for one public URL.",
+          "default": 40
+        },
+        "traffic_max_rate": {
+          "type": "integer",
+          "description": "Operator ceiling on new visitor connections per second for one public URL.",
+          "default": 100
+        },
+        "traffic_max_burst": {
+          "type": "integer",
+          "description": "Operator ceiling on one public URL's new-connection burst.",
+          "default": 200
+        },
+        "traffic_default_upload_bytes": {
+          "type": "integer",
+          "description": "Default visitor-to-publisher encrypted bytes per second per public URL.",
+          "default": 8388608
+        },
+        "traffic_default_download_bytes": {
+          "type": "integer",
+          "description": "Default publisher-to-visitor encrypted bytes per second per public URL.",
+          "default": 16777216
+        },
+        "traffic_max_upload_bytes": {
+          "type": "integer",
+          "description": "Operator ceiling on visitor-to-publisher bytes per second per public URL.",
+          "default": 67108864
+        },
+        "traffic_max_download_bytes": {
+          "type": "integer",
+          "description": "Operator ceiling on publisher-to-visitor bytes per second per public URL.",
+          "default": 134217728
+        },
+        "traffic_source_rate": {
+          "type": "integer",
+          "description": "New connections per second per public-listener IPv4 address or IPv6 /64 before hostname lookup.",
+          "default": 30
+        },
+        "traffic_source_burst": {
+          "type": "integer",
+          "description": "Initial and maximum connection burst per visitor network.",
+          "default": 60
+        },
+        "traffic_process_rate": {
+          "type": "integer",
+          "description": "New connections per second on one ingress public listener before hostname lookup.",
+          "default": 200
+        },
+        "traffic_process_burst": {
+          "type": "integer",
+          "description": "Initial and maximum new-connection burst per ingress process.",
+          "default": 400
+        },
+        "traffic_process_upload_bytes": {
+          "type": "integer",
+          "description": "Visitor-to-publisher bytes per second across one ingress process.",
+          "default": 268435456
+        },
+        "traffic_process_download_bytes": {
+          "type": "integer",
+          "description": "Publisher-to-visitor bytes per second across one ingress process.",
+          "default": 268435456
+        },
         "publisher_connection_limit": {
           "type": "integer",
           "description": "Maximum publisher connections held by one relay process (default: automatic).",

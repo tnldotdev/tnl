@@ -123,6 +123,22 @@ type Config struct {
 	StandaloneControlConnectionLimit int           `name:"standalone-control-connection-limit" env:"TNLD_STANDALONE_CONTROL_CONNECTION_LIMIT" default:"-1" help:"Maximum control connections handed off by standalone, held until close (default: automatic)."`
 	StandaloneRelayConnectionLimit   int           `name:"standalone-relay-connection-limit" env:"TNLD_STANDALONE_RELAY_CONNECTION_LIMIT" default:"-1" help:"Maximum relay TCP connections handed off by standalone, held until close (default: automatic)."`
 	VisitorConnectionLimit           int64         `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"-1" help:"Maximum concurrent visitor connections (default: automatic)."`
+	TrafficDefaultConnections        int           `name:"traffic-default-connections" env:"TNLD_TRAFFIC_DEFAULT_CONNECTIONS" default:"32" help:"Concurrent visitor connections per public URL and ingress process by default."`
+	TrafficMaxConnections            int           `name:"traffic-max-connections" env:"TNLD_TRAFFIC_MAX_CONNECTIONS" default:"128" help:"Operator ceiling on concurrent visitor connections per public URL and ingress process."`
+	TrafficDefaultRate               int           `name:"traffic-default-rate" env:"TNLD_TRAFFIC_DEFAULT_RATE" default:"20" help:"New visitor connections per second for one public URL by default."`
+	TrafficDefaultBurst              int           `name:"traffic-default-burst" env:"TNLD_TRAFFIC_DEFAULT_BURST" default:"40" help:"Initial and maximum new-connection burst for one public URL."`
+	TrafficMaxRate                   int           `name:"traffic-max-rate" env:"TNLD_TRAFFIC_MAX_RATE" default:"100" help:"Operator ceiling on new visitor connections per second for one public URL."`
+	TrafficMaxBurst                  int           `name:"traffic-max-burst" env:"TNLD_TRAFFIC_MAX_BURST" default:"200" help:"Operator ceiling on one public URL's new-connection burst."`
+	TrafficDefaultUploadBytes        int64         `name:"traffic-default-upload-bytes" env:"TNLD_TRAFFIC_DEFAULT_UPLOAD_BYTES" default:"8388608" help:"Default visitor-to-publisher encrypted bytes per second per public URL."`
+	TrafficDefaultDownloadBytes      int64         `name:"traffic-default-download-bytes" env:"TNLD_TRAFFIC_DEFAULT_DOWNLOAD_BYTES" default:"16777216" help:"Default publisher-to-visitor encrypted bytes per second per public URL."`
+	TrafficMaxUploadBytes            int64         `name:"traffic-max-upload-bytes" env:"TNLD_TRAFFIC_MAX_UPLOAD_BYTES" default:"67108864" help:"Operator ceiling on visitor-to-publisher bytes per second per public URL."`
+	TrafficMaxDownloadBytes          int64         `name:"traffic-max-download-bytes" env:"TNLD_TRAFFIC_MAX_DOWNLOAD_BYTES" default:"134217728" help:"Operator ceiling on publisher-to-visitor bytes per second per public URL."`
+	TrafficSourceRate                int           `name:"traffic-source-rate" env:"TNLD_TRAFFIC_SOURCE_RATE" default:"30" help:"New connections per second per public-listener IPv4 address or IPv6 /64 before hostname lookup."`
+	TrafficSourceBurst               int           `name:"traffic-source-burst" env:"TNLD_TRAFFIC_SOURCE_BURST" default:"60" help:"Initial and maximum connection burst per visitor network."`
+	TrafficProcessRate               int           `name:"traffic-process-rate" env:"TNLD_TRAFFIC_PROCESS_RATE" default:"200" help:"New connections per second on one ingress public listener before hostname lookup."`
+	TrafficProcessBurst              int           `name:"traffic-process-burst" env:"TNLD_TRAFFIC_PROCESS_BURST" default:"400" help:"Initial and maximum new-connection burst per ingress process."`
+	TrafficProcessUploadBytes        int64         `name:"traffic-process-upload-bytes" env:"TNLD_TRAFFIC_PROCESS_UPLOAD_BYTES" default:"268435456" help:"Visitor-to-publisher bytes per second across one ingress process."`
+	TrafficProcessDownloadBytes      int64         `name:"traffic-process-download-bytes" env:"TNLD_TRAFFIC_PROCESS_DOWNLOAD_BYTES" default:"268435456" help:"Publisher-to-visitor bytes per second across one ingress process."`
 	PublisherConnectionLimit         int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"-1" help:"Maximum publisher connections held by one relay process (default: automatic)."`
 	RelayStreamCapacity              int64         `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"-1" help:"Maximum concurrent visitor streams held by one relay process (default: automatic)."`
 	RequireProxyHeader               bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on public ingress traffic or the control API."`
@@ -230,6 +246,16 @@ func (c Config) Validate() (retErr error) {
 	if c.VisitorConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
 		c.RelayStreamCapacity <= 0 || c.QUICMaxIncomingStreams <= 0 {
 		return errors.New("connection and stream capacities must be positive")
+	}
+	if (c.Role.RunsControl() || c.Role.RunsIngress()) && (c.TrafficDefaultConnections <= 0 || c.TrafficMaxConnections < c.TrafficDefaultConnections ||
+		c.TrafficDefaultRate <= 0 || c.TrafficMaxRate < c.TrafficDefaultRate ||
+		c.TrafficDefaultBurst <= 0 || c.TrafficMaxBurst < c.TrafficDefaultBurst ||
+		c.TrafficDefaultUploadBytes < 64<<10 || c.TrafficMaxUploadBytes < c.TrafficDefaultUploadBytes ||
+		c.TrafficDefaultDownloadBytes < 64<<10 || c.TrafficMaxDownloadBytes < c.TrafficDefaultDownloadBytes ||
+		c.TrafficSourceRate <= 0 || c.TrafficSourceBurst <= 0 ||
+		c.TrafficProcessRate <= 0 || c.TrafficProcessBurst <= 0 ||
+		c.TrafficProcessUploadBytes < 64<<10 || c.TrafficProcessDownloadBytes < 64<<10) {
+		return errors.New("traffic defaults and ceilings must be positive and defaults must not exceed ceilings")
 	}
 	if c.IngressLeaseDuration <= 0 || c.RelayLeaseDuration <= 0 || c.LeaseRenewalInterval <= 0 ||
 		c.LeaseRenewalInterval >= c.IngressLeaseDuration || c.LeaseRenewalInterval >= c.RelayLeaseDuration ||
