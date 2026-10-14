@@ -356,10 +356,11 @@ func TestInspectionModeValid(t *testing.T) {
 }
 
 func TestTCPInspectionModes(t *testing.T) {
+	target := Target("127.0.0.1:1234")
 	for _, protocol := range []string{"postgres", "mysql", "redis"} {
 		mode := InspectionSummary
 		project := TNL{Inspection: &Inspection{Mode: &mode}, Services: Services{"service": {
-			Publish: &Publish{Protocol: &protocol},
+			Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: &target},
 		}}}
 		if err := ValidateTNL(project); err != nil {
 			t.Fatalf("%s summary inspection: %v", protocol, err)
@@ -367,7 +368,7 @@ func TestTCPInspectionModes(t *testing.T) {
 	}
 	protocol, mode := "ssh", InspectionSummary
 	project := TNL{Inspection: &Inspection{Mode: &mode}, Services: Services{"service": {
-		Publish: &Publish{Protocol: &protocol},
+		Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: &target},
 	}}}
 	if err := ValidateTNL(project); err == nil {
 		t.Fatal("SSH accepted summary inspection")

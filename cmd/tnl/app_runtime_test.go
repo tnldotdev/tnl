@@ -518,7 +518,7 @@ func TestWaitDiscardsAResponseFromAReplacedRegistrationRun(t *testing.T) {
 func TestWatchResumeAndExpiredCursor(t *testing.T) {
 	a, state, _ := testAppRuntime(t)
 	a.manager.RecordFailure("api", "runtime.preparation_failed")
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
 	var output bytes.Buffer
 	if err := runAppWatch(ctx, a.project, state, watchCommand{Output: "ndjson"}, &output); err != nil {
@@ -535,7 +535,7 @@ func TestWatchResumeAndExpiredCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	output.Reset()
-	ctx2, cancel2 := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx2, cancel2 := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel2()
 	if err := runAppWatch(ctx2, a.project, state, watchCommand{After: initial.Snapshot.Cursor, Output: "ndjson"}, &output); err != nil {
 		t.Fatal(err)

@@ -302,12 +302,11 @@ diagnostic. the journal survives a manager restart and contains no credentials,
 request bodies, or OAuth state.
 
 `tnl inspect` keeps numbered HTTP and supported TCP summaries in client SQLite.
-HTTP, PostgreSQL, and MySQL default to summary; `inspection.mode: none` or
-`--inspection-mode=none` disables capture. the record contract also accepts
-Redis command names and outcomes for a later publisher observer, without
-arguments or reply bodies. SSH does not create inspection records. no protocol
-retains request headers, bodies, SQL statements, or Redis arguments in this
-history.
+HTTP, PostgreSQL, MySQL, and Redis default to summary; `inspection.mode: none`
+or `--inspection-mode=none` disables capture. Redis records bounded command
+names and outcomes without arguments or reply bodies. SSH does not create
+inspection records. no protocol retains request headers, bodies, SQL statements,
+or Redis arguments in this history.
 
 `internal/adhoc.Run` owns the common publication boundary for ad-hoc SDK
 registrations. control allocates the URL before `publisher.Run` starts; the

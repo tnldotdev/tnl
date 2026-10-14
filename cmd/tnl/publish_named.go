@@ -167,7 +167,6 @@ func runNamedPublish(ctx context.Context, flags publishCommand, stdout, stderr i
 	if err != nil {
 		return err
 	}
-	output.setInspectionMode(flags.InspectionMode)
 	if flags.Protocol == "" || flags.Protocol == "http" {
 		output.openURL = browserOpener(ctx, flags.Open, false)
 	}

@@ -622,7 +622,10 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	defer recorder.Close()
 	configuration.ObserveRequest = httpObservation(recorder)
 	if (service.ServiceProtocol == "mysql" || service.ServiceProtocol == "postgres") && !configuration.VisitorTLSPassthrough {
-		configuration.ObserveDatabase = sqlObservation(recorder, flags.InspectionMode)
+		configuration.ObserveDatabase = sqlObservation(recorder)
+	}
+	if service.ServiceProtocol == "redis" {
+		configuration.ObserveRedis = redisObservation(recorder)
 	}
 	configuration.Logf = func(_ string, _ ...any) {
 		if ctx.Err() == nil {
