@@ -6,6 +6,7 @@ kill_timeout = 45
 [env]
 TNLD_ROLE = "ingress"
 TNLD_INGRESS_ID = "ingress-1"
+TNLD_INGRESS_POOL_ID = "ingress-a"
 TNLD_CONTROL_HOSTNAME = "control.tnl.wtf"
 TNLD_PRIVATE_CONTROL_ADDRESS = "tnl-control-staging.internal:9443"
 TNLD_CLUSTER_SECRET_PREVIOUS = ""
@@ -27,6 +28,23 @@ min_machines_running = 2
 [[services.ports]]
 handlers = ["proxy_proto"]
 port = 443
+proxy_proto_options = { version = "v2" }
+
+# qualify the destination port at ingress before advertising these ports from control.
+[[services.ports]]
+handlers = ["proxy_proto"]
+port = 3306
+proxy_proto_options = { version = "v2" }
+
+[[services.ports]]
+handlers = ["proxy_proto"]
+port = 5432
+proxy_proto_options = { version = "v2" }
+
+[[services.ports]]
+handlers = ["proxy_proto"]
+start_port = 10000
+end_port = 10031
 proxy_proto_options = { version = "v2" }
 
 [[services.tcp_checks]]

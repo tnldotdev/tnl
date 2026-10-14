@@ -24,10 +24,13 @@ else if (args[0] === "secrets" && args[1] === "list") json(["TNLD_CLUSTER_SECRET
 else if (args[0] === "config" && args[1] === "show") {
   const name = option("--config").match(/fly\.(tnl-[^.]+)\.toml$/)[1];
   const selectedRole = name.replace(/^tnl-/, "").replace(/-staging$/, "");
-  const tcp = { protocol: "tcp", internal_port: 8443, ports: [{port: 443}], processes: ["app", "udp"] };
+  const proxy = (port) => ({ ...port, handlers: ["proxy_proto"], proxy_proto_options: {version: "v2"} });
+  const tcp = { protocol: "tcp", internal_port: 8443, ports: selectedRole === "ingress"
+    ? [proxy({port: 443}), proxy({port: 3306}), proxy({port: 5432}), proxy({start_port: 10000, end_port: 10031})]
+    : [{port: 443}], processes: ["app", "udp"] };
   json({ app: name, primary_region: "sjc", kill_signal: "SIGTERM", kill_timeout: 45,
     env: selectedRole.startsWith("relay-") ? {TNLD_ROLE: "relay", TNLD_RELAY_SERVICE_ID: selectedRole} :
-      selectedRole === "ingress" ? {TNLD_ROLE: "ingress", TNLD_INGRESS_ID: "ingress-1"} : {TNLD_ROLE: "control"},
+      selectedRole === "ingress" ? {TNLD_ROLE: "ingress", TNLD_INGRESS_ID: "ingress-1", TNLD_INGRESS_POOL_ID: "ingress-a"} : {TNLD_ROLE: "control"},
     metrics: [{port: 9090, path: "/metrics"}],
     services: selectedRole.startsWith("relay-") ? [tcp, {protocol: "udp", internal_port: 443, ports: [{port: 443}], processes: ["udp"]}] : [tcp],
     vm: [{cpu_kind: "shared", cpus: 1, memory: "512mb"}],
@@ -37,7 +40,7 @@ else if (args[0] === "machine" && args[1] === "list") json(state.machines[app] |
 else if (args[0] === "machine" && args[1] === "create") {
   const config = JSON.parse(option("--machine-config"));
   const id = (++state.next).toString(16).padStart(14, "0");
-  (state.machines[app] ||= []).push({id, state: "stopped", image_ref: {digest: process.env.FAKE_DIGEST}, config});
+  (state.machines[app] ||= []).push({id, state: "stopped", checks: [{status: "passing"}], image_ref: {digest: process.env.FAKE_DIGEST}, config});
 } else if (args[0] === "machine" && args[1] === "update") {
   const machine = state.machines[app].find((item) => item.id === args[2]);
   if (args.includes("--env")) {
@@ -55,7 +58,7 @@ save();
 const docker = String.raw`#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "run" && args.at(-1) === "version")
-  process.stdout.write("tnld main-" + process.env.FAKE_COMMIT + " (" + process.env.FAKE_COMMIT + ")\n");
+  process.stdout.write("tnld " + (process.env.FAKE_VERSION || "main") + "-" + process.env.FAKE_COMMIT + " (" + process.env.FAKE_COMMIT + ")\n");
 else if (args[0] === "run" && args.at(-1) === "migrate") { /* migrated fixture */ }
 else if (args[0] === "buildx")
   process.stdout.write(JSON.stringify({manifests: [{digest: process.env.FAKE_DIGEST, platform: {os: "linux", architecture: "amd64"}}]}));
@@ -140,10 +143,11 @@ test("an empty Fly organization gets the configured topology and can be deployed
         string,
         {
           id: string;
+          state: string;
           config: {
             env: Record<string, string>;
             metadata: { fly_process_group: string };
-            services: { protocol: string }[];
+            services: { protocol: string; internal_port: number; ports: { port?: number }[] }[];
           };
         }[]
       >;
@@ -180,6 +184,44 @@ test("an empty Fly organization gets the configured topology and can be deployed
         state.machines["tnl-ingress-staging"]?.map((member) => member.config.env.TNLD_INGRESS_ID),
       ).size,
     ).toBe(2);
+
+    // a matching image digest alone must not leave an older ingress service on 443.
+    const ingress = state.machines["tnl-ingress-staging"];
+    if (!ingress) throw new Error("missing ingress fixture");
+    const firstIngress = ingress[0];
+    if (!firstIngress) throw new Error("missing ingress Machine");
+    firstIngress.config.services[0] = {
+      protocol: "tcp",
+      internal_port: 8443,
+      ports: [{ port: 443 }],
+    };
+    writeFileSync(stateFile, JSON.stringify(state));
+    const [script, , reference] = args;
+    if (!script || !reference) throw new Error("missing deployment fixture args");
+    const manualArgs = [script, "staging", reference, `source-${commit}`, commit, "--existing"];
+    const manualEnv = { ...env, FAKE_VERSION: "source" };
+    const unavailable = state.machines["tnl-control-staging"]?.[0];
+    if (!unavailable) throw new Error("missing control Machine");
+    unavailable.state = "stopped";
+    writeFileSync(stateFile, JSON.stringify(state));
+    const rejected = spawnSync(process.execPath, manualArgs, { env: manualEnv, encoding: "utf8" });
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr).toContain("expected 2 started Machines");
+    unavailable.state = "started";
+    writeFileSync(stateFile, JSON.stringify(state));
+    const manual = spawnSync(process.execPath, manualArgs, { env: manualEnv, encoding: "utf8" });
+    expect(manual.status, manual.stderr).toBe(0);
+    const restored = JSON.parse(readFileSync(stateFile, "utf8")) as typeof state;
+    expect(restored.machines["tnl-ingress-staging"]?.[0]?.config.services[0]).toEqual(
+      restored.machines["tnl-ingress-staging"]?.[1]?.config.services[0],
+    );
+    expect(manual.stdout).toContain("rollback tnl-ingress-staging");
+    const portCheck = spawnSync(process.execPath, [script, "--check-staging-ingress"], {
+      env: manualEnv,
+      encoding: "utf8",
+    });
+    expect(portCheck.status, portCheck.stderr).toBe(0);
+    expect(portCheck.stdout).toContain("2 Machines advertise the staged PROXY v2 ports");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

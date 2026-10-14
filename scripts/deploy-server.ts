@@ -1,19 +1,37 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
 type Environment = "staging" | "production";
 type Role = "control" | "ingress" | "relay-a" | "relay-b";
 const roles: Role[] = ["control", "ingress", "relay-a", "relay-b"];
+const stagingIngressPorts = [
+  { port: 443 },
+  { port: 3306 },
+  { port: 5432 },
+  { start_port: 10000, end_port: 10031 },
+];
 
 const serviceSchema = z
   .object({
     protocol: z.enum(["tcp", "udp"]),
     internal_port: z.number().int(),
-    ports: z.array(z.object({ port: z.number().int() }).passthrough()),
+    ports: z.array(
+      z
+        .object({
+          port: z.number().int().optional(),
+          start_port: z.number().int().optional(),
+          end_port: z.number().int().optional(),
+          handlers: z.array(z.string()).optional(),
+          proxy_proto_options: z.object({ version: z.string() }).passthrough().optional(),
+        })
+        .passthrough(),
+    ),
   })
   .passthrough();
 const machineSchema = z
@@ -21,6 +39,7 @@ const machineSchema = z
     id: z.string().min(1),
     state: z.string(),
     image_ref: z.object({ digest: z.string() }),
+    checks: z.array(z.object({ status: z.string() }).passthrough()).optional(),
     config: z
       .object({
         image: z.string().optional(),
@@ -32,6 +51,36 @@ const machineSchema = z
   })
   .passthrough();
 type Machine = z.infer<typeof machineSchema>;
+
+export function hasStagingIngressPorts(member: Machine): boolean {
+  if (member.config.env.TNLD_INGRESS_POOL_ID !== "ingress-a") return false;
+  const [service] = member.config.services;
+  if (
+    member.config.services.length !== 1 ||
+    !service ||
+    service.protocol !== "tcp" ||
+    service.internal_port !== 8443 ||
+    service.ports.length !== stagingIngressPorts.length
+  )
+    return false;
+  return stagingIngressPorts.every((expected) =>
+    service.ports.some(
+      (port) =>
+        port.port === ("port" in expected ? expected.port : undefined) &&
+        port.start_port === ("start_port" in expected ? expected.start_port : undefined) &&
+        port.end_port === ("end_port" in expected ? expected.end_port : undefined) &&
+        isDeepStrictEqual(port.handlers, ["proxy_proto"]) &&
+        port.proxy_proto_options?.version === "v2",
+    ),
+  );
+}
+
+function checkStagingIngress(app: string, members: Machine[]): void {
+  if (members.some((member) => !hasStagingIngressPorts(member)))
+    throw new Error(
+      `${app}: both ingress Machines must advertise 443, 3306, 5432 and 10000-10031 with PROXY v2 in ingress-a`,
+    );
+}
 
 const relayCounts = z.object({ app: z.number().int().positive(), udp: z.literal(1) });
 const countsSchema = z.object({
@@ -370,7 +419,11 @@ function updateMachine(
 ): void {
   const group = member.config.metadata?.fly_process_group === "udp" ? "udp" : "app";
   const settings = machineSettings(config, role, group, `ghcr.io/tnldotdev/tnl@${digest}`, member);
-  if (member.image_ref.digest === digest && isDeepStrictEqual(member.config.env, settings.env))
+  if (
+    member.image_ref.digest === digest &&
+    isDeepStrictEqual(member.config.env, settings.env) &&
+    !(role === "ingress" && app.endsWith("-staging") && !hasStagingIngressPorts(member))
+  )
     return;
   run("flyctl", [
     "machine",
@@ -463,6 +516,7 @@ function deploy(
   digest: string,
   counts: RoleCounts,
   imageTag: string,
+  existingOnly: boolean,
 ): void {
   for (const role of roles) {
     const app = `tnl-${role}-${environment}`;
@@ -479,16 +533,54 @@ function deploy(
         Number(b.config.metadata?.fly_process_group === "udp"),
     )) {
       updateMachine(app, role, manifest, digest, member);
+      if (existingOnly) {
+        const updated = machines(app).find((candidate) => candidate.id === member.id);
+        if (
+          !updated ||
+          updated.state !== "started" ||
+          updated.image_ref.digest !== digest ||
+          !updated.checks?.length ||
+          updated.checks.some((check) => check.status !== "passing") ||
+          (role === "ingress" &&
+            updated.config.env.TNLD_INGRESS_ID !== member.config.env.TNLD_INGRESS_ID) ||
+          (role.startsWith("relay-") &&
+            updated.config.env.TNLD_RELAY_ID !== member.config.env.TNLD_RELAY_ID) ||
+          (role === "ingress" && !hasStagingIngressPorts(updated))
+        )
+          throw new Error(
+            `${app}: Machine ${member.id} did not become ready on the selected image`,
+          );
+      }
     }
     const current = machines(app);
     check(app, role, countFor(counts, role), current);
+    if (role === "ingress" && environment === "staging") checkStagingIngress(app, current);
     if (current.some((member) => member.image_ref.digest !== digest)) {
       throw new Error(`${app}: Machines are not all on the selected image`);
     }
   }
 }
 
-try {
+function preflightStaging(counts: RoleCounts): void {
+  for (const role of roles) {
+    const app = `tnl-${role}-staging`;
+    const members = machines(app);
+    check(app, role, countFor(counts, role), members);
+    if (
+      members.some(
+        (member) =>
+          !member.checks?.length || member.checks.some((check) => check.status !== "passing"),
+      )
+    )
+      throw new Error(`${app}: all existing Machines must have passing checks before migration`);
+    for (const member of members)
+      process.stdout.write(
+        `rollback ${app} ${member.id}: ${member.config.image ?? member.image_ref.digest}\n`,
+      );
+  }
+}
+
+function main(): void {
   const [environmentArg, imageArg, versionArg, commitArg] = process.argv.slice(2);
   const environment = requireValue(
     environmentArg,
@@ -502,11 +594,18 @@ try {
   );
   const version = requireValue(
     versionArg,
-    /^(?:main-[a-f0-9]{40}|[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?)$/,
+    /^(?:(?:main|source)-[a-f0-9]{40}|[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?)$/,
     "version",
   );
   const commit = requireValue(commitArg, /^[a-f0-9]{40}$/, "commit");
-  if (environment === "staging" ? version !== `main-${commit}` : version.startsWith("main-")) {
+  const selectedSource = process.argv[6] === "--existing" && process.argv.length === 7;
+  if (
+    (environment === "staging"
+      ? ![`main-${commit}`, `source-${commit}`].includes(version)
+      : /^(main|source)-/.test(version)) ||
+    (process.argv.length !== 6 && !selectedSource) ||
+    (selectedSource && (environment !== "staging" || version !== `source-${commit}`))
+  ) {
     throw new Error("image version does not match the deployment environment");
   }
   directURL(environment);
@@ -517,15 +616,33 @@ try {
   if (installed !== `tnld ${version} (${commit})`)
     throw new Error("image version or commit does not match deployment");
   const digest = platformDigest(image);
-  ensureApps(topology.organization, environment);
+  if (selectedSource) preflightStaging(topology.staging);
+  else ensureApps(topology.organization, environment);
   ensureSecrets(environment);
   run("docker", ["run", "--rm", "--env", "TNLD_DATABASE_DIRECT_URL", image, "migrate"]);
-  const imageTag = `ghcr.io/tnldotdev/tnl:${environment === "staging" ? `sha-${commit}` : `v${version}`}`;
-  deploy(environment, digest, topology[environment], imageTag);
+  const imageTag = `ghcr.io/tnldotdev/tnl:${environment === "staging" ? `${version.startsWith("source-") ? "source" : "sha"}-${commit}` : `v${version}`}`;
+  deploy(environment, digest, topology[environment], imageTag, selectedSource);
   process.stdout.write(`${environment} tnld ${version} deployed from ${image}\n`);
-} catch (error) {
-  process.stderr.write(
-    `server deployment: ${error instanceof Error ? error.message : "unexpected failure"}\n`,
-  );
-  process.exitCode = 1;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  try {
+    if (process.argv.length === 3 && process.argv[2] === "--check-staging-ingress") {
+      const topology = topologySchema.parse(
+        JSON.parse(readFileSync("deploy/server/process-counts.json", "utf8")),
+      );
+      const app = "tnl-ingress-staging";
+      const members = machines(app);
+      check(app, "ingress", topology.staging.ingress, members);
+      checkStagingIngress(app, members);
+      process.stdout.write(
+        `${app}: ${members.length} Machines advertise the staged PROXY v2 ports\n`,
+      );
+    } else main();
+  } catch (error) {
+    process.stderr.write(
+      `server deployment: ${error instanceof Error ? error.message : "unexpected failure"}\n`,
+    );
+    process.exitCode = 1;
+  }
 }

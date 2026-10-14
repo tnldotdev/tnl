@@ -1,0 +1,113 @@
+name: Deploy selected staging source
+
+on:
+  workflow_dispatch:
+    inputs:
+      tnl_ref:
+        description: tnl branch or full commit SHA to deploy to staging
+        default: main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  source-image:
+    name: Build selected tnl source
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      digest: ${{ steps.image.outputs.digest }}
+    steps:
+      - name: Resolve selected branch or commit
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_REF: ${{ inputs.tnl_ref }}
+        run: |
+          if [[ "$SOURCE_REF" =~ ^[a-f0-9]{40}$ ]]; then
+            sha="$(gh api "repos/$REPOSITORY/commits/$SOURCE_REF" --jq .sha)"
+          else
+            [[ "$SOURCE_REF" =~ ^[a-zA-Z0-9._/-]+$ ]]
+            sha="$(gh api "repos/$REPOSITORY/git/ref/heads/$SOURCE_REF" --jq .object.sha)"
+          fi
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out selected commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          path: source
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push selected image
+        id: image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: source
+          file: source/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/tnldotdev/tnl:source-${{ steps.source.outputs.sha }}
+          build-args: |
+            VERSION=source-${{ steps.source.outputs.sha }}
+            COMMIT=${{ steps.source.outputs.sha }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=tnl-server-staging
+
+  deploy:
+    name: Deploy selected source to staging
+    needs: source-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: server-staging
+      cancel-in-progress: false
+    environment: deploy-staging
+    steps:
+      - name: Check out deployment tooling on main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm and Node
+        uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        with:
+          runtime: node@22.23.2
+          cache: false
+          require-lockfile: true
+
+      - name: Set up Fly tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.0
+          install_args: flyctl task
+          cache: false
+
+      - name: Deploy selected commit
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          TNLD_DATABASE_DIRECT_URL: ${{ secrets.TNLD_DATABASE_DIRECT_URL }}
+          TNLD_DATABASE_BRANCH: ${{ vars.TNLD_DATABASE_BRANCH }}
+          SHA: ${{ needs.source-image.outputs.sha }}
+          DIGEST: ${{ needs.source-image.outputs.digest }}
+        run: task server:deploy:staging:source IMAGE="ghcr.io/tnldotdev/tnl@$DIGEST" COMMIT="$SHA"

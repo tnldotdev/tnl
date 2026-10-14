@@ -8,6 +8,18 @@ tasks:
     cmds:
       - node scripts/deploy-server.ts staging "{{.IMAGE}}" "{{.VERSION}}" "{{.COMMIT}}"
 
+  server:deploy:staging:source:
+    desc: Migrate and roll existing healthy staging Machines from a selected tnl commit
+    requires:
+      vars: [IMAGE, COMMIT]
+    cmds:
+      - node scripts/deploy-server.ts staging "{{.IMAGE}}" "source-{{.COMMIT}}" "{{.COMMIT}}" --existing
+
+  server:ingress:ports:staging:
+    desc: Check both staging ingress Machines advertise the trial TCP ports with PROXY v2
+    cmds:
+      - node scripts/deploy-server.ts --check-staging-ingress
+
   server:deploy:production:
     desc: Migrate and deploy a published release to the existing production Fly Machines
     requires:
