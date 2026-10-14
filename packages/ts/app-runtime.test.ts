@@ -91,6 +91,41 @@ test("sends authenticated local publisher requests over loopback TCP", async () 
   }
 });
 
+test("a selected publisher endpoint does not start another app-owned worker", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tnl-compose-sdk-"));
+  const binary = join(directory, "fake-tnl.mjs");
+  const endpointPath = join(directory, "app.web.endpoint.json");
+  const credential = "a".repeat(43);
+  const server = createServer((request, response) => {
+    response
+      .writeHead(
+        request.url === "/v1/status" && request.headers.authorization === `Bearer ${credential}`
+          ? 200
+          : 401,
+      )
+      .end();
+  });
+  try {
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("missing bound address");
+    await writeFile(
+      endpointPath,
+      JSON.stringify({ version: 1, url: `http://127.0.0.1:${address.port}`, credential }),
+    );
+    await writeFile(
+      binary,
+      `#!/usr/bin/env node\nimport {writeFileSync} from "node:fs";\nif (process.argv.includes("serve")) writeFileSync(${JSON.stringify(join(directory, "spawned"))}, "yes");\nprocess.stdout.write(JSON.stringify({version:1,path:${JSON.stringify(endpointPath)},spawn:false}));`,
+    );
+    await chmod(binary, 0o700);
+    expect(await startRuntime(directory, "web", binary)).toBe(endpointPath);
+    await expect(readFile(join(directory, "spawned"))).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("authenticates temporary publication requests with the owner credential", async () => {
   const directory = await mkdtemp(join(tmpdir(), "tnl-sdk-adhoc-"));
   const endpointPath = join(directory, "manager.endpoint.json");
@@ -205,6 +240,32 @@ test("a surviving app reconnects and re-registers after the manager crashes", as
   expect(registrations).toHaveLength(2);
   expect(handle.publicURL).toBe("https://api.member.example");
   await handle.close();
+});
+
+test("a container listener reports its wildcard binding and selected port", async () => {
+  const request = vi.fn(async (_socket: string, operation: string, _body: unknown) =>
+    operation === "prepare" ? assignment() : undefined,
+  );
+  const handle = await createPreparedService({ service: "api" }, "node", {
+    start: async () => "/isolated/manager.app.api.endpoint.json",
+    request,
+  });
+  const server = createServer((_req, res) => res.end("ready"));
+  try {
+    await new Promise<void>((resolve) => server.listen(0, "0.0.0.0", resolve));
+    await handle.register(server);
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("missing bound address");
+    expect(request.mock.calls.find(([, operation]) => operation === "register")?.[2]).toMatchObject(
+      {
+        target: `http://127.0.0.1:${address.port}`,
+        bound_host: "0.0.0.0",
+      },
+    );
+  } finally {
+    await handle.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 test("Bun hot replacements retain ownership and an old listener stop cannot unregister the replacement", async () => {

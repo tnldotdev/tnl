@@ -20,6 +20,7 @@ class FakeNative(AppRuntime):
     def __init__(self) -> None:
         self.events: list[tuple[str, str]] = []
         self.targets: dict[str, str] = {}
+        self.bound_hosts: dict[str, object] = {}
 
     async def start(self, directory: str, service: str) -> str:
         assert service == "web"
@@ -44,6 +45,7 @@ class FakeNative(AppRuntime):
             }
         if operation == "register":
             self.targets[endpoint_path] = str(payload["target"])
+            self.bound_hosts[endpoint_path] = payload.get("bound_host")
         return None
 
 
@@ -108,6 +110,43 @@ def test_two_worktrees_register_their_actual_sockets_and_unpublish_before_shutdo
                 "unregister",
                 "shutdown",
             ]
+
+    asyncio.run(scenario())
+
+
+def test_container_app_reports_wildcard_binding_and_loopback_port(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def scenario() -> None:
+        native = FakeNative()
+        monkeypatch.setattr(tnl_uvicorn, "_native", native)
+
+        async def app(scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] == "lifespan":
+                while True:
+                    message = await receive()
+                    if message["type"] == "lifespan.startup":
+                        await send({"type": "lifespan.startup.complete"})
+                    else:
+                        await send({"type": "lifespan.shutdown.complete"})
+                        return
+
+        server = tnl_uvicorn.Server(
+            uvicorn.Config(app, host="0.0.0.0", port=0, lifespan="on", log_level="critical"),
+            "web",
+            str(tmp_path),
+        )
+        task = asyncio.create_task(server.serve())
+        try:
+            async with asyncio.timeout(5):
+                while not server.started or not native.targets:
+                    await asyncio.sleep(0.01)
+            endpoint = str(tmp_path) + "/endpoint.json"
+            assert native.targets[endpoint].startswith("http://127.0.0.1:")
+            assert native.bound_hosts[endpoint] == "0.0.0.0"
+        finally:
+            server.should_exit = True
+            await task
 
     asyncio.run(scenario())
 

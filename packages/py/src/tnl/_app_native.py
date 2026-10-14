@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from pathlib import Path
 from typing import cast
@@ -46,8 +47,10 @@ class AppRuntime:
             result: object = json.loads(stdout)
             if (
                 not isinstance(result, dict)
-                or set(result) != {"version", "path"}
+                or set(result) not in ({"version", "path"}, {"version", "path", "spawn"})
                 or result["version"] != 1
+                or "spawn" in result
+                and not isinstance(result["spawn"], bool)
                 or not isinstance(result["path"], str)
                 or not Path(result["path"]).is_absolute()
                 or not result["path"].endswith(f".app.{service}.endpoint.json")
@@ -56,22 +59,25 @@ class AppRuntime:
                 raise InvalidResponse()
             endpoint_path = cast(str, result["path"])
             if not await self.healthy(endpoint_path):
-                worker = await asyncio.create_subprocess_exec(
-                    str(binary),
-                    "--no-telemetry",
-                    "runtime",
-                    "serve",
-                    "--directory",
-                    directory,
-                    cwd=directory,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
+                worker = None
+                if result.get("spawn", True):
+                    worker = await asyncio.create_subprocess_exec(
+                        str(binary),
+                        "--no-telemetry",
+                        "runtime",
+                        "serve",
+                        "--directory",
+                        directory,
+                        cwd=directory,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
                 deadline = asyncio.get_running_loop().time() + 15
                 while not await self.healthy(endpoint_path):
                     if (
                         asyncio.get_running_loop().time() >= deadline
-                        or worker.returncode is not None
+                        or worker is not None
+                        and worker.returncode is not None
                     ):
                         raise NativeUnavailable()
                     await asyncio.sleep(0.05)
@@ -110,9 +116,16 @@ class AppRuntime:
             raise InvalidResponse() from None
         if (
             parsed.scheme != "http"
-            or parsed.hostname != "127.0.0.1"
+            or (
+                parsed.hostname != "127.0.0.1"
+                and (
+                    path != os.environ.get("TNL_APP_ENDPOINT")
+                    or parsed.hostname is None
+                    or re.fullmatch(r"[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?", parsed.hostname) is None
+                )
+            )
             or port is None
-            or parsed.netloc != f"127.0.0.1:{port}"
+            or parsed.netloc != f"{parsed.hostname}:{port}"
             or parsed.path != ""
             or parsed.query != ""
             or parsed.fragment != ""
@@ -152,7 +165,15 @@ class AppRuntime:
             if operation == "register":
                 method, body = (
                     "PUT",
-                    {"owner": payload.get("owner"), "target": payload.get("target")},
+                    {
+                        "owner": payload.get("owner"),
+                        "target": payload.get("target"),
+                        **(
+                            {}
+                            if "bound_host" not in payload
+                            else {"bound_host": payload["bound_host"]}
+                        ),
+                    },
                 )
             elif operation == "renew":
                 method, body = "POST", None

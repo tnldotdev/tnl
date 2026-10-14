@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tnl._app_native import AppRuntime
 from tnl._native import NativeRuntime
 from tnl._protocol import InvalidResponse, parse_status
 
@@ -65,6 +66,24 @@ def test_native_request_uses_the_owner_credential(tmp_path: Path) -> None:
             await server.wait_closed()
 
     asyncio.run(scenario())
+
+
+def test_compose_app_descriptor_requires_its_mounted_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    endpoint = tmp_path / "app.web.endpoint.json"
+    endpoint.write_text(
+        json.dumps({"version": 1, "url": "http://publisher:8765", "credential": "a" * 43})
+    )
+    with pytest.raises(InvalidResponse):
+        AppRuntime._endpoint(str(endpoint))
+    monkeypatch.setenv("TNL_APP_ENDPOINT", str(endpoint))
+    assert AppRuntime._endpoint(str(endpoint)) == ("http://publisher:8765", "a" * 43)
+    endpoint.write_text(
+        json.dumps({"version": 1, "url": "http://other.example:8765", "credential": "a" * 43})
+    )
+    with pytest.raises(InvalidResponse):
+        AppRuntime._endpoint(str(endpoint))
 
 
 def test_native_request_rejects_oversized_tcp_response(tmp_path: Path) -> None:

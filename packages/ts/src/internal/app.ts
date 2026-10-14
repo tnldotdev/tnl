@@ -117,6 +117,7 @@ export async function createPreparedService(
   let assignment = parseAssignment(await dependencies.request(socket, "prepare", prepareRequest));
   let server: LocalHTTPServer | undefined;
   let reportedTarget: CanonicalTarget | undefined;
+  let boundHost: "0.0.0.0" | "::" | undefined;
   let closed = false;
   let registered = false;
   let needsPrepare = false;
@@ -131,6 +132,7 @@ export async function createPreparedService(
     registration_id: assignment.registrationID,
     owner,
     ...(target === undefined ? {} : { target }),
+    ...(target === undefined || boundHost === undefined ? {} : { bound_host: boundHost }),
   });
   const reconnect = async () => {
     socket = await dependencies.start(directory, options.service);
@@ -255,6 +257,10 @@ export async function createPreparedService(
       schedule();
     }
     const target = await listeningTarget(listener);
+    const host = isBunServer(listener)
+      ? (listener.hostname ?? listener.url.hostname)
+      : (listener.address() as { address?: unknown } | null)?.address;
+    boundHost = host === "0.0.0.0" || host === "::" ? host : undefined;
     if (closed) throw new TnlError("sdk.registration_stale");
     const currentRevision = ++revision;
     server = listener;
@@ -414,9 +420,14 @@ export async function startRuntime(
     );
     const value: unknown = JSON.parse(stdout);
     const object = record(value, "local publisher endpoint path");
-    exactKeys(object, ["version", "path"], "local publisher endpoint path");
+    exactKeys(
+      object,
+      Object.hasOwn(object, "spawn") ? ["version", "path", "spawn"] : ["version", "path"],
+      "local publisher endpoint path",
+    );
     if (
       object.version !== 1 ||
+      (object.spawn !== undefined && typeof object.spawn !== "boolean") ||
       typeof object.path !== "string" ||
       !path.isAbsolute(object.path) ||
       !object.path.endsWith(".endpoint.json") ||
@@ -426,18 +437,17 @@ export async function startRuntime(
     if (!(await runtimeHealthy(object.path))) {
       // the app process owns the local publisher's lifetime. a second service
       // can race this spawn: the runtime's hostname lock elects one owner.
-      const process_ = spawn(
-        binary,
-        ["--no-telemetry", "runtime", "serve", "--directory", directory],
-        {
-          cwd: directory,
-          stdio: "ignore",
-        },
-      );
-      process_.once("error", () => {
-        // an available sibling runtime may still win the socket election.
-      });
-      process_.unref();
+      if (object.spawn !== false) {
+        const process_ = spawn(
+          binary,
+          ["--no-telemetry", "runtime", "serve", "--directory", directory],
+          { cwd: directory, stdio: "ignore" },
+        );
+        process_.once("error", () => {
+          // an available sibling runtime may still win the socket election.
+        });
+        process_.unref();
+      }
       const deadline = Date.now() + 15_000;
       while (!(await runtimeHealthy(object.path))) {
         if (Date.now() >= deadline) throw new TnlError("sdk.dev_unavailable");
@@ -508,7 +518,7 @@ function ownerRuntimeHealthy(endpointPath: string): Promise<boolean> {
     }
     const request = http.get(
       {
-        hostname: "127.0.0.1",
+        hostname: endpoint.url.hostname,
         port: Number(endpoint.url.port),
         path: "/v1/status",
         timeout: 1_000,
@@ -535,7 +545,7 @@ function runtimeHealthy(endpointPath: string): Promise<boolean> {
     }
     const request = http.get(
       {
-        hostname: "127.0.0.1",
+        hostname: endpoint.url.hostname,
         port: Number(endpoint.url.port),
         path: "/v1/status",
         timeout: 1_000,
@@ -567,7 +577,8 @@ function readLocalEndpoint(endpointPath: string): { url: URL; credential: string
     const url = new URL(endpoint.url);
     if (
       url.protocol !== "http:" ||
-      url.hostname !== "127.0.0.1" ||
+      (url.hostname !== "127.0.0.1" &&
+        (endpointPath !== process.env.TNL_APP_ENDPOINT || !validServiceName(url.hostname))) ||
       !url.port ||
       url.pathname !== "/" ||
       url.search ||
@@ -601,6 +612,9 @@ export function runtimeRequest(socket: string, operation: string, body: unknown)
               : {
                   owner: record(body, "registration").owner,
                   target: record(body, "registration").target,
+                  ...(record(body, "registration").bound_host === undefined
+                    ? {}
+                    : { bound_host: record(body, "registration").bound_host }),
                 },
           )
         : "";
@@ -631,7 +645,7 @@ export function runtimeRequest(socket: string, operation: string, body: unknown)
             : "DELETE";
     const request = http.request(
       {
-        hostname: "127.0.0.1",
+        hostname: endpoint.url.hostname,
         port: Number(endpoint.url.port),
         path: route,
         method,

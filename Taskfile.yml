@@ -264,6 +264,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestBinaryIntegration' -count=1 -timeout=15m -args -tnl-test-tier=binary
 
+  go:test:integration:compose-app:
+    desc: Check app endpoint isolation and publisher replacement in disposable Compose containers
+    cmds:
+      - go test -v ./cmd/tnl -run='^TestIntegrationComposeAppEndpoints$' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
   go:test:integration:dns:
     desc: Run the authoritative DNS integration test in disposable Linux containers
     cmds:

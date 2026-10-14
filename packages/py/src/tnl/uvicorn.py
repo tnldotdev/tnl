@@ -41,6 +41,8 @@ class Server(_uvicorn.Server):
         }
         if target is not None:
             result["target"] = target
+            if self.config.host in ("0.0.0.0", "::"):
+                result["bound_host"] = self.config.host
         return result
 
     async def _prepare(self) -> None:
@@ -88,8 +90,10 @@ class Server(_uvicorn.Server):
         if len(self.servers) != 1 or not self.servers[0].sockets:
             raise TnlError("sdk.listener_failed", "Uvicorn has no bound listener")
         host, port = self.servers[0].sockets[0].getsockname()[:2]
-        if host != "127.0.0.1" or not isinstance(port, int) or port <= 0:
-            raise TnlError("sdk.listener_failed", "Uvicorn must bind a loopback listener")
+        if host not in ("127.0.0.1", "0.0.0.0", "::") or not isinstance(port, int) or port <= 0:
+            raise TnlError(
+                "sdk.listener_failed", "Uvicorn must bind a loopback or container-wide listener"
+            )
         return f"http://127.0.0.1:{port}"
 
     async def startup(self, sockets: list[socket.socket] | None = None) -> None:
@@ -169,12 +173,15 @@ def run(
         or not isinstance(service, str)
         or len(service) > 32
         or _service.fullmatch(service) is None
-        or host != "127.0.0.1"
+        or host not in ("127.0.0.1", "0.0.0.0", "::")
         or type(port) is not int
         or not 0 <= port <= 65535
         or type(reload) is not bool
     ):
-        raise TnlError("sdk.configuration_invalid", "select an app, service, and loopback listener")
+        raise TnlError(
+            "sdk.configuration_invalid",
+            "select an app, service, and loopback or container-wide listener",
+        )
     root = str(Path(directory or os.getcwd()).resolve())
     config = _uvicorn.Config(
         app,
