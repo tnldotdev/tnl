@@ -21,3 +21,7 @@ func httpObservation(recorder *clientstate.InspectionRecorder) func(publisher.Re
 func sqlObservation(recorder *clientstate.InspectionRecorder, mode config.InspectionMode) func(publisher.DatabaseObservation) {
 	return localpublisher.SQLObservation(recorder, mode)
 }
+
+func redisObservation(recorder *clientstate.InspectionRecorder) func(publisher.RedisObservation) {
+	return localpublisher.RedisObservation(recorder)
+}

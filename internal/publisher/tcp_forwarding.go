@@ -38,6 +38,7 @@ type tcpForwarding struct {
 	admitConnection     func() error
 	onCancelUnsupported func()
 	observeDatabase     func(DatabaseObservation)
+	observeRedis        func(RedisObservation)
 	inspectionMode      projectconfig.InspectionMode
 }
 
@@ -73,6 +74,7 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 		admitConnection:     config.AdmitConnection,
 		onCancelUnsupported: config.OnCancelUnsupported,
 		observeDatabase:     config.ObserveDatabase,
+		observeRedis:        config.ObserveRedis,
 		inspectionMode:      config.InspectionMode,
 	}, nil
 }
@@ -158,6 +160,11 @@ func (d *tcpForwarding) redis(visitor, backend net.Conn, publicTLS *tls.Config) 
 			return err
 		}
 		backend = secured
+	}
+	if d.observeRedis != nil {
+		observer := newRedisInspector(d.observeRedis)
+		defer observer.drain()
+		backend = &tcpInspectionConn{Conn: backend, observer: observer}
 	}
 	return copyTCPConnections(visitor, securedVisitor, backend, d.admission)
 }
@@ -274,7 +281,7 @@ func (d *tcpForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config, 
 		} else {
 			observer = newMySQLInspector(clientFlags, d.inspectionMode, d.observeDatabase)
 		}
-		backend = &databaseInspectionConn{Conn: backend, observer: observer}
+		backend = &tcpInspectionConn{Conn: backend, observer: observer}
 	}
 	return copyTCPConnections(visitor, securedVisitor, backend, d.admission)
 }

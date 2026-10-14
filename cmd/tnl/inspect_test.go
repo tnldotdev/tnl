@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/inspection"
+	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -48,6 +49,54 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 	}
 	if err := run(t.Context(), []string{"requests", "list"}, &stdout, &stderr, factory); err == nil {
 		t.Fatal("retired requests command is still accepted")
+	}
+}
+
+func TestRedisPublisherObservationReachesLocalInspect(t *testing.T) {
+	project, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TNL_STATE_DIR", stateRoot)
+	database, err := clientstate.Open(t.Context(), stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tunnel, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:6379",
+		Project: project, Service: "cache", ServiceProtocol: controlv1.Redis,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	flags := tunnelFlags{InspectionMode: config.InspectionSummary}
+	recorder, err := newInspectionRecorder(t.Context(), tunnel, project, "cache", flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	redisObservation(recorder)(publisher.RedisObservation{
+		ReceivedAt: time.Now().UTC(), Command: "GET", Result: inspection.ResultError, Duration: 2 * time.Millisecond,
+	})
+	recorder.Close()
+	var output bytes.Buffer
+	if err := run(t.Context(), []string{"inspect", "list", "--protocol=redis", "--output=json"}, &output, &bytes.Buffer{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Inspections []inspectionRecord `json:"inspections"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil || len(result.Inspections) != 1 ||
+		result.Inspections[0].Redis == nil || result.Inspections[0].Redis.Command != "GET" ||
+		result.Inspections[0].Result != inspection.ResultError {
+		t.Fatalf("Redis inspection = %s, %v", output.String(), err)
+	}
+	flags.InspectionMode = config.InspectionNone
+	if disabled, err := newInspectionRecorder(t.Context(), tunnel, project, "cache", flags); err != nil || disabled != nil {
+		t.Fatalf("none mode recorder = %v, %v", disabled, err)
 	}
 }
 

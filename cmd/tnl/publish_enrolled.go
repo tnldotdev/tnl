@@ -160,6 +160,9 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, output *publi
 	if (protocol == controlv1.Mysql || protocol == controlv1.Postgres) && !configuration.VisitorTLSPassthrough {
 		configuration.ObserveDatabase = sqlObservation(recorder, flags.InspectionMode)
 	}
+	if protocol == controlv1.Redis {
+		configuration.ObserveRedis = redisObservation(recorder)
+	}
 	configuration.Logf = output.logf
 	configuration.Observe = withTelemetryObserver(telemetry, telemetryPublish, server, nil, func(event publisher.Event) error {
 		return handlePublisherEvent(ctx, tunnel, output, event)

@@ -227,6 +227,9 @@ func HTTPObservation(recorder *clientstate.InspectionRecorder) func(publisher.Re
 func SQLObservation(recorder *clientstate.InspectionRecorder, mode config.InspectionMode) func(publisher.DatabaseObservation) {
 	return sqlObservation(recorder, mode)
 }
+func RedisObservation(recorder *clientstate.InspectionRecorder) func(publisher.RedisObservation) {
+	return redisObservation(recorder)
+}
 
 func IntegrationGroup(project projectconfig.Project, namespace string) string {
 	return projectIntegrationGroup(project, namespace)

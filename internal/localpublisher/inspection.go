@@ -10,6 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func inspectionRoots(ctx context.Context, project string) (string, string, error) {
@@ -75,6 +76,18 @@ func sqlObservation(recorder *clientstate.InspectionRecorder, mode config.Inspec
 			Origin: "tnl", CaptureMode: mode, Detail: detail,
 			Operation: event.Operation, Result: event.Result, SQLState: event.SQLState, Rows: event.Rows,
 			ResultSets: int64(event.ResultSets), MySQLErrorCode: int64(event.MySQLErrorCode),
+		})
+	}
+}
+
+func redisObservation(recorder *clientstate.InspectionRecorder) func(publisher.RedisObservation) {
+	if recorder == nil {
+		return nil
+	}
+	return func(event publisher.RedisObservation) {
+		recorder.Observe(clientstate.InspectionRecord{
+			Protocol: controlv1.Redis, ReceivedAt: event.ReceivedAt, DurationMS: event.Duration.Milliseconds(),
+			Origin: "tnl", RedisCommand: event.Command, Result: event.Result,
 		})
 	}
 }
