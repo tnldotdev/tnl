@@ -113,6 +113,9 @@ func validAllocationLimits(limits *controlv1.PublisherApplicationLimits) bool {
 			return false
 		}
 		rateRequests = limits.Rate.Requests
+		if limits.Rate.Burst != nil && *limits.Rate.Burst <= 0 {
+			return false
+		}
 	}
 	return applicationlimits.Valid(requests, rateRequests, concurrency, period)
 }

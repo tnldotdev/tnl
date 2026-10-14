@@ -226,7 +226,7 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 	for name, test := range map[string]struct{ source, category string }{
 		"service server":      {`export default {services: {api: {server: "https://control.example"}}};`, `unknown TypeScript configuration field "server"`},
 		"service team":        {`export default {services: {api: {team: "studio"}}};`, `unknown TypeScript configuration field "team"`},
-		"retired limits":      {`export default {services: {api: {tunnel: {limits: {concurrency: 0}}}}};`, `unknown TypeScript configuration field "limits"`},
+		"retired limits":      {`export default {services: {api: {tunnel: {limits: {concurrency: 0}}}}};`, `unknown TypeScript configuration field "concurrency"`},
 		"old request limit":   {`export default {services: {api: {tunnel: {requestLimit: 2}}}};`, "unknown TypeScript configuration field"},
 		"inspection":          {`export default {services: {api: {inspection: {mode: "all"}}}};`, "services.api.inspection: mode must be none or summary"},
 		"retired dev":         {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "dev"},

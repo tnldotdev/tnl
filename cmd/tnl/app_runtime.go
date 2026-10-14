@@ -376,7 +376,7 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 		return privateprotocol.Assignment{}, err
 	}
 	flags := tunnelFlags{InspectionMode: config.InspectionSummary}
-	applyTunnelConfiguration(&flags, effective.Tunnel)
+	applyTunnelConfiguration(&flags, effective.Tunnel, config.ServiceProtocol(effective.Publish))
 	applyInspection(&flags, effective)
 	// app-led URLs remain saved across restarts, including configurations that
 	// previously requested ephemeral development URLs.

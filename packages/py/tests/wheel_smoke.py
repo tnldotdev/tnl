@@ -69,7 +69,7 @@ async def main() -> None:
     async with tnl.open(
         app,
         credential="tnl_eph_" + "A" * 22 + "." + "B" * 43,
-        limits=tnl.Limits(requests=2),
+        limits=tnl.Limits(http=tnl.WorkLimits(total=2)),
     ) as tunnel:
         assert tunnel.url == "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test"
         async with httpx.AsyncClient() as client:

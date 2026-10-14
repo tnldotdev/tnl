@@ -168,6 +168,17 @@ configuration validation does not consult server policy or publish a URL.
 TypeScript config helpers check service references in aliases, webhooks, and
 path mounts; Go validation also checks computed values and static configuration.
 
+`tunnel.limits.http` and `tunnel.limits.tcp` set publisher-side admission for
+HTTP requests and TCP sessions. each has optional `total`, `concurrency`, and
+`rate` (`count`, `per`, optional `burst`). root defaults merge field by field
+with a matching service's limits; a service cannot configure the other
+protocol's limits. without overrides, the publisher allows 64 concurrent HTTP
+requests at 60 per second (burst 60), or 24 concurrent TCP sessions at 10 per
+second (burst 20). `total` is uncapped unless set. a saved public URL's
+credential selects its protocol before the publisher applies root defaults.
+these budgets run after visitor access checks; ingress applies its own visitor
+admission separately.
+
 aliases keep a persistent selected project directory in client state, initially
 the corresponding project in the primary checkout. registration never takes an
 explicit selection back. `use` requires a ready entry service and preserves a

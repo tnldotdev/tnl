@@ -1,6 +1,6 @@
 """publish Python ASGI applications through the app-owned tnl runtime."""
 
-from ._asgi import Limits, RateLimit, Tunnel, open
+from ._asgi import Limits, RateLimit, Tunnel, WorkLimits, open
 from ._handler import handler
 from ._protocol import (
     CredentialRequired,
@@ -19,6 +19,7 @@ __all__ = [
     "RegistrationLost",
     "TnlError",
     "Tunnel",
+    "WorkLimits",
     "handler",
     "open",
 ]

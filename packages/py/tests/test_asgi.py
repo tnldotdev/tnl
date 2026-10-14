@@ -78,6 +78,23 @@ def test_python_uses_the_same_go_and_typescript_socket_fixture() -> None:
         parse_status({**ready, "state": "unknown"}, registration_id)
 
 
+def test_http_limits_validate_and_map_to_the_native_socket() -> None:
+    assert _asgi._limit_payload(
+        tnl.Limits(
+            http=tnl.WorkLimits(
+                total=2, concurrency=3, rate=tnl.RateLimit(count=4, per="1s", burst=5)
+            )
+        )
+    ) == {"requests": 2, "concurrency": 3, "rate": {"requests": 4, "per": "1s", "burst": 5}}
+    for limits in (
+        tnl.Limits(http=tnl.WorkLimits(total=0)),
+        tnl.Limits(http=tnl.WorkLimits(rate=tnl.RateLimit(count=1, per="1s", burst=0))),
+        tnl.Limits(http=tnl.WorkLimits(rate=tnl.RateLimit(count=1, per="minute"))),
+    ):
+        with pytest.raises(tnl.TnlError, match="positive"):
+            _asgi._limit_payload(limits)
+
+
 def test_single_request_handler_requires_an_explicit_asgi_adapter() -> None:
     async def scenario() -> None:
         async def endpoint(request: Request) -> PlainTextResponse:
@@ -124,7 +141,10 @@ def test_lifespan_precedes_registration_and_close_joins_websockets(
                 await receive()
 
         async with tnl.open(
-            app, credential=_token, allow_all_ips=True, limits=tnl.Limits(requests=2)
+            app,
+            credential=_token,
+            allow_all_ips=True,
+            limits=tnl.Limits(http=tnl.WorkLimits(total=2)),
         ) as tunnel:
             assert tunnel.url == _public_url
             assert events.index("startup") < events.index("register")
@@ -158,7 +178,9 @@ def test_strict_budget_fails_closed_if_native_manager_disappears(
                         await send({"type": "lifespan.shutdown.complete"})
                         return
 
-        async with tnl.open(app, credential=_token, limits=tnl.Limits(requests=1)) as tunnel:
+        async with tnl.open(
+            app, credential=_token, limits=tnl.Limits(http=tnl.WorkLimits(total=1))
+        ) as tunnel:
             native.fail_status = True
             with pytest.raises(RegistrationLost):
                 await asyncio.wait_for(tunnel.wait(), 2)

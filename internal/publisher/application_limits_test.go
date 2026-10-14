@@ -7,7 +7,7 @@ import (
 )
 
 func TestApplicationAdmissionDrainsTotalBudgetWithoutCountingRejections(t *testing.T) {
-	admission, err := newApplicationAdmission(ApplicationLimits{Requests: 2, Concurrency: 1})
+	admission, err := newApplicationAdmission(ApplicationLimits{Requests: 2, Concurrency: 1}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestApplicationAdmissionDrainsTotalBudgetWithoutCountingRejections(t *testi
 }
 
 func TestApplicationAdmissionRateRefillsEvenly(t *testing.T) {
-	admission, err := newApplicationAdmission(ApplicationLimits{RateRequests: 2, RatePer: 4 * time.Second})
+	admission, err := newApplicationAdmission(ApplicationLimits{RateRequests: 2, RatePer: 4 * time.Second}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,5 +64,40 @@ func TestApplicationAdmissionRateRefillsEvenly(t *testing.T) {
 	admission.leave()
 	if status, retry := admission.enter(now.Add(3 * time.Second)); status != http.StatusTooManyRequests || retry < time.Second {
 		t.Fatalf("one-second refill = %d, %s", status, retry)
+	}
+}
+
+func TestApplicationAdmissionBurstAndProtocolDefaults(t *testing.T) {
+	for _, test := range []struct {
+		tcp                      bool
+		concurrency, rate, burst int
+	}{{false, 64, 60, 60}, {true, 24, 10, 20}} {
+		admission, err := newApplicationAdmission(ApplicationLimits{}, test.tcp)
+		if err != nil || admission.limits.Concurrency != test.concurrency || admission.limits.RateRequests != test.rate || admission.limits.RateBurst != test.burst || admission.limits.RatePer != time.Second {
+			t.Fatalf("TCP=%t defaults = %+v, %v", test.tcp, admission, err)
+		}
+	}
+	admission, err := newApplicationAdmission(ApplicationLimits{RateRequests: 1, RatePer: time.Second, RateBurst: 3}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for range 3 {
+		if status, _ := admission.enter(now); status != 0 {
+			t.Fatalf("permitted burst request rejected with %d", status)
+		}
+		admission.leave()
+	}
+	if status, _ := admission.enter(now); status != http.StatusTooManyRequests {
+		t.Fatalf("burst exhaustion = %d", status)
+	}
+	if status, _ := admission.enter(now.Add(time.Second)); status != 0 {
+		t.Fatalf("rate did not refill after burst: %d", status)
+	}
+	admission.leave()
+	for _, limits := range []ApplicationLimits{{RateBurst: 1}, {RateBurst: -1}} {
+		if _, err := newApplicationAdmission(limits, false); err == nil {
+			t.Fatalf("accepted invalid burst: %+v", limits)
+		}
 	}
 }

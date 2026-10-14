@@ -4,7 +4,7 @@ package applicationlimits
 import "time"
 
 // Valid checks the numeric limits after input-specific parsing. zero requests
-// and rate mean no cap; zero concurrency selects the publisher default.
+// leaves the lifetime total uncapped; zero rate and concurrency select publisher defaults.
 func Valid(requests, rateRequests, concurrency int, ratePer time.Duration) bool {
 	return requests >= 0 && rateRequests >= 0 && concurrency >= 0 && ratePer >= 0 &&
 		(rateRequests == 0) == (ratePer == 0)

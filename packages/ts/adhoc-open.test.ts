@@ -56,7 +56,11 @@ test("one supplied Node listener waits for its run and stays open on close", asy
   let statuses = 0;
   const handle = await openServer(
     listener,
-    { credential: credential(), targetHostname: "app.internal" },
+    {
+      credential: credential(),
+      targetHostname: "app.internal",
+      limits: { http: { total: 9, concurrency: 3, rate: { count: 2, per: "1s", burst: 4 } } },
+    },
     {
       start: async () => "/tmp/tnl-test.sock",
       request: async (_socket, operation, body: unknown) => {
@@ -72,6 +76,11 @@ test("one supplied Node listener waits for its run and stays open on close", asy
         expect(body.registration_id).toBe(registrationID);
         if (operation === "ad-hoc/register") {
           expect(body).toHaveProperty("target", "http://app.internal:3000");
+          expect(body).toHaveProperty("limits", {
+            requests: 9,
+            concurrency: 3,
+            rate: { requests: 2, per: "1s", burst: 4 },
+          });
         }
         if (operation === "ad-hoc/unregister" || operation === "ad-hoc/renew") return undefined;
         const status = {
@@ -105,12 +114,25 @@ test("one supplied Node listener waits for its run and stays open on close", asy
   expect(calls.at(-1)).toBe("ad-hoc/unregister");
 });
 
+test("ad-hoc limits reject flat and invalid rate settings before registration", async () => {
+  for (const limits of [
+    { requests: 1 },
+    { http: { rate: { count: 1, per: "1s", burst: 0 } } },
+    { http: { rate: { count: 1, per: "minute" } } },
+    { tcp: { concurrency: 1 } },
+  ]) {
+    await expect(
+      openServer(listener, { credential: credential(), limits } as never),
+    ).rejects.toMatchObject({ code: "sdk.configuration_invalid" });
+  }
+});
+
 test("a strict total budget fails closed when the native manager disappears", async () => {
   let starts = 0;
   await expect(
     openServer(
       listener,
-      { credential: credential(), limits: { requests: 1 } },
+      { credential: credential(), limits: { http: { total: 1 } } },
       {
         start: async () => {
           starts++;

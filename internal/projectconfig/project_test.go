@@ -88,14 +88,18 @@ func TestServiceIPOverridesAndAllowAllIPs(t *testing.T) {
 
 func TestServiceLimitsOverrideEachFieldWithoutChangingRoot(t *testing.T) {
 	requests, rateRequests, concurrency := 20, 5, 3
+	tcpCount, tcpConcurrency := 10, 8
+	address := config.Target("db.internal:5432")
 	period := config.Duration(time.Minute)
 	override := config.Duration(2 * time.Minute)
 	project := Project{Config: config.TNL{
-		Tunnel: &config.Tunnel{Limits: &config.Limits{
-			Requests: &requests, Rate: &config.Rate{Requests: &rateRequests, Per: &period}, Concurrency: &concurrency,
-		}},
+		Tunnel: &config.Tunnel{Limits: &config.Limits{HTTP: &config.WorkLimits{
+			Total: &requests, Rate: &config.Rate{Count: &rateRequests, Per: &period}, Concurrency: &concurrency,
+		}, TCP: &config.WorkLimits{Rate: &config.Rate{Count: &tcpCount, Per: &period}, Concurrency: &tcpConcurrency}}},
 		Services: config.Services{"api": {Tunnel: &config.Tunnel{Limits: &config.Limits{
-			Rate: &config.Rate{Per: &override},
+			HTTP: &config.WorkLimits{Rate: &config.Rate{Per: &override}},
+		}}}, "orders": {Protocol: new("postgres"), Target: &config.ServiceTarget{Type: "address", Address: &address}, Tunnel: &config.Tunnel{Limits: &config.Limits{
+			TCP: &config.WorkLimits{Rate: &config.Rate{Per: &override}},
 		}}}},
 	}}
 	if err := config.ValidateTNL(project.Config); err != nil {
@@ -105,12 +109,17 @@ func TestServiceLimitsOverrideEachFieldWithoutChangingRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits := service.Tunnel.Limits
-	if limits.Requests != &requests || limits.Concurrency != &concurrency || limits.Rate.Requests != &rateRequests || limits.Rate.Per != &override {
+	limits := service.Tunnel.Limits.HTTP
+	if limits.Total != &requests || limits.Concurrency != &concurrency || limits.Rate.Count != &rateRequests || limits.Rate.Per != &override {
 		t.Fatalf("service limits = %#v", limits)
 	}
-	if project.Config.Tunnel.Limits.Rate.Per != &period {
+	if project.Config.Tunnel.Limits.HTTP.Rate.Per != &period {
 		t.Fatal("service override changed root rate period")
+	}
+	tcp, err := project.EffectiveService("orders")
+	if err != nil || tcp.Tunnel.Limits.TCP.Rate.Count != &tcpCount || tcp.Tunnel.Limits.TCP.Rate.Per != &override || tcp.Tunnel.Limits.TCP.Concurrency != &tcpConcurrency ||
+		tcp.Tunnel.Limits.HTTP.Rate.Per != &period || project.Config.Tunnel.Limits.TCP.Rate.Per != &period {
+		t.Fatalf("TCP service inheritance changed a different protocol's defaults: %+v, %v", tcp.Tunnel, err)
 	}
 }
 

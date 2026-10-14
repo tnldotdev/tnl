@@ -34,15 +34,21 @@ _alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 @dataclass(frozen=True, slots=True)
 class RateLimit:
-    requests: int
+    count: int
     per: str
+    burst: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkLimits:
+    total: int | None = None
+    rate: RateLimit | None = None
+    concurrency: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class Limits:
-    requests: int | None = None
-    rate: RateLimit | None = None
-    concurrency: int | None = None
+    http: WorkLimits | None = None
 
 
 def _limit_payload(value: Limits | None) -> dict[str, object] | None:
@@ -50,29 +56,42 @@ def _limit_payload(value: Limits | None) -> dict[str, object] | None:
         return None
     if not isinstance(value, Limits):
         raise TnlError("sdk.configuration_invalid", "limits must be a Limits value")
+    if value.http is None:
+        return None
+    if not isinstance(value.http, WorkLimits):
+        raise TnlError("sdk.configuration_invalid", "http limits must be a WorkLimits value")
+    http = value.http
     if (
-        value.requests is not None
-        and (type(value.requests) is not int or value.requests < 1)
-        or value.concurrency is not None
-        and (type(value.concurrency) is not int or value.concurrency < 1)
+        http.total is not None
+        and (type(http.total) is not int or http.total < 1)
+        or http.concurrency is not None
+        and (type(http.concurrency) is not int or http.concurrency < 1)
     ):
         raise TnlError("sdk.configuration_invalid", "request limits must be positive")
     result: dict[str, object] = {}
-    if value.requests is not None:
-        result["requests"] = value.requests
-    if value.concurrency is not None:
-        result["concurrency"] = value.concurrency
-    if value.rate is not None:
+    if http.total is not None:
+        result["requests"] = http.total
+    if http.concurrency is not None:
+        result["concurrency"] = http.concurrency
+    if http.rate is not None:
         if (
-            not isinstance(value.rate, RateLimit)
-            or type(value.rate.requests) is not int
-            or value.rate.requests < 1
-            or not isinstance(value.rate.per, str)
-            or _duration.fullmatch(value.rate.per) is None
-            or not any(character in "123456789" for character in value.rate.per)
+            not isinstance(http.rate, RateLimit)
+            or type(http.rate.count) is not int
+            or http.rate.count < 1
+            or not isinstance(http.rate.per, str)
+            or _duration.fullmatch(http.rate.per) is None
+            or not any(character in "123456789" for character in http.rate.per)
+            or http.rate.burst is not None
+            and (type(http.rate.burst) is not int or http.rate.burst < 1)
         ):
-            raise TnlError("sdk.configuration_invalid", "rate requires positive requests and per")
-        result["rate"] = {"requests": value.rate.requests, "per": value.rate.per}
+            raise TnlError(
+                "sdk.configuration_invalid", "rate requires positive count, per, and burst"
+            )
+        result["rate"] = {
+            "requests": http.rate.count,
+            "per": http.rate.per,
+            **({} if http.rate.burst is None else {"burst": http.rate.burst}),
+        }
     return result
 
 
@@ -118,7 +137,9 @@ class Tunnel:
         if allow_all_ips:
             self._payload["allow_all_ips"] = True
         if limits is not None:
-            self._payload["limits"] = _limit_payload(limits)
+            selected_limits = _limit_payload(limits)
+            if selected_limits is not None:
+                self._payload["limits"] = selected_limits
         self._registered = False
         self._closed = False
         self._close_lock = asyncio.Lock()

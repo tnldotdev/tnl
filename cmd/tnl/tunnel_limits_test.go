@@ -16,15 +16,15 @@ func TestPublisherLimitsMergeAndFlagPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parser.Parse([]string{"publish", "web", "--rate-requests=3"}); err != nil {
+	if _, err := parser.Parse([]string{"publish", "web", "--rate-count=3"}); err != nil {
 		t.Fatal(err)
 	}
 	requests, rateRequests, concurrency := 20, 2, 7
 	period := config.Duration(time.Minute)
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		Tunnel:   &config.Tunnel{Limits: &config.Limits{Requests: &requests, Rate: &config.Rate{Requests: &rateRequests, Per: &period}}},
-		Services: config.Services{"web": {Tunnel: &config.Tunnel{Limits: &config.Limits{Concurrency: &concurrency}}, Publish: &config.Publish{Target: &target}}},
+		Tunnel:   &config.Tunnel{Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &requests, Rate: &config.Rate{Count: &rateRequests, Per: &period}}}},
+		Services: config.Services{"web": {Tunnel: &config.Tunnel{Limits: &config.Limits{HTTP: &config.WorkLimits{Concurrency: &concurrency}}}, Publish: &config.Publish{Target: &target}}},
 	}}}
 	if err := project.applyPublish(&flags.Publish); err != nil {
 		t.Fatal(err)
@@ -37,11 +37,13 @@ func TestPublisherLimitsMergeAndFlagPrecedence(t *testing.T) {
 
 func TestPublisherLimitsRequirePositivePairedRate(t *testing.T) {
 	for _, args := range [][]string{
-		{"publish", "3000", "--requests=0"},
+		{"publish", "3000", "--total=0"},
 		{"publish", "3000", "--concurrency=-1"},
-		{"publish", "3000", "--rate-requests=1"},
+		{"publish", "3000", "--rate-count=1"},
 		{"publish", "3000", "--rate-per=1m"},
-		{"publish", "3000", "--rate-requests=1", "--rate-per=0s"},
+		{"publish", "3000", "--rate-count=1", "--rate-per=0s"},
+		{"publish", "3000", "--rate-burst=2"},
+		{"publish", "3000", "--rate-count=1", "--rate-per=1s", "--rate-burst=0"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)
@@ -54,6 +56,46 @@ func TestPublisherLimitsRequirePositivePairedRate(t *testing.T) {
 		if err := (projectConfiguration{}).applyPublish(&flags.Publish); err == nil {
 			t.Fatalf("invalid limits %v were accepted", args)
 		}
+	}
+}
+
+func TestPublisherLimitsSelectProtocolForDirectNamedAndScopedPublish(t *testing.T) {
+	httpTotal, tcpTotal, tcpOverride := 20, 8, 3
+	count, burst := 2, 4
+	period := config.Duration(time.Second)
+	protocol := "postgres"
+	target := config.Target("db.internal:5432")
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+		Tunnel: &config.Tunnel{Limits: &config.Limits{
+			HTTP: &config.WorkLimits{Total: &httpTotal},
+			TCP:  &config.WorkLimits{Total: &tcpTotal, Rate: &config.Rate{Count: &count, Per: &period, Burst: &burst}},
+		}},
+		Services: config.Services{"db": {
+			Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target},
+			Tunnel: &config.Tunnel{Limits: &config.Limits{TCP: &config.WorkLimits{Total: &tcpOverride}}},
+		}},
+	}}}
+	for _, test := range []struct {
+		target, protocol string
+		wantTotal        int
+	}{{"3000", "", httpTotal}, {"db.internal:5432", "postgres", tcpTotal}, {"db", "", tcpOverride}} {
+		flags := publishCommand{Target: test.target, Protocol: test.protocol}
+		if err := project.applyPublish(&flags); err != nil {
+			t.Fatalf("%s: %v", test.target, err)
+		}
+		limits := flags.limits()
+		if limits.Requests != test.wantTotal {
+			t.Fatalf("%s selected total %d, want %d", test.target, limits.Requests, test.wantTotal)
+		}
+		if flags.Protocol == "postgres" && (limits.RateRequests != count || limits.RateBurst != burst || limits.RatePer != time.Second) {
+			t.Fatalf("%s TCP rate = %+v", test.target, limits)
+		}
+	}
+	// scoped publication learns the saved URL protocol before applying root admission.
+	flags := tunnelFlags{}
+	applyTunnelLimits(&flags, project.Config.Tunnel.Limits, "postgres")
+	if limits := flags.limits(); limits.Requests != tcpTotal || limits.RateBurst != burst {
+		t.Fatalf("scoped TCP admission = %+v", limits)
 	}
 }
 

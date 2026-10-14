@@ -144,10 +144,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.Limits.Concurrency == 0 {
 		config.Limits.Concurrency = config.RequestLimit
 	}
-	admission, err := newApplicationAdmission(config.Limits)
+	admission, err := newApplicationAdmission(config.Limits, forwarding != nil)
 	if err != nil {
 		return nil, err
 	}
+	config.Limits = admission.limits
 	if forwarding != nil {
 		forwarding.admission = admission
 	}

@@ -149,7 +149,7 @@ func ValidateTNL(config TNL) error {
 	if err := validateServiceValues(config.Tunnel, config.Publish); err != nil {
 		return err
 	}
-	if err := validateRatePair(config.Tunnel, nil); err != nil {
+	if err := validateRatePairs(config.Tunnel, nil); err != nil {
 		return err
 	}
 	if len(config.Services) != 0 && config.Tunnel != nil {
@@ -223,6 +223,10 @@ func ValidateTNL(config TNL) error {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 		protocol := ServiceProtocol(effectivePublish)
+		if service.Tunnel != nil && service.Tunnel.Limits != nil &&
+			(protocol == "http" && service.Tunnel.Limits.TCP != nil || protocol != "http" && service.Tunnel.Limits.HTTP != nil) {
+			return fmt.Errorf("services.%s.tunnel.limits: select only the service protocol's limits", name)
+		}
 		paths := ServicePaths(service)
 		if protocol != "http" {
 			if service.HTTP != nil || service.Readiness != nil || config.Readiness != nil {
@@ -250,7 +254,7 @@ func ValidateTNL(config TNL) error {
 				}
 			}
 		}
-		if err := validateRatePair(service.Tunnel, config.Tunnel); err != nil {
+		if err := validateRatePairs(service.Tunnel, config.Tunnel); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 		if len(paths) > 32 {
@@ -302,11 +306,20 @@ func validateServerAndTeam(server, team *string) error {
 func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	if tunnel != nil {
 		if limits := tunnel.Limits; limits != nil {
-			if limits.Requests != nil && *limits.Requests <= 0 || limits.Concurrency != nil && *limits.Concurrency <= 0 {
-				return errors.New("tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero")
-			}
-			if limits.Rate != nil && (limits.Rate.Requests != nil && *limits.Rate.Requests <= 0 || limits.Rate.Per != nil && limits.Rate.Per.Value() <= 0) {
-				return errors.New("tunnel.limits.rate requests and per must be positive")
+			for _, selected := range []struct {
+				name string
+				work *WorkLimits
+			}{{"http", limits.HTTP}, {"tcp", limits.TCP}} {
+				if selected.work == nil {
+					continue
+				}
+				if selected.work.Total != nil && *selected.work.Total <= 0 || selected.work.Concurrency != nil && *selected.work.Concurrency <= 0 {
+					return fmt.Errorf("tunnel.limits.%s total and concurrency must be positive", selected.name)
+				}
+				if rate := selected.work.Rate; rate != nil &&
+					(rate.Count != nil && *rate.Count <= 0 || rate.Per != nil && rate.Per.Value() <= 0 || rate.Burst != nil && *rate.Burst <= 0) {
+					return fmt.Errorf("tunnel.limits.%s.rate count, per, and burst must be positive", selected.name)
+				}
 			}
 		}
 		if tunnel.Name != nil && tunnel.PublicURL != nil {
@@ -378,22 +391,37 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	return nil
 }
 
-func validateRatePair(tunnel, base *Tunnel) error {
-	if tunnel == nil || tunnel.Limits == nil || tunnel.Limits.Rate == nil {
+func validateRatePairs(tunnel, base *Tunnel) error {
+	if tunnel == nil || tunnel.Limits == nil {
 		return nil
 	}
-	rate := tunnel.Limits.Rate
-	requests, per := rate.Requests, rate.Per
-	if base != nil && base.Limits != nil && base.Limits.Rate != nil {
-		if requests == nil {
-			requests = base.Limits.Rate.Requests
+	for _, selected := range []struct {
+		name string
+		work *WorkLimits
+		base *WorkLimits
+	}{{name: "http", work: tunnel.Limits.HTTP}, {name: "tcp", work: tunnel.Limits.TCP}} {
+		if selected.work == nil || selected.work.Rate == nil {
+			continue
 		}
-		if per == nil {
-			per = base.Limits.Rate.Per
+		if base != nil && base.Limits != nil {
+			if selected.name == "http" {
+				selected.base = base.Limits.HTTP
+			} else {
+				selected.base = base.Limits.TCP
+			}
 		}
-	}
-	if requests == nil || per == nil {
-		return errors.New("tunnel.limits.rate requires positive requests and per")
+		count, per := selected.work.Rate.Count, selected.work.Rate.Per
+		if selected.base != nil && selected.base.Rate != nil {
+			if count == nil {
+				count = selected.base.Rate.Count
+			}
+			if per == nil {
+				per = selected.base.Rate.Per
+			}
+		}
+		if count == nil || per == nil {
+			return fmt.Errorf("tunnel.limits.%s.rate requires positive count and per", selected.name)
+		}
 	}
 	return nil
 }

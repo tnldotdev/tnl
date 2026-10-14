@@ -46,8 +46,8 @@ func TestLoadDocumentRequiresVersionAndStrictFields(t *testing.T) {
 		"retired-service.yml":          {"version: 1\ntnl:\n  services:\n    web:\n      directory: apps/web\n", "field directory not found"},
 		"retired-service.json":         {`{"version":1,"tnl":{"services":{"web":{"paths":{"/api":"api"}}}}}`, `unknown object member name "paths"`},
 		"retired-service-publish.json": {`{"version":1,"tnl":{"services":{"api":{"publish":{"target":3000}}}}}`, `unknown object member name "publish"`},
-		"retired-limits.yml":           {"version: 1\ntnl:\n  tunnel:\n    limits: {requests: 2}\n", "field limits not found"},
-		"retired-limits.json":          {`{"version":1,"tnl":{"services":{"api":{"tunnel":{"limits":{"requests":2}}}}}}`, `unknown object member name "limits"`},
+		"retired-limits.yml":           {"version: 1\ntnl:\n  tunnel:\n    limits: {requests: 2}\n", "field requests not found"},
+		"retired-limits.json":          {`{"version":1,"tnl":{"services":{"api":{"tunnel":{"limits":{"requests":2}}}}}}`, `unknown object member name "requests"`},
 		"retired-tls.yml":              {"version: 1\ntnl:\n  services:\n    orders:\n      protocol: postgres\n      target: {type: address, address: 'db:5432'}\n      tcp: {visitor_tls: passthrough}\n", "field tcp not found"},
 		"retired-tls.json":             {`{"version":1,"tnl":{"services":{"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"tcp":{"visitor_tls":"passthrough"}}}}}`, `unknown object member name "tcp"`},
 		"duplicate.yml":                {"version: 1\nversion: 1\n", "already defined"},
@@ -102,6 +102,34 @@ tnl:
 		document.TNL.Services["app"].HTTP == nil || document.TNL.Services["app"].HTTP.Readiness.Path != "/health" ||
 		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs {
 		t.Fatalf("document = %#v", document)
+	}
+}
+
+func TestProtocolLimitsLoadAndRejectMismatchedServices(t *testing.T) {
+	for name, source := range map[string]string{
+		"tnl.json": `{"version":1,"tnl":{"tunnel":{"limits":{"http":{"rate":{"count":5,"per":"1m","burst":8}},"tcp":{"concurrency":12}}},"services":{"web":{"tunnel":{"limits":{"http":{"total":20}}}},"db":{"protocol":"postgres","target":{"type":"address","address":"db:5432"},"tunnel":{"limits":{"tcp":{"rate":{"count":3,"per":"1s"}}}}}}}}`,
+		"tnl.yml":  "version: 1\ntnl:\n  tunnel:\n    limits:\n      http: {rate: {count: 5, per: 1m, burst: 8}}\n      tcp: {concurrency: 12}\n  services:\n    web:\n      tunnel: {limits: {http: {total: 20}}}\n    db:\n      protocol: postgres\n      target: {type: address, address: 'db:5432'}\n      tunnel: {limits: {tcp: {rate: {count: 3, per: 1s}}}}\n",
+	} {
+		path := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		document, err := LoadDocument(path)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		limits := document.TNL.Tunnel.Limits
+		if *limits.HTTP.Rate.Burst != 8 || *limits.TCP.Concurrency != 12 || *document.TNL.Services["web"].Tunnel.Limits.HTTP.Total != 20 {
+			t.Fatalf("%s: limits not loaded: %+v", name, limits)
+		}
+	}
+	for _, service := range []Service{
+		{Tunnel: &Tunnel{Limits: &Limits{TCP: &WorkLimits{Concurrency: new(2)}}}},
+		{Protocol: new("postgres"), Target: &ServiceTarget{Type: "address", Address: new(Target("db:5432"))}, Tunnel: &Tunnel{Limits: &Limits{HTTP: &WorkLimits{Concurrency: new(2)}}}},
+	} {
+		if err := ValidateTNL(TNL{Services: Services{"test": service}}); err == nil || !strings.Contains(err.Error(), "select only the service protocol's limits") {
+			t.Fatalf("mismatched protocol limits: %v", err)
+		}
 	}
 }
 
@@ -405,9 +433,9 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		})
 	}
 	for name, test := range map[string]struct{ json, yaml, category string }{
-		"zero concurrency":           {`{"version":1,"tnl":{"tunnel":{"limits":{"concurrency":0}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      concurrency: 0\n", "limits"},
-		"negative total":             {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"limits":{"requests":-1}}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        limits:\n          requests: -1\n", "limits"},
-		"missing rate period":        {`{"version":1,"tnl":{"tunnel":{"limits":{"rate":{"requests":2}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      rate: {requests: 2}\n", "limits"},
+		"zero concurrency":           {`{"version":1,"tnl":{"tunnel":{"limits":{"http":{"concurrency":0}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      http: {concurrency: 0}\n", "tunnel.limits.http total and concurrency must be positive"},
+		"negative total":             {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"limits":{"http":{"total":-1}}}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        limits:\n          http: {total: -1}\n", "services.web: tunnel.limits.http total and concurrency must be positive"},
+		"missing rate period":        {`{"version":1,"tnl":{"tunnel":{"limits":{"http":{"rate":{"count":2}}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      http:\n        rate: {count: 2}\n", "tunnel.limits.http.rate requires positive count and per"},
 		"retired request limit":      {`{"version":1,"tnl":{"tunnel":{"request_limit":2}}}`, "version: 1\ntnl:\n  tunnel:\n    request_limit: 2\n", "request_limit"},
 		"invalid inspection":         {`{"version":1,"tnl":{"inspection":{"mode":"all"}}}`, "version: 1\ntnl:\n  inspection: {mode: all}\n", "inspection: mode must be none or summary"},
 		"invalid service inspection": {`{"version":1,"tnl":{"services":{"web":{"inspection":{"mode":"all"}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      inspection: {mode: all}\n", "services.web.inspection: mode must be none or summary"},

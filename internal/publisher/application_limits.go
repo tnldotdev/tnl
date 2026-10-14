@@ -7,21 +7,22 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/applicationlimits"
-	"github.com/tnldotdev/tnl/internal/localproxy"
 )
 
-// ApplicationLimits bounds application requests after visitor access is resolved.
-// zero requests and rate mean no cap; zero concurrency selects the default.
+// ApplicationLimits bounds HTTP requests or TCP sessions after visitor access.
+// zero requests leaves the lifetime total uncapped; other zero values select defaults.
 type ApplicationLimits struct {
 	Requests     int
 	RateRequests int
 	RatePer      time.Duration
+	RateBurst    int
 	Concurrency  int
 }
 
 // Validate checks the shared request budget before a public URL is allocated.
 func (limits ApplicationLimits) Validate() error {
-	if !applicationlimits.Valid(limits.Requests, limits.RateRequests, limits.Concurrency, limits.RatePer) {
+	if !applicationlimits.Valid(limits.Requests, limits.RateRequests, limits.Concurrency, limits.RatePer) ||
+		limits.RateBurst < 0 || limits.RateBurst > 0 && limits.RateRequests == 0 {
 		return errors.New("publisher: application limits must be positive and rate requires both requests and period")
 	}
 	return nil
@@ -37,20 +38,31 @@ type applicationAdmission struct {
 	completed chan struct{}
 }
 
-func newApplicationAdmission(limits ApplicationLimits) (*applicationAdmission, error) {
+func newApplicationAdmission(limits ApplicationLimits, tcp bool) (*applicationAdmission, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
 	if limits.Concurrency == 0 {
-		limits.Concurrency = localproxy.DefaultRequestLimit
+		limits.Concurrency = 64
+		if tcp {
+			limits.Concurrency = 24
+		}
 	}
-	return &applicationAdmission{limits: limits, tokens: float64(limits.RateRequests), completed: make(chan struct{})}, nil
+	if limits.RateRequests == 0 {
+		limits.RateRequests, limits.RatePer, limits.RateBurst = 60, time.Second, 60
+		if tcp {
+			limits.RateRequests, limits.RateBurst = 10, 20
+		}
+	} else if limits.RateBurst == 0 {
+		limits.RateBurst = limits.RateRequests
+	}
+	return &applicationAdmission{limits: limits, tokens: float64(limits.RateBurst), completed: make(chan struct{})}, nil
 }
 
 // enter checks all limits under one lock. the lifetime request budget counts
 // admitted requests and never refills; active requests hold a concurrency slot
 // until leave. the token bucket starts full, refills by elapsed time at the
-// configured requests-per-period rate, and cannot exceed one period's supply.
+// configured requests-per-period rate, and cannot exceed the burst capacity.
 // rejection spends no request budget or token. rate rejection returns the time
 // until another token is available, rounded up to at least one second.
 func (a *applicationAdmission) enter(now time.Time) (int, time.Duration) {
@@ -65,7 +77,7 @@ func (a *applicationAdmission) enter(now time.Time) (int, time.Duration) {
 	if a.limits.RateRequests > 0 {
 		if !a.updatedAt.IsZero() && now.After(a.updatedAt) {
 			elapsed := now.Sub(a.updatedAt).Seconds()
-			a.tokens = min(float64(a.limits.RateRequests), a.tokens+elapsed*float64(a.limits.RateRequests)/a.limits.RatePer.Seconds())
+			a.tokens = min(float64(a.limits.RateBurst), a.tokens+elapsed*float64(a.limits.RateRequests)/a.limits.RatePer.Seconds())
 		}
 		a.updatedAt = now
 		if a.tokens < 1 {

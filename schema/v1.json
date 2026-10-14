@@ -97,6 +97,78 @@
             "ephemeral": {
               "type": "boolean",
               "description": "Remove the public URL when this tunnel stops."
+            },
+            "limits": {
+              "properties": {
+                "http": {
+                  "properties": {
+                    "total": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "concurrency": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "rate": {
+                      "properties": {
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "per": {
+                          "type": "string",
+                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                        },
+                        "burst": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": ["count", "per"]
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object"
+                },
+                "tcp": {
+                  "properties": {
+                    "total": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "concurrency": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "rate": {
+                      "properties": {
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "per": {
+                          "type": "string",
+                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                        },
+                        "burst": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": ["count", "per"]
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
             }
           },
           "additionalProperties": false,
@@ -217,6 +289,45 @@
                       "ephemeral": {
                         "type": "boolean",
                         "description": "Remove the public URL when this tunnel stops."
+                      },
+                      "limits": {
+                        "properties": {
+                          "http": {
+                            "properties": {
+                              "total": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "concurrency": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["count", "per"]
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
                       }
                     },
                     "additionalProperties": false,
@@ -376,6 +487,45 @@
                       "ephemeral": {
                         "type": "boolean",
                         "description": "Remove the public URL when this tunnel stops."
+                      },
+                      "limits": {
+                        "properties": {
+                          "tcp": {
+                            "properties": {
+                              "total": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "concurrency": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["count", "per"]
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
                       }
                     },
                     "additionalProperties": false,
@@ -490,6 +640,45 @@
                       "ephemeral": {
                         "type": "boolean",
                         "description": "Remove the public URL when this tunnel stops."
+                      },
+                      "limits": {
+                        "properties": {
+                          "tcp": {
+                            "properties": {
+                              "total": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "concurrency": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["count", "per"]
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
                       }
                     },
                     "additionalProperties": false,
@@ -604,6 +793,45 @@
                       "ephemeral": {
                         "type": "boolean",
                         "description": "Remove the public URL when this tunnel stops."
+                      },
+                      "limits": {
+                        "properties": {
+                          "tcp": {
+                            "properties": {
+                              "total": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "concurrency": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["count", "per"]
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
                       }
                     },
                     "additionalProperties": false,
@@ -718,6 +946,45 @@
                       "ephemeral": {
                         "type": "boolean",
                         "description": "Remove the public URL when this tunnel stops."
+                      },
+                      "limits": {
+                        "properties": {
+                          "tcp": {
+                            "properties": {
+                              "total": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "concurrency": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": ["count", "per"]
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
                       }
                     },
                     "additionalProperties": false,

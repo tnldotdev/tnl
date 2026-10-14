@@ -192,21 +192,43 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 		if result.Limits == nil {
 			result.Limits = &config.Limits{}
 		}
-		if override.Limits.Requests != nil {
-			result.Limits.Requests = override.Limits.Requests
+		result.Limits.HTTP = mergeWorkLimits(result.Limits.HTTP, override.Limits.HTTP)
+		result.Limits.TCP = mergeWorkLimits(result.Limits.TCP, override.Limits.TCP)
+	}
+	return result
+}
+
+func mergeWorkLimits(base, override *config.WorkLimits) *config.WorkLimits {
+	if base == nil && override == nil {
+		return nil
+	}
+	result := &config.WorkLimits{}
+	if base != nil {
+		*result = *base
+		if base.Rate != nil {
+			rate := *base.Rate
+			result.Rate = &rate
 		}
-		if override.Limits.Concurrency != nil {
-			result.Limits.Concurrency = override.Limits.Concurrency
+	}
+	if override != nil {
+		if override.Total != nil {
+			result.Total = override.Total
 		}
-		if override.Limits.Rate != nil {
-			if result.Limits.Rate == nil {
-				result.Limits.Rate = &config.Rate{}
+		if override.Concurrency != nil {
+			result.Concurrency = override.Concurrency
+		}
+		if override.Rate != nil {
+			if result.Rate == nil {
+				result.Rate = &config.Rate{}
 			}
-			if override.Limits.Rate.Requests != nil {
-				result.Limits.Rate.Requests = override.Limits.Rate.Requests
+			if override.Rate.Count != nil {
+				result.Rate.Count = override.Rate.Count
 			}
-			if override.Limits.Rate.Per != nil {
-				result.Limits.Rate.Per = override.Limits.Rate.Per
+			if override.Rate.Per != nil {
+				result.Rate.Per = override.Rate.Per
+			}
+			if override.Rate.Burst != nil {
+				result.Rate.Burst = override.Rate.Burst
 			}
 		}
 	}
@@ -221,10 +243,8 @@ func cloneTunnel(value *config.Tunnel) *config.Tunnel {
 	result.AllowIP = slices.Clone(value.AllowIP)
 	if value.Limits != nil {
 		limits := *value.Limits
-		if limits.Rate != nil {
-			rate := *limits.Rate
-			limits.Rate = &rate
-		}
+		limits.HTTP = mergeWorkLimits(nil, limits.HTTP)
+		limits.TCP = mergeWorkLimits(nil, limits.TCP)
 		result.Limits = &limits
 	}
 	return &result

@@ -45,6 +45,26 @@ export interface TnlConfig {
      * Remove the public URL when this tunnel stops.
      */
     ephemeral?: boolean;
+    limits?: {
+      http?: {
+        total?: number;
+        concurrency?: number;
+        rate?: {
+          count: number;
+          per: TnlRatePeriod;
+          burst?: number;
+        };
+      };
+      tcp?: {
+        total?: number;
+        concurrency?: number;
+        rate?: {
+          count: number;
+          per: TnlRatePeriod;
+          burst?: number;
+        };
+      };
+    };
     /**
      * Allow visitors from every IP address.
      */
@@ -90,6 +110,17 @@ export interface TnlConfig {
              * Remove the public URL when this tunnel stops.
              */
             ephemeral?: boolean;
+            limits?: {
+              http?: {
+                total?: number;
+                concurrency?: number;
+                rate?: {
+                  count: number;
+                  per: TnlRatePeriod;
+                  burst?: number;
+                };
+              };
+            };
             /**
              * Allow visitors from every IP address.
              */
@@ -146,6 +177,17 @@ export interface TnlConfig {
              * Remove the public URL when this tunnel stops.
              */
             ephemeral?: boolean;
+            limits?: {
+              tcp?: {
+                total?: number;
+                concurrency?: number;
+                rate?: {
+                  count: number;
+                  per: TnlRatePeriod;
+                  burst?: number;
+                };
+              };
+            };
             /**
              * Allow visitors from every IP address.
              */
@@ -184,6 +226,17 @@ export interface TnlConfig {
              * Remove the public URL when this tunnel stops.
              */
             ephemeral?: boolean;
+            limits?: {
+              tcp?: {
+                total?: number;
+                concurrency?: number;
+                rate?: {
+                  count: number;
+                  per: TnlRatePeriod;
+                  burst?: number;
+                };
+              };
+            };
             /**
              * Allow visitors from every IP address.
              */
@@ -222,6 +275,17 @@ export interface TnlConfig {
              * Remove the public URL when this tunnel stops.
              */
             ephemeral?: boolean;
+            limits?: {
+              tcp?: {
+                total?: number;
+                concurrency?: number;
+                rate?: {
+                  count: number;
+                  per: TnlRatePeriod;
+                  burst?: number;
+                };
+              };
+            };
             /**
              * Allow visitors from every IP address.
              */
@@ -260,6 +324,17 @@ export interface TnlConfig {
              * Remove the public URL when this tunnel stops.
              */
             ephemeral?: boolean;
+            limits?: {
+              tcp?: {
+                total?: number;
+                concurrency?: number;
+                rate?: {
+                  count: number;
+                  per: TnlRatePeriod;
+                  burst?: number;
+                };
+              };
+            };
             /**
              * Allow visitors from every IP address.
              */

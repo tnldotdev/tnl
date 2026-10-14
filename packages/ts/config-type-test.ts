@@ -7,13 +7,15 @@ import {
 } from "@tnldotdev/tnl/config";
 import type { OpenOptions } from "@tnldotdev/tnl";
 
-({ limits: { rate: { requests: 2, per: "1h30m" } } }) satisfies OpenOptions;
+({ limits: { http: { rate: { count: 2, per: "1h30m", burst: 4 } } } }) satisfies OpenOptions;
 ({
   limits: {
-    rate: {
-      requests: 2,
-      // @ts-expect-error ad-hoc rate periods use the generated duration-literal type.
-      per: "minute",
+    http: {
+      rate: {
+        count: 2,
+        // @ts-expect-error ad-hoc rate periods use the generated duration-literal type.
+        per: "minute",
+      },
     },
   },
 }) satisfies OpenOptions;
@@ -23,6 +25,10 @@ const staticConfig = {
   tunnel: {
     allowIP: ["192.0.2.0/24"],
     domain: "example.test",
+    limits: {
+      http: { rate: { count: 60, per: "1s", burst: 60 }, concurrency: 64 },
+      tcp: { rate: { count: 10, per: "1s", burst: 20 }, concurrency: 24 },
+    },
   },
 } satisfies TnlConfigInput;
 
@@ -40,6 +46,7 @@ const namedTargets = defineConfig({
         address: "db.internal:5432",
         tls: { serverName: "db.internal", caFile: "./ca.pem" },
       },
+      tunnel: { limits: { tcp: { total: 20 } } },
     },
   },
 });
@@ -48,6 +55,20 @@ const namedTargets = defineConfig({
     web: {
       // @ts-expect-error app registration now names the service instead of selecting its directory.
       directory: "apps/web",
+    },
+  },
+}) satisfies TnlConfig;
+({
+  services: {
+    orders: {
+      protocol: "postgres",
+      target: { type: "address", address: "db:5432" },
+      tunnel: {
+        limits: {
+          // @ts-expect-error TCP services cannot select HTTP limits.
+          http: { total: 2 },
+        },
+      },
     },
   },
 }) satisfies TnlConfig;
@@ -114,7 +135,7 @@ defineConfig({
   services: {
     api: {
       tunnel: {
-        // @ts-expect-error limit settings are reserved for a follow-up.
+        // @ts-expect-error flat limit settings are not supported.
         limits: { requests: 1 },
       },
     },

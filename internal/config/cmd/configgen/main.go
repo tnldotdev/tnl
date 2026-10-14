@@ -149,13 +149,18 @@ func servicesSchema() *jsonschema.Schema {
 		}
 		variant.Set("protocol", &jsonschema.Schema{Const: protocol})
 		required := []string{"protocol", "target"}
+		tunnel := tunnelSchema()
+		limitProperties := jsonschema.NewProperties()
 		if protocol == "http" {
 			required = nil
+			limitProperties.Set("http", workLimitsSchema())
 			variant.Set("http", &jsonschema.Schema{Type: "object", Properties: httpProperties, AdditionalProperties: jsonschema.FalseSchema})
 		} else {
+			limitProperties.Set("tcp", workLimitsSchema())
 			variant.Set("target", &jsonschema.Schema{OneOf: targetVariants[1:]})
 		}
-		variant.Set("tunnel", tunnelSchema())
+		tunnel.Properties.Set("limits", &jsonschema.Schema{Type: "object", Properties: limitProperties, AdditionalProperties: jsonschema.FalseSchema})
+		variant.Set("tunnel", tunnel)
 		serviceVariants = append(serviceVariants, &jsonschema.Schema{Type: "object", Required: required, Properties: variant, AdditionalProperties: jsonschema.FalseSchema})
 	}
 	return &jsonschema.Schema{
@@ -176,6 +181,10 @@ func tunnelSchema() *jsonschema.Schema {
 	})
 	properties.Set("allow_all_ips", &jsonschema.Schema{Type: "boolean", Description: "Allow visitors from every IP address."})
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the public URL when this tunnel stops."})
+	limitProperties := jsonschema.NewProperties()
+	limitProperties.Set("http", workLimitsSchema())
+	limitProperties.Set("tcp", workLimitsSchema())
+	properties.Set("limits", &jsonschema.Schema{Type: "object", Properties: limitProperties, AdditionalProperties: jsonschema.FalseSchema})
 	allowAllProperties := jsonschema.NewProperties()
 	allowAllProperties.Set("allow_all_ips", &jsonschema.Schema{Const: true})
 	return &jsonschema.Schema{
@@ -190,6 +199,18 @@ func tunnelSchema() *jsonschema.Schema {
 			},
 		},
 	}
+}
+
+func workLimitsSchema() *jsonschema.Schema {
+	properties := jsonschema.NewProperties()
+	properties.Set("total", &jsonschema.Schema{Type: "integer", Minimum: "1"})
+	properties.Set("concurrency", &jsonschema.Schema{Type: "integer", Minimum: "1"})
+	rate := jsonschema.NewProperties()
+	rate.Set("count", &jsonschema.Schema{Type: "integer", Minimum: "1"})
+	rate.Set("per", &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern})
+	rate.Set("burst", &jsonschema.Schema{Type: "integer", Minimum: "1"})
+	properties.Set("rate", &jsonschema.Schema{Type: "object", Required: []string{"count", "per"}, Properties: rate, AdditionalProperties: jsonschema.FalseSchema})
+	return &jsonschema.Schema{Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema}
 }
 
 func webhookSchema() *jsonschema.Schema {

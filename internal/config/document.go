@@ -140,19 +140,25 @@ type Tunnel struct {
 	AllowIP     []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
 	AllowAllIPs *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
 	Ephemeral   *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
-	Limits      *Limits  `json:"-" yaml:"-"`
+	Limits      *Limits  `json:"limits,omitempty" yaml:"limits,omitempty"`
 }
 
-// Limits apply to application requests after visitor access.
+// Limits select protocol-specific application admission after visitor access.
 type Limits struct {
-	Requests    *int  `json:"requests,omitempty" yaml:"requests,omitempty"`
+	HTTP *WorkLimits `json:"http,omitempty" yaml:"http,omitempty"`
+	TCP  *WorkLimits `json:"tcp,omitempty" yaml:"tcp,omitempty"`
+}
+
+type WorkLimits struct {
+	Total       *int  `json:"total,omitempty" yaml:"total,omitempty"`
 	Rate        *Rate `json:"rate,omitempty" yaml:"rate,omitempty"`
 	Concurrency *int  `json:"concurrency,omitempty" yaml:"concurrency,omitempty"`
 }
 
 type Rate struct {
-	Requests *int      `json:"requests,omitempty" yaml:"requests,omitempty"`
-	Per      *Duration `json:"per,omitempty" yaml:"per,omitempty"`
+	Count *int      `json:"count,omitempty" yaml:"count,omitempty"`
+	Per   *Duration `json:"per,omitempty" yaml:"per,omitempty"`
+	Burst *int      `json:"burst,omitempty" yaml:"burst,omitempty"`
 }
 
 type Publish struct {

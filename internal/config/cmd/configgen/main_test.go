@@ -56,10 +56,15 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	if _, found := tunnel.Properties.Get("ephemeral"); !found {
 		t.Fatal("tunnel ephemeral property is missing")
 	}
-	for _, field := range []string{"limits", "open", "visitor_tls"} {
+	for _, field := range []string{"open", "visitor_tls"} {
 		if _, found := tunnel.Properties.Get(field); found {
 			t.Fatalf("retired tunnel field %q remains in the schema", field)
 		}
+	}
+	if limits, found := tunnel.Properties.Get("limits"); !found || limits.Properties == nil {
+		t.Fatalf("tunnel protocol limits schema = %#v", limits)
+	} else if http, found := limits.Properties.Get("http"); !found || http.Properties == nil {
+		t.Fatalf("HTTP limits schema = %#v", http)
 	}
 	if _, found := tunnel.Properties.Get("allow_providers"); found {
 		t.Fatal("tunnel-wide provider grants must not be generated")
