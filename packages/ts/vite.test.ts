@@ -149,7 +149,6 @@ describe("tnl", () => {
       });
     });
     expect(bootstrap.requests[0]?.body).toMatchObject({
-      version: 1,
       framework: "vite",
       pid: process.pid,
     });
@@ -251,12 +250,12 @@ test(
 
     await fixture.diagnose(async () => {
       expect(await fixture.request()).toMatchObject({
-        body: { version: 1, framework: "vite" },
+        body: { framework: "vite" },
         path: "/v1/prepare",
       });
       expect(await fixture.request(1)).toMatchObject({
-        body: { version: 1, target: `http://127.0.0.1:${port}` },
-        path: "/v1/register",
+        body: { target: `http://127.0.0.1:${port}` },
+        path: `/v1/registrations/reg_${"b".repeat(32)}`,
       });
 
       const page = await requestTestServer(port);
@@ -314,11 +313,11 @@ test("registers the actual next port selected by Vite", async () => {
 
   await fixture.diagnose(async () => {
     expect(await fixture.request()).toMatchObject({
-      body: { version: 1, framework: "vite" },
+      body: { framework: "vite" },
       path: "/v1/prepare",
     });
     const target = await fixture.request(1);
-    expect(target.path).toBe("/v1/register");
+    expect(target.path).toBe(`/v1/registrations/reg_${"b".repeat(32)}`);
     const selectedTarget = z.object({ target: z.string() }).parse(target.body).target;
     expect(selectedTarget).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+$/);
     const selectedPort = Number(new URL(selectedTarget).port);
@@ -334,8 +333,8 @@ test("registers and serves an IPv6 localhost target", async () => {
 
   await fixture.diagnose(async () => {
     expect(await fixture.request(1)).toMatchObject({
-      body: { version: 1, target: `http://[::1]:${port}` },
-      path: "/v1/register",
+      body: { target: `http://[::1]:${port}` },
+      path: `/v1/registrations/reg_${"b".repeat(32)}`,
     });
     await expect(requestTestServer(port, { address: "::1" })).resolves.toMatchObject({
       status: 200,

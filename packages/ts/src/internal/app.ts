@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import { promisify } from "node:util";
@@ -42,7 +43,7 @@ interface Assignment {
 }
 
 interface Dependencies {
-  start(directory: string): Promise<string>;
+  start(directory: string, service?: string): Promise<string>;
   request(socket: string, operation: string, body: unknown): Promise<unknown>;
 }
 
@@ -103,11 +104,12 @@ export async function createPreparedService(
   validateOptions(options);
   const directory = path.resolve(options.directory ?? process.cwd());
   const owner = randomBytes(16).toString("hex");
-  let socket = await dependencies.start(directory);
+  let socket = await dependencies.start(directory, options.service);
   const prepareRequest = {
-    version: 1,
     directory,
-    ...(options.service === undefined ? {} : { service: options.service }),
+    ...((options.service ?? endpointService(socket)) === undefined
+      ? {}
+      : { service: options.service ?? endpointService(socket) }),
     framework,
     owner,
     pid: process.pid,
@@ -131,7 +133,7 @@ export async function createPreparedService(
     ...(target === undefined ? {} : { target }),
   });
   const reconnect = async () => {
-    socket = await dependencies.start(directory);
+    socket = await dependencies.start(directory, options.service);
     const replacement = parseAssignment(
       await dependencies.request(socket, "prepare", prepareRequest),
     );
@@ -200,7 +202,7 @@ export async function createPreparedService(
       )
         return;
       try {
-        const replacementSocket = await dependencies.start(directory);
+        const replacementSocket = await dependencies.start(directory, options.service);
         const replacement = parseAssignment(
           await dependencies.request(replacementSocket, "prepare", prepareRequest),
         );
@@ -394,25 +396,34 @@ function parseAssignment(value: unknown): Assignment {
 
 export async function startRuntime(
   directory: string,
+  service?: string,
   binary: string = resolveNativeBinary(),
 ): Promise<string> {
   try {
     const { stdout } = await promisify(execFile)(
       binary,
-      ["--no-telemetry", "runtime", "address", "--directory", directory],
+      [
+        "--no-telemetry",
+        "runtime",
+        "endpoint",
+        "--directory",
+        directory,
+        ...(service === undefined ? [] : ["--service", service]),
+      ],
       { timeout: 30_000, maxBuffer: 64 * 1024, encoding: "utf8" },
     );
     const value: unknown = JSON.parse(stdout);
-    const object = record(value, "local publisher socket");
-    exactKeys(object, ["version", "socket"], "local publisher socket");
+    const object = record(value, "local publisher endpoint path");
+    exactKeys(object, ["version", "path"], "local publisher endpoint path");
     if (
       object.version !== 1 ||
-      typeof object.socket !== "string" ||
-      !path.isAbsolute(object.socket) ||
-      object.socket.includes("\0")
+      typeof object.path !== "string" ||
+      !path.isAbsolute(object.path) ||
+      !object.path.endsWith(".endpoint.json") ||
+      object.path.includes("\0")
     )
       throw new TnlError("sdk.response_invalid");
-    if (!(await runtimeHealthy(object.socket))) {
+    if (!(await runtimeHealthy(object.path))) {
       // the app process owns the local publisher's lifetime. a second service
       // can race this spawn: the runtime's hostname lock elects one owner.
       const process_ = spawn(
@@ -428,22 +439,34 @@ export async function startRuntime(
       });
       process_.unref();
       const deadline = Date.now() + 15_000;
-      while (!(await runtimeHealthy(object.socket))) {
+      while (!(await runtimeHealthy(object.path))) {
         if (Date.now() >= deadline) throw new TnlError("sdk.dev_unavailable");
         await new Promise<void>((resolve) => setTimeout(resolve, 50));
       }
     }
-    return object.socket;
+    return object.path;
   } catch (cause) {
     if (cause instanceof TnlError) throw cause;
     throw new TnlError("sdk.dev_unavailable", { cause });
   }
 }
 
-function runtimeHealthy(socket: string): Promise<boolean> {
+function runtimeHealthy(endpointPath: string): Promise<boolean> {
   return new Promise((resolve) => {
+    let endpoint;
+    try {
+      endpoint = readLocalEndpoint(endpointPath);
+    } catch {
+      resolve(false);
+      return;
+    }
     const request = http.get(
-      { socketPath: socket, path: "/v1/health", timeout: 1_000 },
+      {
+        hostname: "127.0.0.1",
+        port: Number(endpoint.url.port),
+        path: "/v1/health",
+        timeout: 1_000,
+      },
       (response) => {
         response.resume();
         resolve(response.statusCode === 204);
@@ -454,17 +477,90 @@ function runtimeHealthy(socket: string): Promise<boolean> {
   });
 }
 
+function readLocalEndpoint(endpointPath: string): { url: URL; credential: string } {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(endpointPath, "utf8"));
+    const endpoint = record(raw, "local publisher endpoint");
+    exactKeys(endpoint, ["version", "url", "credential"], "local publisher endpoint");
+    if (
+      endpoint.version !== 1 ||
+      typeof endpoint.url !== "string" ||
+      typeof endpoint.credential !== "string" ||
+      !/^[A-Za-z0-9_-]{43}$/.test(endpoint.credential)
+    ) {
+      throw new TnlError("sdk.response_invalid");
+    }
+    const url = new URL(endpoint.url);
+    if (
+      url.protocol !== "http:" ||
+      url.hostname !== "127.0.0.1" ||
+      !url.port ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash ||
+      url.username ||
+      url.password
+    ) {
+      throw new TnlError("sdk.response_invalid");
+    }
+    return { url, credential: endpoint.credential };
+  } catch (cause) {
+    if (cause instanceof TnlError) throw cause;
+    throw new TnlError("sdk.dev_unavailable", { cause });
+  }
+}
+
+function endpointService(endpointPath: string): string | undefined {
+  const match = /\.app\.([a-z][a-z0-9-]*)\.endpoint\.json$/.exec(endpointPath);
+  return match?.[1];
+}
+
 export function runtimeRequest(socket: string, operation: string, body: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const payload = JSON.stringify(body);
+    const payload =
+      operation === "prepare" || operation === "register"
+        ? JSON.stringify(
+            operation === "prepare"
+              ? body
+              : {
+                  owner: record(body, "registration").owner,
+                  target: record(body, "registration").target,
+                },
+          )
+        : "";
+    const endpoint = readLocalEndpoint(socket);
+    const registration = record(body, "registration");
+    const id = registration.registration_id;
+    if (operation !== "prepare" && (typeof id !== "string" || !/^reg_[a-f0-9]{32}$/.test(id))) {
+      reject(new TnlError("sdk.configuration_invalid"));
+      return;
+    }
+    const route =
+      operation === "prepare"
+        ? "/v1/prepare"
+        : `/v1/registrations/${id}${operation === "renew" ? "/renew" : ""}`;
+    const method =
+      operation === "prepare"
+        ? "POST"
+        : operation === "register"
+          ? "PUT"
+          : operation === "renew"
+            ? "POST"
+            : "DELETE";
     const request = http.request(
       {
-        socketPath: socket,
-        path: `/v1/${operation}`,
-        method: "POST",
+        hostname: "127.0.0.1",
+        port: Number(endpoint.url.port),
+        path: route,
+        method,
         headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(payload),
+          ...(payload === ""
+            ? {}
+            : { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) }),
+          ...(operation === "renew" || operation === "unregister"
+            ? { "X-Registration-Owner": registration.owner as string }
+            : {}),
+          Authorization: `Bearer ${endpoint.credential}`,
         },
       },
       (response) => {

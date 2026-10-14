@@ -182,10 +182,10 @@ describe("withTnl", () => {
     expect(
       bootstrap.requests.map(({ body, path: requestPath }) => ({ body, path: requestPath })),
     ).toMatchObject([
-      { body: { version: 1, framework: "next" }, path: "/v1/prepare" },
+      { body: { framework: "next" }, path: "/v1/prepare" },
       {
-        body: { version: 1, target: "http://127.0.0.1:3200" },
-        path: "/v1/register",
+        body: { target: "http://127.0.0.1:3200" },
+        path: `/v1/registrations/reg_${"b".repeat(32)}`,
       },
     ]);
   });
@@ -233,7 +233,6 @@ describe("withTnl", () => {
       async () => await withTnl()(developmentPhase, context),
     );
     expect(bootstrap.requests[1]?.body).toMatchObject({
-      version: 1,
       target: expected,
     });
   });
@@ -273,12 +272,12 @@ test(
 
     await fixture.diagnose(async () => {
       expect(await fixture.request()).toMatchObject({
-        body: { version: 1, framework: "next" },
+        body: { framework: "next" },
         path: "/v1/prepare",
       });
       expect(await fixture.request(1)).toMatchObject({
-        body: { version: 1, target: `http://127.0.0.1:${port}` },
-        path: "/v1/register",
+        body: { target: `http://127.0.0.1:${port}` },
+        path: `/v1/registrations/reg_${"b".repeat(32)}`,
       });
 
       const page = await requestTestServer(port);
@@ -357,11 +356,11 @@ test("registers the actual fallback port selected by Next.js", { timeout: 60_000
 
   await fixture.diagnose(async () => {
     expect(await fixture.request()).toMatchObject({
-      body: { version: 1, framework: "next" },
+      body: { framework: "next" },
       path: "/v1/prepare",
     });
     const registration = await fixture.request(1);
-    expect(registration.path).toBe("/v1/register");
+    expect(registration.path).toBe(`/v1/registrations/reg_${"b".repeat(32)}`);
     const target = z.object({ target: z.string() }).parse(registration.body).target;
     expect(target).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+$/);
     const selectedPort = Number(new URL(target).port);

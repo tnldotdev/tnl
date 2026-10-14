@@ -59,8 +59,8 @@ test(
       waitForBootstrapRequest(a, 1, 20_000, first.assertRunning),
       waitForBootstrapRequest(b, 1, 20_000, second.assertRunning),
     ]);
-    expect(a.requests[0]?.body).toMatchObject({ version: 1, framework: "bun" });
-    expect(firstTarget.path).toBe("/v1/register");
+    expect(a.requests[0]?.body).toMatchObject({ framework: "bun" });
+    expect(firstTarget.path).toBe(`/v1/registrations/reg_${"b".repeat(32)}`);
     const firstURL = (firstTarget.body as { target: string }).target;
     const secondURL = (secondTarget.body as { target: string }).target;
     expect(firstURL).toMatch(/^http:\/\/127\.0\.0\.1:[1-9][0-9]*$/);
@@ -106,7 +106,7 @@ test("Bun hot reload keeps the registered listener available", { timeout: 30_000
     .toEqual({ siblingURL: "https://web.member.example", updated: true });
   expect(
     bootstrap.requests
-      .filter((request) => request.path === "/v1/register")
+      .filter((request) => request.path === `/v1/registrations/reg_${"b".repeat(32)}`)
       .every((request) => (request.body as { target: string }).target === target),
   ).toBe(true);
 });

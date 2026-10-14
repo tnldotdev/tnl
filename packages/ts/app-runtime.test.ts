@@ -23,23 +23,59 @@ import http from "node:http";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 const directory = process.argv[process.argv.indexOf("--directory") + 1];
-const socket = join(directory, "manager.sock");
-if (process.argv.includes("address")) process.stdout.write(JSON.stringify({ version: 1, socket }) + "\\n");
+const path = join(directory, "manager.sock.endpoint.json");
+if (process.argv.includes("endpoint")) process.stdout.write(JSON.stringify({ version: 1, path }) + "\\n");
 else if (process.argv.includes("serve")) {
-  const server = http.createServer((_request, response) => response.writeHead(204).end());
-  server.listen(socket);
-  writeFileSync(join(directory, "pid"), String(process.pid));
+  const credential = "a".repeat(43);
+  const server = http.createServer((request, response) => {
+    response.writeHead(request.url === "/v1/health" ? 204 : 401).end();
+  });
+  server.listen(0, "127.0.0.1", () => {
+    writeFileSync(path, JSON.stringify({ version: 1, url: "http://127.0.0.1:" + server.address().port, credential }));
+    writeFileSync(join(directory, "pid"), String(process.pid));
+  });
   process.on("SIGTERM", () => server.close(() => process.exit(0)));
 }
 `,
     );
     await chmod(binary, 0o700);
-    const socket = await startRuntime(directory, binary);
-    expect(socket).toBe(join(directory, "manager.sock"));
+    const endpointPath = await startRuntime(directory, undefined, binary);
+    expect(endpointPath).toBe(join(directory, "manager.sock.endpoint.json"));
     workerPID = Number(await readFile(join(directory, "pid"), "utf8"));
     expect(workerPID).toBeGreaterThan(0);
   } finally {
     if (workerPID !== undefined) process.kill(workerPID, "SIGTERM");
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("sends authenticated local publisher requests over loopback TCP", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tnl-sdk-tcp-"));
+  const credential = "b".repeat(43);
+  const received: boolean[] = [];
+  const server = createServer((request, response) => {
+    received.push(request.headers.authorization === `Bearer ${credential}`);
+    request.resume();
+    response.writeHead(204).end();
+  });
+  try {
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("missing bound address");
+    const endpointPath = join(directory, "manager.sock.endpoint.json");
+    await writeFile(
+      endpointPath,
+      JSON.stringify({ version: 1, url: `http://127.0.0.1:${address.port}`, credential }),
+    );
+    await expect(
+      runtimeRequest(endpointPath, "renew", {
+        registration_id: `reg_${"b".repeat(32)}`,
+        owner: "b".repeat(32),
+      }),
+    ).resolves.toBeUndefined();
+    expect(received).toEqual([true]);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -75,7 +111,7 @@ function assignment(registration = "a") {
 
 test("preparation exposes only public metadata and registers an actual port-0 Node listener", async () => {
   const bootstrap = await startTestBootstrap();
-  const start = vi.fn(async () => bootstrap.socket);
+  const start = vi.fn(async () => bootstrap.endpointPath);
   const handle = await createPreparedService({ service: "api" }, "node", {
     start,
     request: runtimeRequest,
@@ -92,12 +128,12 @@ test("preparation exposes only public metadata and registers an actual port-0 No
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("missing bound address");
   expect(bootstrap.requests[1]).toMatchObject({
-    path: "/v1/register",
+    path: `/v1/registrations/reg_${"b".repeat(32)}`,
     body: { target: `http://127.0.0.1:${address.port}` },
   });
   await handle.close();
   expect(server.listening).toBe(true);
-  expect(bootstrap.requests.at(-1)?.path).toBe("/v1/unregister");
+  expect(bootstrap.requests.at(-1)?.path).toBe(`/v1/registrations/reg_${"b".repeat(32)}`);
 });
 
 test("a surviving app reconnects and re-registers after the manager crashes", async () => {
@@ -176,7 +212,7 @@ test("malformed metadata and duplicate live ownership are classified without pro
       message: "secret provider detail",
     }),
   });
-  await expect(runtimeRequest(bootstrap.socket, "prepare", {})).rejects.toMatchObject({
+  await expect(runtimeRequest(bootstrap.endpointPath, "prepare", {})).rejects.toMatchObject({
     code: "sdk.owner_conflict",
     message: expect.not.stringContaining("secret"),
   });

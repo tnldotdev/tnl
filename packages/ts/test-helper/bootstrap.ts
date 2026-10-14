@@ -1,4 +1,5 @@
-import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -8,7 +9,6 @@ import * as z from "zod";
 import { testPublicProject } from "./project.js";
 
 export interface BootstrapRequest {
-  readonly authorization: string | undefined;
   readonly body: unknown;
   readonly contentType: string | undefined;
   readonly method: string | undefined;
@@ -17,6 +17,7 @@ export interface BootstrapRequest {
 
 export interface TestBootstrap {
   readonly socket: string;
+  readonly endpointPath: string;
   readonly environment: Record<string, string>;
   readonly requests: BootstrapRequest[];
   assertHealthy(): void;
@@ -33,10 +34,12 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
   const ownedDirectory =
     options.socket === undefined ? await mkdtemp(path.join(os.tmpdir(), "tnl-app-test-")) : null;
   const socket = options.socket ?? path.join(ownedDirectory ?? "", "control.sock");
+  const endpointPath = socket + ".endpoint.json";
+  const credential = randomBytes(32).toString("base64url");
   const requests: BootstrapRequest[] = [];
   let failure: unknown;
   let appOwner: string | undefined;
-  const server = http.createServer((request, response) => {
+  const serve = (request: http.IncomingMessage, response: http.ServerResponse) => {
     const chunks: Buffer[] = [];
     request.on("error", (error) => {
       failure ??= error;
@@ -49,9 +52,20 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
           response.writeHead(204).end();
           return;
         }
+        if (
+          request.socket.localAddress !== undefined &&
+          request.headers.authorization !== `Bearer ${credential}`
+        ) {
+          response.writeHead(401).end();
+          return;
+        }
+        if (request.method === "GET" && request.url === "/v1/status") {
+          response.setHeader("Content-Type", "application/json");
+          response.writeHead(200).end("{}");
+          return;
+        }
         const body = Buffer.concat(chunks).toString("utf8");
         requests.push({
-          authorization: request.headers.authorization,
           body: body === "" ? null : JSON.parse(body),
           contentType: request.headers["content-type"],
           method: request.method,
@@ -60,8 +74,8 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
         response.statusCode = options.status ?? 200;
         if (response.statusCode !== 200) {
           response.end(options.responseBody ?? "registration failed");
-        } else if (["/v1/register", "/v1/renew", "/v1/unregister"].includes(request.url ?? "")) {
-          if (request.url === "/v1/unregister") appOwner = undefined;
+        } else if (/^\/v1\/registrations\/reg_[a-f0-9]{32}(?:\/renew)?$/.test(request.url ?? "")) {
+          if (request.method === "DELETE") appOwner = undefined;
           response.writeHead(204).end();
         } else if (request.url === "/v1/prepare") {
           const preparation = z.object({ owner: z.string() }).parse(JSON.parse(body));
@@ -104,7 +118,9 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
         response.writeHead(400).end("invalid bootstrap request");
       }
     });
-  });
+  };
+  const server = http.createServer(serve);
+  const tcpServer = http.createServer(serve);
   server.on("error", (error) => {
     failure ??= error;
   });
@@ -120,8 +136,16 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
           server.closeAllConnections();
           await closed;
         }
+        if (tcpServer.listening) {
+          const closed = new Promise<void>((resolve, reject) =>
+            tcpServer.close((error) => (error ? reject(error) : resolve())),
+          );
+          tcpServer.closeAllConnections();
+          await closed;
+        }
       } finally {
         if (ownedDirectory !== null) await rm(ownedDirectory, { force: true, recursive: true });
+        else await rm(endpointPath, { force: true });
       }
     })());
   const assertHealthy = () => {
@@ -144,6 +168,21 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
       });
     });
     await chmod(socket, 0o600);
+    await new Promise<void>((resolve, reject) => {
+      tcpServer.once("error", reject);
+      tcpServer.listen(0, "127.0.0.1", () => {
+        tcpServer.off("error", reject);
+        resolve();
+      });
+    });
+    const address = tcpServer.address();
+    if (address === null || typeof address === "string")
+      throw new Error("test bootstrap TCP address is missing");
+    await writeFile(
+      endpointPath,
+      JSON.stringify({ version: 1, url: `http://127.0.0.1:${address.port}`, credential }),
+      { mode: 0o600 },
+    );
   } catch (error) {
     await close();
     failure = undefined; // the startup caller receives this error directly.
@@ -151,7 +190,8 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
   }
   return {
     socket,
-    environment: { APP_TEST_SOCKET: socket },
+    endpointPath,
+    environment: { APP_TEST_SOCKET: endpointPath },
     requests,
     assertHealthy,
     close,

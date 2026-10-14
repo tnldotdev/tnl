@@ -36,7 +36,7 @@ describe("test resource ownership", () => {
 
   test("surfaces malformed bootstrap requests through the waiter instead of throwing in an event handler", async () => {
     const bootstrap = await startTestBootstrap();
-    const socket = bootstrap.environment.APP_TEST_SOCKET;
+    const socket = bootstrap.socket;
     expect(socket).toBeDefined();
     if (socket === undefined) throw new Error("test bootstrap did not provide a socket");
     expect(await socketRequest(socket, "{")).toBe(400);
