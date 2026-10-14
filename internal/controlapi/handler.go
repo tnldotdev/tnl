@@ -95,6 +95,8 @@ type PublicURLPublishCredentialStore interface {
 }
 
 type PublisherIdentityStore interface {
+	RegisterGuestPublisherIdentity(context.Context, string, ed25519.PublicKey, time.Time) (controlstate.PublisherIdentity, error)
+	GuestPublisherSourceMatches(context.Context, string, netip.Addr) (bool, error)
 	ListTeamPublisherIdentities(context.Context, string, string) (controlstate.PublisherIdentityPage, error)
 	AuthenticatePublisherAccess(context.Context, string, time.Time) (controlstate.PublisherIdentity, error)
 	PublisherKeyForAccess(context.Context, controlstate.PublisherIdentity) (ed25519.PublicKey, error)

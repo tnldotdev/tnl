@@ -59,7 +59,7 @@ func (h *handler) allocatePublisherNamespace(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if machine.Scope.Kind != "namespace" || machine.CreatorID == "" {
+	if machine.Scope.Kind != "namespace" || machine.CreatorID == "" || machine.GuestID != "" {
 		writeBearerProblem(w)
 		return
 	}

@@ -29,6 +29,7 @@ func (d *Database) PublisherKeyForAccess(ctx context.Context, identity Publisher
 // enrolling person's current membership.
 func (d *Database) PublisherRunPlan(ctx context.Context, publisher PublisherIdentity, route PublicURL, dnsAutomation bool) (authorization.CertificatePlan, error) {
 	if route.TeamID != publisher.Scope.TeamID || route.LifecycleState != PublicURLLifecycleEnabled ||
+		publisher.GuestID != "" && (route.Purpose != PublicURLPurposeDemo || !route.Ephemeral || route.MembershipID == "") ||
 		publisher.Scope.Kind == "saved_url" && (route.ID != publisher.Scope.PublicURLID || route.Ephemeral) ||
 		publisher.Scope.Kind == "namespace" && (!route.Ephemeral || route.DomainID != publisher.Scope.DomainID) ||
 		publisher.Scope.Kind != "saved_url" && publisher.Scope.Kind != "namespace" {
@@ -49,7 +50,7 @@ func (d *Database) PublisherRunPlan(ctx context.Context, publisher PublisherIden
 	plan := authorization.PublicURLCertificatePlan(route.CanonicalHostname, namespace,
 		domain.Kind == "custom" && route.PublicURLScope == PublicURLScopeShared, dnsAutomation)
 	if plan == nil || !certificateidentity.Covers(plan.Identifiers, route.CanonicalHostname) ||
-		publisher.Scope.Kind == "namespace" && plan.ChallengeMethod != certificateidentity.ChallengeDNS01 {
+		publisher.Scope.Kind == "namespace" && publisher.GuestID == "" && plan.ChallengeMethod != certificateidentity.ChallengeDNS01 {
 		return authorization.CertificatePlan{}, ErrPublisherIdentity
 	}
 	return *plan, nil
@@ -59,6 +60,9 @@ func (d *Database) PublisherRunPlan(ctx context.Context, publisher PublisherIden
 func (d *Database) PublisherMayStartRun(ctx context.Context, identity PublisherIdentity, publicURLID string) (bool, error) {
 	if identity.Scope.Kind == "saved_url" {
 		return identity.Scope.PublicURLID == publicURLID, nil
+	}
+	if identity.GuestID != "" {
+		return d.GuestOwnsPublicURL(ctx, identity.GuestID, publicURLID)
 	}
 	if identity.Scope.Kind != "namespace" {
 		return false, nil

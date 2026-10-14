@@ -192,11 +192,12 @@ const getPublisherAccessToken = `-- name: GetPublisherAccessToken :one
 SELECT tokens.digest, tokens.publisher_identity_id, tokens.grant_id, tokens.key_id, tokens.created_at, tokens.expires_at, grants.kind, grants.public_url_id, grants.domain_id,
     grants.namespace, grants.expires_at AS grant_expires_at,
     grants.revoked_at AS grant_revoked_at, identities.team_id,
-    identities.revoked_at AS identity_revoked_at,
-    identities.created_by_identity_id
+    identities.revoked_at AS identity_revoked_at, identities.created_by_identity_id,
+    guests.guest_id
 FROM control.publisher_access_tokens AS tokens
 JOIN control.publisher_identity_grants AS grants ON grants.id = tokens.grant_id
 JOIN control.publisher_identities AS identities ON identities.id = tokens.publisher_identity_id
+LEFT JOIN control.guest_publisher_identities AS guests ON guests.publisher_identity_id = identities.id
 WHERE tokens.digest = $1
 `
 
@@ -216,6 +217,7 @@ type GetPublisherAccessTokenRow struct {
 	TeamID              string
 	IdentityRevokedAt   pgtype.Timestamptz
 	CreatedByIdentityID pgtype.Text
+	GuestID             pgtype.Text
 }
 
 func (q *Queries) GetPublisherAccessToken(ctx context.Context, digest []byte) (GetPublisherAccessTokenRow, error) {
@@ -237,6 +239,7 @@ func (q *Queries) GetPublisherAccessToken(ctx context.Context, digest []byte) (G
 		&i.TeamID,
 		&i.IdentityRevokedAt,
 		&i.CreatedByIdentityID,
+		&i.GuestID,
 	)
 	return i, err
 }

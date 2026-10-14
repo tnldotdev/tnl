@@ -293,6 +293,27 @@ paths:
                 $ref: "#/components/schemas/GuestDemoNumber"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/guest-demo/publisher:
+    post:
+      operationId: registerGuestPublisherIdentity
+      summary: Register a signing key for this guest trial
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterGuestPublisherIdentityRequest"
+      responses:
+        "201":
+          description: Guest publisher key and namespace grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestPublisherIdentity"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/previews:
     post:
       operationId: createPreview
@@ -1956,6 +1977,33 @@ components:
           type: integer
           format: int64
           minimum: 1
+    RegisterGuestPublisherIdentityRequest:
+      type: object
+      additionalProperties: false
+      required: [public_key]
+      properties:
+        public_key:
+          type: string
+          minLength: 43
+          maxLength: 43
+          description: Base64url-encoded Ed25519 public key without padding.
+    GuestPublisherIdentity:
+      type: object
+      additionalProperties: false
+      required: [client_id, key_id, grant_id, team_id, domain_id, namespace]
+      properties:
+        client_id:
+          $ref: "#/components/schemas/ResourceID"
+        key_id:
+          $ref: "#/components/schemas/ResourceID"
+        grant_id:
+          $ref: "#/components/schemas/ResourceID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        domain_id:
+          $ref: "#/components/schemas/DomainID"
+        namespace:
+          $ref: "#/components/schemas/CanonicalHostname"
     AuthenticationFacts:
       type: object
       additionalProperties: false

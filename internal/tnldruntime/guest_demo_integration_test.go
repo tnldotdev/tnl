@@ -2,7 +2,10 @@ package tnldruntime
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -13,16 +16,46 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlapi"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisheridentity"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+// the trial client still creates its numbered demo URL; only a signed guest
+// publisher assertion and proof can start the publish run.
+type guestIntegrationControl struct {
+	*controlclient.Client
+	publisher *controlclient.Client
+	authority *authorityclient.Client
+	identity  controlv1.GuestPublisherIdentity
+	private   ed25519.PrivateKey
+}
+
+func (c *guestIntegrationControl) CreatePublishRun(ctx context.Context, id, key string) (controlv1.PublishRunSetup, error) {
+	return c.CreatePublishRunWithTraffic(ctx, id, key, trafficlimits.Selection{})
+}
+
+func (c *guestIntegrationControl) CreatePublishRunWithTraffic(ctx context.Context, id, key string, traffic trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+	access, err := c.authority.ExchangePublisherAssertion(ctx, c.identity.ClientId, c.identity.GrantId, c.identity.KeyId, c.private)
+	if err != nil {
+		return controlv1.PublishRunSetup{}, err
+	}
+	proof, err := publisheridentity.SignRun(c.private, id, key)
+	if err != nil {
+		return controlv1.PublishRunSetup{}, err
+	}
+	return c.publisher.CreatePublisherRun(ctx, id, key, access, proof, traffic)
+}
 
 func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testing.T) {
 	databaseURL, _ := standaloneTestDatabase(t)
@@ -92,6 +125,49 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	if err := json.Unmarshal(allowed.Body.Bytes(), &route); err != nil {
 		t.Fatal(err)
 	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	register := func(ip string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPost, "/v1/guest-demo/publisher",
+			strings.NewReader(`{"public_key":"`+base64.RawURLEncoding.EncodeToString(public)+`"}`))
+		request.RemoteAddr = ip + ":49153"
+		request.Header.Set("Authorization", "Bearer "+guest.AccessToken)
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, request)
+		return response
+	}
+	if changed := register("192.0.2.8"); changed.Code != http.StatusForbidden || !strings.Contains(changed.Body.String(), `"guest_ip_changed"`) {
+		t.Fatalf("changed guest publisher IP = %d, %s", changed.Code, changed.Body.String())
+	}
+	registered := register("192.0.2.7")
+	if registered.Code != http.StatusCreated {
+		t.Fatalf("guest publisher registration = %d, %s", registered.Code, registered.Body.String())
+	}
+	var machine controlv1.GuestPublisherIdentity
+	if err := json.Unmarshal(registered.Body.Bytes(), &machine); err != nil || machine.Namespace != guest.Namespace {
+		t.Fatalf("guest publisher scope = %+v, %v", machine, err)
+	}
+	assertion, err := publisheridentity.Sign(machine.ClientId, machine.KeyId,
+		"https://control.example/v1/publisher/token", private, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := state.ExchangePublisherAssertion(t.Context(), machine.ClientId, machine.GrantId,
+		"https://control.example/v1/publisher/token", assertion, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	allocateArbitrary := httptest.NewRequest(http.MethodPost, "/v1/ephemeral-public-urls",
+		strings.NewReader(`{"invocation_id":"ivk_0123456789abcdefghijkl","target":"http://127.0.0.1:3000"}`))
+	allocateArbitrary.Header.Set("Authorization", "Bearer "+access.Token)
+	deniedAllocation := httptest.NewRecorder()
+	h.ServeHTTP(deniedAllocation, allocateArbitrary)
+	if deniedAllocation.Code != http.StatusUnauthorized {
+		t.Fatalf("guest publisher allocated arbitrary URL = %d, %s", deniedAllocation.Code, deniedAllocation.Body.String())
+	}
 	for _, name := range []string{"guest-relay-a", "guest-relay-b"} {
 		if _, err := state.RegisterRelay(t.Context(), controlstate.RelayRegistration{
 			RelayServiceID: name, RelayID: name + "-process", RelayRunID: name + "-run",
@@ -102,16 +178,36 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 			t.Fatal(err)
 		}
 	}
-	startRun := func(key string) *httptest.ResponseRecorder {
+	startRun := func(key, ip string) *httptest.ResponseRecorder {
 		t.Helper()
-		request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/"+route.Id+"/publish-runs", nil)
-		request.Header.Set("Authorization", "Bearer "+guest.AccessToken)
+		proof, err := publisheridentity.SignRun(private, route.Id, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/"+route.Id+"/publish-runs",
+			strings.NewReader(`{"publisher_proof":"`+proof+`"}`))
+		request.RemoteAddr = ip + ":49154"
+		request.Header.Set("Authorization", "Bearer "+access.Token)
 		request.Header.Set("Idempotency-Key", key)
 		response := httptest.NewRecorder()
 		h.ServeHTTP(response, request)
 		return response
 	}
-	started := startRun("guest-first-run")
+	if missing := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/"+route.Id+"/publish-runs", nil)
+		request.RemoteAddr = "192.0.2.7:49154"
+		request.Header.Set("Authorization", "Bearer "+access.Token)
+		request.Header.Set("Idempotency-Key", "missing-proof")
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, request)
+		return response
+	}(); missing.Code != http.StatusBadRequest {
+		t.Fatalf("unsigned guest run = %d, %s", missing.Code, missing.Body.String())
+	}
+	if changed := startRun("changed-source", "192.0.2.8"); changed.Code != http.StatusForbidden || !strings.Contains(changed.Body.String(), `"guest_ip_changed"`) {
+		t.Fatalf("changed guest run IP = %d, %s", changed.Code, changed.Body.String())
+	}
+	started := startRun("guest-first-run", "192.0.2.7")
 	if started.Code != http.StatusCreated {
 		t.Fatalf("guest publish run = %d, %s", started.Code, started.Body.String())
 	}
@@ -121,7 +217,7 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 		setup.CertificatePlan.Identifiers[0] != "*."+guest.Namespace {
 		t.Fatalf("guest certificate plan = %+v, error = %v", setup.CertificatePlan, err)
 	}
-	if repeated := startRun("guest-second-run"); repeated.Code != http.StatusConflict {
+	if repeated := startRun("guest-second-run", "192.0.2.7"); repeated.Code != http.StatusConflict {
 		t.Fatalf("second active guest publish run = %d, %s", repeated.Code, repeated.Body.String())
 	}
 	for _, denied := range []*httptest.ResponseRecorder{
@@ -175,6 +271,22 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("guest client could not reach control without login: %v", err)
 	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisherControl, err := controlclient.New(serverURL, controlHTTP, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := publisherControl.RegisterGuestPublisherIdentity(t.Context(), credentials.AccessToken(issued.AccessToken), public)
+	if err != nil || identity.Namespace != issued.Namespace || identity.TeamId != issued.TeamId {
+		t.Fatalf("guest publisher enrollment = %+v, %v", identity, err)
+	}
+	authority, err := authorityclient.New(serverURL, controlHTTP, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	allocated, err := authenticated.Control.AllocateGuestDemoNumber(t.Context())
 	if err != nil || allocated.Number != 1 {
 		t.Fatalf("guest demo number = %+v, %v", allocated, err)
@@ -208,7 +320,9 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	tcp := redirectIntegrationConnector(publicAddress, muxsession.TLSYamuxConnector{TLSConfig: relayTLS})
 	hostname := "demo-1." + issued.Namespace
 	handle := startOwnedIntegrationPublisher(t, owner, publisher.Config{
-		Control: authenticated.Control, TeamID: issued.TeamId, MembershipID: issued.MembershipId,
+		Control: &guestIntegrationControl{Client: authenticated.Control, publisher: publisherControl,
+			authority: authority, identity: identity, private: private},
+		TeamID: issued.TeamId, MembershipID: issued.MembershipId,
 		DomainID: issued.DomainId, Hostname: hostname, PublicURLScope: controlv1.Member, Purpose: controlv1.Demo,
 		PolicyRevision: 1, Target: localDemo.Target(),
 		AllowedIPPrefixes: []string{netip.PrefixFrom(address.Unmap(), address.Unmap().BitLen()).String()},

@@ -156,11 +156,12 @@ INSERT INTO control.publisher_access_tokens (
 SELECT tokens.*, grants.kind, grants.public_url_id, grants.domain_id,
     grants.namespace, grants.expires_at AS grant_expires_at,
     grants.revoked_at AS grant_revoked_at, identities.team_id,
-    identities.revoked_at AS identity_revoked_at,
-    identities.created_by_identity_id
+    identities.revoked_at AS identity_revoked_at, identities.created_by_identity_id,
+    guests.guest_id
 FROM control.publisher_access_tokens AS tokens
 JOIN control.publisher_identity_grants AS grants ON grants.id = tokens.grant_id
 JOIN control.publisher_identities AS identities ON identities.id = tokens.publisher_identity_id
+LEFT JOIN control.guest_publisher_identities AS guests ON guests.publisher_identity_id = identities.id
 WHERE tokens.digest = sqlc.arg(digest);
 
 -- name: DeleteExpiredPublisherAccessTokens :exec

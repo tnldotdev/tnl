@@ -1380,6 +1380,16 @@ type GuestDemoSession struct {
 	TeamId       TeamID            `json:"team_id"`
 }
 
+// GuestPublisherIdentity defines model for GuestPublisherIdentity.
+type GuestPublisherIdentity struct {
+	ClientId  ResourceID        `json:"client_id"`
+	DomainId  DomainID          `json:"domain_id"`
+	GrantId   ResourceID        `json:"grant_id"`
+	KeyId     ResourceID        `json:"key_id"`
+	Namespace CanonicalHostname `json:"namespace"`
+	TeamId    TeamID            `json:"team_id"`
+}
+
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
 	Status HealthResponseStatus `json:"status"`
@@ -1777,6 +1787,12 @@ type RedeemShareRequest struct {
 	ShareId          *ShareID `json:"share_id,omitempty"`
 }
 
+// RegisterGuestPublisherIdentityRequest defines model for RegisterGuestPublisherIdentityRequest.
+type RegisterGuestPublisherIdentityRequest struct {
+	// PublicKey Base64url-encoded Ed25519 public key without padding.
+	PublicKey string `json:"public_key"`
+}
+
 // RelayID defines model for RelayID.
 type RelayID = ResourceID
 
@@ -2086,6 +2102,9 @@ type AllocateEphemeralPublicURLJSONRequestBody = AllocateEphemeralPublicURLReque
 
 // AppendFeedbackEventJSONRequestBody defines body for AppendFeedbackEvent for application/json ContentType.
 type AppendFeedbackEventJSONRequestBody = AppendFeedbackEventRequest
+
+// RegisterGuestPublisherIdentityJSONRequestBody defines body for RegisterGuestPublisherIdentity for application/json ContentType.
+type RegisterGuestPublisherIdentityJSONRequestBody = RegisterGuestPublisherIdentityRequest
 
 // CreatePreviewJSONRequestBody defines body for CreatePreview for application/json ContentType.
 type CreatePreviewJSONRequestBody = CreatePreviewRequest
@@ -2453,6 +2472,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
 	AllocateGuestDemoNumber(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterGuestPublisherIdentityWithBody Register a signing key for this guest trial
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/guest-demo/publisher (the `RegisterGuestPublisherIdentity` operationId).
+	RegisterGuestPublisherIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterGuestPublisherIdentity Register a signing key for this guest trial
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/guest-demo/publisher (the `RegisterGuestPublisherIdentity` operationId).
+	RegisterGuestPublisherIdentity(ctx context.Context, body RegisterGuestPublisherIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth Confirm that the control HTTP server is serving
 	//
@@ -3371,6 +3404,40 @@ func (c *Client) CreateGuestDemo(ctx context.Context, reqEditors ...RequestEdito
 // Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
 func (c *Client) AllocateGuestDemoNumber(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAllocateGuestDemoNumberRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterGuestPublisherIdentityWithBody Register a signing key for this guest trial
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/guest-demo/publisher (the `RegisterGuestPublisherIdentity` operationId).
+func (c *Client) RegisterGuestPublisherIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterGuestPublisherIdentityRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterGuestPublisherIdentity Register a signing key for this guest trial
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/guest-demo/publisher (the `RegisterGuestPublisherIdentity` operationId).
+func (c *Client) RegisterGuestPublisherIdentity(ctx context.Context, body RegisterGuestPublisherIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterGuestPublisherIdentityRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5647,6 +5714,46 @@ func NewAllocateGuestDemoNumberRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewRegisterGuestPublisherIdentityRequest calls the generic RegisterGuestPublisherIdentity builder with application/json body
+func NewRegisterGuestPublisherIdentityRequest(server string, body RegisterGuestPublisherIdentityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterGuestPublisherIdentityRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRegisterGuestPublisherIdentityRequestWithBody constructs an http.Request for the RegisterGuestPublisherIdentity method, with any body, and a specified content type
+func NewRegisterGuestPublisherIdentityRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/guest-demo/publisher")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -8359,6 +8466,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/guest-demo/number (the `AllocateGuestDemoNumber` operationId).
 	AllocateGuestDemoNumberWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AllocateGuestDemoNumberResponse, error)
 
+	// RegisterGuestPublisherIdentityWithBodyWithResponse Register a signing key for this guest trial
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/guest-demo/publisher (the `RegisterGuestPublisherIdentity` operationId).
+	RegisterGuestPublisherIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterGuestPublisherIdentityResponse, error)
+
+	// RegisterGuestPublisherIdentityWithResponse Register a signing key for this guest trial
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/guest-demo/publisher (the `RegisterGuestPublisherIdentity` operationId).
+	RegisterGuestPublisherIdentityWithResponse(ctx context.Context, body RegisterGuestPublisherIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterGuestPublisherIdentityResponse, error)
+
 	// GetHealthWithResponse Confirm that the control HTTP server is serving
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -9922,6 +10043,54 @@ func (r AllocateGuestDemoNumberResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AllocateGuestDemoNumberResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RegisterGuestPublisherIdentityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *GuestPublisherIdentity
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RegisterGuestPublisherIdentityResponse) GetJSON201() *GuestPublisherIdentity {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegisterGuestPublisherIdentityResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterGuestPublisherIdentityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterGuestPublisherIdentityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterGuestPublisherIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterGuestPublisherIdentityResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12757,6 +12926,32 @@ func (c *ClientWithResponses) AllocateGuestDemoNumberWithResponse(ctx context.Co
 	return ParseAllocateGuestDemoNumberResponse(rsp)
 }
 
+// RegisterGuestPublisherIdentityWithBodyWithResponse Register a signing key for this guest trial
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/guest-demo/publisher (the `RegisterGuestPublisherIdentity` operationId).
+func (c *ClientWithResponses) RegisterGuestPublisherIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterGuestPublisherIdentityResponse, error) {
+	rsp, err := c.RegisterGuestPublisherIdentityWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterGuestPublisherIdentityResponse(rsp)
+}
+
+// RegisterGuestPublisherIdentityWithResponse Register a signing key for this guest trial
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/guest-demo/publisher (the `RegisterGuestPublisherIdentity` operationId).
+func (c *ClientWithResponses) RegisterGuestPublisherIdentityWithResponse(ctx context.Context, body RegisterGuestPublisherIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterGuestPublisherIdentityResponse, error) {
+	rsp, err := c.RegisterGuestPublisherIdentity(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterGuestPublisherIdentityResponse(rsp)
+}
+
 // GetHealthWithResponse Confirm that the control HTTP server is serving
 //
 // Returns a wrapper object for the known response body format(s).
@@ -14504,6 +14699,39 @@ func ParseAllocateGuestDemoNumberResponse(rsp *http.Response) (*AllocateGuestDem
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRegisterGuestPublisherIdentityResponse parses an HTTP response from a RegisterGuestPublisherIdentityWithResponse call
+func ParseRegisterGuestPublisherIdentityResponse(rsp *http.Response) (*RegisterGuestPublisherIdentityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterGuestPublisherIdentityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest GuestPublisherIdentity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -16329,6 +16557,9 @@ type ServerInterface interface {
 	// AllocateGuestDemoNumber Allocate a new hostname number for this guest trial
 	// (POST /v1/guest-demo/number)
 	AllocateGuestDemoNumber(w http.ResponseWriter, r *http.Request)
+	// RegisterGuestPublisherIdentity Register a signing key for this guest trial
+	// (POST /v1/guest-demo/publisher)
+	RegisterGuestPublisherIdentity(w http.ResponseWriter, r *http.Request)
 	// GetHealth Confirm that the control HTTP server is serving
 	// (GET /v1/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
@@ -17109,6 +17340,20 @@ func (siw *ServerInterfaceWrapper) AllocateGuestDemoNumber(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AllocateGuestDemoNumber(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RegisterGuestPublisherIdentity operation middleware
+func (siw *ServerInterfaceWrapper) RegisterGuestPublisherIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegisterGuestPublisherIdentity(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -18947,6 +19192,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/webhook-providers/{provider}/source", wrapper.GetWebhookProviderSource)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo", wrapper.CreateGuestDemo)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo/number", wrapper.AllocateGuestDemoNumber)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo/publisher", wrapper.RegisterGuestPublisherIdentity)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews", wrapper.CreatePreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}", wrapper.GetPreview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/public-urls", wrapper.AddPreviewPublicURL)

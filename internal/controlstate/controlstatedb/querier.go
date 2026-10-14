@@ -207,6 +207,7 @@ type Querier interface {
 	GetTeamActorContext(ctx context.Context, arg GetTeamActorContextParams) (GetTeamActorContextRow, error)
 	GetTeamMembershipContext(ctx context.Context, arg GetTeamMembershipContextParams) (GetTeamMembershipContextRow, error)
 	GuestForPublicURL(ctx context.Context, publicUrlID string) (string, error)
+	GuestForPublisherIdentity(ctx context.Context, publisherIdentityID string) (GuestForPublisherIdentityRow, error)
 	GuestNamespaceReserved(ctx context.Context, label string) (bool, error)
 	GuestOwnsPublicURL(ctx context.Context, arg GuestOwnsPublicURLParams) (bool, error)
 	GuestRunAllowanceSpent(ctx context.Context, arg GuestRunAllowanceSpentParams) (string, error)
@@ -226,6 +227,7 @@ type Querier interface {
 	// already hold the clock. keep it through commit to preserve revision order.
 	InsertFinalIngressRoutingTableEvent(ctx context.Context, arg InsertFinalIngressRoutingTableEventParams) (int64, error)
 	InsertGuestPublicURL(ctx context.Context, arg InsertGuestPublicURLParams) error
+	InsertGuestPublisherIdentity(ctx context.Context, arg InsertGuestPublisherIdentityParams) error
 	InsertGuestTrial(ctx context.Context, arg InsertGuestTrialParams) (ControlGuestTrial, error)
 	InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error)
 	InsertPublicURL(ctx context.Context, arg InsertPublicURLParams) (ControlPublicUrl, error)

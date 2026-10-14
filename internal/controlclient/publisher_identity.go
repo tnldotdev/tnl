@@ -2,11 +2,22 @@ package controlclient
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"net/http"
 
+	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+func (c *Client) RegisterGuestPublisherIdentity(ctx context.Context, trial credentials.AccessToken, public ed25519.PublicKey) (controlv1.GuestPublisherIdentity, error) {
+	return request[controlv1.GuestPublisherIdentity](ctx, c, string(trial), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RegisterGuestPublisherIdentity(ctx, controlv1.RegisterGuestPublisherIdentityRequest{
+			PublicKey: base64.RawURLEncoding.EncodeToString(public),
+		}, editors...)
+	})
+}
 
 func (c *Client) CreatePublisherEnrollment(ctx context.Context, body controlv1.CreatePublisherEnrollmentRequest) (controlv1.IssuedPublisherEnrollment, error) {
 	return requestWithAccess[controlv1.IssuedPublisherEnrollment](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {

@@ -56,6 +56,7 @@ type CreatePublisherEnrollmentRequest struct {
 type PublisherIdentity struct {
 	ID, KeyID, GrantID string
 	CreatorID          string
+	GuestID            string
 	Scope              PublisherScope
 }
 
@@ -373,7 +374,14 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, clientID, gra
 	}
 	scope := PublisherScope{TeamID: identity.TeamID, Kind: grant.Kind, PublicURLID: grant.PublicURLID.String,
 		DomainID: grant.DomainID.String, Namespace: grant.Namespace.String}
-	if err := validatePublisherScope(ctx, queries, scope); err != nil {
+	guestID := ""
+	if identity.Kind == "guest" {
+		guest, err := queries.GuestForPublisherIdentity(ctx, clientID)
+		if err != nil || !guestPublisherScope(scope, guest, now) {
+			return PublisherAccess{}, ErrPublisherIdentity
+		}
+		guestID = guest.ID
+	} else if err := validatePublisherScope(ctx, queries, scope); err != nil {
 		return PublisherAccess{}, ErrPublisherIdentity
 	}
 	if err := queries.DeleteExpiredPublisherAssertions(ctx, timestamptz(now)); err != nil {
@@ -407,7 +415,7 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, clientID, gra
 	if err := tx.Commit(ctx); err != nil {
 		return PublisherAccess{}, err
 	}
-	return PublisherAccess{PublisherIdentity: PublisherIdentity{ID: clientID, KeyID: keyID, GrantID: grantID, Scope: scope}, Token: access, Until: until}, nil
+	return PublisherAccess{PublisherIdentity: PublisherIdentity{ID: clientID, KeyID: keyID, GrantID: grantID, GuestID: guestID, CreatorID: identity.CreatedByIdentityID.String, Scope: scope}, Token: access, Until: until}, nil
 }
 
 // AuthenticatePublisherAccess rechecks grant and identity revocation. the
@@ -425,7 +433,13 @@ func (d *Database) AuthenticatePublisherAccess(ctx context.Context, token string
 	if err != nil {
 		return PublisherIdentity{}, fmt.Errorf("read publisher access token: %w", err)
 	}
-	return PublisherIdentity{ID: row.PublisherIdentityID, GrantID: row.GrantID, KeyID: row.KeyID, CreatorID: row.CreatedByIdentityID.String,
+	if row.GuestID.Valid {
+		guest, err := controlstatedb.New(d.pool).GuestForPublisherIdentity(ctx, row.PublisherIdentityID)
+		if err != nil || !guestPublisherScope(PublisherScope{TeamID: row.TeamID, Kind: row.Kind, DomainID: row.DomainID.String, Namespace: row.Namespace.String}, guest, now) {
+			return PublisherIdentity{}, ErrPublisherIdentity
+		}
+	}
+	return PublisherIdentity{ID: row.PublisherIdentityID, GrantID: row.GrantID, KeyID: row.KeyID, CreatorID: row.CreatedByIdentityID.String, GuestID: row.GuestID.String,
 		Scope: PublisherScope{TeamID: row.TeamID, Kind: row.Kind, PublicURLID: row.PublicURLID.String,
 			DomainID: row.DomainID.String, Namespace: row.Namespace.String}}, nil
 }

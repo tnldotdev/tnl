@@ -38,6 +38,22 @@ func (h *handler) createPublisherIdentityRun(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, http.StatusNotFound, controlv1.NotFound, "public URL not found in publisher grant")
 		return
 	}
+	if machine.GuestID != "" {
+		address, err := guestRequestAddress(r)
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid client address")
+			return
+		}
+		matched, err := h.publisherIdentities.GuestPublisherSourceMatches(r.Context(), machine.GuestID, address)
+		if err != nil {
+			writeControlStateProblem(w, "check guest IP", err)
+			return
+		}
+		if !matched {
+			writeProblem(w, http.StatusForbidden, controlv1.GuestIpChanged, "your IP changed since this guest trial started; run tnl auth login to continue")
+			return
+		}
+	}
 	key := r.Header.Get("Idempotency-Key")
 	route, err := h.store.GetPublicURLForPublishRunAuthorization(r.Context(), string(publicURLID), key)
 	if err != nil {
@@ -109,7 +125,7 @@ func (h *handler) createPublisherIdentityRun(w http.ResponseWriter, r *http.Requ
 	}
 	digest = sha256.Sum256(signed)
 	setup, err := h.store.CreatePublishRun(r.Context(), controlstate.PublishRunRequest{
-		PublicURLID: route.ID, TeamID: route.TeamID, ActingIdentityID: machine.CreatorID,
+		PublicURLID: route.ID, TeamID: route.TeamID, ActingIdentityID: machine.CreatorID, GuestID: machine.GuestID,
 		PublisherIdentityID: machine.ID, PublisherGrantID: machine.GrantID,
 		RetrySecret: retrySecret[:], IdempotencyKey: key, RequestDigest: [32]byte(digest),
 		PolicyRevision: uint64(route.PolicyRevision), CertificateCacheKey: plan.CacheKey,
@@ -117,6 +133,10 @@ func (h *handler) createPublisherIdentityRun(w http.ResponseWriter, r *http.Requ
 		CertificateChallenge: plan.ChallengeMethod, ExpectedMutationRevision: route.MutationRevision,
 		Traffic: &effective,
 	}, time.Now().UTC(), publisherLeaseDuration, publisherConnectionCredentialDuration)
+	if errors.Is(err, controlstate.ErrPublisherIdentity) {
+		writeBearerProblem(w)
+		return
+	}
 	if err != nil {
 		writeControlStateProblem(w, "create publisher run", err)
 		return

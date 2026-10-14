@@ -577,6 +577,14 @@ grants can start runs only for URLs allocated to that exact identity and grant.
 existing public URL publish credentials and ephemeral credentials still start
 and renew their runs through their own checks; migration 32 adds the namespace
 allocation table without replacing any credential rows or publish run columns.
+guest demos keep the numbered, source-IP-restricted URL created with the trial
+credential. the native publisher registers a trial-bound signing key, exchanges
+an assertion for a namespace grant token, and signs each run start. control
+checks the trial's source IP at enrollment and run creation and checks its
+expiry and usage limits at token exchange, token use, and run creation. guest
+grants can start runs only on that trial's demo URLs; they cannot allocate
+arbitrary namespace URLs. migration 34 links these identities to guest trials
+and follows the independent migration 33.
 `tnl publisher enroll <public-url-id>` issues a one-use key for an enabled saved
 app URL; `tnl publisher enroll --namespace` selects the current authorized
 namespace. `tnl publish <target> --enroll-key -` reads the key from stdin and

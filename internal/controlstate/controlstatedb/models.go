@@ -291,6 +291,12 @@ type ControlGuestPublicUrl struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type ControlGuestPublisherIdentity struct {
+	PublisherIdentityID string
+	GuestID             string
+	CreatedAt           pgtype.Timestamptz
+}
+
 type ControlGuestTrial struct {
 	ID                    string
 	CredentialID          pgtype.Text

@@ -180,6 +180,17 @@ func (d *Database) createPublishRun(
 			identity.CreatedByIdentityID.String != request.ActingIdentityID {
 			return PublishRunSetup{}, ErrPublisherIdentity
 		}
+		if request.GuestID != "" {
+			guest, err := queries.GuestForPublisherIdentity(ctx, identity.ID)
+			if err != nil || guest.ID != request.GuestID || !guestPublisherScope(PublisherScope{
+				TeamID: identity.TeamID, DomainID: route.DomainID, Namespace: route.Namespace, Kind: "namespace",
+			}, guest, now) || route.Purpose != string(PublicURLPurposeDemo) ||
+				route.MembershipID.String != guest.MembershipID {
+				return PublishRunSetup{}, ErrPublisherIdentity
+			}
+		} else if identity.Kind == "guest" {
+			return PublishRunSetup{}, ErrPublisherIdentity
+		}
 		grant, err := queries.GetPublisherIdentityGrant(ctx, controlstatedb.GetPublisherIdentityGrantParams{
 			GrantID: request.PublisherGrantID, PublisherIdentityID: request.PublisherIdentityID,
 		})
@@ -189,7 +200,7 @@ func (d *Database) createPublishRun(
 				grant.Kind == "namespace" && route.Ephemeral && grant.DomainID.String == route.DomainID && grant.Namespace.String == route.Namespace) {
 			return PublishRunSetup{}, ErrPublisherIdentity
 		}
-		if grant.Kind == "namespace" {
+		if grant.Kind == "namespace" && request.GuestID == "" {
 			allocation, err := queries.GetPublisherNamespaceAllocation(ctx, route.ID)
 			if err != nil || allocation.PublisherIdentityID != request.PublisherIdentityID ||
 				allocation.PublisherGrantID != request.PublisherGrantID {
@@ -657,7 +668,7 @@ func validatePublishRunRequest(
 	}
 	if (request.PublisherIdentityID == "") != (request.PublisherGrantID == "") ||
 		request.PublisherIdentityID != "" && (!opaqueid.Valid(request.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) ||
-			!opaqueid.Valid(request.PublisherGrantID, opaqueid.PublisherGrantPrefix) || request.PublishCredentialID != "" || request.GuestID != "") {
+			!opaqueid.Valid(request.PublisherGrantID, opaqueid.PublisherGrantPrefix) || request.PublishCredentialID != "") {
 		return ErrPublisherIdentity
 	}
 	if len(request.RetrySecret) < 32 {

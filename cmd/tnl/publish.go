@@ -162,6 +162,13 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if protocol == controlv1.Http {
 		output.openURL = browserOpener(ctx, flags.Open, authenticated.Discovery.DnsAutomation)
 	}
+	var guestControl *guestSignedControl
+	if guest != nil {
+		guestControl, err = newGuestSignedControl(ctx, serverURL, *guest, authenticated)
+		if err != nil {
+			return err
+		}
+	}
 	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
 	if err != nil {
 		return err
@@ -222,6 +229,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.limits(), traffic)
+	if guestControl != nil {
+		publisherConfig.Control = guestControl
+	}
 	publisherConfig.ServiceProtocol = protocol
 	publisherConfig.TargetTLSName = flags.TargetTLSName
 	publisherConfig.TargetTLS = flags.TargetTLS
