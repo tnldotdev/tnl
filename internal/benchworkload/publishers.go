@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/publisherauth"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -89,6 +90,7 @@ type Publishers struct {
 	base        publisher.Config
 	namespace   string
 	database    *clientstate.Database
+	owner       *publisherauth.Owner
 	ctx         context.Context
 	cancel      context.CancelFunc
 	processes   []*publicURLProcess
@@ -198,10 +200,14 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	if err != nil {
 		return nil, err
 	}
+	owner, err := publisherauth.Interactive(auth, "tnlbench")
+	if err != nil {
+		return nil, err
+	}
 	groupCtx, cancel := context.WithCancel(ctx)
-	return &Publishers{config: config, database: database, ctx: groupCtx, cancel: cancel,
+	return &Publishers{config: config, database: database, owner: owner, ctx: groupCtx, cancel: cancel,
 		namespace: membership.ManagedLabel + "." + domain.CanonicalDomain, failures: make(chan error, 1), run: publisher.Run,
-		base: publisher.Config{Control: auth.Control, State: store, Target: config.Target, DrainTime: config.DrainTime,
+		base: publisher.Config{Control: &publisherauth.RunControl{Client: auth.PublisherControl, Owner: owner}, State: store, Target: config.Target, DrainTime: config.DrainTime,
 			Limits:    limits,
 			Ephemeral: config.Ephemeral,
 			TeamID:    team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,
@@ -432,7 +438,7 @@ func (g *Publishers) Close(ctx context.Context) (ShutdownResult, error) {
 			return result, err
 		}
 	}
-	return result, errors.Join(err, g.database.Close())
+	return result, errors.Join(err, g.owner.Close(ctx), g.database.Close())
 }
 
 type disabledConnector struct{}
