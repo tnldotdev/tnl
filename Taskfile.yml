@@ -248,7 +248,7 @@ tasks:
   go:test:integration:postgres-tls:
     desc: Verify PostgreSQL channel binding with a disposable TLS-enabled target
     cmds:
-      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgresMatchingCertificate$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgres(MatchingCertificate|EncryptedCancellation)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:mysql-oracle:
     desc: Check bounded MySQL result observations against the test-only Vitess decoder

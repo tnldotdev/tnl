@@ -82,7 +82,7 @@ func (c *postgresAuthChoiceConn) Read(data []byte) (int, error) {
 		if bytes.Equal(prefix, postgresPlusMethod) {
 			message, err := (&pgproto3.ErrorResponse{
 				Severity: "FATAL", Code: "28000",
-				Message: "PostgreSQL channel binding cannot cross different TLS certificates; use channel_binding=disable or --visitor-tls-passthrough with a certificate the client can verify",
+				Message: "PostgreSQL channel binding cannot cross different TLS certificates; use channel_binding=disable when the private target is plaintext or uses a different certificate",
 			}).Encode(nil)
 			if err != nil {
 				return 0, err

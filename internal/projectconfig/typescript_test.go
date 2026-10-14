@@ -201,15 +201,16 @@ func TestLoadRejectsVersionedOrDaemonResult(t *testing.T) {
 
 func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 	for name, test := range map[string]struct{ source, category string }{
-		"service server":    {`export default {services: {api: {server: "https://control.example"}}};`, `unknown TypeScript configuration field "server"`},
-		"service team":      {`export default {services: {api: {team: "studio"}}};`, `unknown TypeScript configuration field "team"`},
-		"concurrency":       {`export default {services: {api: {tunnel: {limits: {concurrency: 0}}}}};`, "services.api: tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
-		"old request limit": {`export default {services: {api: {tunnel: {requestLimit: 2}}}};`, "unknown TypeScript configuration field"},
-		"inspection":        {`export default {services: {api: {inspection: {mode: "all"}}}};`, "services.api.inspection: mode must be none or summary"},
-		"retired dev":       {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "dev"},
-		"target":            {`export default {services: {api: {publish: {target: "https://example.com/path"}}}};`, "services.api: publish.target:"},
-		"ip":                {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.7/24"]}}}};`, "must be a canonical IP address or prefix"},
-		"duplicate":         {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.1", "192.0.2.1/32"]}}}};`, "is duplicated"},
+		"service server":      {`export default {services: {api: {server: "https://control.example"}}};`, `unknown TypeScript configuration field "server"`},
+		"service team":        {`export default {services: {api: {team: "studio"}}};`, `unknown TypeScript configuration field "team"`},
+		"concurrency":         {`export default {services: {api: {tunnel: {limits: {concurrency: 0}}}}};`, "services.api: tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
+		"old request limit":   {`export default {services: {api: {tunnel: {requestLimit: 2}}}};`, "unknown TypeScript configuration field"},
+		"inspection":          {`export default {services: {api: {inspection: {mode: "all"}}}};`, "services.api.inspection: mode must be none or summary"},
+		"retired dev":         {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "dev"},
+		"retired visitor TLS": {`export default {services: {orders: {publish: {protocol: "postgres", target: "db:5432"}, tcp: {visitorTLS: "passthrough"}}}};`, `unknown TypeScript configuration field "tcp"`},
+		"target":              {`export default {services: {api: {publish: {target: "https://example.com/path"}}}};`, "services.api: publish.target:"},
+		"ip":                  {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.7/24"]}}}};`, "must be a canonical IP address or prefix"},
+		"duplicate":           {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.1", "192.0.2.1/32"]}}}};`, "is duplicated"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl.config.ts")

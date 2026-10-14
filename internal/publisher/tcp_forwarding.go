@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/diagnostic"
-	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/router"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
@@ -31,7 +29,6 @@ type tcpForwarding struct {
 	publicPort          uint16
 	target              string
 	backendTLS          *tls.Config
-	passthrough         bool
 	onTargetFailure     func()
 	onCancelUnsupported func()
 	observeDatabase     func(DatabaseObservation)
@@ -39,7 +36,7 @@ type tcpForwarding struct {
 
 func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 	if config.ServiceProtocol == "" || config.ServiceProtocol == controlv1.Http {
-		if config.PublicPort != 0 || config.TargetTLSName != "" || config.TargetTLS || config.VisitorTLSPassthrough {
+		if config.PublicPort != 0 || config.TargetTLSName != "" || config.TargetTLS {
 			return nil, errors.New("publisher: HTTP public URL cannot configure TCP forwarding")
 		}
 		return nil, nil
@@ -63,7 +60,6 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 	return &tcpForwarding{
 		protocol: config.ServiceProtocol, publicPort: config.PublicPort, target: config.Target,
 		backendTLS:          backendTLS,
-		passthrough:         config.VisitorTLSPassthrough,
 		onTargetFailure:     config.OnTargetFailure,
 		onCancelUnsupported: config.OnCancelUnsupported,
 		observeDatabase:     config.ObserveDatabase,
@@ -82,14 +78,6 @@ func validateTCPForwarding(config PublicURLServerConfig) (string, error) {
 	if !config.TargetTLS && (config.TargetTLSName != "" || config.TargetOptions.RootCAs != nil) {
 		return "", errors.New("publisher: target TLS options require target TLS")
 	}
-	if config.VisitorTLSPassthrough {
-		if config.ServiceProtocol != controlv1.Postgres && config.ServiceProtocol != controlv1.Mysql {
-			return "", errors.New("publisher: visitor TLS passthrough requires PostgreSQL or MySQL")
-		}
-		if config.TargetTLS || config.TargetTLSName != "" || config.TargetOptions.RootCAs != nil {
-			return "", errors.New("publisher: visitor TLS passthrough requires the database client to verify the private certificate")
-		}
-	}
 	host, err := tcptarget.Host(config.Target)
 	if err != nil {
 		return "", diagnostic.Wrap(diagnostic.TargetInvalid, err)
@@ -97,7 +85,7 @@ func validateTCPForwarding(config PublicURLServerConfig) (string, error) {
 	return host, nil
 }
 
-func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config, hostname string) {
+func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	backend, err := (&net.Dialer{}).DialContext(ctx, "tcp", d.target)
@@ -111,9 +99,9 @@ func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config, hostnam
 	visitorTLS.NextProtos = nil
 	switch d.protocol {
 	case controlv1.Postgres:
-		_ = d.postgres(visitor, backend, visitorTLS, hostname)
+		_ = d.postgres(visitor, backend, visitorTLS)
 	case controlv1.Mysql:
-		_ = d.mysql(visitor, backend, visitorTLS, hostname)
+		_ = d.mysql(visitor, backend, visitorTLS)
 	case controlv1.Redis:
 		_ = d.redis(visitor, backend, visitorTLS)
 	case controlv1.Ssh:
@@ -147,7 +135,7 @@ func (d *tcpForwarding) redis(visitor, backend net.Conn, publicTLS *tls.Config) 
 	return copyTCPConnections(visitor, securedVisitor, backend, d.admission)
 }
 
-func (d *tcpForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.Config, hostname string) error {
+func (d *tcpForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.Config) error {
 	var startup [8]byte
 	if _, err := io.ReadFull(visitor, startup[:]); err != nil {
 		return err
@@ -173,7 +161,7 @@ func (d *tcpForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.Confi
 		}
 		return errors.New("publisher: PostgreSQL visitor TLS is required")
 	}
-	if d.backendTLS != nil || d.passthrough {
+	if d.backendTLS != nil {
 		if _, err := io.Copy(backend, bytes.NewReader(postgresSSLRequest[:])); err != nil {
 			d.targetFailed()
 			return err
@@ -185,26 +173,21 @@ func (d *tcpForwarding) postgres(visitor, backend net.Conn, publicTLS *tls.Confi
 		}
 		if answer[0] != 'S' {
 			d.targetFailed()
-			return errors.New("publisher: PostgreSQL target must accept TLS for visitor TLS passthrough or verified target TLS")
+			return errors.New("publisher: PostgreSQL target must accept verified target TLS")
 		}
-		if !d.passthrough {
-			secured, err := d.connectTargetTLS(backend)
-			if err != nil {
-				return err
-			}
-			backend = secured
+		secured, err := d.connectTargetTLS(backend)
+		if err != nil {
+			return err
 		}
+		backend = secured
 	}
 	if _, err := visitor.Write([]byte{'S'}); err != nil {
 		return err
 	}
-	if d.passthrough {
-		return forwardVisitorTLSPassthrough(visitor, backend, hostname, d.admission)
-	}
 	return forwardDatabaseTLS(visitor, backend, publicTLS, d.admission, d.observeDatabase)
 }
 
-func (d *tcpForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config, hostname string) error {
+func (d *tcpForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config) error {
 	// mysql begins with a server greeting. preserve its scramble and capability
 	// flags so the private target, not tnl, authenticates the visitor.
 	greeting, err := readMySQLPacket(backend, 64<<10)
@@ -213,7 +196,7 @@ func (d *tcpForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config, 
 		return err
 	}
 	var scramble []byte
-	if d.backendTLS == nil && !d.passthrough {
+	if d.backendTLS == nil {
 		scramble, err = advertiseMySQLTLS(greeting)
 		if err != nil {
 			return err
@@ -229,13 +212,10 @@ func (d *tcpForwarding) mysql(visitor, backend net.Conn, publicTLS *tls.Config, 
 	if len(request) != 36 || request[3] != 1 || binary.LittleEndian.Uint32(request[4:8])&mysqlClientSSL == 0 {
 		return errors.New("publisher: MySQL visitor TLS is required")
 	}
-	if d.backendTLS != nil || d.passthrough {
+	if d.backendTLS != nil {
 		if _, err := io.Copy(backend, bytes.NewReader(request)); err != nil {
 			d.targetFailed()
 			return err
-		}
-		if d.passthrough {
-			return forwardVisitorTLSPassthrough(visitor, backend, hostname, d.admission)
 		}
 		backend, err = d.connectTargetTLS(backend)
 		if err != nil {
@@ -331,24 +311,5 @@ func copyTCPConnections(visitor, securedVisitor, backend net.Conn, admission *ap
 	_ = visitor.SetDeadline(time.Time{})
 	_ = backend.SetDeadline(time.Time{})
 	_, err := streamcopy.Copy(securedVisitor, backend)
-	return err
-}
-
-func forwardVisitorTLSPassthrough(visitor, backend net.Conn, hostname string, admission *applicationAdmission) error {
-	hello, err := router.InspectClientHello(visitor)
-	serverName, nameErr := naming.CanonicalizeHostname(hello.ServerName)
-	if err != nil || nameErr != nil || serverName != hostname || hello.ACMETLSALPN {
-		return errors.New("publisher: visitor TLS SNI does not match public URL")
-	}
-	if status, _ := admission.enter(time.Now()); status != 0 {
-		return errors.New("publisher: private TCP visitor capacity is exhausted")
-	}
-	defer admission.leave()
-	if _, err := io.Copy(backend, bytes.NewReader(hello.Prefix)); err != nil {
-		return err
-	}
-	_ = visitor.SetDeadline(time.Time{})
-	_ = backend.SetDeadline(time.Time{})
-	_, err = streamcopy.Copy(&publicURLReaderConn{Conn: visitor, reader: hello.Remainder}, backend)
 	return err
 }

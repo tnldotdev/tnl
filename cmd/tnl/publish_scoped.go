@@ -172,7 +172,7 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membershipID,
 		PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: publicURLScope, Purpose: controlv1.App,
 		Hostname: route.CanonicalHostname, Target: target, AllowedIPPrefixes: allowed,
-		ServiceProtocol: protocol, TargetTLSName: flags.TargetTLSName, TargetTLS: flags.TargetTLS, VisitorTLSPassthrough: flags.VisitorTLSPassthrough,
+		ServiceProtocol: protocol, TargetTLSName: flags.TargetTLSName, TargetTLS: flags.TargetTLS,
 		PreserveSavedURLTarget: route.Target == "",
 		TargetOptions:          targetOptions,
 		Limits:                 flags.limits(), InspectionMode: flags.InspectionMode,
@@ -185,7 +185,7 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	}
 	defer recorder.Close()
 	publisherConfig.ObserveRequest = httpObservation(recorder)
-	if (protocol == controlv1.Mysql || protocol == controlv1.Postgres) && !flags.VisitorTLSPassthrough {
+	if protocol == controlv1.Mysql || protocol == controlv1.Postgres {
 		publisherConfig.ObserveDatabase = sqlObservation(recorder)
 	}
 	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service)

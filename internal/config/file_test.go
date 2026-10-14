@@ -43,6 +43,8 @@ func TestLoadDocumentRequiresVersionAndStrictFields(t *testing.T) {
 		"service-oauth.json": {`{"version":1,"tnl":{"services":{"api":{"oauth":true}}}}`, `unknown object member name "oauth"`},
 		"retired-ca.yml":     {"version: 1\ntnl:\n  publish:\n    ca_file: ca.pem\n", "field ca_file not found"},
 		"retired-ca.json":    {`{"version":1,"tnl":{"publish":{"ca_file":"ca.pem"}}}`, `unknown object member name "ca_file"`},
+		"retired-tls.yml":    {"version: 1\ntnl:\n  services:\n    orders:\n      publish: {protocol: postgres, target: 'db:5432'}\n      tcp: {visitor_tls: passthrough}\n", "field tcp not found"},
+		"retired-tls.json":   {`{"version":1,"tnl":{"services":{"orders":{"publish":{"protocol":"postgres","target":"db:5432"},"tcp":{"visitor_tls":"passthrough"}}}}}`, `unknown object member name "tcp"`},
 		"duplicate.yml":      {"version: 1\nversion: 1\n", "already defined"},
 		"duplicate.json":     {`{"version":1,"version":1}`, "duplicate object member name"},
 		"tagged.yml":         {"version: 1\ntnl: !include config.yml\n", "custom YAML tag"},

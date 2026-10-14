@@ -104,10 +104,11 @@ separate plaintext PostgreSQL CancelRequest cannot cancel through the public
 URL: tnl warns once per publish run, does not forward the cancel secret, and the
 query may keep running. close the query connection or cancel it at the database
 and check before retrying.
-`--visitor-tls-passthrough` instead passes the visitor TLS handshake to a
-PostgreSQL or MySQL target that accepts TLS, without requiring `--target-tls`.
-the client sees the target's certificate and must verify it; the publisher
-cannot inspect database commands in this mode.
+
+the publisher terminates visitor TLS with the public URL certificate for both
+plaintext and verified-TLS private targets; clients verify that certificate.
+PostgreSQL clients that send a CancelRequest over visitor TLS can cancel through
+either private target mode.
 a MySQL target with no TLS advertises visitor TLS through a rewritten greeting;
 the publisher preserves its challenge and plugin, adjusts the authentication
 packet sequence, and handles the private server's RSA password exchange when
