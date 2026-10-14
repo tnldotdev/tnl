@@ -94,7 +94,12 @@ func (a *appRuntime) localHandler() http.Handler {
 		})
 	}
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
-		privateprotocol.Write(w, http.StatusOK, localProjectSnapshot(a.manager.Snapshot()))
+		snapshot, err := a.manager.JournalSnapshot()
+		if err != nil {
+			runtimeProblem(w, err)
+			return
+		}
+		privateprotocol.Write(w, http.StatusOK, localProjectSnapshot(snapshot))
 	})
 	mux.HandleFunc("GET /v1/events", a.localEvents)
 	return mux
@@ -184,7 +189,11 @@ func (a *appRuntime) localEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	deadline := time.Now().Add(time.Duration(wait) * time.Second)
 	for {
-		snapshot := a.manager.Snapshot()
+		snapshot, err := a.manager.JournalSnapshot()
+		if err != nil {
+			runtimeProblem(w, err)
+			return
+		}
 		events, err := clientruntime.EventsAfter(snapshot, query.Get("after"))
 		if errors.Is(err, clientruntime.ErrCursorExpired) {
 			privateprotocol.Write(w, http.StatusGone, localpublisherv1.Problem{Code: "runtime.cursor_expired", Message: "local event cursor expired; read status and resume"})

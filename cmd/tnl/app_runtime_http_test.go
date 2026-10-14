@@ -6,16 +6,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/clientruntime"
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/pkg/api/localpublisherv1"
 )
 
 func TestLocalProjectAPIUsesRegistrationOwnershipAndOneEventCursor(t *testing.T) {
-	state := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state")
 	manager, err := clientruntime.New(t.Context(), "/project", state,
 		[]clientruntime.Service{{Name: "api"}, {Name: "web"}},
 		func(ctx context.Context, _ clientruntime.Service, _ func(uint64, bool) error) error {
@@ -84,5 +86,44 @@ func TestLocalProjectAPIUsesRegistrationOwnershipAndOneEventCursor(t *testing.T)
 	}
 	if response := call(http.MethodDelete, "/v1/registrations/"+id, "", "api", owner); response.Code != http.StatusNoContent {
 		t.Fatalf("unregister = %d %s", response.Code, response.Body)
+	}
+}
+
+func TestLocalOwnerEventsResumeDirectPublicationFromAnotherWriter(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	project := t.TempDir()
+	manager, err := clientruntime.New(t.Context(), project, state, []clientruntime.Service{{Name: "web"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	before := manager.Snapshot().Cursor
+	db, err := clientstate.Open(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tunnel, err := db.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: project,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	handler := (&appRuntime{manager: manager}).localHandler()
+	request := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		return w
+	}
+	status := request("/v1/status")
+	var snapshot localpublisherv1.ProjectSnapshot
+	if err := json.Unmarshal(status.Body.Bytes(), &snapshot); err != nil || status.Code != http.StatusOK || snapshot.Cursor != "2" {
+		t.Fatalf("owner status = %d %s, %v", status.Code, status.Body, err)
+	}
+	pageResponse := request("/v1/events?after=" + before)
+	var page localpublisherv1.ProjectEventPage
+	if err := json.Unmarshal(pageResponse.Body.Bytes(), &page); err != nil || pageResponse.Code != http.StatusOK || len(page.Events) != 1 || page.Events[0].Type != "tunnel.starting" || page.Cursor != snapshot.Cursor {
+		t.Fatalf("owner resume = %d %s, %v", pageResponse.Code, pageResponse.Body, err)
 	}
 }

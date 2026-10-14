@@ -14,14 +14,14 @@ import (
 
 const testPublicURLID = "url_0123456789abcdefghijkl"
 
-func TestClientV1SchemaRejectsIncompleteState(t *testing.T) {
+func TestClientV3SchemaRejectsIncompleteState(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	database, err := Open(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if filepath.Base(DatabasePath(root)) != "client-v2.db" {
+	if filepath.Base(DatabasePath(root)) != "client-v3.db" {
 		t.Fatalf("client database path = %q", DatabasePath(root))
 	}
 	for _, table := range []string{"server_profiles", "client_setting", "control_sessions", "certificate_materials", "local_tunnels"} {
@@ -57,6 +57,32 @@ func TestClientV1SchemaRejectsIncompleteState(t *testing.T) {
 		if _, err := database.db.ExecContext(t.Context(), query); err == nil {
 			t.Fatalf("incomplete certificate material accepted: %s", query)
 		}
+	}
+}
+
+func TestClientV3StartsWithoutImportingV2(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(root, "client-v2.db")
+	if err := os.WriteFile(legacy, []byte("old state must not be opened"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(DatabasePath(root)); err != nil {
+		t.Fatal(err)
+	}
+	journal, found, err := db.ReadRuntimeJournal(t.Context(), t.TempDir())
+	if err != nil || found || journal.Cursor != 0 {
+		t.Fatalf("fresh journal = %#v, found=%t, err=%v", journal, found, err)
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -199,7 +198,7 @@ func runAppObservation(ctx context.Context, flags cli, command string, output io
 	if err != nil {
 		return err
 	}
-	if !project.Found() || len(project.Config.Services) == 0 {
+	if command == "wait" && (!project.Found() || len(project.Config.Services) == 0) {
 		return failure.Wrap("observe services", failure.ProjectConfigMissing, errors.New("configured services are required"))
 	}
 	if canonical, err := filepath.EvalSymlinks(root); err == nil {
@@ -344,37 +343,28 @@ func writeAppWait(output io.Writer, mode string, snapshot clientruntime.Snapshot
 }
 
 func runAppWatch(ctx context.Context, project projectConfiguration, state string, flags watchCommand, output io.Writer) error {
-	hasTCP := len(project.Config.Services) != len(configuredRuntimeServices(project))
-	var database *clientstate.Database
-	if hasTCP {
-		var err error
-		database, err = clientstate.Open(ctx, state)
-		if err != nil {
-			return err
-		}
-		defer database.Close()
-	}
 	cursor := flags.After
 	if cursor == "" {
 		snapshot, err := readAppSnapshot(ctx, project, state)
 		if err != nil {
 			return err
 		}
-		if hasTCP {
-			sequence, err := database.LatestTunnelEventCursor(ctx, project.Root)
-			if err != nil {
-				return err
-			}
-			tunnels, err := database.SnapshotProject(ctx, project.Root)
-			if err != nil {
-				return err
-			}
-			snapshot = mergeTCPServices(snapshot, project, tunnels.Tunnels)
-			cursor = watchCursor(snapshot.Cursor, sequence, true)
-		} else {
-			cursor = snapshot.Cursor
+		database, err := clientstate.Open(ctx, state)
+		if err != nil {
+			return err
 		}
-		snapshot.Cursor = cursor
+		current, snapshotErr := database.SnapshotProject(ctx, project.Root)
+		closeErr := database.Close()
+		if snapshotErr != nil || closeErr != nil {
+			return errors.Join(snapshotErr, closeErr)
+		}
+		snapshot = mergeTCPServices(snapshot, project, current.Tunnels)
+		for _, tunnel := range current.Tunnels {
+			if tunnel.Command == clientstate.TunnelCommandPublish && tunnel.Service == "" {
+				snapshot.Tunnels = append(snapshot.Tunnels, tunnel)
+			}
+		}
+		cursor = snapshot.Cursor
 		if flags.Output == "ndjson" {
 			if err := json.NewEncoder(output).Encode(struct {
 				Type     string                 `json:"type"`
@@ -382,12 +372,19 @@ func runAppWatch(ctx context.Context, project projectConfiguration, state string
 			}{"snapshot", snapshot}); err != nil {
 				return err
 			}
-		} else if err := writeHumanFrame(output, "tnl watch", "snapshot", "cursor "+cursor, appServiceBlocks(snapshot)...); err != nil {
-			return err
+		} else {
+			blocks := appServiceBlocks(snapshot)
+			for _, tunnel := range snapshot.Tunnels {
+				blocks = append(blocks, clioutput.Section("direct "+string(tunnel.State), clioutput.Fields(
+					clioutput.Field{Label: "tunnel", Value: tunnel.ID}, clioutput.Field{Label: "target", Value: tunnel.Target},
+					clioutput.Field{Label: "public URL", Value: tunnel.PublicURL})))
+			}
+			if err := writeHumanFrame(output, "tnl watch", "snapshot", "cursor "+cursor, blocks...); err != nil {
+				return err
+			}
 		}
 	}
-	appCursor, tunnelCursor, err := parseWatchCursor(cursor)
-	if err != nil {
+	if _, err := clientruntime.ParseCursor(cursor); err != nil {
 		return failure.Wrap("resume local events", failure.InvalidCommand, err)
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -400,52 +397,14 @@ func runAppWatch(ctx context.Context, project projectConfiguration, state string
 		if err != nil {
 			return err
 		}
-		events, err := clientruntime.EventsAfter(snapshot, appCursor)
+		events, err := clientruntime.EventsAfter(snapshot, cursor)
 		if err != nil {
 			return failure.Wrap("resume local events", failure.AppCursorExpired, err)
 		}
 		for _, event := range events {
-			appCursor = event.Cursor
-			event.Cursor = watchCursor(appCursor, tunnelCursor, hasTCP)
+			cursor = event.Cursor
 			if err := writeAppWatchEvent(output, flags.Output, event); err != nil {
 				return err
-			}
-		}
-		if hasTCP {
-			if ctx.Err() != nil {
-				return nil
-			}
-			tunnelEvents, err := database.TunnelEventsAfter(ctx, project.Root, tunnelCursor)
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				return failure.Wrap("resume local events", failure.AppCursorExpired, err)
-			}
-			for _, change := range tunnelEvents {
-				tunnelCursor = change.Sequence
-				effective, err := project.EffectiveService(change.Service)
-				if err != nil || config.ServiceProtocol(effective.Publish) != string(change.ServiceProtocol) {
-					continue
-				}
-				service := clientruntime.Service{
-					Name: change.Service, Directory: project.RelativeServiceDirectories[change.Service],
-					ServiceProtocol: string(change.ServiceProtocol), TunnelID: change.TunnelID, Target: change.Target,
-					PublishRunNumber: change.PublishRunNumber,
-					Registered:       change.State != clientstate.TunnelStateStopped && change.State != clientstate.TunnelStateFailed && change.State != clientstate.TunnelStateDraining,
-					Routable:         change.State == clientstate.TunnelStateReady,
-				}
-				if change.Hostname != "" && change.PublicPort != 0 {
-					service.PublicURL = net.JoinHostPort(change.Hostname, strconv.Itoa(int(change.PublicPort)))
-				}
-				kind := "service." + string(change.State)
-				if change.State == clientstate.TunnelStateReady {
-					kind = "service.publication"
-				}
-				event := clientruntime.Event{Cursor: watchCursor(appCursor, tunnelCursor, true), Type: kind, At: change.At, Service: &service}
-				if err := writeAppWatchEvent(output, flags.Output, event); err != nil {
-					return err
-				}
 			}
 		}
 		select {
@@ -456,28 +415,6 @@ func runAppWatch(ctx context.Context, project projectConfiguration, state string
 	}
 }
 
-func watchCursor(app string, database uint64, hasTCP bool) string {
-	if hasTCP {
-		return app + ":" + strconv.FormatUint(database, 10)
-	}
-	return app
-}
-
-func parseWatchCursor(cursor string) (string, uint64, error) {
-	app, database, combined := strings.Cut(cursor, ":")
-	if _, err := clientruntime.ParseCursor(app); err != nil {
-		return "", 0, err
-	}
-	if !combined {
-		return app, 0, nil
-	}
-	sequence, err := clientruntime.ParseCursor(database)
-	if err != nil {
-		return "", 0, err
-	}
-	return app, sequence, nil
-}
-
 func writeAppWatchEvent(output io.Writer, mode string, event clientruntime.Event) error {
 	if mode == "ndjson" {
 		return json.NewEncoder(output).Encode(event)
@@ -485,6 +422,16 @@ func writeAppWatchEvent(output io.Writer, mode string, event clientruntime.Event
 	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "cursor", Value: event.Cursor})}
 	if event.Service != nil {
 		blocks = append(blocks, appServiceBlocks(clientruntime.Snapshot{Services: []clientruntime.Service{*event.Service}})...)
+	}
+	if event.Tunnel != nil {
+		fields := []clioutput.Field{{Label: "tunnel", Value: event.Tunnel.ID}, {Label: "target", Value: event.Tunnel.Target}}
+		if event.Tunnel.PublicURL != "" {
+			fields = append(fields, clioutput.Field{Label: "public URL", Value: event.Tunnel.PublicURL})
+		}
+		if event.Tunnel.PublishRunNumber != 0 {
+			fields = append(fields, clioutput.Field{Label: "publish run number", Value: strconv.FormatUint(event.Tunnel.PublishRunNumber, 10)})
+		}
+		blocks = append(blocks, clioutput.Fields(fields...))
 	}
 	if event.Snapshot != nil {
 		blocks = append(blocks, appServiceBlocks(*event.Snapshot)...)

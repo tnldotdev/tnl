@@ -162,9 +162,9 @@ The owner and app-registration credentials have different scopes. An accepted
 registration reports a bound listener; public readiness remains a separate
 observation. The API returns browser-safe project metadata but does not carry
 visitor bytes or expose the control session to an app. Status and event pages
-share one project journal: a cursor marks an exclusive position, not a
-TCP-specific counter. Expired cursors require a fresh status snapshot; the
-wire cursor remains opaque when the local journal moves to SQLite. The host
+share one project SQLite journal: a cursor marks an exclusive numeric position
+for app and direct tunnel changes, not a TCP-specific counter. Expired cursors
+require a fresh status snapshot; the API treats the cursor as opaque. The host
 publisher also binds an OS-assigned loopback TCP port with a private endpoint
 descriptor. Existing SDK calls use the Unix socket until their clients adopt
 the local publisher API.
@@ -178,8 +178,7 @@ The Unix socket stays under `/tmp` to fit macOS socket path limits until that
 transport is retired.
 
 Named CLI publication leases need the same manager ownership and journal as
-app registrations; add their API operations when those workers use the unified
-SQLite journal, rather than introducing a second TCP event history.
+app registrations; add their API operations with those workers.
 
 ## resolve project configuration
 
@@ -248,7 +247,10 @@ listeners that request port 0. directory inference requires a unique configured
 service. builds and production previews do not prepare registrations.
 
 `internal/clientruntime` owns registration leases, publisher observations,
-readiness, and a bounded durable local event journal. the private native command
+and readiness. `internal/clientstate` stores one bounded per-project event
+sequence in `client-v3.db`. app observations commit their snapshot and event
+together; direct `tnl publish` transitions append in the tunnel-state transaction,
+including projects without a configuration file. the private native command
 `tnl runtime address` locates one Unix socket per canonical
 project/worktree/client-state identity. the app starts `tnl runtime serve` to
 maintain it. the socket is user-owned
@@ -291,8 +293,10 @@ publication running. `tnl status` only reads observations.
 
 `tnl watch` resumes after a local event cursor. a status or initial watch
 snapshot includes the cursor for its service state. cursors older than retained
-events fail with an authored diagnostic. the journal survives a
-manager restart and contains no credentials, request bodies, or OAuth state.
+events fail with an authored diagnostic. the journal retains at most 2048
+events and 8 MiB per project, survives a manager restart, and contains no
+credentials, request bodies, or OAuth state. older `client-v2.db` state is not
+imported when starting `client-v3.db`.
 
 `tnl inspect` keeps numbered HTTP and supported TCP summaries in client SQLite.
 HTTP, PostgreSQL, and MySQL default to summary; `inspection.mode: none` or
