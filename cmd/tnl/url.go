@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"strconv"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -14,7 +15,7 @@ import (
 )
 
 type publicURLCommand struct {
-	List       publicURLListCommand       `cmd:"" help:"List public URLs for the selected team."`
+	List       publicURLListCommand       `cmd:"" help:"List team public URLs and public URLs shared with you."`
 	Update     publicURLUpdateCommand     `cmd:"" help:"Change a saved public URL target or visitor policy."`
 	Delete     publicURLDeleteCommand     `cmd:"" help:"Delete a public URL by ID; use tnl url list to find it."`
 	Credential publicURLCredentialCommand `cmd:"" help:"Manage credentials scoped to publishing one public URL."`
@@ -43,32 +44,37 @@ func runURLList(ctx context.Context, command publicURLListCommand, output, diagn
 		return err
 	}
 	defer session.Close()
-	current, err := session.current(ctx)
+	teamID := ""
+	if command.Team != "" {
+		selected, err := session.resolveMembership(ctx, command.Team)
+		if err != nil {
+			return err
+		}
+		teamID = selected.TeamId
+	}
+	routes, err := session.authenticated.Control.ListAvailablePublicURLs(ctx, teamID)
 	if err != nil {
 		return err
 	}
-	routes, err := session.authenticated.Control.ListPublicURLs(ctx, current.team.Id)
-	if err != nil {
-		return err
-	}
-	blocks := []clioutput.Block{clioutput.Fields(
-		clioutput.Field{Label: "server", Value: session.authenticated.ServerEndpoint},
-		clioutput.Field{Label: "team", Value: current.team.DisplayName},
-	)}
+	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "server", Value: session.authenticated.ServerEndpoint})}
 	for _, route := range routes {
+		address := "https://" + route.CanonicalHostname
+		if route.ServiceProtocol != controlv1.Http {
+			if route.PublicPort == nil {
+				return failure.Wrap("list public URLs", failure.ServerResponseInvalid, errors.New("controlclient: missing public TCP port"))
+			}
+			address = net.JoinHostPort(route.CanonicalHostname, strconv.Itoa(*route.PublicPort))
+		}
 		fields := []clioutput.Field{
+			clioutput.Field{Label: "public URL", Value: address},
+			clioutput.Field{Label: "team", Value: route.TeamName},
+			clioutput.Field{Label: "access", Value: string(route.VisitorAccess)},
 			clioutput.Field{Label: "scope", Value: string(route.PublicUrlScope)},
 			clioutput.Field{Label: "state", Value: string(route.LifecycleState)},
-			clioutput.Field{Label: "next publish run number", Value: strconv.FormatInt(route.NextPublishRunNumber, 10)},
 			clioutput.Field{Label: "public URL ID", Value: route.Id},
 		}
 		if route.ServiceProtocol != controlv1.Http {
-			address, err := savedPublicAddress(route)
-			if err != nil {
-				return err
-			}
-			fields = append(fields, clioutput.Field{Label: "protocol", Value: string(route.ServiceProtocol)},
-				clioutput.Field{Label: "public URL", Value: address})
+			fields = append(fields, clioutput.Field{Label: "protocol", Value: string(route.ServiceProtocol)})
 		}
 		blocks = append(blocks, clioutput.Section(route.CanonicalHostname, clioutput.Fields(fields...)))
 	}

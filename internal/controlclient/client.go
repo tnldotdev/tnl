@@ -265,6 +265,46 @@ func (c *Client) ListPublicURLs(ctx context.Context, teamID string) ([]controlv1
 	}
 }
 
+// ListAvailablePublicURLs pages through the signed-in identity's visitor inventory.
+func (c *Client) ListAvailablePublicURLs(ctx context.Context, teamID string) ([]controlv1.AvailablePublicURL, error) {
+	var urls []controlv1.AvailablePublicURL
+	cursor := ""
+	for {
+		params := &controlv1.ListAvailablePublicURLsParams{}
+		if teamID != "" {
+			selected := controlv1.OptionalTeamIDQuery(teamID)
+			params.TeamId = &selected
+		}
+		if cursor != "" {
+			params.Cursor = &cursor
+		}
+		page, err := requestWithAccess[controlv1.AvailablePublicURLPage](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+			return c.api.ListAvailablePublicURLs(ctx, params, editors...)
+		})
+		if err != nil {
+			return nil, err
+		}
+		if len(page.PublicUrls) > 100 {
+			return nil, failure.Wrap("list available public URLs", failure.ServerResponseInvalid, errors.New("controlclient: public URL page exceeds its limit"))
+		}
+		for _, url := range page.PublicUrls {
+			if url.Id == "" || url.Id <= cursor || teamID != "" && url.TeamId != teamID ||
+				len(urls) != 0 && url.Id <= urls[len(urls)-1].Id ||
+				(url.ServiceProtocol == controlv1.Http) != (url.PublicPort == nil) {
+				return nil, failure.Wrap("list available public URLs", failure.ServerResponseInvalid, errors.New("controlclient: invalid available public URL"))
+			}
+			urls = append(urls, url)
+		}
+		if page.NextCursor == nil {
+			return urls, nil
+		}
+		if len(page.PublicUrls) == 0 || *page.NextCursor != page.PublicUrls[len(page.PublicUrls)-1].Id {
+			return nil, failure.Wrap("list available public URLs", failure.ServerResponseInvalid, errors.New("controlclient: invalid available public URL cursor"))
+		}
+		cursor = *page.NextCursor
+	}
+}
+
 // GetPublicURLByHostname uses one filtered request instead of paging through a
 // team's public URLs. reject unfiltered responses from servers ignoring the filter.
 func (c *Client) GetPublicURLByHostname(ctx context.Context, teamID, hostname string) (controlv1.PublicURL, error) {

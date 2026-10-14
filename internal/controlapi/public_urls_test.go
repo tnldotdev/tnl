@@ -42,6 +42,30 @@ func TestListRoutesUsesCurrentRouteReadAuthorization(t *testing.T) {
 	}
 }
 
+func TestListAvailablePublicURLsBindsIdentityAndHidesPrivateTargets(t *testing.T) {
+	port := uint16(5432)
+	store := &publicURLMutationStoreStub{available: controlstate.AvailablePublicURLPage{PublicURLs: []controlstate.AvailablePublicURL{{
+		ID: "public_url_1", TeamID: "team_2", TeamName: "studio", CanonicalHostname: "db.example", PublicPort: &port,
+		ServiceProtocol: controlstate.PublicURLServicePostgres, PublicURLScope: controlstate.PublicURLScopeMember,
+		Purpose: controlstate.PublicURLPurposeApp, LifecycleState: controlstate.PublicURLLifecycleEnabled, VisitorAccess: "invite",
+	}}}}
+	principal := testPublicURLReadPrincipal()
+	authorizer := &recordingAuthorizer{principal: principal}
+	h := &handler{store: store, authorizer: authorizer}
+	request := httptest.NewRequest(http.MethodGet, "/v1/public-urls/available?team_id=team_2", nil)
+	request.Header.Set("Authorization", "Bearer access-token")
+	response := httptest.NewRecorder()
+	h.ListAvailablePublicURLs(response, request, controlv1.ListAvailablePublicURLsParams{})
+	if response.Code != http.StatusOK || store.availableIdentityID != principal.identityID || store.availableTeamID != "team_2" ||
+		!slices.Equal(authorizer.readTokens, []string{"access-token"}) {
+		t.Fatalf("available response = %d: %s; identity = %q; team = %q", response.Code, response.Body.String(), store.availableIdentityID, store.availableTeamID)
+	}
+	if strings.Contains(response.Body.String(), "target") || strings.Contains(response.Body.String(), "allowed_ip_prefixes") ||
+		!strings.Contains(response.Body.String(), `"visitor_access":"invite"`) {
+		t.Fatalf("visitor inventory exposed private state: %s", response.Body.String())
+	}
+}
+
 func TestGetRouteDoesNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
 	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_other"}}
 	h := &handler{store: store, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
@@ -338,12 +362,20 @@ type publicURLMutationStoreStub struct {
 	update                     controlstate.AuthorizedPublicURLUpdateRequest
 	authorizationReads         int
 	page                       controlstate.PublicURLPage
+	available                  controlstate.AvailablePublicURLPage
+	availableIdentityID        string
+	availableTeamID            string
 	listTeamID                 string
 	listCursor                 string
 	authorizationPublicURLIDs  []string
 	sessionLookup              [2]string
 	sessionRequest             controlstate.PublishRunRequest
 	updates, sessions, deletes int
+}
+
+func (s *publicURLMutationStoreStub) ListAvailablePublicURLs(_ context.Context, identityID, teamID, _ string, _ time.Time) (controlstate.AvailablePublicURLPage, error) {
+	s.availableIdentityID, s.availableTeamID = identityID, teamID
+	return s.available, nil
 }
 
 func (s *publicURLMutationStoreStub) GetPublicURLForFeedbackAuthorization(ctx context.Context, id string) (controlstate.PublicURL, error) {

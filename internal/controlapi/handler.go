@@ -63,6 +63,7 @@ type Config struct {
 // PublicURLStore owns saved public URL and publish run state.
 type PublicURLStore interface {
 	ListAuthorizedPublicURLs(context.Context, string, string) (controlstate.PublicURLPage, error)
+	ListAvailablePublicURLs(context.Context, string, string, string, time.Time) (controlstate.AvailablePublicURLPage, error)
 	GetAuthorizedPublicURLByHostname(context.Context, string, string) (controlstate.PublicURL, error)
 	CreatePublicURL(context.Context, controlstate.CreatePublicURLRequest, time.Time) (controlstate.PublicURL, error)
 	UpdateAuthorizedPublicURL(context.Context, controlstate.AuthorizedPublicURLUpdateRequest, time.Time) (controlstate.PublicURL, error)

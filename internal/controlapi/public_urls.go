@@ -63,6 +63,43 @@ func (h *handler) ListPublicURLs(response http.ResponseWriter, request *http.Req
 	writeJSON(response, http.StatusOK, body)
 }
 
+func (h *handler) ListAvailablePublicURLs(response http.ResponseWriter, request *http.Request, _ controlv1.ListAvailablePublicURLsParams) {
+	principal, ok := h.authorizeRouteReads(response, request)
+	if !ok {
+		return
+	}
+	query := request.URL.Query()
+	if len(query["team_id"]) > 1 || len(query["cursor"]) > 1 {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "provide one team and cursor")
+		return
+	}
+	page, err := h.store.ListAvailablePublicURLs(request.Context(), principal.identityID, query.Get("team_id"), query.Get("cursor"), time.Now())
+	if err != nil {
+		writeControlStateProblem(response, "list available public URLs", err)
+		return
+	}
+	items := make([]controlv1.AvailablePublicURL, 0, len(page.PublicURLs))
+	for _, route := range page.PublicURLs {
+		item := controlv1.AvailablePublicURL{
+			Id: route.ID, TeamId: route.TeamID, TeamName: route.TeamName, CanonicalHostname: route.CanonicalHostname,
+			ServiceProtocol: controlv1.PublicURLServiceProtocol(route.ServiceProtocol),
+			PublicUrlScope:  controlv1.PublicURLScope(route.PublicURLScope), Purpose: controlv1.PublicURLPurpose(route.Purpose),
+			LifecycleState: controlv1.PublicURLLifecycleState(route.LifecycleState),
+			VisitorAccess:  controlv1.AvailablePublicURLVisitorAccess(route.VisitorAccess),
+		}
+		if route.PublicPort != nil {
+			port := int(*route.PublicPort)
+			item.PublicPort = &port
+		}
+		items = append(items, item)
+	}
+	result := controlv1.AvailablePublicURLPage{PublicUrls: items}
+	if page.NextCursor != "" {
+		result.NextCursor = &page.NextCursor
+	}
+	writeJSON(response, http.StatusOK, result)
+}
+
 func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Request, _ controlv1.CreatePublicURLParams) {
 	var body controlv1.CreatePublicURLRequest
 	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil {

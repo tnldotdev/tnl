@@ -620,6 +620,14 @@ OIDC providers prove identity; control owns current memberships and publishing
 decisions. the hosted website uses the narrow
 [hosted integration](hosted-integration.md) for its team picker and invitations.
 
+control lists visitor-facing public URL addresses through a separate identity
+inventory. current team membership makes a team's saved URLs visible; an active
+identity grant also makes its exact URL visible to a person outside the team.
+the inventory contains no target, visitor IP policy, or publish credential.
+its access label distinguishes ownership, a visitor grant, and team inventory
+visibility, which by itself cannot authorize a visit or a mutation. control
+rechecks current membership and grants when admitting visitors.
+
 control creates guest trials against its own managed domain. it reserves each
 guest namespace in the managed-label pool in the same
 transaction as the trial; team creation cannot reuse a guest namespace. managed

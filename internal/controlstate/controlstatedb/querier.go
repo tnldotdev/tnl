@@ -289,6 +289,7 @@ type Querier interface {
 	ListTeamPublisherIdentities(ctx context.Context, arg ListTeamPublisherIdentitiesParams) ([]ListTeamPublisherIdentitiesRow, error)
 	ListTeamShares(ctx context.Context, arg ListTeamSharesParams) ([]ControlShare, error)
 	ListValidReadyPublisherConnections(ctx context.Context, arg ListValidReadyPublisherConnectionsParams) ([]ListValidReadyPublisherConnectionsRow, error)
+	ListVisitorAccessInventory(ctx context.Context, arg ListVisitorAccessInventoryParams) ([]ListVisitorAccessInventoryRow, error)
 	LockACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)
 	LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrderForInstallParams) (ControlAcmeOrder, error)
 	LockBrowserAccessSession(ctx context.Context, tokenDigest []byte) (ControlBrowserAccessSession, error)

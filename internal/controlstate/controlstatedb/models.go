@@ -968,3 +968,19 @@ type ControlTeamMembership struct {
 	RemovedAt           pgtype.Timestamptz
 	RemovedByIdentityID pgtype.Text
 }
+
+type ControlVisitorAccessGrant struct {
+	ID                  string
+	TeamID              string
+	Kind                string
+	PreviewID           pgtype.Text
+	PublicURLID         pgtype.Text
+	IdentityID          pgtype.Text
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	RequestDigest       []byte
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+	RevokedByIdentityID pgtype.Text
+}

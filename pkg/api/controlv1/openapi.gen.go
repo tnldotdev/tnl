@@ -56,6 +56,30 @@ func (e AuthenticationFactsMethods) Valid() bool {
 	}
 }
 
+// Defines values for AvailablePublicURLVisitorAccess.
+const (
+	Inventory AvailablePublicURLVisitorAccess = "inventory"
+	Invite    AvailablePublicURLVisitorAccess = "invite"
+	Owner     AvailablePublicURLVisitorAccess = "owner"
+	Team      AvailablePublicURLVisitorAccess = "team"
+)
+
+// Valid indicates whether the value is a known member of the AvailablePublicURLVisitorAccess enum.
+func (e AvailablePublicURLVisitorAccess) Valid() bool {
+	switch e {
+	case Inventory:
+		return true
+	case Invite:
+		return true
+	case Owner:
+		return true
+	case Team:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CertificateChallengeMethod.
 const (
 	Dns01     CertificateChallengeMethod = "dns-01"
@@ -958,6 +982,31 @@ type AuthenticationFacts struct {
 
 // AuthenticationFactsMethods defines model for AuthenticationFacts.Methods.
 type AuthenticationFactsMethods string
+
+// AvailablePublicURL defines model for AvailablePublicURL.
+type AvailablePublicURL struct {
+	CanonicalHostname CanonicalHostname        `json:"canonical_hostname"`
+	Id                PublicURLID              `json:"id"`
+	LifecycleState    PublicURLLifecycleState  `json:"lifecycle_state"`
+	PublicPort        *int                     `json:"public_port,omitempty"`
+	PublicUrlScope    PublicURLScope           `json:"public_url_scope"`
+	Purpose           PublicURLPurpose         `json:"purpose"`
+	ServiceProtocol   PublicURLServiceProtocol `json:"service_protocol"`
+	TeamId            TeamID                   `json:"team_id"`
+	TeamName          string                   `json:"team_name"`
+
+	// VisitorAccess Inventory visibility does not itself permit a visitor connection.
+	VisitorAccess AvailablePublicURLVisitorAccess `json:"visitor_access"`
+}
+
+// AvailablePublicURLVisitorAccess Inventory visibility does not itself permit a visitor connection.
+type AvailablePublicURLVisitorAccess string
+
+// AvailablePublicURLPage defines model for AvailablePublicURLPage.
+type AvailablePublicURLPage struct {
+	NextCursor *ResourceID          `json:"next_cursor,omitempty"`
+	PublicUrls []AvailablePublicURL `json:"public_urls"`
+}
 
 // BrowserAccessRequest defines model for BrowserAccessRequest.
 type BrowserAccessRequest struct {
@@ -1921,6 +1970,9 @@ type Cursor = ResourceID
 // FeedbackAfterCursor defines model for FeedbackAfterCursor.
 type FeedbackAfterCursor = int64
 
+// OptionalTeamIDQuery defines model for OptionalTeamIDQuery.
+type OptionalTeamIDQuery = TeamID
+
 // TeamIDQuery defines model for TeamIDQuery.
 type TeamIDQuery = TeamID
 
@@ -1998,6 +2050,12 @@ type ListPublicURLsParams struct {
 // CreatePublicURLParams defines parameters for CreatePublicURL.
 type CreatePublicURLParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// ListAvailablePublicURLsParams defines parameters for ListAvailablePublicURLs.
+type ListAvailablePublicURLsParams struct {
+	TeamId *OptionalTeamIDQuery `form:"team_id,omitempty" json:"team_id,omitempty"`
+	Cursor *Cursor              `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // CreatePublishRunParams defines parameters for CreatePublishRun.
@@ -2515,6 +2573,11 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
 	CreatePublicURL(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAvailablePublicURLs List public URLs belonging to the current identity's teams or shared with that identity
+	//
+	// Corresponds with GET /v1/public-urls/available (the `ListAvailablePublicURLs` operationId).
+	ListAvailablePublicURLs(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeletePublicURL Delete one public URL and close its publish run
 	//
@@ -3535,6 +3598,21 @@ func (c *Client) CreatePublicURLWithBody(ctx context.Context, params *CreatePubl
 // Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
 func (c *Client) CreatePublicURL(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreatePublicURLRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAvailablePublicURLs List public URLs belonging to the current identity's teams or shared with that identity
+//
+// Corresponds with GET /v1/public-urls/available (the `ListAvailablePublicURLs` operationId).
+func (c *Client) ListAvailablePublicURLs(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAvailablePublicURLsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -5943,6 +6021,72 @@ func NewCreatePublicURLRequestWithBody(server string, params *CreatePublicURLPar
 	return req, nil
 }
 
+// NewListAvailablePublicURLsRequest constructs an http.Request for the ListAvailablePublicURLs method
+func NewListAvailablePublicURLsRequest(server string, params *ListAvailablePublicURLsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/public-urls/available")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.TeamId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", *params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewDeletePublicURLRequest constructs an http.Request for the DeletePublicURL method
 func NewDeletePublicURLRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
 	var err error
@@ -8124,6 +8268,13 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/public-urls (the `CreatePublicURL` operationId).
 	CreatePublicURLWithResponse(ctx context.Context, params *CreatePublicURLParams, body CreatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublicURLResponse, error)
 
+	// ListAvailablePublicURLsWithResponse List public URLs belonging to the current identity's teams or shared with that identity
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/public-urls/available (the `ListAvailablePublicURLs` operationId).
+	ListAvailablePublicURLsWithResponse(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*ListAvailablePublicURLsResponse, error)
+
 	// DeletePublicURLWithResponse Delete one public URL and close its publish run
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -9979,6 +10130,54 @@ func (r CreatePublicURLResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreatePublicURLResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListAvailablePublicURLsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AvailablePublicURLPage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAvailablePublicURLsResponse) GetJSON200() *AvailablePublicURLPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAvailablePublicURLsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAvailablePublicURLsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAvailablePublicURLsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAvailablePublicURLsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAvailablePublicURLsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12375,6 +12574,19 @@ func (c *ClientWithResponses) CreatePublicURLWithResponse(ctx context.Context, p
 	return ParseCreatePublicURLResponse(rsp)
 }
 
+// ListAvailablePublicURLsWithResponse List public URLs belonging to the current identity's teams or shared with that identity
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/public-urls/available (the `ListAvailablePublicURLs` operationId).
+func (c *ClientWithResponses) ListAvailablePublicURLsWithResponse(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*ListAvailablePublicURLsResponse, error) {
+	rsp, err := c.ListAvailablePublicURLs(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAvailablePublicURLsResponse(rsp)
+}
+
 // DeletePublicURLWithResponse Delete one public URL and close its publish run
 //
 // Returns a wrapper object for the known response body format(s).
@@ -14172,6 +14384,39 @@ func ParseCreatePublicURLResponse(rsp *http.Response) (*CreatePublicURLResponse,
 	return response, nil
 }
 
+// ParseListAvailablePublicURLsResponse parses an HTTP response from a ListAvailablePublicURLsWithResponse call
+func ParseListAvailablePublicURLsResponse(rsp *http.Response) (*ListAvailablePublicURLsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAvailablePublicURLsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AvailablePublicURLPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseDeletePublicURLResponse parses an HTTP response from a DeletePublicURLWithResponse call
 func ParseDeletePublicURLResponse(rsp *http.Response) (*DeletePublicURLResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -15584,6 +15829,9 @@ type ServerInterface interface {
 	// CreatePublicURL Create one team public URL
 	// (POST /v1/public-urls)
 	CreatePublicURL(w http.ResponseWriter, r *http.Request, params CreatePublicURLParams)
+	// ListAvailablePublicURLs List public URLs belonging to the current identity's teams or shared with that identity
+	// (GET /v1/public-urls/available)
+	ListAvailablePublicURLs(w http.ResponseWriter, r *http.Request, params ListAvailablePublicURLsParams)
 	// DeletePublicURL Delete one public URL and close its publish run
 	// (DELETE /v1/public-urls/{public_url_id})
 	DeletePublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
@@ -16662,6 +16910,52 @@ func (siw *ServerInterfaceWrapper) CreatePublicURL(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreatePublicURL(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAvailablePublicURLs operation middleware
+func (siw *ServerInterfaceWrapper) ListAvailablePublicURLs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAvailablePublicURLsParams
+
+	// ------------- Optional query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAvailablePublicURLs(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -18064,6 +18358,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback/{feedback_id}", wrapper.GetFeedbackThread)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback/{feedback_id}/events", wrapper.ListFeedbackThreadEvents)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/feedback/{feedback_id}/events", wrapper.AppendFeedbackEvent)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/available", wrapper.ListAvailablePublicURLs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls", wrapper.ListPublicURLs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls", wrapper.CreatePublicURL)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/enrollments", wrapper.CreatePublisherEnrollment)

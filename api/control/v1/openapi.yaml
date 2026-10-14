@@ -566,6 +566,24 @@ paths:
                 $ref: "#/components/schemas/FeedbackEvent"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/public-urls/available:
+    get:
+      operationId: listAvailablePublicURLs
+      summary: List public URLs belonging to the current identity's teams or shared with that identity
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OptionalTeamIDQuery"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of public visitor addresses and access scopes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AvailablePublicURLPage"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/public-urls:
     get:
       operationId: listPublicURLs
@@ -1447,6 +1465,12 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/TeamID"
+    OptionalTeamIDQuery:
+      name: team_id
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/TeamID"
     CanonicalHostnameQuery:
       name: canonical_hostname
       in: query
@@ -1915,6 +1939,59 @@ components:
     PublicURLLifecycleState:
       type: string
       enum: [enabled, suspended]
+    AvailablePublicURL:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          team_id,
+          team_name,
+          canonical_hostname,
+          service_protocol,
+          public_url_scope,
+          purpose,
+          lifecycle_state,
+          visitor_access,
+        ]
+      properties:
+        id:
+          $ref: "#/components/schemas/PublicURLID"
+        team_id:
+          $ref: "#/components/schemas/TeamID"
+        team_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        canonical_hostname:
+          $ref: "#/components/schemas/CanonicalHostname"
+        service_protocol:
+          $ref: "#/components/schemas/PublicURLServiceProtocol"
+        public_port:
+          type: integer
+          minimum: 1024
+          maximum: 65535
+        public_url_scope:
+          $ref: "#/components/schemas/PublicURLScope"
+        purpose:
+          $ref: "#/components/schemas/PublicURLPurpose"
+        lifecycle_state:
+          $ref: "#/components/schemas/PublicURLLifecycleState"
+        visitor_access:
+          type: string
+          description: Inventory visibility does not itself permit a visitor connection.
+          enum: [owner, team, invite, inventory]
+    AvailablePublicURLPage:
+      type: object
+      additionalProperties: false
+      required: [public_urls]
+      properties:
+        public_urls:
+          type: array
+          items:
+            $ref: "#/components/schemas/AvailablePublicURL"
+        next_cursor:
+          $ref: "#/components/schemas/ResourceID"
     PublicURL:
       type: object
       additionalProperties: false
