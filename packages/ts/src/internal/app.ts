@@ -451,6 +451,66 @@ export async function startRuntime(
   }
 }
 
+// ad-hoc invocations still use the private Unix transport until the host API
+// provides a separately authorized credential scope for them.
+export async function startAdHocRuntime(
+  directory: string,
+  binary: string = resolveNativeBinary(),
+): Promise<string> {
+  try {
+    const { stdout } = await promisify(execFile)(
+      binary,
+      ["--no-telemetry", "runtime", "address", "--directory", directory],
+      { timeout: 30_000, maxBuffer: 64 * 1024, encoding: "utf8" },
+    );
+    const value: unknown = JSON.parse(stdout);
+    const object = record(value, "local publisher socket");
+    exactKeys(object, ["version", "socket"], "local publisher socket");
+    if (
+      object.version !== 1 ||
+      typeof object.socket !== "string" ||
+      !path.isAbsolute(object.socket) ||
+      object.socket.includes("\0")
+    )
+      throw new TnlError("sdk.response_invalid");
+    if (!(await adHocRuntimeHealthy(object.socket))) {
+      const worker = spawn(
+        binary,
+        ["--no-telemetry", "runtime", "serve", "--directory", directory],
+        {
+          cwd: directory,
+          stdio: "ignore",
+        },
+      );
+      worker.once("error", () => {});
+      worker.unref();
+      const deadline = Date.now() + 15_000;
+      while (!(await adHocRuntimeHealthy(object.socket))) {
+        if (Date.now() >= deadline) throw new TnlError("sdk.dev_unavailable");
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    return object.socket;
+  } catch (cause) {
+    if (cause instanceof TnlError) throw cause;
+    throw new TnlError("sdk.dev_unavailable", { cause });
+  }
+}
+
+function adHocRuntimeHealthy(socket: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const request = http.get(
+      { socketPath: socket, path: "/v1/health", timeout: 1_000 },
+      (response) => {
+        response.resume();
+        resolve(response.statusCode === 204);
+      },
+    );
+    request.on("error", () => resolve(false));
+    request.on("timeout", () => request.destroy());
+  });
+}
+
 function runtimeHealthy(endpointPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     let endpoint;
@@ -517,8 +577,10 @@ function endpointService(endpointPath: string): string | undefined {
 
 export function runtimeRequest(socket: string, operation: string, body: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const payload =
-      operation === "prepare" || operation === "register"
+    const adHoc = operation.startsWith("ad-hoc/");
+    const payload = adHoc
+      ? JSON.stringify(body)
+      : operation === "prepare" || operation === "register"
         ? JSON.stringify(
             operation === "prepare"
               ? body
@@ -528,19 +590,25 @@ export function runtimeRequest(socket: string, operation: string, body: unknown)
                 },
           )
         : "";
-    const endpoint = readLocalEndpoint(socket);
-    const registration = record(body, "registration");
-    const id = registration.registration_id;
-    if (operation !== "prepare" && (typeof id !== "string" || !/^reg_[a-f0-9]{32}$/.test(id))) {
+    const endpoint = adHoc ? undefined : readLocalEndpoint(socket);
+    const registration = adHoc ? undefined : record(body, "registration");
+    const id = registration?.registration_id;
+    if (
+      !adHoc &&
+      operation !== "prepare" &&
+      (typeof id !== "string" || !/^reg_[a-f0-9]{32}$/.test(id))
+    ) {
       reject(new TnlError("sdk.configuration_invalid"));
       return;
     }
-    const route =
-      operation === "prepare"
+    const route = adHoc
+      ? `/v1/${operation}`
+      : operation === "prepare"
         ? "/v1/prepare"
         : `/v1/registrations/${id}${operation === "renew" ? "/renew" : ""}`;
-    const method =
-      operation === "prepare"
+    const method = adHoc
+      ? "POST"
+      : operation === "prepare"
         ? "POST"
         : operation === "register"
           ? "PUT"
@@ -549,8 +617,9 @@ export function runtimeRequest(socket: string, operation: string, body: unknown)
             : "DELETE";
     const request = http.request(
       {
-        hostname: "127.0.0.1",
-        port: Number(endpoint.url.port),
+        ...(adHoc
+          ? { socketPath: socket }
+          : { hostname: "127.0.0.1", port: Number(endpoint?.url.port) }),
         path: route,
         method,
         headers: {
@@ -558,9 +627,9 @@ export function runtimeRequest(socket: string, operation: string, body: unknown)
             ? {}
             : { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) }),
           ...(operation === "renew" || operation === "unregister"
-            ? { "X-Registration-Owner": registration.owner as string }
+            ? { "X-Registration-Owner": registration?.owner as string }
             : {}),
-          Authorization: `Bearer ${endpoint.credential}`,
+          ...(adHoc ? {} : { Authorization: `Bearer ${endpoint?.credential}` }),
         },
       },
       (response) => {

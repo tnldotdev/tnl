@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { TnlRatePeriod } from "../config.gen.js";
 import type { FetchHandler } from "./fetch_types.js";
 import { TnlCleanupError, TnlError } from "../errors.js";
-import { startRuntime, runtimeRequest } from "./app.js";
+import { startAdHocRuntime, runtimeRequest } from "./app.js";
 import { closeServer, listeningTarget, type LocalHTTPServer } from "./register.js";
 import { record, requiredHostname } from "./runtime.js";
 
@@ -43,7 +43,7 @@ interface Dependencies {
 }
 
 const dependencies: Dependencies = {
-  start: startRuntime,
+  start: startAdHocRuntime,
   request: runtimeRequest,
   pause: (milliseconds) =>
     new Promise((resolve) => {

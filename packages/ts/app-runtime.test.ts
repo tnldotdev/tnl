@@ -80,6 +80,25 @@ test("sends authenticated local publisher requests over loopback TCP", async () 
   }
 });
 
+test("keeps temporary publication requests on the app-owned Unix socket", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tnl-sdk-adhoc-"));
+  const socket = join(directory, "manager.sock");
+  const requests: string[] = [];
+  const server = createServer((request, response) => {
+    requests.push(request.url ?? "");
+    request.resume();
+    response.writeHead(204).end();
+  });
+  try {
+    await new Promise<void>((resolve) => server.listen(socket, resolve));
+    await expect(runtimeRequest(socket, "ad-hoc/renew", { version: 1 })).resolves.toBeUndefined();
+    expect(requests).toEqual(["/v1/ad-hoc/renew"]);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("accepts the native private protocol golden assignment", async () => {
   const golden: unknown = JSON.parse(
     await readFile(
