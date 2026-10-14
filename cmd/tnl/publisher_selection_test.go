@@ -326,7 +326,8 @@ func TestExternalPublisherWaitRecordsHTTPReadinessOnTheSelectedOwner(t *testing.
 		RelativeServiceDirectories: map[string]string{"web": "."},
 	}}
 	var output bytes.Buffer
-	err = runAppWaitWithProbe(t.Context(), project, t.TempDir(), waitCommand{Timeout: time.Second, Output: "json"}, &output,
+	state := filepath.Join(t.TempDir(), "state")
+	err = runAppWaitWithProbe(t.Context(), project, state, waitCommand{Timeout: time.Second, Output: "json"}, &output,
 		func(_ context.Context, service clientruntime.Service) clientruntime.Observation {
 			return clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber,
 				Readiness: service.Readiness, Ready: true, CheckedAt: time.Now()}

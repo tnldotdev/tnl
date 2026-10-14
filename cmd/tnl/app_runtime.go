@@ -46,7 +46,7 @@ type runtimeOptions struct {
 	App         bool   `name:"app" help:"Locate the credential for one configured app."`
 	Service     string `name:"service" help:"Configured app service; required when several apps are configured."`
 	AdHoc       bool   `name:"ad-hoc" help:"Locate the credential for an ad-hoc invocation."`
-	Listen    string `name:"listen" help:"Private listen address of an external project publisher API."`
+	Listen      string `name:"listen" help:"Private listen address of an external project publisher API."`
 }
 
 func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfiguration, string, error) {
