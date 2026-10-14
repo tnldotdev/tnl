@@ -285,6 +285,7 @@ func (e OIDCAuthenticationFactsLoginFlow) Valid() bool {
 const (
 	Conflict                    ProblemCode = "conflict"
 	DnsSetupPending             ProblemCode = "dns_setup_pending"
+	FeedbackSignInRequired      ProblemCode = "feedback_sign_in_required"
 	Forbidden                   ProblemCode = "forbidden"
 	GuestDemoOnly               ProblemCode = "guest_demo_only"
 	GuestIpChanged              ProblemCode = "guest_ip_changed"
@@ -310,6 +311,8 @@ func (e ProblemCode) Valid() bool {
 	case Conflict:
 		return true
 	case DnsSetupPending:
+		return true
+	case FeedbackSignInRequired:
 		return true
 	case Forbidden:
 		return true

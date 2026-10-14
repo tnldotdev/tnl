@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import type { FeedbackAPI } from "./api.ts";
+import { FeedbackError } from "./errors.ts";
 import { Toolbar } from "./toolbar.tsx";
 import type { FeedbackEvent, Summary, Thread } from "./model.ts";
 
@@ -153,6 +154,39 @@ test("a lost response retries the frozen report with its original idempotency ke
   await waitFor(() => expect(api.report).toHaveBeenCalledTimes(2));
   const [first, second] = vi.mocked(api.report).mock.calls;
   expect(first?.slice(0, 2)).toEqual(second?.slice(0, 2));
+});
+
+test("sign-in required keeps the report draft in the original tab until manual retry", async () => {
+  const { api, user } = mount();
+  vi.mocked(api.report).mockRejectedValueOnce(new FeedbackError("sign_in_required"));
+  await openDraft(user, appButton());
+  await user.type(screen.getByRole("textbox", { name: "Feedback", exact: true }), "Draft to keep");
+  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await screen.findByText("sign in to leave feedback, then send again");
+  const link = screen.getByRole("link", { name: "[ sign in ]" });
+  expect(link.getAttribute("href")).toBe("/__tnl/team/login?return=%2F");
+  expect(link.getAttribute("target")).toBe("_blank");
+  expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+  expect(
+    (screen.getByRole("textbox", { name: "Feedback", exact: true }) as HTMLTextAreaElement).value,
+  ).toBe("Draft to keep");
+  expect(api.report).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await waitFor(() => expect(api.report).toHaveBeenCalledTimes(2));
+});
+
+test("sign-in required keeps a reply without retrying it automatically", async () => {
+  const { api, user } = mount(fixture([report]));
+  vi.mocked(api.append).mockRejectedValueOnce(new FeedbackError("sign_in_required"));
+  await openThread(user);
+  await user.type(screen.getByRole("textbox", { name: "Reply", exact: true }), "Reply draft");
+  await user.click(screen.getByRole("button", { name: "Send reply" }));
+  await screen.findByText("sign in to leave feedback, then send again");
+  expect(
+    (screen.getByRole("textbox", { name: "Reply", exact: true }) as HTMLTextAreaElement).value,
+  ).toBe("Reply draft");
+  expect(screen.getByRole("link", { name: "[ sign in ]" }).getAttribute("target")).toBe("_blank");
+  expect(api.append).toHaveBeenCalledTimes(1);
 });
 
 test("reply, resolve, and reopen share the same conversation and preserve history", async () => {

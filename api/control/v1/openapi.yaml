@@ -3213,6 +3213,7 @@ components:
         [
           invalid_request,
           unauthenticated,
+          feedback_sign_in_required,
           forbidden,
           guest_demo_only,
           guest_ip_changed,

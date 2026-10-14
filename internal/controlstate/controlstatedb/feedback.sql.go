@@ -230,28 +230,21 @@ func (q *Queries) FeedbackRunScope(ctx context.Context, arg FeedbackRunScopePara
 	return i, err
 }
 
-const getFeedbackEventByActorKey = `-- name: GetFeedbackEventByActorKey :one
+const getFeedbackEventByKey = `-- name: GetFeedbackEventByKey :one
 SELECT cursor, schema_version, feedback_id, team_id, event_type, actor_kind, actor_reference, idempotency_key, request_digest, text, evidence, source_state, occurred_at, author_identity_id, author_display_name, author_verified FROM control.feedback_events
 WHERE feedback_id = $1
-  AND actor_kind = $2
-  AND actor_reference = $3
-  AND idempotency_key = $4
+  AND idempotency_key = $2
+ORDER BY cursor LIMIT 1
 `
 
-type GetFeedbackEventByActorKeyParams struct {
+type GetFeedbackEventByKeyParams struct {
 	FeedbackID     string
-	ActorKind      string
-	ActorReference string
 	IdempotencyKey string
 }
 
-func (q *Queries) GetFeedbackEventByActorKey(ctx context.Context, arg GetFeedbackEventByActorKeyParams) (ControlFeedbackEvent, error) {
-	row := q.db.QueryRow(ctx, getFeedbackEventByActorKey,
-		arg.FeedbackID,
-		arg.ActorKind,
-		arg.ActorReference,
-		arg.IdempotencyKey,
-	)
+// one idempotency key cannot create events under different authors.
+func (q *Queries) GetFeedbackEventByKey(ctx context.Context, arg GetFeedbackEventByKeyParams) (ControlFeedbackEvent, error) {
+	row := q.db.QueryRow(ctx, getFeedbackEventByKey, arg.FeedbackID, arg.IdempotencyKey)
 	var i ControlFeedbackEvent
 	err := row.Scan(
 		&i.Cursor,

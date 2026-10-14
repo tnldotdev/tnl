@@ -52,12 +52,12 @@ WHERE team_id = sqlc.arg(team_id)
   AND id > sqlc.arg(after_id)
 ORDER BY id LIMIT 101;
 
--- name: GetFeedbackEventByActorKey :one
+-- one idempotency key cannot create events under different authors.
+-- name: GetFeedbackEventByKey :one
 SELECT * FROM control.feedback_events
 WHERE feedback_id = sqlc.arg(feedback_id)
-  AND actor_kind = sqlc.arg(actor_kind)
-  AND actor_reference = sqlc.arg(actor_reference)
-  AND idempotency_key = sqlc.arg(idempotency_key);
+  AND idempotency_key = sqlc.arg(idempotency_key)
+ORDER BY cursor LIMIT 1;
 
 -- name: InsertFeedbackEvent :one
 INSERT INTO control.feedback_events (

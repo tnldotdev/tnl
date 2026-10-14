@@ -7,6 +7,8 @@ import type { AnchorTarget } from "./anchors.ts";
 import { boundedText } from "./evidence.ts";
 import { EvidenceView } from "./evidence-view.tsx";
 import type { Action, Evidence, ReportInput, Thread } from "./model.ts";
+import { FeedbackError, safeFeedbackMessage } from "./errors.ts";
+import { SignInLink } from "./sign-in.tsx";
 
 export function ReportForm({
   api,
@@ -80,6 +82,9 @@ export function ReportForm({
       )}
       {!target && <small>on this page</small>}
       {send.error && <p role="alert">{safeFeedbackMessage(send.error)}</p>}
+      {send.error instanceof FeedbackError && send.error.code === "sign_in_required" && (
+        <SignInLink path={path} />
+      )}
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -142,4 +147,3 @@ export function ReportForm({
     </section>
   );
 }
-import { FeedbackError, safeFeedbackMessage } from "./errors.ts";

@@ -232,6 +232,47 @@ paths:
                 $ref: "#/components/schemas/Team"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/teams/{team_id}/feedback-policy:
+    get:
+      operationId: getTeamFeedbackPolicy
+      summary: Read the team's live feedback sign-in policy
+      description: Current team members may read this policy. Sign-in is optional by default; visitor access remains required independently.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+      responses:
+        "200":
+          description: Team feedback policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamFeedbackPolicy"
+        default:
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: setTeamFeedbackPolicy
+      summary: Set the team's live feedback sign-in policy
+      description: Only owners and admins may edit this policy. Enabling requires configured browser sign-in. Changes apply to reports, replies, resolve, and reopen on already-running previews.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamFeedbackPolicy"
+      responses:
+        "200":
+          description: Updated team feedback policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamFeedbackPolicy"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/teams/{team_id}/memberships:
     get:
       operationId: listTeamMemberships
@@ -683,6 +724,13 @@ components:
     TeamKind:
       type: string
       enum: [personal, organization]
+    TeamFeedbackPolicy:
+      type: object
+      additionalProperties: false
+      required: [require_sign_in]
+      properties:
+        require_sign_in:
+          type: boolean
     Team:
       type: object
       additionalProperties: false

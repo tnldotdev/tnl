@@ -171,6 +171,37 @@ attribution. Identity alone never admits a reviewer. Report creation and event
 writes revalidate these boundaries under their write transaction; no caller
 membership flag participates in authorization.
 
+## enforce the team's live feedback policy
+
+`tnl team feedback show` reads the selected team's policy; owners and admins can
+set it with `tnl team feedback set --require-sign-in=true|false`. The authority
+API owns `GET` and `PUT /v1/teams/{team_id}/feedback-policy`, with the dedicated
+`require_sign_in` boolean. Current members may read; enabling requires configured
+browser OIDC. A missing row in `team_feedback_policies` means optional sign-in.
+
+Guest trials retain optional sign-in under their saved guest ownership boundary;
+they do not have an editable local team policy. A missing or deleted local team
+does not receive that default.
+
+Policy changes take the same exclusive team advisory guard as other authority
+mutations. Reviewer writes share that guard before locking the public URL, run,
+or thread, normalize current reviewer access, then read the policy inside the
+write transaction. The requirement covers reports, replies, resolve, and reopen,
+including retries, and applies to already-running publish runs without changing
+publishing authorization revisions. CLI implementers remain authenticated through
+their existing authorization boundary.
+
+Sign-in supplies verified attribution, not visitor permission. Signed-in
+nonmembers admitted by IP policy or a share can write when sign-in is required;
+an anonymous admitted visitor receives `feedback_sign_in_required` (HTTP 401).
+Denied access remains HTTP 403; unavailable browser authentication remains HTTP 503. Reads retain their existing admission requirements independently of policy.
+
+The publisher returns HTTP 401 when control requires sign-in for a feedback
+write. The toolbar offers sign-in in a new tab, leaving the original draft in
+place; after authentication, the reviewer sends it again. It does not replay
+the write automatically. Control rejects a reused event idempotency key under
+a different author so an uncertain retry cannot become a second event.
+
 ## coordinate publisher connections
 
 Publisher-connection claim and readiness operations share a keyed advisory guard
