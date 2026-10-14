@@ -6,11 +6,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 )
@@ -32,7 +32,7 @@ type Manager struct {
 	op            sync.Mutex
 	mu            sync.Mutex
 	ctx           context.Context
-	state         string
+	state         *clientstate.Database
 	snapshot      Snapshot
 	registrations map[string]*registration
 	run           Run
@@ -45,11 +45,17 @@ type Manager struct {
 }
 
 func New(ctx context.Context, project, state string, services []Service, run Run) (*Manager, error) {
-	previous, err := ReadSnapshot(project, state)
+	db, err := clientstate.Open(ctx, state)
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{ctx: ctx, state: state, run: run, registrations: map[string]*registration{}, idleSince: time.Now(), snapshot: previous}
+	previous, err := readSnapshot(db, project)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	m := &Manager{ctx: ctx, state: db, run: run, registrations: map[string]*registration{}, idleSince: time.Now(), snapshot: previous}
+	m.snapshot.Events = nil
 	m.snapshot.Services = slices.Clone(services)
 	slices.SortFunc(m.snapshot.Services, func(a, b Service) int {
 		if a.Name < b.Name {
@@ -78,12 +84,13 @@ func New(ctx context.Context, project, state string, services []Service, run Run
 		}
 	}
 	m.emitLocked(kind, nil)
+	if m.writeErr != nil {
+		db.Close()
+	}
 	return m, m.writeErr
 }
 
 func (m *Manager) emitLocked(kind string, service *Service) {
-	sequence, _ := ParseCursor(m.snapshot.Cursor)
-	m.snapshot.Cursor = strconv.FormatUint(sequence+1, 10)
 	m.snapshot.ObservedAt = time.Now().UTC()
 	var copy *Service
 	if service != nil {
@@ -97,11 +104,8 @@ func (m *Manager) emitLocked(kind string, service *Service) {
 		snapshot.Events = nil
 		event.Snapshot = &snapshot
 	}
-	m.snapshot.Events = append(m.snapshot.Events, event)
-	if len(m.snapshot.Events) > EventRetention {
-		m.snapshot.Events = slices.Clone(m.snapshot.Events[len(m.snapshot.Events)-EventRetention:])
-	}
-	if err := WriteSnapshot(m.snapshot, m.state); err != nil {
+	m.snapshot.Events = []Event{event}
+	if err := WriteSnapshot(&m.snapshot, m.state); err != nil {
 		m.writeErr = err
 	}
 }
@@ -113,6 +117,14 @@ func (m *Manager) Snapshot() Snapshot {
 	copy.Services = slices.Clone(copy.Services)
 	copy.Events = slices.Clone(copy.Events)
 	return copy
+}
+
+// JournalSnapshot reads the shared cursor and retained history, including
+// direct publications committed by another process.
+func (m *Manager) JournalSnapshot() (Snapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return readSnapshot(m.state, m.snapshot.Project)
 }
 
 func (m *Manager) BeginPreparation() func() {
@@ -503,4 +515,5 @@ func (m *Manager) close() {
 	m.mu.Lock()
 	m.emitLocked("runtime.stopped", nil)
 	m.mu.Unlock()
+	_ = m.state.Close()
 }

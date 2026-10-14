@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -278,7 +277,7 @@ func TestWaitAlwaysChecksFreshResponsesAndKeepsFailingPublicationsRunning(t *tes
 		return clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now(), Status: 503, Reason: "runtime.probe_rejected", Readiness: service.Readiness}
 	}
 	var output bytes.Buffer
-	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Service: []string{"api"}, Timeout: 20 * time.Millisecond, Output: "json"}, &output, probe)
+	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Service: []string{"api"}, Timeout: time.Second, Output: "json"}, &output, probe)
 	if reason, _, ok := failure.Describe(err); !ok || reason != failure.AppReadinessTimeout || calls.Load() == 0 {
 		t.Fatalf("fresh wait = %v, probes=%d", err, calls.Load())
 	}
@@ -291,7 +290,7 @@ func TestWaitAlwaysChecksFreshResponsesAndKeepsFailingPublicationsRunning(t *tes
 		t.Fatalf("wait output = %s, %v", output.String(), err)
 	}
 	output.Reset()
-	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Timeout: 10 * time.Millisecond, Output: "json"}, &output, func(_ context.Context, s clientruntime.Service) clientruntime.Observation {
+	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Timeout: time.Second, Output: "json"}, &output, func(_ context.Context, s clientruntime.Service) clientruntime.Observation {
 		return clientruntime.Observation{RegistrationID: s.RegistrationID, PublishRunNumber: s.PublishRunNumber, CheckedAt: time.Now(), Ready: true, Readiness: s.Readiness}
 	})
 	if err == nil {
@@ -332,7 +331,7 @@ func TestWaitDiscardsAResponseFromAReplacedRegistrationRun(t *testing.T) {
 func TestWatchResumeAndExpiredCursor(t *testing.T) {
 	a, state, _ := testAppRuntime(t)
 	a.manager.RecordFailure("api", "runtime.preparation_failed")
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	var output bytes.Buffer
 	if err := runAppWatch(ctx, a.project, state, watchCommand{Output: "ndjson"}, &output); err != nil {
@@ -349,7 +348,7 @@ func TestWatchResumeAndExpiredCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	output.Reset()
-	ctx2, cancel2 := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx2, cancel2 := context.WithTimeout(t.Context(), time.Second)
 	defer cancel2()
 	if err := runAppWatch(ctx2, a.project, state, watchCommand{After: initial.Snapshot.Cursor, Output: "ndjson"}, &output); err != nil {
 		t.Fatal(err)
@@ -412,7 +411,7 @@ func TestWatchResumesTCPAndAppEventsWithOneCursor(t *testing.T) {
 		Snapshot clientruntime.Snapshot `json:"snapshot"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &initial); err != nil || initial.Type != "snapshot" ||
-		len(initial.Snapshot.Services) != 3 || !strings.Contains(initial.Snapshot.Cursor, ":") ||
+		len(initial.Snapshot.Services) != 3 || initial.Snapshot.Cursor != "1" ||
 		initial.Snapshot.Services[1].Name != "orders" {
 		t.Fatalf("mixed watch snapshot = %s, %v", output.String(), err)
 	}
@@ -446,7 +445,7 @@ func TestWatchResumesTCPAndAppEventsWithOneCursor(t *testing.T) {
 	}
 	if len(events) != 3 || events[2].Type != "service.publication" ||
 		events[2].Service == nil || events[2].Service.PublicURL != "orders.example:15432" ||
-		!events[2].Service.Routable || events[2].Cursor != strings.Split(initial.Snapshot.Cursor, ":")[0]+":3" {
+		!events[2].Service.Routable || events[2].Cursor != "4" {
 		t.Fatalf("TCP watch events = %#v", events)
 	}
 	if _, err := a.manager.Reserve("api", "owner", 1, "https://api.example"); err != nil {
@@ -461,20 +460,11 @@ func TestWatchResumesTCPAndAppEventsWithOneCursor(t *testing.T) {
 	if err := runAppWatch(resumeCtx2, project, stateDir, watchCommand{After: events[2].Cursor, Output: "ndjson"}, &output); err != nil {
 		t.Fatal(err)
 	}
-	preparedCursor, _, err := parseWatchCursor(events[2].Cursor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous, err := clientruntime.ParseCursor(preparedCursor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	next := strconv.FormatUint(previous+1, 10)
-	if !strings.Contains(output.String(), `"cursor":"`+next+`:3","type":"service.prepared"`) ||
-		!strings.Contains(output.String(), `"cursor":"`+next+`:4","type":"service.stopped"`) {
+	if !strings.Contains(output.String(), `"cursor":"5","type":"service.prepared"`) ||
+		!strings.Contains(output.String(), `"cursor":"6","type":"service.stopped"`) {
 		t.Fatalf("interleaved watch resume = %s", output.String())
 	}
-	if err := runAppWatch(t.Context(), project, stateDir, watchCommand{After: "0:9999", Output: "ndjson"}, &output); !errors.Is(err, clientstate.ErrTunnelCursorExpired) {
+	if err := runAppWatch(t.Context(), project, stateDir, watchCommand{After: "9999", Output: "ndjson"}, &output); !errors.Is(err, clientruntime.ErrCursorExpired) {
 		t.Fatalf("future TCP cursor = %v", err)
 	}
 }
@@ -501,7 +491,7 @@ func TestWatchTCPOnlyProjectWithoutAppRuntime(t *testing.T) {
 		Snapshot clientruntime.Snapshot `json:"snapshot"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &initial); err != nil ||
-		initial.Snapshot.Cursor != "0:0" || len(initial.Snapshot.Services) != 1 ||
+		initial.Snapshot.Cursor != "0" || len(initial.Snapshot.Services) != 1 ||
 		initial.Snapshot.Services[0].Name != "warehouse" || initial.Snapshot.Services[0].Registered {
 		t.Fatalf("TCP-only watch snapshot = %s, %v", output.String(), err)
 	}
@@ -520,8 +510,62 @@ func TestWatchTCPOnlyProjectWithoutAppRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	var event clientruntime.Event
-	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil || event.Cursor != "0:1" ||
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil || event.Cursor != "1" ||
 		event.Type != "service.starting" || event.Service == nil || event.Service.ServiceProtocol != "mysql" {
 		t.Fatalf("TCP-only event = %s, %v", output.String(), err)
+	}
+}
+
+func TestWatchDirectTunnelWithoutProjectConfiguration(t *testing.T) {
+	t.Setenv("TNL_CONFIG", "")
+	t.Chdir(t.TempDir())
+	stateDir := filepath.Join(t.TempDir(), "state")
+	project, err := projectRoot(t.Context(), cli{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := clientstate.Open(t.Context(), stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	direct, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "127.0.0.1:3306",
+		Project: project, ServiceProtocol: controlv1.Mysql,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer direct.Finish(context.Background(), nil)
+	flags := cli{Watch: watchCommand{StateDir: stateDir, Output: "ndjson"}}
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	var output bytes.Buffer
+	if err := runAppObservation(ctx, flags, "watch", &output); err != nil {
+		t.Fatal(err)
+	}
+	var initial struct {
+		Snapshot clientruntime.Snapshot `json:"snapshot"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &initial); err != nil ||
+		len(initial.Snapshot.Services) != 0 || len(initial.Snapshot.Tunnels) != 1 || initial.Snapshot.Tunnels[0].ID != direct.ID() || initial.Snapshot.Cursor != "1" {
+		t.Fatalf("config-less direct watch snapshot = %s, %v", output.String(), err)
+	}
+	if err := direct.SetPublicURL(t.Context(), "url_0123456789abcdefghijkl", "warehouse.example"); err != nil {
+		t.Fatal(err)
+	}
+	if err := direct.SetReady(t.Context(), "warehouse.example:13306", 1); err != nil {
+		t.Fatal(err)
+	}
+	flags.Watch.After = initial.Snapshot.Cursor
+	output.Reset()
+	ctx, cancel = context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	if err := runAppObservation(ctx, flags, "watch", &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"cursor":"3","type":"tunnel.ready"`) ||
+		!strings.Contains(output.String(), `"public_url":"warehouse.example:13306"`) {
+		t.Fatalf("config-less direct tunnel events = %s", output.String())
 	}
 }

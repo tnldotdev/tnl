@@ -14,8 +14,8 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/localpublisherv1"
 )
 
-// localHandler is the project API on loopback. the Unix handler remains the
-// existing SDK transport; TCP never exposes its ad-hoc or observation routes.
+// localHandler is the authenticated project API on loopback. app service
+// credentials cannot access owner-only ad-hoc or observation operations.
 func (a *appRuntime) localHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
@@ -94,7 +94,12 @@ func (a *appRuntime) localHandler() http.Handler {
 		})
 	}
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) {
-		privateprotocol.Write(w, http.StatusOK, localProjectSnapshot(a.manager.Snapshot()))
+		snapshot, err := a.manager.JournalSnapshot()
+		if err != nil {
+			runtimeProblem(w, err)
+			return
+		}
+		privateprotocol.Write(w, http.StatusOK, localProjectSnapshot(snapshot))
 	})
 	mux.HandleFunc("GET /v1/events", a.localEvents)
 	// the owner credential can observe readiness and manage ad-hoc invocations;
@@ -188,7 +193,11 @@ func (a *appRuntime) localEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	deadline := time.Now().Add(time.Duration(wait) * time.Second)
 	for {
-		snapshot := a.manager.Snapshot()
+		snapshot, err := a.manager.JournalSnapshot()
+		if err != nil {
+			runtimeProblem(w, err)
+			return
+		}
 		events, err := clientruntime.EventsAfter(snapshot, query.Get("after"))
 		if errors.Is(err, clientruntime.ErrCursorExpired) {
 			privateprotocol.Write(w, http.StatusGone, localpublisherv1.Problem{Code: "runtime.cursor_expired", Message: "local event cursor expired; read status and resume"})
