@@ -26,7 +26,7 @@ services:
       - |
         go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
         go test -race -v ./internal/tnldruntime \
-          -run='^TestDNSIntegrationSplitAutomaticRelayCertificates$$' \
+          -run='^TestDNSIntegration(SplitAutomaticRelayCertificates|EnrolledSSHDeviceAndEngineerIPHandoff)$$' \
           -count=1 -timeout=5m -args \
           -tnl-test-tier=dns \
           -tnl-test-postgres-url='postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable'

@@ -24,10 +24,11 @@ import (
 )
 
 type waitCommand struct {
-	StateDir string        `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
-	Service  []string      `name:"service" help:"Check this service; repeat to select several. Defaults to every configured service."`
-	Timeout  time.Duration `name:"timeout" default:"2m" help:"Time to wait for fresh readiness checks."`
-	Output   string        `name:"output" enum:"human,json" default:"human"`
+	remoteProbeFlags `embed:""`
+	StateDir         string        `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	Service          []string      `name:"service" help:"Check this service; repeat to select several. Defaults to every configured service."`
+	Timeout          time.Duration `name:"timeout" default:"2m" help:"Time to wait for fresh readiness checks."`
+	Output           string        `name:"output" enum:"human,json" default:"human"`
 }
 type watchCommand struct {
 	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
@@ -232,6 +233,15 @@ func appServiceBlocks(snapshot clientruntime.Snapshot) []clioutput.Block {
 }
 
 func runAppObservation(ctx context.Context, flags cli, command string, output io.Writer) error {
+	if command == "wait" && flags.Wait.Remote != "" {
+		if len(flags.Wait.Service) != 0 {
+			return failure.Wrap("select remote wait", failure.InvalidCommand, errors.New("--service is for local apps; omit it with --remote"))
+		}
+		return runRemoteWait(ctx, flags.Wait, output)
+	}
+	if command == "wait" && (flags.Wait.Protocol != "" || flags.Wait.Path != "" || flags.Wait.VisitorTLSPassthrough) {
+		return failure.Wrap("select remote wait", failure.InvalidCommand, errors.New("--protocol, --path, and --visitor-tls-passthrough require --remote"))
+	}
 	stateDir := flags.Wait.StateDir
 	if command == "watch" {
 		stateDir = flags.Watch.StateDir

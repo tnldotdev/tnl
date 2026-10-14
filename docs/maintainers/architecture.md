@@ -160,6 +160,14 @@ The publisher checks it before forwarding new SSH visitors and retains the
 normal certificate expiration and renewal lifecycle. Target TLS remains an
 explicit option for an SSH target behind a separate TLS wrapper.
 
+remote `tnl status --remote` and `tnl wait --remote` probe from the caller's
+machine without a team session or local project. HTTPS checks the public
+certificate and reads an HTTP response without following redirects. TCP probes
+reuse protocol-specific visitor checks, including the target's SSH banner;
+they send no application credentials. `reachable` means the public visitor
+path answered this probe. it does not authenticate an SSH host key or prove an
+application login will succeed.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.
