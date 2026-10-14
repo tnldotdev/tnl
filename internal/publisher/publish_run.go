@@ -203,6 +203,12 @@ func runSession(
 			}
 			return config.AdmitRequest(request, PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, Number: version})
 		},
+		AdmitConnection: func() error {
+			if config.AdmitConnection == nil {
+				return nil
+			}
+			return config.AdmitConnection(PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, Number: version})
+		},
 		ObserveResponse: func(response *http.Response) error {
 			if config.ObserveResponse == nil {
 				return nil

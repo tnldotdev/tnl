@@ -97,7 +97,7 @@ func authorizeLocalPublisher(handler http.Handler, credential, address string, a
 		}
 		provided := []byte(r.Header.Get("Authorization"))
 		if len(provided) == len(expected) && subtle.ConstantTimeCompare(provided, expected) == 1 {
-			if r.URL.Path != "/v1/status" && r.URL.Path != "/v1/events" && r.URL.Path != "/v1/observe" && !strings.HasPrefix(r.URL.Path, "/v1/ad-hoc/") {
+			if r.URL.Path != "/v1/status" && r.URL.Path != "/v1/events" && r.URL.Path != "/v1/observe" && r.URL.Path != "/v1/publications" && !strings.HasPrefix(r.URL.Path, "/v1/publications/") && !strings.HasPrefix(r.URL.Path, "/v1/ad-hoc/") {
 				localUnauthorized(w)
 				return
 			}

@@ -67,6 +67,7 @@ type Config struct {
 	TargetOptions            localproxy.TargetOptions
 	Handler                  http.Handler // integration URL handler; no local target is dialed.
 	AdmitRequest             func(*http.Request, PublishRunIdentity) error
+	AdmitConnection          func(PublishRunIdentity) error
 	ObserveResponse          ResponseObserver
 	Mounts                   []localproxy.Mount
 	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.

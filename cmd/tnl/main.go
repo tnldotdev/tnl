@@ -400,6 +400,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			return err
 		}
 		if parsedCommand == "publish <service-or-target>" {
+			flags.Publish.namedOverrides = namedPublishOverrides(parsed)
 			err = project.applyPublish(&flags.Publish)
 		}
 		if err != nil {

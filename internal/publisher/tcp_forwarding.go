@@ -26,6 +26,7 @@ const mysqlClientSSL = 1 << 11
 type tcpForwarding struct {
 	protocol            controlv1.PublicURLServiceProtocol
 	admission           *applicationAdmission
+	admit               func() error
 	publicPort          uint16
 	target              string
 	backendTLS          *tls.Config
@@ -59,6 +60,7 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 	}
 	return &tcpForwarding{
 		protocol: config.ServiceProtocol, publicPort: config.PublicPort, target: config.Target,
+		admit:               config.AdmitConnection,
 		backendTLS:          backendTLS,
 		onTargetFailure:     config.OnTargetFailure,
 		onCancelUnsupported: config.OnCancelUnsupported,

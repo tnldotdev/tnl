@@ -5,12 +5,15 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -39,9 +42,15 @@ type publishCommand struct {
 	demoNameFromCLI  bool
 	Service          string `kong:"-"`
 	project          projectConfiguration
+	namedOverrides   []string
 }
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
+	if flags.Service != "" && flags.PublishCredential == "" {
+		if target := flags.project.Config.Services[flags.Service].Target; target != nil && target.Type == "address" {
+			return runNamedPublish(ctx, flags, stdout, stderr, reporters...)
+		}
+	}
 	telemetry := optionalTelemetryReporter(reporters)
 	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
 	if err != nil {
@@ -260,6 +269,26 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	return output.stopped()
+}
+
+func namedPublishOverrides(parsed *kong.Context) []string {
+	var unsupported []string
+	for _, flag := range parsed.Flags() {
+		if flag.Name == "inspection-mode" && fmt.Sprint(parsed.FlagValue(flag)) == "summary" {
+			continue
+		}
+		if !flag.Set {
+			continue
+		}
+		switch flag.Name {
+		case "server", "access-token", "team", "domain", "name", "public-url", "allow-ip", "allow-all-ips", "ephemeral",
+			"total", "rate-count", "rate-per", "rate-burst", "concurrency", "protocol", "target-ca-file", "target-tls-name", "target-tls",
+			"inspection-mode", "inspection-retention", "inspection-max-bytes":
+			unsupported = append(unsupported, "--"+flag.Name)
+		}
+	}
+	slices.Sort(unsupported)
+	return unsupported
 }
 
 func demoPingHandler(output *publishOutput, telemetry telemetryReporter) func(demo.State) error {

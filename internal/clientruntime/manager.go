@@ -91,7 +91,7 @@ func New(ctx context.Context, project, state string, services []Service, run Run
 	return m, m.writeErr
 }
 
-func (m *Manager) emitLocked(kind string, service *Service) {
+func (m *Manager) emitLocked(kind string, service *Service, publication ...*PublicationEvent) {
 	m.snapshot.ObservedAt = time.Now().UTC()
 	var copy *Service
 	if service != nil {
@@ -99,6 +99,9 @@ func (m *Manager) emitLocked(kind string, service *Service) {
 		copy = &value
 	}
 	event := Event{Cursor: m.snapshot.Cursor, Type: kind, At: m.snapshot.ObservedAt, Service: copy}
+	if len(publication) != 0 {
+		event.Publication = publication[0]
+	}
 	if copy == nil {
 		snapshot := m.snapshot
 		snapshot.Services = slices.Clone(snapshot.Services)
@@ -312,6 +315,7 @@ func (m *Manager) register(id, owner, target, framework string, named bool) erro
 	}
 	if reg.cancel != nil {
 		service.Registered, service.Routable, service.Ready = false, false, false
+		service.TunnelID = ""
 		service.Observation = nil
 		m.emitLocked("service.replacing", service)
 		reg.cancel()
@@ -321,6 +325,7 @@ func (m *Manager) register(id, owner, target, framework string, named bool) erro
 		m.mu.Lock()
 	}
 	service.Registered, service.Routable, service.Ready = true, false, false
+	service.TunnelID = ""
 	service.Target, service.Framework, service.Failure = target, framework, ""
 	service.PublishRunNumber, service.Observation = 0, nil
 	service.ProvisioningStage = ""
@@ -382,7 +387,8 @@ func (m *Manager) Published(id string, run uint64, routable bool) error {
 	}
 	for index := range m.snapshot.Services {
 		service := &m.snapshot.Services[index]
-		if service.RegistrationID != id || !service.Registered {
+		reg := m.registrations[service.Name]
+		if service.RegistrationID != id || !service.Registered || reg == nil || time.Now().After(reg.expires) || m.Alive != nil && !m.Alive(reg.pid) {
 			continue
 		}
 		if run != service.PublishRunNumber || !routable {
@@ -398,6 +404,43 @@ func (m *Manager) Published(id string, run uint64, routable bool) error {
 		}
 		m.emitLocked("service.publication", service)
 		return m.writeErr
+	}
+	return ErrRegistrationStale
+}
+
+// Started binds the named publisher's tunnel to its current lease.
+func (m *Manager) Started(id, target, tunnelID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for index := range m.snapshot.Services {
+		service := &m.snapshot.Services[index]
+		reg := m.registrations[service.Name]
+		if service.RegistrationID == id && service.Registered && service.ServiceProtocol != "" && service.Target == target &&
+			reg != nil && time.Now().Before(reg.expires) && (m.Alive == nil || m.Alive(reg.pid)) {
+			service.TunnelID = tunnelID
+			m.emitLocked("service.starting", service)
+			return m.writeErr
+		}
+	}
+	return ErrRegistrationStale
+}
+
+// RecordPublication records a named worker's progress only while its lease and
+// target are current. the event uses the same project cursor as app and direct work.
+func (m *Manager) RecordPublication(id, target string, event PublicationEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrRegistrationStale
+	}
+	for index := range m.snapshot.Services {
+		service := &m.snapshot.Services[index]
+		reg := m.registrations[service.Name]
+		if service.RegistrationID == id && service.Registered && service.ServiceProtocol != "" && service.Target == target &&
+			reg != nil && time.Now().Before(reg.expires) && (m.Alive == nil || m.Alive(reg.pid)) {
+			m.emitLocked("publication."+event.Type, service, &event)
+			return m.writeErr
+		}
 	}
 	return ErrRegistrationStale
 }
@@ -507,7 +550,7 @@ func (m *Manager) unregister(id, owner string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.registrations, service.Name)
-	service.RegistrationID, service.Target = "", ""
+	service.RegistrationID, service.Target, service.TunnelID = "", "", ""
 	if len(m.registrations) == 0 {
 		m.idleSince = time.Now()
 	}

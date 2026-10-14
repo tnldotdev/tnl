@@ -106,6 +106,7 @@ func (a *appRuntime) localHandler() http.Handler {
 	// app service credentials cannot reach these private operations.
 	mux.Handle("POST /v1/observe", a.ownerOperations())
 	mux.Handle("POST /v1/ad-hoc/", a.ownerOperations())
+	a.namedHandler(mux)
 	return mux
 }
 
@@ -164,7 +165,14 @@ func localServiceStatus(service clientruntime.Service) localpublisherv1.ServiceS
 		result.Target = &service.Target
 	}
 	if service.RegistrationID != "" {
-		result.RegistrationId = &service.RegistrationID
+		if service.ServiceProtocol == "" {
+			result.RegistrationId = &service.RegistrationID
+		} else {
+			result.PublicationId = &service.RegistrationID
+		}
+	}
+	if service.TunnelID != "" {
+		result.TunnelId = &service.TunnelID
 	}
 	if service.PublishRunNumber != 0 {
 		number := int64(service.PublishRunNumber)
@@ -216,6 +224,9 @@ func (a *appRuntime) localEvents(w http.ResponseWriter, r *http.Request) {
 					status := localServiceStatus(*event.Service)
 					entry.Status = &status
 				}
+				if event.Publication != nil {
+					entry.Publication = localPublicationEvent(*event.Publication)
+				}
 				page.Events = append(page.Events, entry)
 				page.Cursor = event.Cursor
 				if len(page.Events) == 32 {
@@ -233,4 +244,30 @@ func (a *appRuntime) localEvents(w http.ResponseWriter, r *http.Request) {
 		case <-timer.C:
 		}
 	}
+}
+
+func localPublicationEvent(event clientruntime.PublicationEvent) *localpublisherv1.PublicationEvent {
+	result := &localpublisherv1.PublicationEvent{Type: event.Type}
+	if event.PublicURLID != "" {
+		result.PublicUrlId = &event.PublicURLID
+	}
+	if event.Hostname != "" {
+		result.Hostname = &event.Hostname
+	}
+	if event.PublicURL != "" {
+		result.PublicUrl = &event.PublicURL
+	}
+	if event.PublishRunNumber != 0 {
+		number := int64(event.PublishRunNumber)
+		result.PublishRunNumber = &number
+	}
+	if event.Transport != "" {
+		transport := localpublisherv1.PublicationEventTransport(event.Transport)
+		result.Transport = &transport
+	}
+	if event.PolicyDenials != 0 {
+		count := int64(event.PolicyDenials)
+		result.PolicyDenials = &count
+	}
+	return result
 }
