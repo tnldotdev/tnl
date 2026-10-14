@@ -60,6 +60,12 @@ service with and without tnl, use `DIRECT_PATH=1`:
 mise exec -- task go:test:load:runtime PUBLIC_URLS=64 START_PARALLEL=64 RPS=160 DURATION=30s DIRECT_PATH=1 RESULTS=bench-results/runtime-reference
 ```
 
+The opt-in fixture sets each publisher to 200 application requests per second
+with a 400-request burst so its shutdown phase can concentrate visitors on
+fewer public URLs. `PUBLISHER_RATE` and `PUBLISHER_BURST` override those test
+settings; ordinary publishers keep their smaller defaults. The selected values
+are recorded in `admission-limits.json` alongside process capacities.
+
 To investigate a fault, select one `SCENARIO` at a time. Available cases
 include `relay-kill`, `control-restart`, `forwarding-blackhole`,
 `publisher-blackhole`, `udp-fallback`, `latency`, and `packet-loss`. For example:
