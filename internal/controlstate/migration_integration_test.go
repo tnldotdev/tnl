@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/storagekey"
 )
 
@@ -302,6 +303,92 @@ func TestIntegrationBrowserAccessAndFeedbackPolicyMigration(t *testing.T) {
 		if _, err := database.pool.Exec(ctx, "UPDATE control."+table+" SET preview_id = NULL"); err != nil {
 			t.Fatalf("%s rejected a nullable preview reference: %v", table, err)
 		}
+	}
+}
+
+func TestIntegrationPublisherIdentityMigrationKeepsServingOldCredentials(t *testing.T) {
+	ctx := t.Context()
+	url := newDisposableControlStateDatabaseURL(t, "publisher_identity_upgrade")
+	config, err := parseDirectConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct := stdlib.OpenDB(*config)
+	t.Cleanup(func() { _ = direct.Close() })
+	if err := ensureMigrationLock(ctx, direct); err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, direct, migrations,
+		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 30); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	keyring, err := storagekey.New(testStorageKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := &Database{pool: pool, storageKey: keyring}
+	now := time.Now().UTC().Truncate(time.Second)
+	seedControlPublicURL(t, legacy, now, "identityupgrade")
+	credential, secret, err := legacy.CreatePublicURLPublishCredential(ctx, CreatePublicURLPublishCredentialRequest{
+		PublicURLID: "public_url_identityupgrade", TeamID: "team_identityupgrade",
+		IdentityID: "identity_identityupgrade", MembershipID: "membership_identityupgrade",
+		PolicyRevision: 1, Target: "http://127.0.0.1:3000",
+		CertificatePlan: authorization.CertificatePlan{
+			CacheKey: "identity-upgrade", Scope: "public-url",
+			Identifiers: []string{"route-identityupgrade.example.test"}, ChallengeMethod: "tls-alpn-01",
+		}, Now: now, ExpiresAt: now.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns := func(table string) []string {
+		t.Helper()
+		rows, err := pool.Query(ctx, `SELECT column_name FROM information_schema.columns
+			WHERE table_schema = 'control' AND table_name = $1 ORDER BY ordinal_position`, table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		values, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return values
+	}
+	tables := []string{"public_urls", "publish_runs", "public_url_publish_credentials", "teams"}
+	shapes := make(map[string][]string, len(tables))
+	for _, table := range tables {
+		shapes[table] = columns(table)
+		if len(shapes[table]) == 0 {
+			t.Fatalf("version 30 has no columns for %s", table)
+		}
+	}
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range tables {
+		if !slices.Equal(shapes[table], columns(table)) {
+			t.Fatalf("migration changed the %s SELECT * shape", table)
+		}
+	}
+	selected, _, err := legacy.AuthenticatePublicURLPublishCredential(ctx, secret, now.Add(time.Second))
+	if err != nil || selected.ID != credential.ID {
+		t.Fatalf("preexisting publish credential after migration = %q, %v", selected.ID, err)
+	}
+	if err := checkSchemaVersion(ctx, pool); err != nil {
+		t.Fatalf("control rejected the additive migration: %v", err)
 	}
 }
 
