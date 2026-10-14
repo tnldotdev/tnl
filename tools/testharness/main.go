@@ -104,14 +104,15 @@ func run() error {
 		}
 		command = append(command, "-tnl-test-postgres-url="+address)
 		if arguments.Service == "postgres-tls" {
-			certificate, key, cleanup, err := preparePostgresTLS(ctx, container)
+			certificate, key, rootCA, cleanup, err := preparePostgresTLS(ctx, container)
 			if cleanup != nil {
 				defer cleanup()
 			}
 			if err != nil {
 				return fmt.Errorf("enable disposable PostgreSQL TLS: %w", err)
 			}
-			command = append(command, "-tnl-test-postgres-ca="+certificate, "-tnl-test-postgres-key="+key)
+			command = append(command, "-tnl-test-postgres-cert="+certificate,
+				"-tnl-test-postgres-key="+key, "-tnl-test-postgres-ca="+rootCA)
 		}
 	case "mysql":
 		var container *mysql.MySQLContainer
