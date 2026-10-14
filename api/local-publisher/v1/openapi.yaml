@@ -161,7 +161,7 @@ components:
       required: [service, framework, owner, pid, directory]
       properties:
         service: { $ref: "#/components/schemas/ServiceName" }
-        framework: { type: string, enum: [node, bun, vite, next] }
+        framework: { type: string, enum: [node, bun, vite, next, python] }
         owner: { type: string, pattern: "^[a-f0-9]{32}$" }
         pid: { type: integer, minimum: 1 }
         directory:

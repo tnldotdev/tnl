@@ -166,9 +166,9 @@ share one project journal: a cursor marks an exclusive position, not a
 TCP-specific counter. Expired cursors require a fresh status snapshot; the
 wire cursor remains opaque when the local journal moves to SQLite. The host
 publisher also binds an OS-assigned loopback TCP port with a private endpoint
-descriptor. Node, Bun, Next, and Vite app registrations use service-scoped
-credentials over the authenticated loopback API. Other callers continue to use
-the Unix socket while they migrate.
+descriptor. Node, Bun, Next, Vite, and configured Python Uvicorn app registrations
+use service-scoped credentials over the authenticated loopback API. Ad-hoc
+publishers continue to use the Unix socket until their transport is migrated.
 
 The host lock, owner descriptor, and per-app service descriptors live in the
 verified private `run/` directory under canonical client state. Each app
