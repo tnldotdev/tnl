@@ -222,6 +222,10 @@ Run that command from either checkout to keep its containers and named volumes
 separate. `tnl url show orders --output raw` prints a configured service's saved
 public address when you need one value in a script.
 
+`tnl version` shows the installed version in a frame. Use
+`tnl version --output raw` for the exact version line in a script, or
+`tnl version --output json` for structured version and commit information.
+
 Then start the two services:
 
 ```bash

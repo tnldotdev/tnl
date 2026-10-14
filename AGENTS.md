@@ -297,7 +297,7 @@ Frames follow this general form:
 
 - Use short, lowercase, concrete states and ASCII-only frame syntax. Use `v` for healthy flow and `x` for the exact failure boundary.
 - Keep human output deterministic and at most 72 columns. Do not truncate meaningful values or emit ANSI control sequences.
-- Keep JSON and NDJSON contracts unchanged. `tnl version` and one-time credentials remain exact raw values; generated help remains unframed.
+- Keep JSON and NDJSON contracts unchanged. `tnl version --output raw` and one-time credentials emit exact raw values; generated help remains unframed.
 - Finite results go to stdout; prompts, lifecycle output, warnings, and errors go to stderr. Applications own their terminal output.
 - Render errors once at the top level through the same renderer. Preserve stable diagnostic codes, help URLs, HTTP behavior, and HTML negotiation.
 - `tnl publish` uses the tunnel presentation; app-led observations use `tnl status`, `tnl wait`, and `tnl watch`.

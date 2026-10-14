@@ -220,7 +220,7 @@ async function main(): Promise<void> {
     );
     return;
   }
-  const version = cli(config, process.cwd(), "version").trim();
+  const version = cli(config, process.cwd(), "version", "--output", "raw").trim();
   if (!version.startsWith(`tnl ${config.version} (`))
     throw new Error(`unexpected tnl version: ${version}`);
   const cwd = await mkdtemp(join(tmpdir(), "tnl-release-check-"));

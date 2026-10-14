@@ -64,7 +64,7 @@ for (const manager of ["npm", "pnpm"] as const) {
     await run(manager, args, consumer);
     const { stdout } = await run(
       path.join(consumer, "node_modules", ".bin", "tnl"),
-      ["version"],
+      ["version", "--output", "raw"],
       consumer,
     );
     assert.equal(stdout.trim(), `tnl ${metadata.version} (${metadata.commit})`);
@@ -83,7 +83,8 @@ for (const manager of ["npm", "pnpm"] as const) {
         import("@tnldotdev/tnl/next"), import("@tnldotdev/tnl/vite"),
       ]);
       const config = { tunnel: { allowAllIPs: true } };
-      if (tnl.port !== 3000 || tnl.services !== undefined || tnl.dev !== false || typeof tnl.register !== "function" ||
+      if (tnl.port !== 3000 || tnl.services !== undefined || tnl.dev !== false ||
+          typeof tnl.prepare !== "function" || typeof tnl.open !== "function" ||
           defineConfig(config) !== config || typeof withTnl !== "function" || typeof vite !== "function") {
         throw new Error("release package exports are invalid");
       }
