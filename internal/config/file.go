@@ -178,9 +178,6 @@ func ValidateTNL(config TNL) error {
 	slices.Sort(names)
 	for _, name := range names {
 		service := config.Services[name]
-		if service.Protocol != nil && *service.Protocol != "http" && service.Target == nil && service.Publish == nil {
-			return fmt.Errorf("services.%s: TCP service requires an address or Docker target", name)
-		}
 		if config.Publisher != nil && config.Publisher.Type == "url" && service.Target != nil && service.Target.Type == "docker" {
 			return fmt.Errorf("services.%s: a url publisher cannot use a host Docker mapping; select an address it can reach", name)
 		}
