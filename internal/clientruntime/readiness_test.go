@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/localproxy"
 )
 
 type roundTrip func(*http.Request) (*http.Response, error)
@@ -66,5 +68,19 @@ func TestDiagnosticsAlwaysFailAndReadinessUsesConfiguredPath(t *testing.T) {
 	}
 	if RetryDelay(0) != 500*time.Millisecond || RetryDelay(1) != time.Second || RetryDelay(20) != 2*time.Second {
 		t.Fatal("wrong retry schedule")
+	}
+}
+
+func TestAuthorizedReadinessUsesOneProofOnTheConfiguredPublicPath(t *testing.T) {
+	service := Service{RegistrationID: "registration", PublishRunNumber: 7, PublicURL: "https://app.example", Readiness: Readiness{Path: "/health"}}
+	probe := ProbeWithProof(t.Context(), service, "run-specific-proof", roundTrip(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != "https://app.example/health" || request.Header.Get(localproxy.ReadinessAuthorizationHeader) != "run-specific-proof" ||
+			request.Header.Get(ProbeHeader) != "1" || request.Header.Get("Authorization") != "" || request.Header.Get("Cookie") != "" {
+			t.Fatalf("public readiness request = %#v", request)
+		}
+		return &http.Response{StatusCode: 204, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
+	}))
+	if !probe.Ready || probe.RegistrationID != "registration" || probe.PublishRunNumber != 7 {
+		t.Fatalf("authorized readiness = %+v", probe)
 	}
 }

@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -49,6 +50,8 @@ type PublicURLServerConfig struct {
 	Mounts              []localproxy.Mount
 	ShareAccess         *shareAccess
 	BrowserAccess       *browserAccess
+	ReadinessProof      string
+	ReadinessPath       string
 	Feedback            *feedbackRuntime
 	RequestLimit        int // zero selects localproxy.DefaultRequestLimit.
 	Limits              ApplicationLimits
@@ -223,6 +226,21 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					diagnostic.WriteHTTP(response, request, code)
 					return
 				}
+				readinessProof := request.Header.Get(localproxy.ReadinessAuthorizationHeader)
+				readinessAuthorized := false
+				if readinessProof != "" {
+					path := config.ReadinessPath
+					if path == "" {
+						path = "/"
+					}
+					if config.ReadinessProof == "" || request.Method != http.MethodGet || request.URL.RequestURI() != path ||
+						subtle.ConstantTimeCompare([]byte(readinessProof), []byte(config.ReadinessProof)) != 1 {
+						diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected)
+						return
+					}
+					readinessAuthorized = true
+					request.Header.Del(localproxy.ReadinessAuthorizationHeader)
+				}
 				if config.AdmitRequest != nil {
 					if err := config.AdmitRequest(request); err != nil {
 						code, ok := diagnostic.CodeOf(err)
@@ -300,7 +318,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				if browserSignedIn {
 					request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
 				}
-				allowed := !denied || sharePermitted || browserSignedIn && browser.VisitAllowed
+				allowed := !denied || sharePermitted || browserSignedIn && browser.VisitAllowed || readinessAuthorized
 				if request.URL.Path == "/__tnl/access" {
 					if request.Method != http.MethodGet || config.PreviewID == "" {
 						http.NotFound(response, request)

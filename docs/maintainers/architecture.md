@@ -272,7 +272,12 @@ grace. it never launches or terminates application processes.
 registered, routable, and ready are separate facts. routable means the existing
 publisher has reported control readiness. ready additionally requires a fresh
 public GET: by default `/` accepts any 2xx app response. tnl diagnostic
-responses always fail. service readiness can select a path. checks use normal
+responses always fail. service readiness can select a path. the local publisher
+keeps a random seed in memory and derives a different probe proof for each
+publish run. its HTTP handler admits only a GET on the configured readiness
+path with that proof, then removes the proof before forwarding to the app.
+`tnl wait` requests the probe through the private, user-owned runtime socket;
+the proof never enters client state or a local event snapshot. checks use normal
 DNS/TLS, send no app credentials, follow no redirects, and read headers only
 with a five-second deadline. retries start at
 500 milliseconds and double to two seconds for up to two minutes. each new run

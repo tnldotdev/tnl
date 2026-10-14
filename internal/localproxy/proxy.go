@@ -32,6 +32,7 @@ const maxHeaderFields = 100
 
 // readiness probes keep HTML responses streaming and observe headers only.
 const ReadinessProbeHeader = "X-Tnl-Readiness-Probe"
+const ReadinessAuthorizationHeader = "X-Tnl-Readiness-Authorization"
 
 // DefaultRequestLimit bounds active requests to one public URL's local service,
 // across all visitor connections and HTTP/2 streams.

@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -172,6 +173,51 @@ func TestAutomaticBrowserReturnChecksPermissionOnce(t *testing.T) {
 				t.Fatalf("denied return restarted sign-in: %d %s", response.Code, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestRunScopedReadinessProofForwardsOnlyItsConfiguredGET(t *testing.T) {
+	forwarded := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		forwarded <- request.URL.RequestURI() + ":" + request.Header.Get(localproxy.ReadinessAuthorizationHeader)
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	server, err := NewPublicURLServer(PublicURLServerConfig{
+		Hostname: "route.example", Target: upstream.URL, ReadinessProof: "run-proof", ReadinessPath: "/health",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	visit := func(method, path, proof string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, nil)
+		request.Host = "route.example"
+		request.TLS = &tls.ConnectionState{ServerName: "route.example"}
+		request.Header.Set(localproxy.ReadinessProbeHeader, "1")
+		if proof != "" {
+			request.Header.Set(localproxy.ReadinessAuthorizationHeader, proof)
+		}
+		request = request.WithContext(context.WithValue(request.Context(), denialContextKey{}, true))
+		response := httptest.NewRecorder()
+		server.http.Handler.ServeHTTP(response, request)
+		return response
+	}
+	if response := visit("GET", "/health", ""); response.Code != http.StatusForbidden {
+		t.Fatalf("forged readiness marker bypassed access: %d", response.Code)
+	}
+	for _, test := range []struct{ method, path, proof string }{
+		{"GET", "/health", "wrong-proof"}, {"GET", "/admin", "run-proof"}, {"POST", "/health", "run-proof"},
+	} {
+		if response := visit(test.method, test.path, test.proof); response.Code != http.StatusBadRequest {
+			t.Fatalf("unscoped readiness proof admitted %s %s: %d", test.method, test.path, response.Code)
+		}
+	}
+	if response := visit("GET", "/health", "run-proof"); response.Code != http.StatusNoContent {
+		t.Fatalf("authorized readiness = %d %s", response.Code, response.Body.String())
+	}
+	if got := awaitPublisherTest(t, forwarded); got != "/health:" {
+		t.Fatalf("proof reached local service: %q", got)
 	}
 }
 

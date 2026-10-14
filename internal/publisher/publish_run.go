@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/readinessproof"
 	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/tunnel"
@@ -202,8 +203,9 @@ func runSession(
 		}
 	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
-		BrowserAccess: browserRuntime,
-		PreviewID:     config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version,
+		BrowserAccess:  browserRuntime,
+		ReadinessProof: readinessproof.ForRun(config.ReadinessProof, version), ReadinessPath: config.ReadinessPath,
+		PreviewID: config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version,
 		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, TargetOptions: config.TargetOptions, CertificatePlan: plan,
 		ServiceProtocol: setup.PublicUrl.ServiceProtocol, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS,
 		PublicPort:      publicPort,

@@ -48,6 +48,8 @@ type Config struct {
 	Control                  PublicURLControlClient
 	ControlURL               string
 	BrowserLoginAvailable    bool
+	ReadinessProof           string
+	ReadinessPath            string
 	TeamID                   string
 	DomainID                 string
 	MembershipID             string

@@ -213,8 +213,39 @@ func runAppObservation(ctx context.Context, flags cli, command string, output io
 
 func runAppWait(ctx context.Context, project projectConfiguration, state string, flags waitCommand, output io.Writer) error {
 	return runAppWaitWithProbe(ctx, project, state, flags, output, func(ctx context.Context, service clientruntime.Service) clientruntime.Observation {
-		return clientruntime.Probe(ctx, service, nil)
+		return probeLocalAppRuntime(ctx, project.Root, state, service)
 	})
+}
+
+func probeLocalAppRuntime(ctx context.Context, project, state string, service clientruntime.Service) clientruntime.Observation {
+	failed := clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber,
+		CheckedAt: time.Now().UTC(), Readiness: service.Readiness, Reason: "runtime.manager_unavailable"}
+	socket, err := runtimeSocket(project, state)
+	if err != nil {
+		return failed
+	}
+	encoded, err := json.Marshal(localReadinessRequest{
+		Name: service.Name, RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber,
+	})
+	if err != nil {
+		return failed
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/v1/probe", bytes.NewReader(encoded))
+	if err != nil {
+		return failed
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := runtimeHTTP(socket).Do(request)
+	if err != nil {
+		return failed
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(response.Body, 16<<10)).Decode(&failed) != nil ||
+		failed.RegistrationID != service.RegistrationID || failed.PublishRunNumber != service.PublishRunNumber || failed.Readiness != service.Readiness {
+		return clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber,
+			CheckedAt: time.Now().UTC(), Readiness: service.Readiness, Reason: "runtime.probe_failed"}
+	}
+	return failed
 }
 
 func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, state string, flags waitCommand, output io.Writer, probe func(context.Context, clientruntime.Service) clientruntime.Observation) error {

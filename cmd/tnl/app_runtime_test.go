@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
@@ -286,6 +288,46 @@ func TestWaitAlwaysChecksFreshResponsesAndKeepsFailingPublicationsRunning(t *tes
 	}
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil || len(result.Services) != 2 {
 		t.Fatalf("all-service wait = %s, %v", output.String(), err)
+	}
+}
+
+type localProbeTransport func(*http.Request) (*http.Response, error)
+
+func (fn localProbeTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
+
+func TestWaitDelegatesAuthorizedProbeWithoutExposingProof(t *testing.T) {
+	a, state, started := testAppRuntime(t)
+	id, err := a.manager.Reserve("api", "owner", 1, "https://api.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.manager.Register(id, "owner", "http://127.0.0.1:1234", "node"); err != nil {
+		t.Fatal(err)
+	}
+	version := <-started
+	service := a.manager.Snapshot().Services[0]
+	if observation := probeLocalAppRuntime(t.Context(), a.project.Root, state, service); observation.Ready {
+		t.Fatalf("publisher without a current proof passed readiness: %+v", observation)
+	}
+	a.setReadinessCredential("api", id, version, "private-proof")
+	a.probeTransport = localProbeTransport(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != "https://api.example/" || request.Header.Get(localproxy.ReadinessAuthorizationHeader) != "private-proof" {
+			t.Fatalf("publisher probe = %#v", request)
+		}
+		return &http.Response{StatusCode: 204, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
+	})
+	if observation := probeLocalAppRuntime(t.Context(), a.project.Root, state, service); !observation.Ready || observation.PublishRunNumber != version {
+		t.Fatalf("current publisher did not prove app readiness: %+v", observation)
+	}
+	snapshot, err := json.Marshal(a.manager.Snapshot())
+	if err != nil || strings.Contains(string(snapshot), "private-proof") {
+		t.Fatalf("readiness proof entered the local snapshot: %s, %v", snapshot, err)
+	}
+	a.clearReadinessCredential("api", id)
+	if observation := probeLocalAppRuntime(t.Context(), a.project.Root, state, service); observation.Ready {
+		t.Fatalf("cleared proof remained usable: %+v", observation)
 	}
 }
 

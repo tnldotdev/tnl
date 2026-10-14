@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +33,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/readinessproof"
 )
 
 type runtimeCommand struct {
@@ -164,13 +167,65 @@ type appPreparation struct {
 }
 
 type appRuntime struct {
-	manager   *clientruntime.Manager
-	adhoc     *clientruntime.AdHocManager
-	project   projectConfiguration
-	state     *clientstate.Database
-	mu        sync.Mutex
-	prepareMu sync.Mutex
-	prepared  map[string]appPreparation
+	manager        *clientruntime.Manager
+	adhoc          *clientruntime.AdHocManager
+	project        projectConfiguration
+	state          *clientstate.Database
+	mu             sync.Mutex
+	prepareMu      sync.Mutex
+	prepared       map[string]appPreparation
+	proofs         map[string]readinessCredential
+	probeTransport http.RoundTripper
+}
+
+type readinessCredential struct {
+	registrationID string
+	version        uint64
+	secret         string
+}
+
+type localReadinessRequest struct {
+	Name             string `json:"name"`
+	RegistrationID   string `json:"registration_id"`
+	PublishRunNumber uint64 `json:"publish_run_number"`
+}
+
+func (a *appRuntime) setReadinessCredential(name, registrationID string, version uint64, secret string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.proofs == nil {
+		a.proofs = make(map[string]readinessCredential)
+	}
+	a.proofs[name] = readinessCredential{registrationID: registrationID, version: version, secret: secret}
+}
+
+func (a *appRuntime) clearReadinessCredential(name, registrationID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.proofs[name].registrationID == registrationID {
+		delete(a.proofs, name)
+	}
+}
+
+func (a *appRuntime) probeService(ctx context.Context, input localReadinessRequest) (clientruntime.Observation, error) {
+	var service clientruntime.Service
+	for _, candidate := range a.manager.Snapshot().Services {
+		if candidate.Name == input.Name && candidate.RegistrationID == input.RegistrationID &&
+			candidate.PublishRunNumber == input.PublishRunNumber && candidate.Registered && candidate.Routable && candidate.ServiceProtocol == "" {
+			service = candidate
+			break
+		}
+	}
+	if service.RegistrationID == "" {
+		return clientruntime.Observation{}, clientruntime.ErrRegistrationStale
+	}
+	a.mu.Lock()
+	proof := a.proofs[input.Name]
+	a.mu.Unlock()
+	if proof.registrationID != input.RegistrationID || proof.version != input.PublishRunNumber || proof.secret == "" {
+		return clientruntime.Observation{}, clientruntime.ErrRegistrationStale
+	}
+	return clientruntime.ProbeWithProof(ctx, service, proof.secret, a.probeTransport), nil
 }
 
 func authenticateRuntime(ctx context.Context, state *clientstate.Database, server string) (*clientauth.Client, error) {
@@ -476,6 +531,19 @@ func (a *appRuntime) handler() http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+	mux.HandleFunc("POST /v1/probe", func(w http.ResponseWriter, r *http.Request) {
+		var input localReadinessRequest
+		if err := privateprotocol.Decode(w, r, &input); err != nil {
+			runtimeProblem(w, err)
+			return
+		}
+		observation, err := a.probeService(r.Context(), input)
+		if err != nil {
+			runtimeProblem(w, err)
+			return
+		}
+		privateprotocol.Write(w, http.StatusOK, observation)
+	})
 	mux.HandleFunc("POST /v1/prepare", func(w http.ResponseWriter, r *http.Request) {
 		var request privateprotocol.Prepare
 		if err := privateprotocol.Decode(w, r, &request); err != nil {
@@ -581,6 +649,13 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	}
 	services.traffic = traffic
 	configuration := services.config(service.Target, preparation.policy.prefixes, flags.limits(), traffic)
+	proofBytes := make([]byte, 32)
+	if _, err := rand.Read(proofBytes); err != nil {
+		return fmt.Errorf("create app readiness proof: %w", err)
+	}
+	configuration.ReadinessProof = base64.RawURLEncoding.EncodeToString(proofBytes)
+	configuration.ReadinessPath = service.Readiness.Path
+	defer a.clearReadinessCredential(service.Name, service.RegistrationID)
 	effective, err := project.EffectiveService(service.Name)
 	if err != nil {
 		return err
@@ -667,6 +742,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		case publisher.EventProvisioningStep:
 			a.manager.SetProvisioningStage(service.Name, service.RegistrationID, event.PublishRunNumber, event.ProvisioningStage)
 		case publisher.EventProvisioning, publisher.EventDraining:
+			a.clearReadinessCredential(service.Name, service.RegistrationID)
 			return observe(event.PublishRunNumber, false)
 		case publisher.EventProvisioningStalled:
 			a.manager.RecordWarning(service.Name, service.RegistrationID, string(diagnostic.ProvisioningStalled))
@@ -674,10 +750,12 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 			if err := observe(event.PublishRunNumber, true); err != nil {
 				return err
 			}
+			proof := readinessproof.ForRun(configuration.ReadinessProof, event.PublishRunNumber)
+			a.setReadinessCredential(service.Name, service.RegistrationID, event.PublishRunNumber, proof)
 			copy := service
 			copy.PublicURL, copy.PublishRunNumber, copy.Routable = event.PublicURL, event.PublishRunNumber, true
 			probes.Add(1)
-			go func() { defer probes.Done(); a.check(probeCtx, copy) }()
+			go func() { defer probes.Done(); a.check(probeCtx, copy, proof) }()
 		}
 		return nil
 	}
@@ -688,11 +766,11 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	return publisher.Run(ctx, configuration)
 }
 
-func (a *appRuntime) check(ctx context.Context, service clientruntime.Service) {
+func (a *appRuntime) check(ctx context.Context, service clientruntime.Service, proof string) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	for attempt := 0; ctx.Err() == nil; attempt++ {
-		observation := clientruntime.Probe(ctx, service, nil)
+		observation := clientruntime.ProbeWithProof(ctx, service, proof, nil)
 		if !a.manager.Observe(observation) || observation.Ready {
 			return
 		}
