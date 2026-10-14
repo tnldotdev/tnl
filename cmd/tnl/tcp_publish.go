@@ -64,9 +64,9 @@ func validateTCPPublishOptions(flags publishCommand, protocol controlv1.PublicUR
 		}
 		return nil
 	}
-	if flags.Open || flags.InspectionMode == config.InspectionDetailed {
+	if flags.Open {
 		return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags,
-			errors.New("TCP publications do not support --open or HTTP request capture"))
+			errors.New("TCP publications do not support --open"))
 	}
 	if flags.VisitorTLSPassthrough {
 		if protocol != controlv1.Postgres && protocol != controlv1.Mysql {
@@ -81,6 +81,20 @@ func validateTCPPublishOptions(flags publishCommand, protocol controlv1.PublicUR
 	if !flags.TargetTLS && (flags.TargetTLSName != "" || flags.TargetCAFile != "") {
 		return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags,
 			errors.New("--target-tls-name and --target-ca-file require --target-tls"))
+	}
+	return nil
+}
+
+func selectPublishInspection(flags *publishCommand, protocol controlv1.PublicURLServiceProtocol) error {
+	if protocol != controlv1.Ssh {
+		return nil
+	}
+	if flags.InspectionMode == config.InspectionSummary && !flags.inspectionModeFromCLI && !flags.inspectionModeFromConfig {
+		flags.InspectionMode = config.InspectionNone
+	}
+	if flags.InspectionMode != config.InspectionNone {
+		return failure.Wrap("validate SSH inspection", failure.InvalidTunnelFlags,
+			errors.New("SSH supports --inspection-mode=none only"))
 	}
 	return nil
 }

@@ -80,24 +80,6 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	}
 }
 
-func TestDetailedRequestCaptureIsVisibleInReadyOutput(t *testing.T) {
-	var stderr bytes.Buffer
-	output, err := newPublishOutput(publishOutputHuman, "tnl publish", io.Discard, &stderr, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	output.setInspectionMode("detailed")
-	if err := output.starting("tun_test", "http://127.0.0.1:3000"); err != nil {
-		t.Fatal(err)
-	}
-	if err := output.ready("https://app.example", 1); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stderr.String(), "request capture  detailed; headers and bodies saved") || !strings.Contains(stderr.String(), "locally") {
-		t.Fatalf("ready output = %q", stderr.String())
-	}
-}
-
 func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	var opened []string

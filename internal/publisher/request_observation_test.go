@@ -2,13 +2,12 @@ package publisher
 
 import (
 	"crypto/tls"
-	"encoding/base64"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/config"
 )
 
 func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
@@ -61,9 +60,6 @@ func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
 		{"/ok", 204, "local_service"}, {"/broken", 500, "local_service"}, {"/invalid", 400, "tnl"},
 	} {
 		got := events[i]
-		if got.CaptureMode != "summary" || got.Detail != nil {
-			t.Fatalf("default capture = %+v", got)
-		}
 		if got.Path != want.path || got.Status != want.status || got.Origin != want.origin || got.Method != http.MethodGet ||
 			got.ReceivedAt.IsZero() || got.Duration < 0 || got.Duration > time.Minute {
 			t.Fatalf("observation %d = %+v", i, got)
@@ -71,41 +67,28 @@ func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
 	}
 }
 
-func TestDetailedRequestObservationRetainsBoundedRawData(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		w.Header().Set("Set-Cookie", "secret=session")
-		_, _ = io.WriteString(w, "response data")
+func TestRequestObservationNoneRecordsNothing(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	var captured RequestObservation
+	observed := 0
 	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "app.example", Target: upstream.URL,
-		InspectionMode: "detailed", ObserveRequest: func(event RequestObservation) { captured = event }})
+		InspectionMode: config.InspectionNone, ObserveRequest: func(RequestObservation) { observed++ }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer server.Close()
-	request := httptest.NewRequest(http.MethodPost, "/hook?code=private", strings.NewReader(strings.Repeat("p", maxCapturedBodyBytes+10)))
+	request := httptest.NewRequest(http.MethodGet, "/health?token=private", nil)
 	request.Host = "app.example"
 	request.TLS = &tls.ConnectionState{ServerName: "app.example"}
-	request.Header.Set("Authorization", "Bearer private")
 	response := httptest.NewRecorder()
 	server.http.Handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || captured.Detail == nil || captured.CaptureMode != "detailed" {
-		t.Fatalf("response = %d, observation = %+v", response.Code, captured)
+	if response.Code != http.StatusNoContent || observed != 0 {
+		t.Fatalf("none mode response = %d, observations = %d", response.Code, observed)
 	}
-	detail := captured.Detail
-	requestBytes, err := base64.StdEncoding.DecodeString(detail.RequestBody.Base64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	responseBytes, err := base64.StdEncoding.DecodeString(detail.ResponseBody.Base64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if captured.Path != "/hook" || detail.Query != "code=private" || detail.RequestHeaders.Get("Authorization") != "Bearer private" ||
-		detail.ResponseHeaders.Get("Set-Cookie") != "secret=session" || !detail.RequestBody.Truncated ||
-		len(requestBytes) != maxCapturedBodyBytes || string(responseBytes) != "response data" {
-		t.Fatalf("detail = %+v, request bytes = %d, response bytes = %q", detail, len(requestBytes), responseBytes)
+	if _, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "app.example", Target: upstream.URL,
+		InspectionMode: "detailed"}); err == nil {
+		t.Fatal("detailed inspection mode was accepted")
 	}
 }

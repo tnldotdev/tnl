@@ -4,21 +4,21 @@ import (
 	"errors"
 )
 
-// InspectionMode selects how much local observation detail to retain.
+// InspectionMode selects whether local observations are recorded.
 type InspectionMode string
 
 const (
-	InspectionSummary  InspectionMode = "summary"
-	InspectionDetailed InspectionMode = "detailed"
+	InspectionNone    InspectionMode = "none"
+	InspectionSummary InspectionMode = "summary"
 )
 
 func (mode InspectionMode) Valid() bool {
-	return mode == InspectionSummary || mode == InspectionDetailed
+	return mode == InspectionNone || mode == InspectionSummary
 }
 
 // Inspection provides project defaults and optional service-level overrides.
 type Inspection struct {
-	Mode *InspectionMode `json:"mode,omitempty" yaml:"mode,omitempty" jsonschema:"enum=summary,enum=detailed"`
+	Mode *InspectionMode `json:"mode,omitempty" yaml:"mode,omitempty" jsonschema:"enum=none,enum=summary"`
 }
 
 func MergeInspection(base, override *Inspection) *Inspection {
@@ -42,7 +42,7 @@ func ValidateInspection(value *Inspection) error {
 		return nil
 	}
 	if value.Mode != nil && !value.Mode.Valid() {
-		return errors.New("mode must be summary or detailed")
+		return errors.New("mode must be none or summary")
 	}
 	return nil
 }

@@ -238,7 +238,7 @@ export interface TnlConfig {
  * Local inspection capture and retention for HTTP and supported TCP services.
  */
 export interface Inspection {
-  mode?: "summary" | "detailed";
+  mode?: "none" | "summary";
 }
 export interface Publish {
   /**
@@ -266,7 +266,7 @@ export interface Readiness {
   path: string;
 }
 export interface Inspection1 {
-  mode?: "summary" | "detailed";
+  mode?: "none" | "summary";
 }
 
 /** The Git worktree or project directory that contains tnl.config.ts. */

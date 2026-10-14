@@ -34,7 +34,7 @@ const staticConfig = {
   services: {
     web: { directory: "apps/web" },
     orders: {
-      inspection: { mode: "detailed" },
+      inspection: { mode: "none" },
       publish: {
         protocol: "postgres",
         target: "db.internal:5432",

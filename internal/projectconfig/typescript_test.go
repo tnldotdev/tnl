@@ -19,7 +19,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 	source := `export default async ({cwd, env, worktree, project}: any) => ({
   server: env.TNL_SERVER === undefined ? "https://control.example.com" : "leaked",
   feedback: true,
-  inspection: {mode: "detailed"},
+  inspection: {mode: "none"},
   tunnel: {domain: "routes.example.test", limits: {requests: 20, rate: {requests: 5, per: "1m"}, concurrency: 750}},
   publish: {target: 3000},
   readiness: {path: "/health"},
@@ -38,7 +38,7 @@ func TestLoadUsesImplicitVersionAndFactoryContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	if value.Server == nil || *value.Server != "https://control.example.com" || value.Feedback == nil || !*value.Feedback || value.Tunnel == nil || value.Tunnel.Domain == nil ||
-		value.Inspection == nil || value.Inspection.Mode == nil || *value.Inspection.Mode != "detailed" ||
+		value.Inspection == nil || value.Inspection.Mode == nil || *value.Inspection.Mode != "none" ||
 		value.Services["api"].Inspection == nil || value.Services["api"].Inspection.Mode == nil || *value.Services["api"].Inspection.Mode != "summary" ||
 		*value.Tunnel.Domain != "routes.example.test" || value.Services["api"].Tunnel == nil ||
 		value.Services["api"].Tunnel.Name == nil || *value.Services["api"].Tunnel.Name != worktree.Label.FullLabel ||
@@ -203,7 +203,7 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 		"service team":      {`export default {services: {api: {team: "studio"}}};`, `unknown TypeScript configuration field "team"`},
 		"concurrency":       {`export default {services: {api: {tunnel: {limits: {concurrency: 0}}}}};`, "services.api: tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
 		"old request limit": {`export default {services: {api: {tunnel: {requestLimit: 2}}}};`, "unknown TypeScript configuration field"},
-		"inspection":        {`export default {services: {api: {inspection: {mode: "all"}}}};`, "services.api.inspection: mode must be summary or detailed"},
+		"inspection":        {`export default {services: {api: {inspection: {mode: "all"}}}};`, "services.api.inspection: mode must be none or summary"},
 		"retired dev":       {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "dev"},
 		"target":            {`export default {services: {api: {publish: {target: "https://example.com/path"}}}};`, "services.api: publish.target:"},
 		"ip":                {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.7/24"]}}}};`, "must be a canonical IP address or prefix"},
