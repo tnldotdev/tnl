@@ -44,6 +44,7 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | Go races                         | `task go:test:race`                                          | No database                                                               |
 | Database and service boundaries  | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                |
 | Real TCP clients                 | `task go:test:integration:tcp-clients`                       | Docker; Task manages disposable PostgreSQL, MySQL, Redis, and SSH targets |
+| MySQL inspection attribution     | `task go:test:integration:mysql-oracle`                      | Test-only Vitess decoder; no Docker required                              |
 | Binary behavior                  | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available  |
 | Authoritative DNS                | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers               |
 | Public Route 53 and ACME staging | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in   |
