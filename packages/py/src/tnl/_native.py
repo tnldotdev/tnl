@@ -15,7 +15,7 @@ from ._protocol import InvalidResponse, NativeUnavailable, RegistrationLost, Tnl
 
 
 class NativeRuntime:
-    async def start(self, directory: str) -> str:
+    async def start(self, directory: str, service: str | None = None) -> str:
         binary = Path(__file__).parent / "bin" / "tnl"
         if not binary.is_file():
             raise TnlError(
@@ -28,7 +28,7 @@ class NativeRuntime:
                 "endpoint",
                 "--directory",
                 directory,
-                "--ad-hoc",
+                *(["--ad-hoc"] if service is None else ["--app", "--service", service]),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
                 limit=64 << 10,
@@ -145,7 +145,7 @@ class NativeRuntime:
         try:
             url, credential = self._endpoint(endpoint_path)
             async with httpx.AsyncClient(
-                timeout=45 if operation == "unregister" else 10,
+                timeout=45 if route.endswith("/unregister") else 10,
                 follow_redirects=False,
                 trust_env=False,
             ) as client:

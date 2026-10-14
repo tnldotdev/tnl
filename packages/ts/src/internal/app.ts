@@ -406,7 +406,6 @@ export async function startRuntime(
     const { stdout } = await promisify(execFile)(
       binary,
       [
-        "--no-telemetry",
         "runtime",
         "endpoint",
         "--directory",

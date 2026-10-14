@@ -45,7 +45,7 @@ class Server(_uvicorn.Server):
         return result
 
     async def _prepare(self) -> None:
-        self.endpoint = await _native.start(self.directory)
+        self.endpoint = await _native.start(self.directory, self.service)
         value = await _native.app_request(
             self.endpoint,
             "prepare",

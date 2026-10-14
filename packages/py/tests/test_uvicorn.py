@@ -21,7 +21,8 @@ class FakeNative(NativeRuntime):
         self.events: list[tuple[str, str]] = []
         self.targets: dict[str, str] = {}
 
-    async def start(self, directory: str) -> str:
+    async def start(self, directory: str, service: str | None = None) -> str:
+        assert service == "web"
         self.events.append(("endpoint", directory))
         return directory + "/endpoint.json"
 
