@@ -32,6 +32,7 @@ type Querier interface {
 	BeginGuestPublishRun(ctx context.Context, arg BeginGuestPublishRunParams) (int64, error)
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
 	BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams) (BeginRelayDrainRow, error)
+	BrowserLoginPublicURL(ctx context.Context, arg BrowserLoginPublicURLParams) (BrowserLoginPublicURLRow, error)
 	BrowserSessionPublicURLIncluded(ctx context.Context, arg BrowserSessionPublicURLIncludedParams) (string, error)
 	CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg CancelOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	CancelPublishRunACMEAuthorizations(ctx context.Context, arg CancelPublishRunACMEAuthorizationsParams) error
@@ -97,6 +98,7 @@ type Querier interface {
 	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
 	EnableIngressPool(ctx context.Context, arg EnableIngressPoolParams) (ControlIngressPool, error)
 	EnableIngressPoolPorts(ctx context.Context, arg EnableIngressPoolPortsParams) (int64, error)
+	EnablePublishRunBrowserAccess(ctx context.Context, publishRunID string) error
 	EnablePublishRunShareAccess(ctx context.Context, arg EnablePublishRunShareAccessParams) (string, error)
 	EnsureACMEAccount(ctx context.Context, arg EnsureACMEAccountParams) (ControlAcmeAccount, error)
 	EnsureGuestPrincipal(ctx context.Context, arg EnsureGuestPrincipalParams) (ControlIdentity, error)
@@ -351,6 +353,7 @@ type Querier interface {
 	// and each publish run number's latest revision. concurrent publication can
 	// make an anchor redundant but cannot restore a superseded event.
 	PruneIngressRoutingHistoryBatch(ctx context.Context, afterRevision int64) (PruneIngressRoutingHistoryBatchRow, error)
+	PublishRunBrowserCapable(ctx context.Context, publishRunID string) (bool, error)
 	PutControlTLSCacheEntry(ctx context.Context, arg PutControlTLSCacheEntryParams) error
 	QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error)
 	QuarantineTCPPortClaim(ctx context.Context, arg QuarantineTCPPortClaimParams) (int64, error)
@@ -417,6 +420,7 @@ type Querier interface {
 	SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error)
 	ShareBrowserAccessSession(ctx context.Context, arg ShareBrowserAccessSessionParams) (ControlBrowserAccessSession, error)
 	ShareBrowserControlIdentity(ctx context.Context, accessTokenID string) (ShareBrowserControlIdentityRow, error)
+	ShareBrowserPreviewPublicURL(ctx context.Context, arg ShareBrowserPreviewPublicURLParams) (string, error)
 	ShareBrowserPublicURL(ctx context.Context, publicUrlID string) (ControlPublicUrl, error)
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)

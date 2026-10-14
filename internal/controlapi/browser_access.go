@@ -29,11 +29,11 @@ const browserCallbackPath = "/v1/browser/callback"
 const browserLoginCookieName = "__Host-tnl-browser-login"
 
 func validBrowserReturnPath(path string) bool {
-	if path == "" || len(path) > 2048 || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.ContainsAny(path, "\\\r\n#") {
+	if path == "" || len(path) > 2048 || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.ContainsAny(path, "\\\r\n# \t") {
 		return false
 	}
 	parsed, err := url.ParseRequestURI(path)
-	return err == nil && parsed.Host == "" && !parsed.IsAbs()
+	return err == nil && parsed.Host == "" && !parsed.IsAbs() && !strings.HasPrefix(parsed.Path, "//") && !strings.ContainsAny(parsed.Path, "\\\r\n")
 }
 
 func (h *handler) browserHTTPClient() *http.Client {
@@ -69,21 +69,29 @@ func (h *handler) BeginPreviewBrowserLogin(response http.ResponseWriter, request
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid preview return path")
 		return
 	}
-	preview, err := h.previews.GetPreview(request.Context(), params.PreviewId)
-	if err != nil {
-		writeControlStateProblem(response, "read browser preview", err)
+	if params.Prompt != nil && string(*params.Prompt) != "select_account" {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid browser sign-in prompt")
 		return
 	}
-	if !slices.Contains(preview.PublicURLIDs, params.PublicUrlId) {
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "preview not found")
-		return
+	var preview controlstate.Preview
+	if params.PreviewId != nil && *params.PreviewId != "" {
+		var err error
+		preview, err = h.previews.GetPreview(request.Context(), *params.PreviewId)
+		if err != nil {
+			writeControlStateProblem(response, "read browser preview", err)
+			return
+		}
+		if !slices.Contains(preview.PublicURLIDs, params.PublicUrlId) {
+			writeProblem(response, http.StatusNotFound, controlv1.NotFound, "preview not found")
+			return
+		}
 	}
 	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), params.PublicUrlId)
 	if err != nil {
 		writeControlStateProblem(response, "read browser public URL", err)
 		return
 	}
-	if publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled {
+	if preview.ID != "" && publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled || publicURL.Purpose != controlstate.PublicURLPurposeApp {
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "public URL not found")
 		return
 	}
@@ -111,7 +119,11 @@ func (h *handler) BeginPreviewBrowserLogin(response http.ResponseWriter, request
 		return
 	}
 	http.SetCookie(response, &http.Cookie{Name: browserLoginCookieName, Value: base64.RawURLEncoding.EncodeToString(binding), Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: now.Add(5 * time.Minute)})
-	http.Redirect(response, request, config.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", nonce)), http.StatusFound)
+	options := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", nonce)}
+	if params.Prompt != nil {
+		options = append(options, oauth2.SetAuthURLParam("prompt", string(*params.Prompt)))
+	}
+	http.Redirect(response, request, config.AuthCodeURL(state, options...), http.StatusFound)
 }
 
 func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, request *http.Request, params controlv1.CompletePreviewBrowserLoginParams) {
@@ -223,6 +235,39 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 	http.Redirect(response, request, "https://"+publicURL.CanonicalHostname+"/__tnl/team/handoff/"+handoff.Token, http.StatusSeeOther)
 }
 
+func (h *handler) EnableBrowserAccess(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID) {
+	var body controlv1.PublishRunVersionRequest
+	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber <= 0 {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid browser capability request")
+		return
+	}
+	auth, ok := h.authenticatePublishRunRequest(response, request, runID, uint64(body.PublishRunNumber))
+	if !ok {
+		return
+	}
+	if h.browserAccess == nil || h.browserVerifier == nil || h.browserAuthority == nil || h.config.ServerDomain == "" {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "browser sign-in is unavailable")
+		return
+	}
+	if err := h.browserAccess.EnableBrowserAccess(request.Context(), auth, time.Now()); err != nil {
+		writeControlStateProblem(response, "register browser capability", err)
+		return
+	}
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handler) requireBrowserAccess(response http.ResponseWriter, request *http.Request, auth controlstate.PublishRunAuthentication) bool {
+	if h.browserAccess == nil || h.browserAuthority == nil {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "browser access is unavailable")
+		return false
+	}
+	if err := h.browserAccess.RequireBrowserAccess(request.Context(), auth, time.Now()); err != nil {
+		writeControlStateProblem(response, "check browser capability", err)
+		return false
+	}
+	return true
+}
+
 func (h *handler) RedeemPreviewBrowserHandoff(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID) {
 	var body controlv1.BrowserHandoffRequest
 	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber <= 0 {
@@ -233,7 +278,10 @@ func (h *handler) RedeemPreviewBrowserHandoff(response http.ResponseWriter, requ
 	if !ok {
 		return
 	}
-	cookie, path, next, bridge, expires, err := h.browserAccess.RedeemBrowserHandoff(request.Context(), auth.PublicURLID, body.Token, time.Now())
+	if !h.requireBrowserAccess(response, request, auth) {
+		return
+	}
+	cookie, path, next, bridge, expires, err := h.browserAccess.RedeemBrowserHandoff(request.Context(), auth, body.Token, time.Now())
 	if err != nil && !errors.Is(err, controlstate.ErrPreviewAccess) {
 		writeControlStateProblem(response, "redeem browser handoff", err)
 		return
@@ -291,10 +339,13 @@ func (h *handler) CheckPreviewBrowserAccess(response http.ResponseWriter, reques
 	if !ok {
 		return
 	}
+	if !h.requireBrowserAccess(response, request, auth) {
+		return
+	}
 	_, principal, err := h.browserSessionIdentity(request, auth, body.CookieSecret)
 	var access controlstate.BrowserAuthorization
 	if err == nil {
-		access, err = h.browserAccess.BrowserAuthorization(request.Context(), auth.PublicURLID, body.CookieSecret, time.Now())
+		access, err = h.browserAccess.BrowserAuthorizationForRun(request.Context(), auth, body.CookieSecret, time.Now())
 		if err == nil && access.Identity.IdentityID != principal.identityID {
 			err = authorization.ErrUnauthenticated
 		}
@@ -323,6 +374,9 @@ func (h *handler) RevokePreviewBrowserAccess(response http.ResponseWriter, reque
 	}
 	auth, ok := h.authenticatePublishRunRequest(response, request, runID, uint64(body.PublishRunNumber))
 	if !ok {
+		return
+	}
+	if !h.requireBrowserAccess(response, request, auth) {
 		return
 	}
 	if err := h.browserAccess.RevokeBrowserSession(request.Context(), auth.PublicURLID, body.CookieSecret, time.Now()); err != nil {

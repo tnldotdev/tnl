@@ -66,7 +66,8 @@ browser capability and team feedback policy. Missing rows mean browser access
 is unavailable and feedback sign-in is optional. Existing `publish_runs` and
 `teams` columns remain unchanged for older serving processes using `SELECT *`.
 Deploy the migration before enabling preview-independent browser writers or
-sign-in policy enforcement.
+sign-in policy enforcement. Browser writers use the nullable preview references
+for public-URL-only sessions.
 
 The two publisher connection slots are stored in
 `control.publish_run_connection_slots`. A slot keeps its `id` and
@@ -119,17 +120,50 @@ before admission and outside the team guard.
 
 ## separate browser identity from visit permission
 
-`browserIdentity` validates the host's preview inclusion, browser-session expiry
+`browserIdentity` validates the host's session scope, browser-session expiry
 and revocation, and its saved OIDC control credential inside the caller's
 transaction. It shares the browser session, control session, and identity rows
 through commit, so logout, rotation, and identity disable cannot cross a write's
 authorization boundary. Attribution uses the identity's current saved name,
 not a publisher-supplied name or the browser session's older name snapshot.
 
+A session without a preview is scoped to its initial public URL ID. A session
+with a preview follows that preview's current included public URL IDs. Lookup,
+refresh, logout, and handoff redemption apply the same scope. A URL-only identity
+can participate in feedback on that URL while feedback retains its own preview
+association.
+
 `browserVisitAllowed` makes the separate visit decision from the enabled public
-URL, the preview's current team access grant, and a current membership in that
-team. The control response calls this decision `visit_allowed`; a signed-in
+URL and current membership. A member public URL admits its owning membership;
+a shared public URL admits current team admins and owners. Other members need
+the session preview's current team access grant. Team administration alone does
+not admit someone to another member's public URL. The control response calls
+this decision `visit_allowed`; a signed-in
 identity without that permission may still visit through IP policy or a share.
+
+Browser admission and capability registration are limited to public URLs with
+purpose `app`. The publisher records its exact live run in
+`publish_run_browser_capabilities` before marking it ready, independently of
+shares or preview configuration.
+Login handoffs fan out only to ready, unexpired, browser-capable app runs in the
+session preview. Their encrypted credentials bind each ticket to the receiving
+run ID and publish run number; redemption rechecks that run and session scope.
+`share_capable` never supplies browser capability.
+
+Publisher browser admission calls `BrowserAuthorizationForRun` after authority
+refresh and identity reads. It locks team, public URL, and the exact publish run
+before browser and control identity rows, then checks readiness, expiry, browser
+capability, identity, and visit permission through commit. A run that stops or
+is replaced during authority I/O cannot use the earlier capability preflight to
+admit a visitor. `BrowserAuthorization` remains a URL-scoped datastore helper.
+
+Denied browser documents keep the policy diagnostic's 403 status and help URL.
+When the app publisher installed browser access, the diagnostic offers a small
+sign-in action; it never starts authentication automatically. A signed-in
+identity without visit permission gets a same-origin POST account-switch action.
+The publisher revokes the browser session before starting control login with
+`prompt=select_account`. API, asset, and non-navigation requests retain the
+ordinary diagnostic. Browser authorization failures remain unavailable responses.
 
 `reviewerAccess` in `reviewer_access.go` composes those decisions for feedback.
 An allowed IP or current share admits a signed-in nonmember with verified

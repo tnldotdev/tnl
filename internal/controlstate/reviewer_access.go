@@ -51,7 +51,7 @@ func (d *Database) reviewerAccess(ctx context.Context, queries *controlstatedb.Q
 		digest := sha256.Sum256(actor.BrowserCookieSecret)
 		var err error
 		identity, err = d.browserIdentity(ctx, queries, publicURL.ID, digest[:], now)
-		if errors.Is(err, ErrPreviewAccess) || err == nil && (identity.PreviewID != previewID || actor.IdentityID != "" && identity.IdentityID != actor.IdentityID) {
+		if errors.Is(err, ErrPreviewAccess) || err == nil && (identity.PreviewID != "" && identity.PreviewID != previewID || actor.IdentityID != "" && identity.IdentityID != actor.IdentityID) {
 			return FeedbackActor{}, "", ErrFeedbackAccess
 		}
 		if err != nil {
