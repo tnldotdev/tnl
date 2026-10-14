@@ -393,6 +393,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "wait", "watch":
 		return runAppObservation(ctx, flags, parsedCommand, stdout)
 	case "publish <service-or-target>", "config check", "config generate":
+		if parsedCommand == "publish <service-or-target>" && flags.Publish.Background {
+			break
+		}
 		if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
 			break
 		}
@@ -562,6 +565,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runPublisherGrantAdd(ctx, flags.Publisher.Grant.Add, stdout, stderr)
 	case "publisher grant revoke <publisher-id> <grant-id>":
 		return runPublisherGrantRevoke(ctx, flags.Publisher.Grant.Revoke, stdout, stderr)
+	case "publisher stop <public-url-id>":
+		return runPublisherStop(flags.Publisher.Stop, stdout)
+	case "publisher service run":
+		return runPublisherService(ctx)
+	case "publisher service install":
+		return installPublisherService(ctx, stdout)
 	case "share link create <url>":
 		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
 	case "share list <url>":

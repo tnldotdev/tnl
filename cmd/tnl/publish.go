@@ -31,6 +31,7 @@ type publishCommand struct {
 	TargetTLS         bool              `name:"target-tls" env:"TNL_TARGET_TLS" help:"Use verified TLS for the TCP target."`
 	PublishCredential string            `name:"credential" env:"TNL_CREDENTIAL" help:"Credential for publishing one saved public URL without a control session."`
 	EnrollKey         string            `name:"enroll-key" help:"One-use publisher enrollment key, or - to read it from stdin."`
+	Background        bool              `name:"bg" help:"Enroll a saved public URL as a system publisher job (run as root)."`
 	Output            publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 	Demo              bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
@@ -43,6 +44,9 @@ type publishCommand struct {
 }
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
+	if flags.Background {
+		return runBackgroundEnrollment(ctx, flags, stdout, os.Stdin)
+	}
 	telemetry := optionalTelemetryReporter(reporters)
 	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
 	if err != nil {

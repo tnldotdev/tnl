@@ -16,10 +16,15 @@ import (
 )
 
 type publisherCommand struct {
-	Enroll publisherEnrollCommand `cmd:"" help:"Issue a one-use enrollment key for a saved URL or namespace."`
-	List   publisherListCommand   `cmd:"" help:"List publisher identities and grants."`
-	Revoke publisherRevokeCommand `cmd:"" help:"Revoke a publisher identity."`
-	Grant  struct {
+	Enroll  publisherEnrollCommand `cmd:"" help:"Issue a one-use enrollment key for a saved URL or namespace."`
+	List    publisherListCommand   `cmd:"" help:"List publisher identities and grants."`
+	Revoke  publisherRevokeCommand `cmd:"" help:"Revoke a publisher identity."`
+	Stop    publisherStopCommand   `cmd:"" help:"Stop a system publisher job without revoking its server grant."`
+	Service struct {
+		Run     struct{} `cmd:"" hidden:""`
+		Install struct{} `cmd:"" help:"Install or refresh the system publisher service (run as root)."`
+	} `cmd:"" help:"Manage the system publisher service."`
+	Grant struct {
 		Add    publisherGrantAddCommand    `cmd:"" help:"Add a saved URL or namespace grant."`
 		Revoke publisherGrantRevokeCommand `cmd:"" help:"Revoke one grant."`
 	} `cmd:"" help:"Manage publisher grants."`

@@ -577,6 +577,20 @@ the grant, records its identity and grant beside the URL, and removes the URL
 on exit. `tnl publisher list`, `revoke`, and `grant add`/`grant revoke` manage
 the scopes separately from legacy publish credentials.
 
+for an installed saved app URL, pass the one-use key on stdin:
+
+```console
+sudo tnl publish <target> --server https://control.example.com --enroll-key - --bg
+```
+
+`--bg` requires a saved URL grant and an explicit server; it does not
+read a team session. the root-owned service keeps multiple URL jobs, each with
+its own signing key and target. `sudo tnl publisher stop --server https://control.example.com <public-url-id>` removes one local job without
+revoking its server grant. `tnl publisher revoke <publisher-id>` or grant
+revocation stops authorization at the server, independently of local jobs.
+`sudo tnl publisher service install` refreshes the installed binary and service
+after an upgrade or a failed service installation.
+
 Visitor TLS is separate from relay transport TLS. Visitor TLS passes through ingress
 and relay unchanged and terminates in the publisher.
 
@@ -586,9 +600,15 @@ profile and the value's context. on linux, `client-v2.db` uses an owner-only
 when moving client state. existing plaintext state must be reset rather than
 opened without a matching key. the file protects a copied database without
 the key file, not a machine where an attacker can read both. macOS interactive
-state uses the user's keychain. a
-pre-login launchdaemon cannot assume that user's login keychain is unlocked;
-service-owned key access must be demonstrated before boot-time publication uses it.
+state uses the user's keychain. the system publisher uses separate root-owned
+state at `/Library/Application Support/tnl/publisher` on macOS or
+`/var/lib/tnl/publisher` on linux. an owner-only wrapping key seals job signing
+keys; its separate service client database also uses a file wrapping key, not
+the interactive macOS login keychain. the launchdaemon or systemd service
+restarts at boot, reconciles saved URL additions and stops, and retries after
+target or server outages. keep both wrapping keys with their respective state
+when restoring jobs; a missing key never creates a replacement for existing
+state.
 
 ## place authority decisions
 
