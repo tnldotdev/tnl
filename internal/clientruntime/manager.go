@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/tcptarget"
 )
 
 const LeaseDuration = 20 * time.Second
@@ -155,6 +156,12 @@ func (m *Manager) Configure(services []Service) error {
 		m.mu.Unlock()
 		return ErrRegistrationStale
 	}
+	for _, configured := range services {
+		if previous := m.serviceLocked(configured.Name); previous != nil && previous.ServiceProtocol != configured.ServiceProtocol && previous.Registered {
+			m.mu.Unlock()
+			return errors.New("cannot change the protocol of a registered service")
+		}
+	}
 	type removal struct{ id, owner string }
 	var removed []removal
 	for name, reg := range m.registrations {
@@ -175,11 +182,15 @@ func (m *Manager) Configure(services []Service) error {
 	changed := len(next) != len(m.snapshot.Services)
 	for index, configured := range next {
 		if previous := m.serviceLocked(configured.Name); previous != nil {
-			if previous.Directory != configured.Directory || previous.Readiness != configured.Readiness {
+			if previous.Directory != configured.Directory || previous.Readiness != configured.Readiness || previous.ServiceProtocol != configured.ServiceProtocol {
 				changed = true
 			}
 			next[index] = *previous
-			next[index].Directory, next[index].Readiness = configured.Directory, configured.Readiness
+			next[index].Directory, next[index].Readiness, next[index].ServiceProtocol = configured.Directory, configured.Readiness, configured.ServiceProtocol
+			if previous.ServiceProtocol != configured.ServiceProtocol {
+				next[index].Target, next[index].Routable = "", false
+				next[index].Ready, next[index].Observation = false, nil
+			}
 			if previous.Readiness != configured.Readiness {
 				next[index].Ready, next[index].Observation = false, nil
 			}
@@ -273,9 +284,15 @@ func (m *Manager) Renew(id, owner string) error {
 // register acknowledges ownership and a bound target. provisioning happens in
 // the worker after this method returns and has its own observations.
 func (m *Manager) Register(id, owner, target, framework string) error {
-	if _, err := localproxy.ParseCanonicalTarget(target); err != nil {
-		return errors.Join(err, errors.New("target must be a canonical HTTP or HTTPS origin"))
-	}
+	return m.register(id, owner, target, framework, false)
+}
+
+// RegisterNamed accepts a CLI-owned target without claiming an app listener.
+func (m *Manager) RegisterNamed(id, owner, target string) error {
+	return m.register(id, owner, target, "", true)
+}
+
+func (m *Manager) register(id, owner, target, framework string, named bool) error {
 	m.op.Lock()
 	defer m.op.Unlock()
 	m.mu.Lock()
@@ -283,6 +300,10 @@ func (m *Manager) Register(id, owner, target, framework string) error {
 	if reg == nil {
 		m.mu.Unlock()
 		return ErrRegistrationStale
+	}
+	if err := validateRegistrationTarget(*service, target, named); err != nil {
+		m.mu.Unlock()
+		return err
 	}
 	if service.Registered && service.Target == target && reg.cancel != nil {
 		reg.expires = time.Now().Add(LeaseDuration)
@@ -329,6 +350,28 @@ func (m *Manager) Register(id, owner, target, framework string) error {
 		}
 	}()
 	return nil
+}
+
+func validateRegistrationTarget(service Service, target string, named bool) error {
+	if named == (service.ServiceProtocol == "") {
+		return errors.New("registration does not match the configured service target")
+	}
+	if service.ServiceProtocol == "" || service.ServiceProtocol == "http" {
+		if _, err := localproxy.ParseCanonicalTarget(target); err != nil {
+			return errors.Join(err, errors.New("target must be a canonical HTTP or HTTPS origin"))
+		}
+		return nil
+	}
+	switch service.ServiceProtocol {
+	case "postgres", "mysql", "redis", "ssh":
+		canonical, err := tcptarget.Normalize(target)
+		if err != nil || canonical != target {
+			return errors.Join(err, errors.New("target must be a canonical private TCP host and port"))
+		}
+		return nil
+	default:
+		return errors.New("unsupported configured service protocol")
+	}
 }
 
 func (m *Manager) Published(id string, run uint64, routable bool) error {
