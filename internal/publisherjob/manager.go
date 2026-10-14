@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"time"
 )
 
@@ -38,6 +39,19 @@ func run(ctx context.Context, store *Store, publish func(context.Context, Job) e
 	for {
 		jobs, err := store.List()
 		if err != nil {
+			// a stop can remove a job after ReadDir but before List opens it.
+			// keep the other jobs running and read a fresh snapshot next tick.
+			if errors.Is(err, os.ErrNotExist) {
+				info, statErr := os.Lstat(store.root)
+				if statErr == nil && checkOwner(info, store.uid, true) == nil {
+					select {
+					case <-ctx.Done():
+						return nil
+					case <-ticker.C:
+						continue
+					}
+				}
+			}
 			return err // never silently run only a subset of corrupt state.
 		}
 		present := make(map[string]bool, len(jobs))
