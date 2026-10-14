@@ -27,7 +27,7 @@ func (s *adminBrowserFlowStub) IssueAdminBrowserHandoff(_ context.Context, _ cre
 func TestBuiltinAdministratorBrowserHandoffDoesNotEchoRefreshCredential(t *testing.T) {
 	store := &adminBrowserFlowStub{}
 	authorizer := &recordingAuthorizer{principal: publicURLReadPrincipal{identityID: "admin", administrator: true}}
-	h := &handler{config: Config{LoginToken: testLoginToken, ServerDomain: "example.test", AccessTokenLifetime: time.Hour,
+	h := &handler{config: Config{LoginToken: testLoginToken, ServerDomain: "example.test", ControlURL: "https://control.example.test", AccessTokenLifetime: time.Hour,
 		RefreshTokenLifetime: 24 * time.Hour}, authorizer: authorizer, browserAccess: store}
 	request := func() *http.Request {
 		value := httptest.NewRequest(http.MethodPost, "/v1/browser/admin-handoff", strings.NewReader(`{"public_url_id":"url_current","refresh_token":"private-refresh"}`))
