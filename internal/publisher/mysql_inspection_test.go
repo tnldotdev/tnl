@@ -5,13 +5,11 @@ import (
 	"encoding/binary"
 	"strings"
 	"testing"
-
-	projectconfig "github.com/tnldotdev/tnl/internal/config"
 )
 
 func TestMySQLInspectorGroupsPreparedAndMultiResultExecutions(t *testing.T) {
 	var observed []DatabaseObservation
-	monitor := newMySQLInspector(mysqlClientDeprecateEOF, projectconfig.InspectionDetailed,
+	monitor := newMySQLInspector(mysqlClientDeprecateEOF,
 		func(value DatabaseObservation) { observed = append(observed, value) })
 	prepare := encodeMySQLPacket(0, append([]byte{0x16}, []byte("SELECT ?")...))
 	monitor.clientBytes(prepare[:3])
@@ -29,7 +27,7 @@ func TestMySQLInspectorGroupsPreparedAndMultiResultExecutions(t *testing.T) {
 	response = append(response, encodeMySQLPacket(3, []byte{0, 0, 2})...)
 	response = append(response, encodeMySQLPacket(4, mysqlInspectionTerminator(0))...)
 	monitor.serverBytes(response)
-	if len(observed) != 1 || observed[0].Operation != "execute" || observed[0].Statement != "SELECT ?" ||
+	if len(observed) != 1 || observed[0].Operation != "execute" ||
 		observed[0].Result != "ok" || observed[0].Rows != 1 || observed[0].ResultSets != 1 {
 		t.Fatalf("prepared result = %#v", observed)
 	}
@@ -44,7 +42,7 @@ func TestMySQLInspectorGroupsPreparedAndMultiResultExecutions(t *testing.T) {
 	response = append(response, encodeMySQLPacket(8, mysqlInspectionTerminator(0))...)
 	monitor.serverBytes(response)
 	if len(observed) != 2 || observed[1].Result != "ok" || observed[1].Rows != 2 ||
-		observed[1].ResultSets != 2 || observed[1].Statement != "SELECT 1; SELECT 2" {
+		observed[1].ResultSets != 2 {
 		t.Fatalf("multiple results = %#v", observed)
 	}
 	monitor.clientBytes(encodeMySQLPacket(0, append([]byte{0x03}, []byte("SELECT missing_column")...)))
@@ -57,13 +55,12 @@ func TestMySQLInspectorGroupsPreparedAndMultiResultExecutions(t *testing.T) {
 
 func TestMySQLInspectorKeepsSummaryBoundedAndRejectsUncertainOutcomes(t *testing.T) {
 	var observed []DatabaseObservation
-	monitor := newMySQLInspector(mysqlClientDeprecateEOF, projectconfig.InspectionSummary,
+	monitor := newMySQLInspector(mysqlClientDeprecateEOF,
 		func(value DatabaseObservation) { observed = append(observed, value) })
 	statement := strings.Repeat("x", 64<<10)
 	monitor.clientBytes(encodeMySQLPacket(0, append([]byte{0x03}, []byte(statement)...)))
 	monitor.serverBytes(encodeMySQLPacket(1, []byte{0, 0, 0, 0, 0, 0, 0}))
-	if len(observed) != 1 || observed[0].Statement != "" || observed[0].StatementTruncated ||
-		cap(monitor.client.prefix) > 16 || monitor.disabled {
+	if len(observed) != 1 || cap(monitor.client.prefix) > mysqlClientCapture || monitor.disabled {
 		t.Fatalf("summary inspection = %#v, captured=%d, disabled=%t", observed, cap(monitor.client.prefix), monitor.disabled)
 	}
 	monitor.clientBytes(encodeMySQLPacket(0, []byte{0xfb})) // unsupported LOCAL INFILE command.
@@ -75,7 +72,7 @@ func TestMySQLInspectorKeepsSummaryBoundedAndRejectsUncertainOutcomes(t *testing
 func TestMySQLInspectorLegacyEOFAfterColumnsAndRows(t *testing.T) {
 	var observed []DatabaseObservation
 	var monitor *mysqlInspector
-	monitor = newMySQLInspector(0, projectconfig.InspectionDetailed,
+	monitor = newMySQLInspector(0,
 		func(value DatabaseObservation) {
 			// observation callbacks may inspect connection state without deadlocking.
 			monitor.mu.Lock()
@@ -99,7 +96,7 @@ func TestMySQLInspectorLegacyEOFAfterColumnsAndRows(t *testing.T) {
 
 func TestMySQLInspectorStreamsMaxSizePacketWithBoundedCapture(t *testing.T) {
 	var observed []DatabaseObservation
-	monitor := newMySQLInspector(mysqlClientDeprecateEOF, projectconfig.InspectionDetailed,
+	monitor := newMySQLInspector(mysqlClientDeprecateEOF,
 		func(value DatabaseObservation) { observed = append(observed, value) })
 	monitor.clientBytes([]byte{0xff, 0xff, 0xff, 0, 0x03})
 	chunk := bytes.Repeat([]byte{'x'}, 32<<10)
@@ -114,10 +111,9 @@ func TestMySQLInspectorStreamsMaxSizePacketWithBoundedCapture(t *testing.T) {
 	if len(observed) != 1 {
 		t.Fatalf("large execution count=%d", len(observed))
 	}
-	if observed[0].Result != "ok" || !observed[0].StatementTruncated ||
-		len(observed[0].Statement) != mysqlMaxStatement || cap(monitor.client.firstPrefix) > 2*mysqlClientCapture {
-		t.Fatalf("large execution count=%d, statement length=%d, captured capacity=%d",
-			len(observed), len(observed[0].Statement), cap(monitor.client.firstPrefix))
+	if observed[0].Result != "ok" || cap(monitor.client.firstPrefix) > mysqlClientCapture {
+		t.Fatalf("large execution count=%d, captured capacity=%d",
+			len(observed), cap(monitor.client.firstPrefix))
 	}
 	monitor.clientBytes(encodeMySQLPacket(0, []byte{0x03, 'S', 'E', 'L', 'E', 'C', 'T', ' ', '1'}))
 	monitor.serverBytes(encodeMySQLPacket(1, []byte{0, 0, 0, 0, 0, 0, 0}))
@@ -128,7 +124,7 @@ func TestMySQLInspectorStreamsMaxSizePacketWithBoundedCapture(t *testing.T) {
 
 func TestMySQLInspectorDisablesCompressedAndUnrecognizedPackets(t *testing.T) {
 	for _, flags := range []uint32{mysqlClientCompress, mysqlClientZstdCompression} {
-		monitor := newMySQLInspector(flags, projectconfig.InspectionDetailed,
+		monitor := newMySQLInspector(flags,
 			func(DatabaseObservation) { t.Fatal("compressed traffic cannot be inspected") })
 		monitor.clientBytes(encodeMySQLPacket(0, []byte{0x03, 'x'}))
 		monitor.serverBytes(encodeMySQLPacket(1, []byte{0, 0, 0, 0, 0, 0, 0}))
@@ -136,7 +132,7 @@ func TestMySQLInspectorDisablesCompressedAndUnrecognizedPackets(t *testing.T) {
 			t.Fatalf("inspector enabled for compression flags %d", flags)
 		}
 	}
-	monitor := newMySQLInspector(0, projectconfig.InspectionDetailed,
+	monitor := newMySQLInspector(0,
 		func(DatabaseObservation) { t.Fatal("unknown response cannot be attributed") })
 	monitor.clientBytes(encodeMySQLPacket(0, []byte{0x03, 'x'}))
 	monitor.serverBytes(encodeMySQLPacket(2, []byte{0, 0, 0, 0, 0, 0, 0}))
@@ -147,7 +143,7 @@ func TestMySQLInspectorDisablesCompressedAndUnrecognizedPackets(t *testing.T) {
 
 func TestMySQLInspectorStopsAtBrokenContinuation(t *testing.T) {
 	observed := 0
-	monitor := newMySQLInspector(0, projectconfig.InspectionSummary,
+	monitor := newMySQLInspector(0,
 		func(DatabaseObservation) { observed++ })
 	physical := make([]byte, mysqlMaxPayload+4)
 	physical[0], physical[1], physical[2] = 0xff, 0xff, 0xff
