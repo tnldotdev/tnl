@@ -284,6 +284,22 @@ snapshot includes the cursor for its service state. cursors older than retained
 events fail with an authored diagnostic. the journal survives a
 manager restart and contains no credentials, request bodies, or OAuth state.
 
+`tnl status --remote https://app.example` checks the public visitor path from
+the caller's machine, without a project or session. `tnl wait --remote` retries
+that same check until reachable or the selected timeout expires. the HTTPS
+check connects directly (not through an HTTP proxy), verifies the public
+certificate, and reads response headers without following redirects or sending
+app credentials. tnl diagnostic responses are not reachable; any other HTTP
+response, including an app's 401 or 404, proves the public path answered.
+`--path` selects an HTTP path. for TCP, use
+`--remote hostname:port --protocol ssh|postgres|mysql|redis`; SSH checks the
+banner and database checks complete verified visitor TLS negotiation, without
+authenticating to the service. each attempt has a five-second deadline. a TCP
+denial can close without a diagnostic, so it reports no response rather than
+claiming which policy denied it. results reflect the caller's egress IP and
+cannot establish reachability for another visitor with a different IP policy.
+remote checks do not update local registration readiness or publish anything.
+
 `tnl inspect` keeps numbered HTTP and supported TCP summaries in client SQLite.
 HTTP, PostgreSQL, and MySQL default to summary; `inspection.mode: none` or
 `--inspection-mode=none` disables capture. project and service inspection

@@ -30,10 +30,10 @@ type cli struct {
 	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
-	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
+	Wait        waitCommand      `cmd:"" help:"Wait for local services or a remote public URL to become reachable." group:"start"`
 	Watch       watchCommand     `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
-	Status      statusCommand    `cmd:"" help:"Show configured services and local publications; --all includes other projects." group:"start"`
+	Status      statusCommand    `cmd:"" help:"Show local publications or probe a public URL from this machine." group:"start"`
 	Inspect     inspectCommand   `cmd:"" help:"Inspect recent local HTTP and supported TCP activity." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
@@ -472,7 +472,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "publish <service-or-target>":
 		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
 	case "status":
-		if !flags.Status.All {
+		if !flags.Status.All && flags.Status.Remote == "" && flags.Status.Protocol == "" && flags.Status.Path == "" {
 			flags.Status.Project, err = projectRoot(ctx, flags)
 			if err != nil {
 				return err

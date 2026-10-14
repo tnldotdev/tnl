@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
@@ -22,14 +24,24 @@ const (
 )
 
 type statusCommand struct {
-	Output        statusOutputMode     `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
-	StateDir      string               `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	All           bool                 `name:"all" help:"Show tunnels from every local project."`
-	Project       string               `kong:"-"`
-	Configuration projectConfiguration `kong:"-"`
+	remoteProbeFlags `embed:""`
+	Output           statusOutputMode     `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+	StateDir         string               `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+	All              bool                 `name:"all" help:"Show tunnels from every local project."`
+	Project          string               `kong:"-"`
+	Configuration    projectConfiguration `kong:"-"`
 }
 
 func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error {
+	if flags.Remote != "" {
+		if flags.All {
+			return failure.Wrap("select remote status", failure.InvalidCommand, errors.New("--all is for local tunnels; omit it with --remote"))
+		}
+		return runRemoteStatus(ctx, flags.remoteProbeFlags, flags.Output, output)
+	}
+	if flags.Protocol != "" || flags.Path != "" {
+		return failure.Wrap("select remote status", failure.InvalidCommand, errors.New("--protocol and --path require --remote"))
+	}
 	root, err := clientStateRoot(flags.StateDir)
 	if err != nil {
 		return err
