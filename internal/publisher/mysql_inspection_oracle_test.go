@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	projectconfig "github.com/tnldotdev/tnl/internal/config"
 	vitess "vitess.io/vitess/go/mysql"
 	"vitess.io/vitess/go/mysql/sqlerror"
 )
@@ -89,7 +88,7 @@ func TestOracleMySQLResultsMatchVitess(t *testing.T) {
 			}
 			oracleRows, oracleSets := oracleResult(t, wire, len(test.sets))
 			var observed []DatabaseObservation
-			monitor := newMySQLInspector(mysqlClientDeprecateEOF, projectconfig.InspectionSummary,
+			monitor := newMySQLInspector(mysqlClientDeprecateEOF,
 				func(value DatabaseObservation) { observed = append(observed, value) })
 			monitor.clientBytes(encodeMySQLPacket(0, []byte("\x03SELECT 1")))
 			for len(wire) > 0 {
@@ -120,7 +119,7 @@ func TestOracleMySQLErrorMatchesVitess(t *testing.T) {
 		t.Fatalf("Vitess error = %v, want SQL error", err)
 	}
 	var observed []DatabaseObservation
-	monitor := newMySQLInspector(mysqlClientDeprecateEOF, projectconfig.InspectionSummary,
+	monitor := newMySQLInspector(mysqlClientDeprecateEOF,
 		func(value DatabaseObservation) { observed = append(observed, value) })
 	monitor.clientBytes(encodeMySQLPacket(0, []byte("\x03SELECT missing_column")))
 	monitor.serverBytes(wire)
