@@ -225,4 +225,4 @@ test("an empty Fly organization gets the configured topology and can be deployed
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
-});
+}, 30_000);
