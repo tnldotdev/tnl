@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
-	"github.com/tnldotdev/tnl/internal/authorization"
+	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/storagekey"
 )
 
@@ -400,15 +400,22 @@ func TestIntegrationPublisherIdentityMigrationKeepsServingOldCredentials(t *test
 	legacy := &Database{pool: pool, storageKey: keyring}
 	now := time.Now().UTC().Truncate(time.Second)
 	seedControlPublicURL(t, legacy, now, "identityupgrade")
-	credential, secret, err := legacy.CreatePublicURLPublishCredential(ctx, CreatePublicURLPublishCredentialRequest{
-		PublicURLID: "public_url_identityupgrade", TeamID: "team_identityupgrade",
-		IdentityID: "identity_identityupgrade", MembershipID: "membership_identityupgrade",
-		PolicyRevision: 1, Target: "http://127.0.0.1:3000",
-		CertificatePlan: authorization.CertificatePlan{
-			CacheKey: "identity-upgrade", Scope: "public-url",
-			Identifiers: []string{"route-identityupgrade.example.test"}, ChallengeMethod: "tls-alpn-01",
-		}, Now: now, ExpiresAt: now.Add(time.Hour),
-	})
+	// seed through the version-30 insert shape. current generated route reads
+	// require migration 33 and cannot represent a still-serving old process.
+	secret, tokenID, digest, err := credentials.NewPublicURLPublishCredential()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const credentialID = "upc_identityupgrade"
+	_, err = pool.Exec(ctx, `INSERT INTO control.public_url_publish_credentials
+		(id, public_url_id, token_id, token_digest, issued_by_identity_id,
+		membership_id, policy_revision, target, certificate_cache_key,
+		certificate_scope, certificate_identifiers, certificate_challenge_method,
+		created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, $10, 'tls-alpn-01', $11, $12)`,
+		credentialID, "public_url_identityupgrade", tokenID.String(), digest[:],
+		"identity_identityupgrade", "membership_identityupgrade", "http://127.0.0.1:3000",
+		"identity-upgrade", "public-url", []string{"route-identityupgrade.example.test"}, now, now.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,12 +444,17 @@ func TestIntegrationPublisherIdentityMigrationKeepsServingOldCredentials(t *test
 		t.Fatal(err)
 	}
 	for _, table := range tables {
-		if !slices.Equal(shapes[table], columns(table)) {
+		after := columns(table)
+		if table == "public_urls" && len(after) == len(shapes[table])+1 &&
+			slices.Equal(shapes[table], after[:len(shapes[table])]) && after[len(shapes[table])] == "next_operator_ip_expiry" {
+			continue
+		}
+		if !slices.Equal(shapes[table], after) {
 			t.Fatalf("migration changed the %s SELECT * shape", table)
 		}
 	}
 	selected, _, err := legacy.AuthenticatePublicURLPublishCredential(ctx, secret, now.Add(time.Second))
-	if err != nil || selected.ID != credential.ID {
+	if err != nil || selected.ID != credentialID {
 		t.Fatalf("preexisting publish credential after migration = %q, %v", selected.ID, err)
 	}
 	if err := checkSchemaVersion(ctx, pool); err != nil {
