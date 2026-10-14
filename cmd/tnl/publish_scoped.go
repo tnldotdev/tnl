@@ -72,10 +72,6 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		return err
 	}
 	defer state.Close()
-	profile, err := state.Server(ctx, serverURL)
-	if err != nil {
-		return err
-	}
 	client, err := controlclient.New(serverURL, nil, "")
 	if err != nil {
 		return err
@@ -94,6 +90,19 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	}
 	if route.Purpose != controlv1.App || route.Ephemeral || route.LifecycleState != controlv1.Enabled || selectedHostname != route.CanonicalHostname {
 		return failure.Wrap("validate scoped publish target", failure.PublishCredentialMismatch, errors.New("credential is bound to another public URL or target"))
+	}
+	return runSelectedPublish(ctx, flags, output, telemetry, state, serverURL, route,
+		&scopedPublishControl{Client: client, credential: credential, urlID: route.Id}, nil)
+}
+
+// runSelectedPublish keeps the native publisher lifecycle shared between saved
+// credential and enrolled identity publications.
+func runSelectedPublish(ctx context.Context, flags publishCommand, output *publishOutput, telemetry telemetryReporter,
+	state *clientstate.Database, serverURL string, route controlv1.PublicURL, control publisher.PublicURLControlClient,
+	allocated *controlv1.PublicURL) (result error) {
+	profile, err := state.Server(ctx, serverURL)
+	if err != nil {
+		return err
 	}
 	protocol := route.ServiceProtocol
 	if protocol == "" {
@@ -188,15 +197,16 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	}
 	connectionTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	publisherConfig := publisher.Config{
-		Control:    &scopedPublishControl{Client: client, credential: credential, urlID: route.Id},
+		Control:    control,
 		ControlURL: serverURL, State: profile,
 		TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membershipID,
 		PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: publicURLScope, Purpose: controlv1.App,
 		Hostname: route.CanonicalHostname, Target: target, AllowedIPPrefixes: allowed,
 		ServiceProtocol: protocol, TargetTLSName: flags.TargetTLSName, TargetTLS: flags.TargetTLS,
 		PreserveSavedURLTarget: route.Target == "",
-		TargetOptions:          targetOptions,
-		Limits:                 flags.limits(), Traffic: traffic, InspectionMode: flags.InspectionMode,
+		Ephemeral:              allocated != nil, AllocatedPublicURL: allocated,
+		TargetOptions: targetOptions,
+		Limits:        flags.limits(), Traffic: traffic, InspectionMode: flags.InspectionMode,
 		QUICConnector: muxsession.QUICConnector{TLSConfig: connectionTLS},
 		TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: connectionTLS},
 	}

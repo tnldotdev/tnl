@@ -3,6 +3,7 @@ package controlapi
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
@@ -14,6 +15,26 @@ func (h *handler) DeleteEphemeralPublicURL(response http.ResponseWriter, request
 	token, ok := requestBearerToken(request)
 	if !ok {
 		writeBearerProblem(response)
+		return
+	}
+	if strings.HasPrefix(token, "pta_") {
+		machine, ok := h.authenticatePublisherAccess(response, request)
+		if !ok {
+			return
+		}
+		if machine.Scope.Kind != "namespace" || machine.CreatorID == "" {
+			writeBearerProblem(response)
+			return
+		}
+		err := h.store.DeleteAuthorizedPublicURL(request.Context(), controlstate.AuthorizedPublicURLDeleteRequest{
+			PublicURLID: string(publicURLID), TeamID: machine.Scope.TeamID, ActingIdentityID: machine.CreatorID,
+			PublisherIdentityID: machine.ID, PublisherGrantID: machine.GrantID,
+		}, time.Now().UTC())
+		if err != nil {
+			writeControlStateProblem(response, "delete publisher public URL", err)
+			return
+		}
+		response.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if h.publishCredentials == nil || h.store == nil {

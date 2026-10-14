@@ -380,6 +380,80 @@ func (q *Queries) GetPublisherNamespaceAllocation(ctx context.Context, publicUrl
 	return i, err
 }
 
+const getPublisherNamespaceContext = `-- name: GetPublisherNamespaceContext :one
+SELECT teams.policy_revision, teams.ingress_pool_id, teams.kind AS team_kind, teams.display_name AS team_display_name,
+    teams.created_by_identity_id AS team_creator_identity_id, domains.kind AS domain_kind,
+    domains.canonical_domain, domains.dns_authority_reference, domains.state AS domain_state,
+    domains.team_id AS domain_team_id
+FROM control.teams AS teams
+JOIN control.domains AS domains ON domains.id = $1 AND domains.released_at IS NULL
+WHERE teams.id = $2 AND teams.deleted_at IS NULL
+    AND (domains.kind = 'managed' OR domains.team_id = teams.id)
+FOR SHARE OF teams, domains
+`
+
+type GetPublisherNamespaceContextParams struct {
+	DomainID string
+	TeamID   string
+}
+
+type GetPublisherNamespaceContextRow struct {
+	PolicyRevision        int64
+	IngressPoolID         string
+	TeamKind              string
+	TeamDisplayName       string
+	TeamCreatorIdentityID string
+	DomainKind            string
+	CanonicalDomain       string
+	DnsAuthorityReference pgtype.Text
+	DomainState           string
+	DomainTeamID          pgtype.Text
+}
+
+func (q *Queries) GetPublisherNamespaceContext(ctx context.Context, arg GetPublisherNamespaceContextParams) (GetPublisherNamespaceContextRow, error) {
+	row := q.db.QueryRow(ctx, getPublisherNamespaceContext, arg.DomainID, arg.TeamID)
+	var i GetPublisherNamespaceContextRow
+	err := row.Scan(
+		&i.PolicyRevision,
+		&i.IngressPoolID,
+		&i.TeamKind,
+		&i.TeamDisplayName,
+		&i.TeamCreatorIdentityID,
+		&i.DomainKind,
+		&i.CanonicalDomain,
+		&i.DnsAuthorityReference,
+		&i.DomainState,
+		&i.DomainTeamID,
+	)
+	return i, err
+}
+
+const getPublisherNamespaceMembership = `-- name: GetPublisherNamespaceMembership :one
+SELECT memberships.id, memberships.managed_label, slugs.member_slug
+FROM control.team_memberships AS memberships
+JOIN control.member_slug_reservations AS slugs ON slugs.id = memberships.slug_reservation_id
+WHERE memberships.team_id = $1 AND memberships.identity_id = $2
+ORDER BY memberships.created_at DESC LIMIT 1
+`
+
+type GetPublisherNamespaceMembershipParams struct {
+	TeamID     string
+	IdentityID string
+}
+
+type GetPublisherNamespaceMembershipRow struct {
+	ID           string
+	ManagedLabel string
+	MemberSlug   string
+}
+
+func (q *Queries) GetPublisherNamespaceMembership(ctx context.Context, arg GetPublisherNamespaceMembershipParams) (GetPublisherNamespaceMembershipRow, error) {
+	row := q.db.QueryRow(ctx, getPublisherNamespaceMembership, arg.TeamID, arg.IdentityID)
+	var i GetPublisherNamespaceMembershipRow
+	err := row.Scan(&i.ID, &i.ManagedLabel, &i.MemberSlug)
+	return i, err
+}
+
 const getPublisherRunNamespace = `-- name: GetPublisherRunNamespace :one
 SELECT namespace FROM control.public_urls
 WHERE id = $1 AND team_id = $2
@@ -593,6 +667,7 @@ FROM control.publisher_identity_grants AS grants
 JOIN control.publisher_identities AS identities ON identities.id = grants.publisher_identity_id
 WHERE grants.id = $4 AND identities.id = $5
     AND grants.kind = 'namespace' AND grants.revoked_at IS NULL AND identities.revoked_at IS NULL
+    AND (grants.expires_at IS NULL OR grants.expires_at > $3)
 `
 
 type InsertPublisherNamespaceAllocationParams struct {
@@ -615,6 +690,58 @@ func (q *Queries) InsertPublisherNamespaceAllocation(ctx context.Context, arg In
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const listPublisherGrantsForIdentities = `-- name: ListPublisherGrantsForIdentities :many
+SELECT publisher_identity_id, id, kind, public_url_id, domain_id, namespace, created_at, expires_at, revoked_at
+FROM (
+    SELECT grants.id, grants.publisher_identity_id, grants.kind, grants.public_url_id, grants.domain_id, grants.namespace, grants.created_at, grants.expires_at, grants.revoked_at, row_number() OVER (PARTITION BY publisher_identity_id ORDER BY id) AS grant_number
+    FROM control.publisher_identity_grants AS grants
+    WHERE grants.publisher_identity_id = ANY($1::text[])
+) AS grants WHERE grant_number <= 257
+ORDER BY publisher_identity_id, id
+`
+
+type ListPublisherGrantsForIdentitiesRow struct {
+	PublisherIdentityID string
+	ID                  string
+	Kind                string
+	PublicURLID         pgtype.Text
+	DomainID            pgtype.Text
+	Namespace           pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+}
+
+func (q *Queries) ListPublisherGrantsForIdentities(ctx context.Context, publisherIdentityIds []string) ([]ListPublisherGrantsForIdentitiesRow, error) {
+	rows, err := q.db.Query(ctx, listPublisherGrantsForIdentities, publisherIdentityIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPublisherGrantsForIdentitiesRow
+	for rows.Next() {
+		var i ListPublisherGrantsForIdentitiesRow
+		if err := rows.Scan(
+			&i.PublisherIdentityID,
+			&i.ID,
+			&i.Kind,
+			&i.PublicURLID,
+			&i.DomainID,
+			&i.Namespace,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listPublisherIdentityManagementGrants = `-- name: ListPublisherIdentityManagementGrants :many
@@ -655,6 +782,54 @@ func (q *Queries) ListPublisherIdentityManagementGrants(ctx context.Context, arg
 			&i.Kind,
 			&i.PublicURLID,
 			&i.PublicUrlMembershipID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTeamPublisherIdentities = `-- name: ListTeamPublisherIdentities :many
+SELECT id, team_id, name, kind, created_at, revoked_at
+FROM control.publisher_identities
+WHERE team_id = $1 AND ($2::text IS NULL OR id > $2)
+ORDER BY id LIMIT 101
+`
+
+type ListTeamPublisherIdentitiesParams struct {
+	TeamID string
+	Cursor pgtype.Text
+}
+
+type ListTeamPublisherIdentitiesRow struct {
+	ID        string
+	TeamID    string
+	Name      string
+	Kind      string
+	CreatedAt pgtype.Timestamptz
+	RevokedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListTeamPublisherIdentities(ctx context.Context, arg ListTeamPublisherIdentitiesParams) ([]ListTeamPublisherIdentitiesRow, error) {
+	rows, err := q.db.Query(ctx, listTeamPublisherIdentities, arg.TeamID, arg.Cursor)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTeamPublisherIdentitiesRow
+	for rows.Next() {
+		var i ListTeamPublisherIdentitiesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.Name,
+			&i.Kind,
+			&i.CreatedAt,
+			&i.RevokedAt,
 		); err != nil {
 			return nil, err
 		}

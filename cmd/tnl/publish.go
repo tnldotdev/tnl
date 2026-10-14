@@ -30,6 +30,7 @@ type publishCommand struct {
 	TargetTLSName     string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the target's TLS certificate; defaults to the target host."`
 	TargetTLS         bool              `name:"target-tls" env:"TNL_TARGET_TLS" help:"Use verified TLS for the TCP target."`
 	PublishCredential string            `name:"credential" env:"TNL_CREDENTIAL" help:"Credential for publishing one saved public URL without a control session."`
+	EnrollKey         string            `name:"enroll-key" help:"One-use publisher enrollment key, or - to read it from stdin."`
 	Output            publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 	Demo              bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
@@ -48,6 +49,12 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	defer func() { result = output.finish(ctx, result) }()
+	if flags.EnrollKey != "" {
+		if flags.PublishCredential != "" || flags.Demo || flags.AccessToken != "" {
+			return failure.Wrap("validate enrollment options", failure.InvalidTunnelFlags, errors.New("--enroll-key cannot be combined with a credential, demo, or access token"))
+		}
+		return runEnrolledPublish(ctx, flags, output, telemetry, os.Stdin)
+	}
 	if flags.PublishCredential != "" {
 		if flags.Demo {
 			return failure.Wrap("validate demo options", failure.InvalidTunnelFlags, errors.New("a public URL publish credential cannot be used with --demo"))

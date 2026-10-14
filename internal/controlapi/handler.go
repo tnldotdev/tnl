@@ -93,6 +93,7 @@ type PublicURLPublishCredentialStore interface {
 }
 
 type PublisherIdentityStore interface {
+	ListTeamPublisherIdentities(context.Context, string, string) (controlstate.PublisherIdentityPage, error)
 	AuthenticatePublisherAccess(context.Context, string, time.Time) (controlstate.PublisherIdentity, error)
 	PublisherKeyForAccess(context.Context, controlstate.PublisherIdentity) (ed25519.PublicKey, error)
 	PublisherMayStartRun(context.Context, controlstate.PublisherIdentity, string) (bool, error)

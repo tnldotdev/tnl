@@ -33,6 +33,24 @@ FOR SHARE;
 SELECT namespace FROM control.public_urls
 WHERE id = sqlc.arg(public_url_id) AND team_id = sqlc.arg(team_id);
 
+-- name: GetPublisherNamespaceContext :one
+SELECT teams.policy_revision, teams.ingress_pool_id, teams.kind AS team_kind, teams.display_name AS team_display_name,
+    teams.created_by_identity_id AS team_creator_identity_id, domains.kind AS domain_kind,
+    domains.canonical_domain, domains.dns_authority_reference, domains.state AS domain_state,
+    domains.team_id AS domain_team_id
+FROM control.teams AS teams
+JOIN control.domains AS domains ON domains.id = sqlc.arg(domain_id) AND domains.released_at IS NULL
+WHERE teams.id = sqlc.arg(team_id) AND teams.deleted_at IS NULL
+    AND (domains.kind = 'managed' OR domains.team_id = teams.id)
+FOR SHARE OF teams, domains;
+
+-- name: GetPublisherNamespaceMembership :one
+SELECT memberships.id, memberships.managed_label, slugs.member_slug
+FROM control.team_memberships AS memberships
+JOIN control.member_slug_reservations AS slugs ON slugs.id = memberships.slug_reservation_id
+WHERE memberships.team_id = sqlc.arg(team_id) AND memberships.identity_id = sqlc.arg(identity_id)
+ORDER BY memberships.created_at DESC LIMIT 1;
+
 -- name: GetPublisherNamespaceAllocation :one
 SELECT public_url_id, publisher_identity_id, publisher_grant_id, invocation_id
 FROM control.publisher_namespace_allocations WHERE public_url_id = sqlc.arg(public_url_id);
@@ -45,7 +63,8 @@ SELECT sqlc.arg(public_url_id), identities.id, grants.id, sqlc.arg(invocation_id
 FROM control.publisher_identity_grants AS grants
 JOIN control.publisher_identities AS identities ON identities.id = grants.publisher_identity_id
 WHERE grants.id = sqlc.arg(grant_id) AND identities.id = sqlc.arg(publisher_identity_id)
-    AND grants.kind = 'namespace' AND grants.revoked_at IS NULL AND identities.revoked_at IS NULL;
+    AND grants.kind = 'namespace' AND grants.revoked_at IS NULL AND identities.revoked_at IS NULL
+    AND (grants.expires_at IS NULL OR grants.expires_at > sqlc.arg(created_at));
 
 -- name: RedeemPublisherEnrollment :execrows
 UPDATE control.publisher_enrollment_keys
@@ -101,6 +120,21 @@ JOIN control.publisher_identity_grants AS grants ON grants.publisher_identity_id
 LEFT JOIN control.public_urls AS routes ON routes.id = grants.public_url_id
 WHERE identities.id = sqlc.arg(publisher_identity_id) AND identities.team_id = sqlc.arg(team_id)
 ORDER BY grants.id;
+
+-- name: ListTeamPublisherIdentities :many
+SELECT id, team_id, name, kind, created_at, revoked_at
+FROM control.publisher_identities
+WHERE team_id = sqlc.arg(team_id) AND (sqlc.narg(cursor)::text IS NULL OR id > sqlc.narg(cursor))
+ORDER BY id LIMIT 101;
+
+-- name: ListPublisherGrantsForIdentities :many
+SELECT publisher_identity_id, id, kind, public_url_id, domain_id, namespace, created_at, expires_at, revoked_at
+FROM (
+    SELECT grants.*, row_number() OVER (PARTITION BY publisher_identity_id ORDER BY id) AS grant_number
+    FROM control.publisher_identity_grants AS grants
+    WHERE grants.publisher_identity_id = ANY(sqlc.arg(publisher_identity_ids)::text[])
+) AS grants WHERE grant_number <= 257
+ORDER BY publisher_identity_id, id;
 
 -- name: DeleteExpiredPublisherAssertions :exec
 DELETE FROM control.publisher_assertions WHERE expires_at <= sqlc.arg(now);

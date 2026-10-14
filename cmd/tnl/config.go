@@ -81,7 +81,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	service := ""
 	if _, found := c.Config.Services[flags.Target]; found && flags.Target != "" {
 		service, flags.Target = flags.Target, ""
-	} else if flags.Target == "" && flags.PublishCredential == "" {
+	} else if flags.Target == "" && flags.PublishCredential == "" && flags.EnrollKey == "" {
 		var err error
 		service, err = c.defaultService()
 		if err != nil {
@@ -123,7 +123,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if usingConfiguredTarget && !flags.TargetTLS && effective.Publish != nil && effective.Publish.TargetTLS != nil {
 		flags.TargetTLS = *effective.Publish.TargetTLS
 	}
-	if flags.PublishCredential == "" {
+	if flags.PublishCredential == "" && flags.EnrollKey == "" {
 		applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel, flags.Protocol)
 	} else if effective.Tunnel != nil && flags.Protocol != "" {
 		// a saved URL supplies hostname and visitor policy; local admission is still configurable.
@@ -131,10 +131,10 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	}
 	applyInspection(&flags.tunnelFlags, effective)
 	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
-	if flags.PublishCredential == "" {
+	if flags.PublishCredential == "" && flags.EnrollKey == "" {
 		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	}
-	if flags.Target == "" && flags.PublishCredential == "" {
+	if flags.Target == "" && flags.PublishCredential == "" && flags.EnrollKey == "" {
 		if service != "" {
 			if selected := c.Config.Services[service].Target; selected != nil && selected.Type == "app" {
 				return failure.Wrap("select app service", failure.MissingTarget,
@@ -146,7 +146,7 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		return failure.Wrap("select target", failure.MissingTarget,
 			errors.New("target is required as an argument"))
 	}
-	if flags.PublishCredential == "" || flags.Protocol != "" {
+	if flags.PublishCredential == "" && flags.EnrollKey == "" || flags.Protocol != "" {
 		if err := validateTunnelFlags(flags.tunnelFlags); err != nil {
 			return failure.Wrap("validate tunnel options", failure.InvalidTunnelFlags, err)
 		}

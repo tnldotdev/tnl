@@ -628,6 +628,39 @@ paths:
                 $ref: "#/components/schemas/IssuedPublisherEnrollment"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/publisher/public-url:
+    get:
+      operationId: getPublisherPublicURL
+      summary: Read the saved URL selected by one scoped publisher token
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Saved public URL for this grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicURL"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/publisher-identities:
+    get:
+      operationId: listPublisherIdentities
+      summary: List publisher identities and grants in a team
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TeamIDQuery"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One bounded page of publisher identities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublisherIdentityPage"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/publisher-identities/{publisher_identity_id}:
     delete:
       operationId: revokePublisherIdentity
@@ -1494,6 +1527,45 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    PublisherIdentityPage:
+      type: object
+      additionalProperties: false
+      required: [identities]
+      properties:
+        identities:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublisherIdentitySummary"
+        next_cursor:
+          $ref: "#/components/schemas/ResourceID"
+    PublisherIdentitySummary:
+      type: object
+      additionalProperties: false
+      required: [id, name, kind, team_id, created_at, grants]
+      properties:
+        id: { $ref: "#/components/schemas/ResourceID" }
+        name: { type: string }
+        kind: { type: string, enum: [installed, automation, guest] }
+        team_id: { $ref: "#/components/schemas/TeamID" }
+        created_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        grants:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublisherGrantSummary"
+    PublisherGrantSummary:
+      type: object
+      additionalProperties: false
+      required: [id, kind, created_at]
+      properties:
+        id: { $ref: "#/components/schemas/ResourceID" }
+        kind: { type: string, enum: [saved_url, namespace] }
+        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        domain_id: { $ref: "#/components/schemas/DomainID" }
+        namespace: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
     CreatePublisherGrantRequest:
       type: object
       additionalProperties: false

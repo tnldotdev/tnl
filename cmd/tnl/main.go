@@ -42,6 +42,7 @@ type cli struct {
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
+	Publisher   publisherCommand `cmd:"" help:"Manage enrolled publishers and grants." group:"manage"`
 	Share       shareCommand     `cmd:"" help:"Manage preview shares." group:"manage"`
 	Feedback    feedbackCommand  `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
 	Webhook     webhookCommand   `cmd:"" help:"Choose a receiver for a selected webhook." group:"manage"`
@@ -551,6 +552,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runURLCredentialList(ctx, flags.URL.Credential.List, stdout, stderr)
 	case "url credential revoke <credential-id>":
 		return runURLCredentialRevoke(ctx, flags.URL.Credential.Revoke, stdout, stderr)
+	case "publisher enroll <public-url-id>":
+		return runPublisherEnroll(ctx, flags.Publisher.Enroll, stdout, stderr)
+	case "publisher list":
+		return runPublisherList(ctx, flags.Publisher.List, stdout, stderr)
+	case "publisher revoke <publisher-id>":
+		return runPublisherRevoke(ctx, flags.Publisher.Revoke, stdout, stderr)
+	case "publisher grant add <publisher-id>":
+		return runPublisherGrantAdd(ctx, flags.Publisher.Grant.Add, stdout, stderr)
+	case "publisher grant revoke <publisher-id> <grant-id>":
+		return runPublisherGrantRevoke(ctx, flags.Publisher.Grant.Revoke, stdout, stderr)
 	case "share link create <url>":
 		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
 	case "share list <url>":
@@ -617,6 +628,8 @@ func commandFailureReason(command string) failure.Reason {
 		return failure.DomainUnavailable
 	case strings.HasPrefix(command, "tnl url "):
 		return failure.ServerConflict
+	case strings.HasPrefix(command, "tnl publisher "):
+		return failure.ServerConflict
 	case strings.HasPrefix(command, "tnl share "), strings.HasPrefix(command, "tnl feedback "):
 		return failure.ServerConflict
 	case strings.HasPrefix(command, "tnl webhook "):
@@ -640,6 +653,8 @@ func canonicalParsedCommand(command string) string {
 		return "url credential create <service-or-public-url-id>"
 	case "url credential list":
 		return "url credential list <public-url-id>"
+	case "publisher enroll":
+		return "publisher enroll <public-url-id>"
 	case "share link create":
 		return "share link create <url>"
 	case "share team create":

@@ -567,6 +567,15 @@ grants can start runs only for URLs allocated to that exact identity and grant.
 existing public URL publish credentials and ephemeral credentials still start
 and renew their runs through their own checks; migration 32 adds the namespace
 allocation table without replacing any credential rows or publish run columns.
+`tnl publisher enroll <public-url-id>` issues a one-use key for an enabled saved
+app URL; `tnl publisher enroll --namespace` selects the current authorized
+namespace. `tnl publish <target> --enroll-key -` reads the key from stdin and
+registers a process-held signing key. the native publisher exchanges assertions
+for short-lived tokens, signs each run attempt, and only uses run tokens for
+subsequent lifecycle calls. for temporary URLs it allocates an exact URL under
+the grant, records its identity and grant beside the URL, and removes the URL
+on exit. `tnl publisher list`, `revoke`, and `grant add`/`grant revoke` manage
+the scopes separately from legacy publish credentials.
 
 Visitor TLS is separate from relay transport TLS. Visitor TLS passes through ingress
 and relay unchanged and terminates in the publisher.

@@ -14,6 +14,53 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
+func (h *handler) ListPublisherIdentities(w http.ResponseWriter, r *http.Request, params controlv1.ListPublisherIdentitiesParams) {
+	principal, ok := h.authorizeRouteReads(w, r)
+	if !ok {
+		return
+	}
+	if _, authorized := principal.teamIDs[string(params.TeamId)]; !authorized || h.publisherIdentities == nil {
+		writeProblem(w, http.StatusNotFound, controlv1.NotFound, "publisher team not found")
+		return
+	}
+	cursor := ""
+	if params.Cursor != nil {
+		cursor = *params.Cursor
+	}
+	if cursor != "" && !opaqueid.Valid(cursor, opaqueid.PublisherIdentityPrefix) {
+		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publisher page cursor")
+		return
+	}
+	page, err := h.publisherIdentities.ListTeamPublisherIdentities(r.Context(), string(params.TeamId), cursor)
+	if err != nil {
+		writeControlStateProblem(w, "list publisher identities", err)
+		return
+	}
+	result := controlv1.PublisherIdentityPage{Identities: make([]controlv1.PublisherIdentitySummary, 0, len(page.Identities))}
+	for _, identity := range page.Identities {
+		item := controlv1.PublisherIdentitySummary{Id: identity.ID, Name: identity.Name, TeamId: identity.TeamID,
+			Kind: controlv1.PublisherIdentitySummaryKind(identity.Kind), CreatedAt: identity.CreatedAt,
+			RevokedAt: identity.RevokedAt, Grants: make([]controlv1.PublisherGrantSummary, 0, len(identity.Grants))}
+		for _, grant := range identity.Grants {
+			entry := controlv1.PublisherGrantSummary{Id: grant.ID, Kind: controlv1.PublisherGrantSummaryKind(grant.Kind),
+				CreatedAt: grant.CreatedAt, ExpiresAt: grant.ExpiresAt, RevokedAt: grant.RevokedAt}
+			if grant.PublicURLID != "" {
+				id := controlv1.PublicURLID(grant.PublicURLID)
+				entry.PublicUrlId = &id
+			} else {
+				id := controlv1.DomainID(grant.DomainID)
+				entry.DomainId, entry.Namespace = &id, &grant.Namespace
+			}
+			item.Grants = append(item.Grants, entry)
+		}
+		result.Identities = append(result.Identities, item)
+	}
+	if page.NextCursor != "" {
+		result.NextCursor = &page.NextCursor
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Request) {
 	if h.publisherIdentities == nil || h.store == nil {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher enrollment is unavailable")

@@ -147,6 +147,22 @@ func TestCredentialPublishDoesNotInheritProjectVisitorPolicy(t *testing.T) {
 	}
 }
 
+func TestEnrolledPublishKeepsGrantScopeOutsideProjectDefaults(t *testing.T) {
+	name := "project-url"
+	allowAllIPs, ephemeral := true, true
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+		Tunnel:   &config.Tunnel{Name: &name, AllowAllIPs: &allowAllIPs, Ephemeral: &ephemeral},
+		Services: config.Services{"api": {}, "web": {}},
+	}}}
+	flags := publishCommand{EnrollKey: "-"}
+	if err := project.applyPublish(&flags); err != nil {
+		t.Fatal(err)
+	}
+	if flags.Service != "" || flags.Name != "" || flags.Target != "" || flags.PublicURL != "" || flags.AllowAllIPs || flags.Ephemeral {
+		t.Fatalf("enrollment inherited a project URL or visitor policy: %#v", flags)
+	}
+}
+
 func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	t.Setenv("TNL_SERVER", "https://environment.example")
 	t.Setenv("TNL_NAME", "environment-name")

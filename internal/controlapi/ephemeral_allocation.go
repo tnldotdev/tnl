@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/applicationlimits"
@@ -19,7 +20,7 @@ import (
 )
 
 func (h *handler) AllocateEphemeralPublicURL(response http.ResponseWriter, request *http.Request) {
-	if h.store == nil || h.publishCredentials == nil || !h.config.DNSAutomation {
+	if h.store == nil || !h.config.DNSAutomation {
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "ad-hoc allocation requires automated DNS")
 		return
 	}
@@ -36,6 +37,14 @@ func (h *handler) AllocateEphemeralPublicURL(response http.ResponseWriter, reque
 	token, ok := requestBearerToken(request)
 	if !ok {
 		writeBearerProblem(response)
+		return
+	}
+	if strings.HasPrefix(token, "pta_") {
+		h.allocatePublisherNamespace(response, request, body)
+		return
+	}
+	if h.publishCredentials == nil {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "ad-hoc credentials are unavailable")
 		return
 	}
 	_, digest, _, err := credentials.ParseEphemeralCredential(credentials.EphemeralCredential(token))
