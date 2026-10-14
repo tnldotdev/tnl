@@ -28,22 +28,29 @@ const (
 )
 
 var (
-	testTier        = flag.String("tnl-test-tier", string(TestTierRoutine), "tnl test tier")
-	testPostgresURL = flag.String("tnl-test-postgres-url", "", "disposable PostgreSQL administration URL")
-	testPostgresCA  = flag.String("tnl-test-postgres-ca", "", "disposable PostgreSQL target TLS certificate")
-	testPostgresKey = flag.String("tnl-test-postgres-key", "", "disposable PostgreSQL target TLS private key")
+	testTier         = flag.String("tnl-test-tier", string(TestTierRoutine), "tnl test tier")
+	testPostgresURL  = flag.String("tnl-test-postgres-url", "", "disposable PostgreSQL administration URL")
+	testPostgresCert = flag.String("tnl-test-postgres-cert", "", "disposable PostgreSQL target TLS certificate")
+	testPostgresKey  = flag.String("tnl-test-postgres-key", "", "disposable PostgreSQL target TLS private key")
+	testPostgresCA   = flag.String("tnl-test-postgres-ca", "", "disposable PostgreSQL target TLS root CA")
 )
 
-// PostgresTLSFiles returns the certificate and private key for a disposable TLS-enabled PostgreSQL target.
-func PostgresTLSFiles(t testing.TB) (string, string) {
+type PostgresTLSMaterial struct {
+	CertificateFile string
+	KeyFile         string
+	RootCAFile      string
+}
+
+// PostgresTLSFiles returns the certificate, private key, and root CA for a disposable TLS-enabled PostgreSQL target.
+func PostgresTLSFiles(t testing.TB) PostgresTLSMaterial {
 	t.Helper()
-	if *testPostgresCA == "" && *testPostgresKey == "" {
+	if *testPostgresCert == "" && *testPostgresKey == "" && *testPostgresCA == "" {
 		t.Skip("requires the disposable PostgreSQL TLS target")
 	}
-	if *testPostgresCA == "" || *testPostgresKey == "" {
-		t.Fatal("TLS-enabled PostgreSQL tests require -tnl-test-postgres-ca and -tnl-test-postgres-key")
+	if *testPostgresCert == "" || *testPostgresKey == "" || *testPostgresCA == "" {
+		t.Fatal("TLS-enabled PostgreSQL tests require -tnl-test-postgres-cert, -tnl-test-postgres-key, and -tnl-test-postgres-ca")
 	}
-	return *testPostgresCA, *testPostgresKey
+	return PostgresTLSMaterial{CertificateFile: *testPostgresCert, KeyFile: *testPostgresKey, RootCAFile: *testPostgresCA}
 }
 
 // RequireTestTier skips a test unless its suite is selected.

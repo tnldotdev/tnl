@@ -1,7 +1,6 @@
 package publisher
 
 import (
-	"errors"
 	"net"
 )
 
@@ -39,8 +38,5 @@ func (c *databaseInspectionConn) Read(data []byte) (int, error) {
 }
 
 func (c *databaseInspectionConn) CloseWrite() error {
-	if halfClose, ok := c.Conn.(interface{ CloseWrite() error }); ok {
-		return halfClose.CloseWrite()
-	}
-	return errors.ErrUnsupported
+	return closeWrite(c.Conn)
 }

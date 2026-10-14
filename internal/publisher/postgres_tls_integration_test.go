@@ -17,18 +17,18 @@ import (
 
 func TestIntegrationDatabaseClientPostgresMatchingCertificate(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	certificateFile, keyFile := testutil.PostgresTLSFiles(t)
-	certificate, err := tls.LoadX509KeyPair(certificateFile, keyFile)
+	material := testutil.PostgresTLSFiles(t)
+	certificate, err := tls.LoadX509KeyPair(material.CertificateFile, material.KeyFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	certificatePEM, err := os.ReadFile(certificateFile)
+	certificatePEM, err := os.ReadFile(material.RootCAFile)
 	if err != nil {
 		t.Fatal(err)
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(certificatePEM) {
-		t.Fatal("invalid disposable PostgreSQL certificate")
+		t.Fatal("invalid disposable PostgreSQL root CA")
 	}
 	parsed, err := url.Parse(testutil.PostgresURL(t))
 	if err != nil {

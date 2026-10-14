@@ -21,14 +21,14 @@ import (
 
 func TestIntegrationSplitDatabasePublishAndVisit(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	certificate, _ := testutil.PostgresTLSFiles(t)
-	backendCertificate, err := os.ReadFile(certificate)
+	material := testutil.PostgresTLSFiles(t)
+	backendCertificate, err := os.ReadFile(material.RootCAFile)
 	if err != nil {
 		t.Fatal(err)
 	}
 	backendRoots := x509.NewCertPool()
 	if !backendRoots.AppendCertsFromPEM(backendCertificate) {
-		t.Fatal("invalid database target certificate")
+		t.Fatal("invalid database target root CA")
 	}
 	backendURL, err := url.Parse(testutil.PostgresURL(t))
 	if err != nil {

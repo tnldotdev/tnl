@@ -2,6 +2,8 @@ package publisher
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -10,11 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"crypto/tls"
-	"crypto/x509"
-
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -96,6 +96,71 @@ func TestPostgresAuthChoicePreservesOtherFrames(t *testing.T) {
 				t.Fatalf("forwarded bytes = %x, %v", got, err)
 			}
 		})
+	}
+}
+
+func TestPostgresAuthChoiceCompletesVisitorTLSAfterTargetHalfClose(t *testing.T) {
+	visitor, publisher := inspectionTCPPair(t)
+	target, backend := inspectionTCPPair(t)
+	certificate := publicURLTestCertificate(t, "route.example")
+	securedPublisher := tls.Server(publisher, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}})
+	securedVisitor := tls.Client(visitor, &tls.Config{MinVersion: tls.VersionTLS12, ServerName: "route.example", RootCAs: rootsForCertificate(t, certificate)})
+	for _, connection := range []net.Conn{visitor, publisher, target, backend} {
+		if err := connection.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handshake := make(chan error, 1)
+	go func() { handshake <- securedPublisher.Handshake() }()
+	if err := securedVisitor.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-handshake; err != nil {
+		t.Fatal(err)
+	}
+	copyDone := make(chan error, 1)
+	copyFinished := false
+	go func() {
+		_, err := streamcopy.Copy(&postgresAuthChoiceConn{Conn: securedPublisher}, target)
+		copyDone <- err
+	}()
+	t.Cleanup(func() {
+		_ = visitor.Close()
+		_ = publisher.Close()
+		_ = target.Close()
+		_ = backend.Close()
+		if !copyFinished {
+			select {
+			case <-copyDone:
+			case <-time.After(3 * time.Second):
+				t.Error("publisher forwarding did not stop after closing both ends")
+			}
+		}
+	})
+	startup := []byte{0, 0, 0, 8, 0, 3, 0, 0}
+	if _, err := securedVisitor.Write(startup); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, len(startup))
+	if _, err := io.ReadFull(backend, got); err != nil || !bytes.Equal(got, startup) {
+		t.Fatalf("target startup = %x, %v", got, err)
+	}
+	if err := backend.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	var response [1]byte
+	if _, err := securedVisitor.Read(response[:]); !errors.Is(err, io.EOF) {
+		t.Fatalf("visitor did not receive target EOF through TLS: %v", err)
+	}
+	_ = securedVisitor.Close()
+	select {
+	case err := <-copyDone:
+		copyFinished = true
+		if err != nil {
+			t.Fatalf("publisher forwarding shutdown: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("publisher forwarding did not stop after visitor closed")
 	}
 }
 
