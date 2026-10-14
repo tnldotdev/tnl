@@ -171,6 +171,25 @@ paths:
           description: Browser session revoked
         default:
           $ref: "#/components/responses/Problem"
+  /v1/publish-runs/{publish_run_id}/visitor-certificate/access:
+    post:
+      operationId: checkDatabaseVisitorCertificate
+      summary: Recheck a database visitor certificate and current access for one publish run
+      security:
+        - publishRunBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PublishRunID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DatabaseVisitorCertificateRequest"
+      responses:
+        "204":
+          description: Current visitor certificate and database public URL access confirmed
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/publish-runs/{publish_run_id}/preview:
     post:
       operationId: createPublishRunPreview
@@ -2760,6 +2779,20 @@ components:
         not_after:
           type: string
           format: date-time
+    DatabaseVisitorCertificateRequest:
+      type: object
+      additionalProperties: false
+      required: [publish_run_number, certificate]
+      properties:
+        publish_run_number:
+          type: integer
+          format: int64
+          minimum: 1
+        certificate:
+          type: string
+          format: byte
+          minLength: 1
+          maxLength: 21848
     Share:
       type: object
       additionalProperties: false

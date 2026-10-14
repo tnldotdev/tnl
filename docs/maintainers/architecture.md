@@ -126,6 +126,10 @@ URL binding, but its caller must check current identity and URL access at
 issuance and again before forwarding each new database connection; a valid
 certificate alone does not grant access. this package does not use the public
 URL's ACME signing key.
+Control also exposes a publish-run-authenticated certificate check for one
+database public URL. It verifies the client certificate against the private
+issuer and queries current grants for each requested connection; an expired,
+revoked, or differently scoped certificate cannot authorize a new visit.
 PostgreSQL clients must set `channel_binding=disable` when visitor TLS ends at
 the publisher and the private target is plaintext or uses a different TLS
 certificate. if a client chooses SCRAM-SHA-256-PLUS across different visitor

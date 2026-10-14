@@ -306,6 +306,15 @@ func (c *Client) CheckBrowserAccess(ctx context.Context, runID string, version u
 	})
 }
 
+func (c *Client) CheckDatabaseVisitorCertificate(ctx context.Context, runID string, version uint64, certificate []byte, token credentials.PublishRunToken) error {
+	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CheckDatabaseVisitorCertificate(ctx, runID, controlv1.DatabaseVisitorCertificateRequest{
+			PublishRunNumber: int64(version), Certificate: certificate,
+		}, editors...)
+	})
+	return err
+}
+
 func (c *Client) RevokeBrowserAccess(ctx context.Context, runID string, version uint64, secret string, token credentials.PublishRunToken) error {
 	_, err := request[struct{}](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RevokePreviewBrowserAccess(ctx, runID, controlv1.BrowserAccessRequest{PublishRunNumber: int64(version), CookieSecret: secret}, editors...)

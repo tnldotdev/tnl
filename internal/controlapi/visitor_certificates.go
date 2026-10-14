@@ -59,3 +59,40 @@ func (h *handler) CreateVisitorCertificate(response http.ResponseWriter, request
 		CertificatePem: string(certificate), IssuerPem: string(h.config.VisitorIssuer.CertificatePEM()), NotAfter: leaf.NotAfter,
 	})
 }
+
+func (h *handler) CheckDatabaseVisitorCertificate(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID) {
+	var body controlv1.DatabaseVisitorCertificateRequest
+	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber <= 0 || len(body.Certificate) == 0 || len(body.Certificate) > 16<<10 {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid database visitor certificate request")
+		return
+	}
+	principal, ok := h.authenticatePublishRunRequest(response, request, runID, uint64(body.PublishRunNumber))
+	if !ok {
+		return
+	}
+	if h.config.VisitorIssuer == nil || h.visitorCertificates == nil {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "database visitor access checks are unavailable")
+		return
+	}
+	leaf, err := x509.ParseCertificate(body.Certificate)
+	if err != nil {
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "database visitor certificate is invalid")
+		return
+	}
+	now := time.Now().UTC()
+	identity, err := h.config.VisitorIssuer.Identity(leaf, principal.PublicURLID, now)
+	if err != nil {
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "database visitor certificate is invalid")
+		return
+	}
+	allowed, err := h.visitorCertificates.DatabaseVisitorAllowed(request.Context(), principal.PublicURLID, identity, now)
+	if err != nil {
+		writeControlStateProblem(response, "check current database visitor access", err)
+		return
+	}
+	if !allowed {
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "database public URL access is not granted")
+		return
+	}
+	response.WriteHeader(http.StatusNoContent)
+}

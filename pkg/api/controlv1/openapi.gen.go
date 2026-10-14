@@ -1285,6 +1285,12 @@ type CreateVisitorInvitationRequest struct {
 	TeamId            TeamID      `json:"team_id"`
 }
 
+// DatabaseVisitorCertificateRequest defines model for DatabaseVisitorCertificateRequest.
+type DatabaseVisitorCertificateRequest struct {
+	Certificate      []byte `json:"certificate"`
+	PublishRunNumber int64  `json:"publish_run_number"`
+}
+
 // DomainID defines model for DomainID.
 type DomainID = ResourceID
 
@@ -2331,6 +2337,9 @@ type RedeemPublishRunShareJSONRequestBody = RedeemShareRequest
 // GetPublishRunShareStateJSONRequestBody defines body for GetPublishRunShareState for application/json ContentType.
 type GetPublishRunShareStateJSONRequestBody = PublishRunVersionRequest
 
+// CheckDatabaseVisitorCertificateJSONRequestBody defines body for CheckDatabaseVisitorCertificate for application/json ContentType.
+type CheckDatabaseVisitorCertificateJSONRequestBody = DatabaseVisitorCertificateRequest
+
 // CreatePublisherGrantJSONRequestBody defines body for CreatePublisherGrant for application/json ContentType.
 type CreatePublisherGrantJSONRequestBody = CreatePublisherGrantRequest
 
@@ -3068,6 +3077,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
 	GetPublishRunShareState(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckDatabaseVisitorCertificateWithBody Recheck a database visitor certificate and current access for one publish run
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/visitor-certificate/access (the `CheckDatabaseVisitorCertificate` operationId).
+	CheckDatabaseVisitorCertificateWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckDatabaseVisitorCertificate Recheck a database visitor certificate and current access for one publish run
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/visitor-certificate/access (the `CheckDatabaseVisitorCertificate` operationId).
+	CheckDatabaseVisitorCertificate(ctx context.Context, publishRunId PublishRunID, body CheckDatabaseVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPublisherIdentities List publisher identities and grants in a team
 	//
@@ -4713,6 +4736,40 @@ func (c *Client) GetPublishRunShareStateWithBody(ctx context.Context, publishRun
 // Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
 func (c *Client) GetPublishRunShareState(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPublishRunShareStateRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CheckDatabaseVisitorCertificateWithBody Recheck a database visitor certificate and current access for one publish run
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/visitor-certificate/access (the `CheckDatabaseVisitorCertificate` operationId).
+func (c *Client) CheckDatabaseVisitorCertificateWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckDatabaseVisitorCertificateRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CheckDatabaseVisitorCertificate Recheck a database visitor certificate and current access for one publish run
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/visitor-certificate/access (the `CheckDatabaseVisitorCertificate` operationId).
+func (c *Client) CheckDatabaseVisitorCertificate(ctx context.Context, publishRunId PublishRunID, body CheckDatabaseVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckDatabaseVisitorCertificateRequest(c.Server, publishRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7965,6 +8022,53 @@ func NewGetPublishRunShareStateRequestWithBody(server string, publishRunId Publi
 	return req, nil
 }
 
+// NewCheckDatabaseVisitorCertificateRequest calls the generic CheckDatabaseVisitorCertificate builder with application/json body
+func NewCheckDatabaseVisitorCertificateRequest(server string, publishRunId PublishRunID, body CheckDatabaseVisitorCertificateJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCheckDatabaseVisitorCertificateRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewCheckDatabaseVisitorCertificateRequestWithBody constructs an http.Request for the CheckDatabaseVisitorCertificate method, with any body, and a specified content type
+func NewCheckDatabaseVisitorCertificateRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/visitor-certificate/access", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListPublisherIdentitiesRequest constructs an http.Request for the ListPublisherIdentities method
 func NewListPublisherIdentitiesRequest(server string, params *ListPublisherIdentitiesParams) (*http.Request, error) {
 	var err error
@@ -9518,6 +9622,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
 	GetPublishRunShareStateWithResponse(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*GetPublishRunShareStateResponse, error)
+
+	// CheckDatabaseVisitorCertificateWithBodyWithResponse Recheck a database visitor certificate and current access for one publish run
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/visitor-certificate/access (the `CheckDatabaseVisitorCertificate` operationId).
+	CheckDatabaseVisitorCertificateWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckDatabaseVisitorCertificateResponse, error)
+
+	// CheckDatabaseVisitorCertificateWithResponse Recheck a database visitor certificate and current access for one publish run
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publish-runs/{publish_run_id}/visitor-certificate/access (the `CheckDatabaseVisitorCertificate` operationId).
+	CheckDatabaseVisitorCertificateWithResponse(ctx context.Context, publishRunId PublishRunID, body CheckDatabaseVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckDatabaseVisitorCertificateResponse, error)
 
 	// ListPublisherIdentitiesWithResponse List publisher identities and grants in a team
 	//
@@ -12564,6 +12682,47 @@ func (r GetPublishRunShareStateResponse) ContentType() string {
 	return ""
 }
 
+type CheckDatabaseVisitorCertificateResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CheckDatabaseVisitorCertificateResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CheckDatabaseVisitorCertificateResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckDatabaseVisitorCertificateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckDatabaseVisitorCertificateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CheckDatabaseVisitorCertificateResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListPublisherIdentitiesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -14671,6 +14830,32 @@ func (c *ClientWithResponses) GetPublishRunShareStateWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseGetPublishRunShareStateResponse(rsp)
+}
+
+// CheckDatabaseVisitorCertificateWithBodyWithResponse Recheck a database visitor certificate and current access for one publish run
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/visitor-certificate/access (the `CheckDatabaseVisitorCertificate` operationId).
+func (c *ClientWithResponses) CheckDatabaseVisitorCertificateWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckDatabaseVisitorCertificateResponse, error) {
+	rsp, err := c.CheckDatabaseVisitorCertificateWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckDatabaseVisitorCertificateResponse(rsp)
+}
+
+// CheckDatabaseVisitorCertificateWithResponse Recheck a database visitor certificate and current access for one publish run
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publish-runs/{publish_run_id}/visitor-certificate/access (the `CheckDatabaseVisitorCertificate` operationId).
+func (c *ClientWithResponses) CheckDatabaseVisitorCertificateWithResponse(ctx context.Context, publishRunId PublishRunID, body CheckDatabaseVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckDatabaseVisitorCertificateResponse, error) {
+	rsp, err := c.CheckDatabaseVisitorCertificate(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckDatabaseVisitorCertificateResponse(rsp)
 }
 
 // ListPublisherIdentitiesWithResponse List publisher identities and grants in a team
@@ -16977,6 +17162,35 @@ func ParseGetPublishRunShareStateResponse(rsp *http.Response) (*GetPublishRunSha
 	return response, nil
 }
 
+// ParseCheckDatabaseVisitorCertificateResponse parses an HTTP response from a CheckDatabaseVisitorCertificateWithResponse call
+func ParseCheckDatabaseVisitorCertificateResponse(rsp *http.Response) (*CheckDatabaseVisitorCertificateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckDatabaseVisitorCertificateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListPublisherIdentitiesResponse parses an HTTP response from a ListPublisherIdentitiesWithResponse call
 func ParseListPublisherIdentitiesResponse(rsp *http.Response) (*ListPublisherIdentitiesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17811,6 +18025,9 @@ type ServerInterface interface {
 	// GetPublishRunShareState Read short-lived share access state for this publisher
 	// (POST /v1/publish-runs/{publish_run_id}/share-state)
 	GetPublishRunShareState(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+	// CheckDatabaseVisitorCertificate Recheck a database visitor certificate and current access for one publish run
+	// (POST /v1/publish-runs/{publish_run_id}/visitor-certificate/access)
+	CheckDatabaseVisitorCertificate(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
 	// ListPublisherIdentities List publisher identities and grants in a team
 	// (GET /v1/publisher-identities)
 	ListPublisherIdentities(w http.ResponseWriter, r *http.Request, params ListPublisherIdentitiesParams)
@@ -19809,6 +20026,32 @@ func (siw *ServerInterfaceWrapper) GetPublishRunShareState(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// CheckDatabaseVisitorCertificate operation middleware
+func (siw *ServerInterfaceWrapper) CheckDatabaseVisitorCertificate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CheckDatabaseVisitorCertificate(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListPublisherIdentities operation middleware
 func (siw *ServerInterfaceWrapper) ListPublisherIdentities(w http.ResponseWriter, r *http.Request) {
 
@@ -20529,6 +20772,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/browser/handoff", wrapper.RedeemPreviewBrowserHandoff)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/browser/access", wrapper.CheckPreviewBrowserAccess)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/browser/logout", wrapper.RevokePreviewBrowserAccess)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/visitor-certificate/access", wrapper.CheckDatabaseVisitorCertificate)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/preview", wrapper.CreatePublishRunPreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/health", wrapper.GetHealth)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/ready", wrapper.GetReadiness)
