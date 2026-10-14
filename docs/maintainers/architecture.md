@@ -441,6 +441,16 @@ start a run; it cannot change a public URL or its visitor policy. the run token
 handles later run operations. control links the run to its current identity
 and grant and closes it on heartbeat when either is revoked.
 
+`tnl publish --enroll-key - --bg <target>` installs an enrolled saved URL in a
+system-owned publisher service. the administrator-owned installer copies the
+binary outside the user's writable directories and seals the private identity
+in a separate `client-v2.db` under `/private/var/db/tnl/publisher` on macOS or
+`/var/lib/tnl/publisher` on Linux. that service state uses its own root-owned
+`wrapping-key-v1` file; it never opens the user's login Keychain or control
+session. launchd runs it in the macOS system domain; systemd starts it at boot
+on Linux. the service uses the same native run owner as foreground publishing
+and starts new jobs without stopping existing publishers.
+
 for `tnl.open(app)`, the native local publisher owner gets an explicit namespace
 grant using the signed-in project's authority. the SDK sends a target,
 invocation ID, limits, and visitor policy through its scoped local HTTP API;

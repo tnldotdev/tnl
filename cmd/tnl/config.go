@@ -295,6 +295,9 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 }
 
 func projectSensitiveCommand(command string) bool {
+	if strings.HasPrefix(command, "publisher service ") || strings.HasPrefix(command, "publisher stop ") {
+		return false
+	}
 	return strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "limits ") || strings.HasPrefix(command, "admin ") ||
 		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "publisher ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ") || strings.HasPrefix(command, "alias ")
 }

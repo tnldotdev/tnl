@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/publisheridentity"
+	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -151,5 +152,83 @@ func TestInteractiveOwnerCreatesOneIdentityWithSeparateURLGrants(t *testing.T) {
 	}
 	if _, err := owner.CreateRun(t.Context(), urlA, "after-close"); !errors.Is(err, ErrGrant) {
 		t.Fatalf("closed native owner reused its publisher identity: %v", err)
+	}
+}
+
+func TestInstalledOwnerSignsRunsAfterPrivateKeyRestart(t *testing.T) {
+	const id = "url_0123456789abcdefghijkl"
+	access := "pta_" + strings.Repeat("a", 43)
+	private := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	public := private.Public().(ed25519.PublicKey)
+	var requests int
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/publisher/token":
+			if err := r.ParseForm(); err != nil {
+				t.Error(err)
+			}
+			if _, err := publisheridentity.Verify(r.Form.Get("client_assertion"), "pub_installed",
+				server.URL+"/v1/publisher/token", "pik_key", public, time.Now()); err != nil {
+				t.Errorf("restored publisher assertion: %v", err)
+			}
+			if r.Form.Get("scope") != "pgr_scope" {
+				t.Error("restored publisher used a different grant")
+			}
+			_, _ = w.Write([]byte(`{"access_token":"` + access + `","token_type":"Bearer","expires_in":299,"scope":"pgr_scope"}`))
+		case "/v1/public-urls/" + id + "/publish-runs":
+			requests++
+			if r.Header.Get("Authorization") != "Bearer "+access {
+				t.Error("restored publisher sent a human credential")
+			}
+			var body controlv1.CreatePublishRunRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			} else if _, err := publisheridentity.VerifyRun(public, body.PublisherProof, id, r.Header.Get("Idempotency-Key")); err != nil {
+				t.Errorf("restored publisher run proof: %v", err)
+			}
+			_, _ = w.Write([]byte(`{"publish_run":{}}`))
+		default:
+			t.Errorf("unexpected restored publisher request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	control, err := controlclient.New(server.URL, server.Client(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := authorityclient.New(server.URL, server.Client(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := id
+	installed := InstalledIdentity{PrivateKey: private, Enrollment: authorityv1.PublisherEnrollmentResult{
+		ClientId: "pub_installed", KeyId: "pik_key", GrantId: "pgr_scope", TeamId: "tm_team",
+		Kind: "saved_url", PublicUrlId: &url,
+	}}
+	first, err := Restore(control, authority, installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := first.InstalledIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	serialized, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded InstalledIdentity
+	if err := json.Unmarshal(serialized, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := Restore(control, authority, loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.CreateRun(t.Context(), id, "ik_restarted"); err != nil || requests != 1 {
+		t.Fatalf("restored owner run count = %d, %v", requests, err)
 	}
 }

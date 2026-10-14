@@ -246,6 +246,15 @@ type ProjectAlias struct {
 	FailureReason     string
 }
 
+type PublisherJob struct {
+	PublicURLID     string
+	ServerOrigin    string
+	Target          string
+	ServiceProtocol string
+	StoredIdentity  []byte
+	CreatedAt       int64
+}
+
 type ServerProfile struct {
 	ID             int64
 	Origin         string

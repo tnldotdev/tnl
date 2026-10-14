@@ -22,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/localpublisher"
 	"golang.org/x/term"
 )
 
@@ -402,6 +403,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runRuntimeServe(ctx, flags.Runtime.Serve)
 	case "runtime owner":
 		return runRuntimeOwner(ctx, flags.Runtime.Owner, os.Stdin, stdout)
+	case "publisher service install":
+		return localpublisher.InstallServiceJob(ctx, os.Stdin)
+	case "publisher service serve":
+		return localpublisher.ServeInstalledJobs(ctx, flags.Publisher.Service.Serve.StateDir)
+	case "publisher service remove <public-url-id>":
+		return localpublisher.RemoveServiceJob(ctx, flags.Publisher.Service.Remove.PublicURLID)
 	case "wait", "watch":
 		return runAppObservation(ctx, flags, parsedCommand, stdout)
 	case "publish <service-or-target>", "config check", "config generate":
@@ -600,6 +607,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
 	case "publisher enroll <service-or-public-url-id>":
 		return runPublisherEnroll(ctx, flags.Publisher.Enroll, project, stdout, stderr)
+	case "publisher stop <public-url-id>":
+		return runPublisherStop(ctx, flags.Publisher.Stop.PublicURLID, stderr)
 	case "publisher list":
 		return runPublisherList(ctx, flags.Publisher.List, stdout, stderr)
 	case "publisher revoke <publisher-id>":

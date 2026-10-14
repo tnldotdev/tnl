@@ -18,10 +18,30 @@ import (
 )
 
 type publisherCommand struct {
-	Enroll publisherEnrollCommand `cmd:"" help:"Issue a one-use publisher enrollment key for a saved URL or authorized namespace."`
-	List   publisherListCommand   `cmd:"" help:"List enrolled publishers and their grants in the selected team."`
-	Revoke publisherRevokeCommand `cmd:"" help:"Revoke a publisher identity and close its active runs on heartbeat."`
-	Grant  publisherGrantCommand  `cmd:"" help:"Add or revoke one publisher grant."`
+	Enroll  publisherEnrollCommand  `cmd:"" help:"Issue a one-use publisher enrollment key for a saved URL or authorized namespace."`
+	List    publisherListCommand    `cmd:"" help:"List enrolled publishers and their grants in the selected team."`
+	Revoke  publisherRevokeCommand  `cmd:"" help:"Revoke a publisher identity and close its active runs on heartbeat."`
+	Grant   publisherGrantCommand   `cmd:"" help:"Add or revoke one publisher grant."`
+	Service publisherServiceCommand `cmd:"" hidden:""`
+	Stop    publisherStopCommand    `cmd:"" help:"Stop background publishing of one public URL on this machine."`
+}
+
+type publisherServiceCommand struct {
+	Install struct{}                      `cmd:"" hidden:""`
+	Serve   publisherServiceServeCommand  `cmd:"" hidden:""`
+	Remove  publisherServiceRemoveCommand `cmd:"" hidden:""`
+}
+
+type publisherServiceServeCommand struct {
+	StateDir string `name:"state-dir" hidden:"" type:"path"`
+}
+
+type publisherServiceRemoveCommand struct {
+	PublicURLID string `arg:"" name:"public-url-id"`
+}
+
+type publisherStopCommand struct {
+	PublicURLID string `arg:"" name:"public-url-id"`
 }
 
 type enrollmentOutputMode string

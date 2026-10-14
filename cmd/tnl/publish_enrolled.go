@@ -34,6 +34,11 @@ func enrollmentKeyInput(value string, input io.Reader) (string, error) {
 }
 
 func runEnrolledPublish(ctx context.Context, flags publishCommand, output *publishOutput, telemetry telemetryReporter, input io.Reader) (result error) {
+	if flags.Background {
+		if err := validateBackgroundPublishOptions(flags); err != nil {
+			return err
+		}
+	}
 	if flags.Demo || flags.AccessToken != "" || flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" {
 		return failure.Wrap("validate publisher enrollment", failure.InvalidTunnelFlags,
 			errors.New("an enrollment key selects the public URL scope"))
@@ -56,6 +61,10 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, output *publi
 		return err
 	}
 	if namespace, ok := owner.EnrolledNamespace(); ok {
+		if flags.Background {
+			return failure.Wrap("install namespace publisher", failure.InvalidTunnelFlags,
+				errors.New("--bg requires an enrolled saved public URL"))
+		}
 		return runEnrolledAdHoc(ctx, flags, output, telemetry, state, auth, owner, namespace, server)
 	}
 	if flags.Ephemeral || len(flags.AllowIP) != 0 || flags.AllowAllIPs {
@@ -93,6 +102,16 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, output *publi
 		if err := localproxy.PreflightWithOptions(ctx, target, targetOptions); err != nil {
 			return err
 		}
+	}
+	if flags.Background {
+		identity, err := owner.InstalledIdentity()
+		if err != nil {
+			return err
+		}
+		return installBackgroundPublisher(ctx, localpublisher.ServiceJob{
+			Server: server, PublicURLID: route.Id, Target: target,
+			Protocol: route.ServiceProtocol, Identity: identity,
+		}, output, route)
 	}
 	services, err := localpublisher.EnrolledServices(ctx, state, auth, route)
 	if err != nil {

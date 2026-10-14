@@ -240,6 +240,10 @@ func TestPublisherEnrollmentSelectsSavedURLOrNamespace(t *testing.T) {
 		{[]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "url_0123456789abcdefghijkl"}, "publisher grant add <publisher-id> <public-url-id>"},
 		{[]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--namespace"}, "publisher grant add <publisher-id> <public-url-id>"},
 		{[]string{"publisher", "grant", "revoke", "pub_0123456789abcdefghijkl", "pgr_0123456789abcdefghijkl"}, "publisher grant revoke <publisher-id> <grant-id>"},
+		{[]string{"publisher", "stop", "url_0123456789abcdefghijkl"}, "publisher stop <public-url-id>"},
+		{[]string{"publisher", "service", "install"}, "publisher service install"},
+		{[]string{"publisher", "service", "serve"}, "publisher service serve"},
+		{[]string{"publisher", "service", "remove", "url_0123456789abcdefghijkl"}, "publisher service remove <public-url-id>"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)
@@ -253,6 +257,23 @@ func TestPublisherEnrollmentSelectsSavedURLOrNamespace(t *testing.T) {
 		if got := canonicalParsedCommand(parsed.Command()); got != test.want {
 			t.Fatalf("publisher command %v = %q, want %q", test.args, got, test.want)
 		}
+	}
+}
+
+func TestBackgroundPublishNeedsEnrollmentKey(t *testing.T) {
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"publish", "127.0.0.1:22", "--protocol", "ssh", "--bg"}); err != nil {
+		t.Fatal(err)
+	}
+	if !flags.Publish.Background || flags.Publish.EnrollKey != "" {
+		t.Fatalf("background publish flags = %+v", flags.Publish)
+	}
+	if projectSensitiveCommand("publisher service serve") || projectSensitiveCommand("publisher stop <public-url-id>") {
+		t.Fatal("background publisher required project login before its service could start")
 	}
 }
 

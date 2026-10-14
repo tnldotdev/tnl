@@ -36,6 +36,7 @@ type publishCommand struct {
 	VisitorTLSPassthrough bool   `name:"visitor-tls-passthrough" help:"Pass database visitor TLS to the private target; the client verifies its certificate and tnl cannot inspect it."`
 	visitorTLSFromCLI     bool
 	EnrollKey             string            `name:"enroll-key" env:"TNL_ENROLL_KEY" help:"Redeem a one-use publisher enrollment key on this machine; pass - to read stdin."`
+	Background            bool              `name:"bg" help:"Install the enrolled saved URL as a system publisher that restarts after reboot."`
 	Output                publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 	Demo                  bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
@@ -56,6 +57,10 @@ type dockerPublishTarget struct {
 }
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
+	if flags.Background && flags.EnrollKey == "" {
+		return failure.Wrap("select background publisher", failure.InvalidTunnelFlags,
+			errors.New("--bg requires a publisher enrollment key"))
+	}
 	if flags.Service != "" && flags.EnrollKey == "" {
 		if target := flags.project.Config.Services[flags.Service].Target; target != nil && target.Type != "app" {
 			if invocation, ok := optionalTelemetryReporter(reporters).(*telemetryInvocation); ok {

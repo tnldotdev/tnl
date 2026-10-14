@@ -27,6 +27,13 @@ type token struct {
 	until time.Time
 }
 
+// InstalledIdentity is encrypted by the service-owned client state before it
+// is saved. the private key must not appear in logs or a command argument.
+type InstalledIdentity struct {
+	Enrollment authorityv1.PublisherEnrollmentResult `json:"enrollment"`
+	PrivateKey ed25519.PrivateKey                    `json:"private_key"`
+}
+
 // Owner owns one signing key and independently revocable grants. an interactive
 // owner creates its first identity automatically after selecting a saved URL.
 type Owner struct {
@@ -77,6 +84,34 @@ func Redeem(ctx context.Context, control *controlclient.Client, authority *autho
 		owner.namespaces[identity.TeamId+"\x00"+*identity.Namespace] = identity.GrantId
 	}
 	return owner, nil
+}
+
+func (o *Owner) InstalledIdentity() (InstalledIdentity, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.human != nil || o.guestControl != nil || o.identity.ClientId == "" || len(o.private) != ed25519.PrivateKeySize {
+		return InstalledIdentity{}, errors.New("only an enrolled publisher can be installed")
+	}
+	return InstalledIdentity{Enrollment: o.identity, PrivateKey: append(ed25519.PrivateKey(nil), o.private...)}, nil
+}
+
+func Restore(control *controlclient.Client, authority *authorityclient.Client, installed InstalledIdentity) (*Owner, error) {
+	identity := installed.Enrollment
+	if control == nil || authority == nil || len(installed.PrivateKey) != ed25519.PrivateKeySize ||
+		identity.ClientId == "" || identity.KeyId == "" || identity.GrantId == "" || identity.TeamId == "" ||
+		identity.Kind == "saved_url" && (identity.PublicUrlId == nil || *identity.PublicUrlId == "") ||
+		identity.Kind == "namespace" && (identity.Namespace == nil || *identity.Namespace == "" || identity.DomainId == nil || *identity.DomainId == "") ||
+		identity.Kind != "saved_url" && identity.Kind != "namespace" {
+		return nil, errors.New("invalid installed publisher identity")
+	}
+	o := &Owner{Control: control, Authority: authority, private: append(ed25519.PrivateKey(nil), installed.PrivateKey...), identity: identity,
+		grants: map[string]string{}, namespaces: map[string]string{}, accessByGrant: map[string]token{}}
+	if identity.PublicUrlId != nil {
+		o.grants[*identity.PublicUrlId] = identity.GrantId
+	} else {
+		o.namespaces[identity.TeamId+"\x00"+*identity.Namespace] = identity.GrantId
+	}
+	return o, nil
 }
 
 // Guest registers a key under one existing trial. its limited guest access

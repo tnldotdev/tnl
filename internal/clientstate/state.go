@@ -33,6 +33,7 @@ type Database struct {
 	queries           *clientstatedb.Queries
 	now               func() time.Time
 	heartbeatInterval time.Duration
+	serviceOwned      bool
 }
 
 // Root returns the canonical, validated directory used by this client state.
@@ -93,6 +94,16 @@ func DefaultDir() (string, error) {
 
 // Open creates and migrates the shared local client database.
 func Open(ctx context.Context, root string) (result *Database, retErr error) {
+	return openState(ctx, root, false)
+}
+
+// OpenService uses an owner-only wrapping key file for a service-owned state
+// directory. it does not need a login session or the login Keychain on macOS.
+func OpenService(ctx context.Context, root string) (*Database, error) {
+	return openState(ctx, root, true)
+}
+
+func openState(ctx context.Context, root string, serviceOwned bool) (result *Database, retErr error) {
 	defer func() {
 		if retErr != nil {
 			if _, typed := failure.Of(retErr); !typed {
@@ -123,7 +134,12 @@ func Open(ctx context.Context, root string) (result *Database, retErr error) {
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("clientstate: inspect database: %w", statErr)
 	}
-	if err := prepareSecretProtection(ctx, root, databaseExists); err != nil {
+	if serviceOwned {
+		err = prepareFileSecretProtection(ctx, root, databaseExists)
+	} else {
+		err = prepareSecretProtection(ctx, root, databaseExists)
+	}
+	if err != nil {
 		return nil, err
 	}
 	migrations, err := fs.Sub(migrationFiles, "migrations")
@@ -135,7 +151,7 @@ func Open(ctx context.Context, root string) (result *Database, retErr error) {
 		return nil, fmt.Errorf("clientstate: %w", err)
 	}
 	return &Database{
-		root: root, locksDir: locksDir, db: db, queries: clientstatedb.New(db), now: time.Now,
+		root: root, locksDir: locksDir, db: db, queries: clientstatedb.New(db), now: time.Now, serviceOwned: serviceOwned,
 		heartbeatInterval: tunnelHeartbeatInterval,
 	}, nil
 }
@@ -165,12 +181,15 @@ func (d *Database) Server(ctx context.Context, serverOrigin string) (*Store, err
 		return nil, err
 	}
 	profileDigest := sha256.Sum256([]byte(d.root + "\x00" + serverOrigin))
+	var secrets secretProtector
+	if d.serviceOwned {
+		secrets = &fileSecretProtector{account: hex.EncodeToString(profileDigest[:]), keyPath: filepath.Join(d.root, "wrapping-key-v1")}
+	} else {
+		secrets = newSecretProtector(hex.EncodeToString(profileDigest[:]), filepath.Join(locksDir, "keychain-initialization.lock"), d.root)
+	}
 	return &Store{
 		database: d, controlEndpoint: serverOrigin, locksDir: locksDir,
-		secrets: newSecretProtector(
-			hex.EncodeToString(profileDigest[:]), filepath.Join(locksDir, "keychain-initialization.lock"),
-			d.root,
-		),
+		secrets: secrets,
 	}, nil
 }
 
