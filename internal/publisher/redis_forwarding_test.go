@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -165,9 +167,11 @@ func TestIntegrationRedisClient(t *testing.T) {
 		t.Skip("requires the Redis integration target")
 	}
 	certificate := publicURLTestCertificate(t, "route.example")
+	observed := make(chan RedisObservation, 8)
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Hostname: "route.example", ServiceProtocol: controlv1.Redis, PublicPort: 6379,
-		Target: *testRedisAddress, Certificate: certificate,
+		Target: *testRedisAddress, Certificate: certificate, InspectionMode: config.InspectionSummary,
+		ObserveRedis: func(event RedisObservation) { observed <- event },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -186,6 +190,15 @@ func TestIntegrationRedisClient(t *testing.T) {
 	response, err := reader.ReadString('\n')
 	if err != nil || response != "ok\r\n" {
 		t.Fatalf("Redis GET = %q, %v", response, err)
+	}
+	for index, expected := range []struct {
+		command string
+		result  inspection.Result
+	}{{"PING", inspection.ResultError}, {"AUTH", inspection.ResultOK}, {"SET", inspection.ResultOK}, {"GET", inspection.ResultOK}} {
+		event := nextRedisObservation(t, observed)
+		if event.Command != expected.command || event.Result != expected.result || event.ReceivedAt.IsZero() || event.Duration < 0 {
+			t.Fatalf("Redis inspection %d = %#v", index, event)
+		}
 	}
 }
 

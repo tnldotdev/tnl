@@ -188,6 +188,9 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	if protocol == controlv1.Mysql && !flags.VisitorTLSPassthrough {
 		publisherConfig.ObserveDatabase = sqlObservation(recorder)
 	}
+	if protocol == controlv1.Redis {
+		publisherConfig.ObserveRedis = redisObservation(recorder)
+	}
 	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service)
 	if err != nil {
 		return err
