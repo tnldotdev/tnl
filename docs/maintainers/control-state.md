@@ -133,6 +133,14 @@ refresh, logout, and handoff redemption apply the same scope. A URL-only identit
 can participate in feedback on that URL while feedback retains its own preview
 association.
 
+On a self-hosted built-in authority without browser OIDC, the administrator
+uses `tnl auth browser` to issue a one-use handoff for one owned HTTP app URL.
+Control verifies the saved CLI access and refresh tokens together and creates
+a separate login-token control session for the browser. Its host-bound cookie
+is tied to the issuing CLI session in `browser_admin_sessions`. Revoking that
+CLI session removes browser visit permission on the next request; the browser
+session's own refresh rotation cannot rotate the CLI's credentials.
+
 `browserVisitAllowed` makes the separate visit decision from the enabled public
 URL and current membership. A member public URL admits its owning membership;
 a shared public URL admits current team admins and owners. An exact team share

@@ -35,6 +35,8 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 		OIDCIssuer:                        cfg.OIDCIssuer,
 		OIDCClientID:                      cfg.OIDCClientID,
 		BrowserOIDCClientID:               cfg.BrowserOIDCClientID,
+		AccessTokenLifetime:               cfg.AccessTokenLifetime,
+		RefreshTokenLifetime:              cfg.RefreshTokenLifetime,
 		OIDCLoginFlow:                     cfg.OIDCLoginFlow,
 		OIDCScopes:                        cfg.EffectiveOIDCScopes(),
 		CertificateIssuance:               cfg.ACMEEnabled(),

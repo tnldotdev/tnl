@@ -20,9 +20,10 @@ import (
 )
 
 type authCommand struct {
-	Status authStatusCommand `cmd:"" help:"Show local credentials; --check silently validates with the server."`
-	Login  authLoginCommand  `cmd:"" help:"Log in explicitly, or manage a resumable login operation."`
-	Logout logoutCommand     `cmd:"" help:"Cancel login operations and remove the saved control session."`
+	Status  authStatusCommand   `cmd:"" help:"Show local credentials; --check silently validates with the server."`
+	Login   authLoginCommand    `cmd:"" help:"Log in explicitly, or manage a resumable login operation."`
+	Logout  logoutCommand       `cmd:"" help:"Cancel login operations and remove the saved control session."`
+	Browser adminBrowserCommand `cmd:"" help:"Open a public URL as the built-in administrator."`
 }
 
 type authStatusCommand struct {

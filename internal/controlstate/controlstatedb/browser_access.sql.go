@@ -11,6 +11,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const browserAdminParentActive = `-- name: BrowserAdminParentActive :one
+SELECT parent.id FROM control.browser_admin_sessions AS binding
+JOIN control.control_sessions AS parent ON parent.id = binding.parent_control_session_id
+WHERE binding.browser_token_digest = $1
+  AND parent.identity_id = $2
+  AND parent.authentication_method = 'login_token'
+  AND parent.revoked_at IS NULL AND parent.refresh_expires_at > $3
+FOR SHARE OF parent
+`
+
+type BrowserAdminParentActiveParams struct {
+	BrowserTokenDigest []byte
+	IdentityID         string
+	Now                pgtype.Timestamptz
+}
+
+func (q *Queries) BrowserAdminParentActive(ctx context.Context, arg BrowserAdminParentActiveParams) (string, error) {
+	row := q.db.QueryRow(ctx, browserAdminParentActive, arg.BrowserTokenDigest, arg.IdentityID, arg.Now)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const browserLoginPublicURL = `-- name: BrowserLoginPublicURL :one
 SELECT url.canonical_hostname, run.id AS publish_run_id, run.publish_run_number
 FROM control.public_urls AS url
@@ -258,6 +281,21 @@ func (q *Queries) InsertBrowserAccessSession(ctx context.Context, arg InsertBrow
 	return err
 }
 
+const insertBrowserAdminParent = `-- name: InsertBrowserAdminParent :exec
+INSERT INTO control.browser_admin_sessions (browser_token_digest, parent_control_session_id)
+VALUES ($1, $2)
+`
+
+type InsertBrowserAdminParentParams struct {
+	BrowserTokenDigest     []byte
+	ParentControlSessionID string
+}
+
+func (q *Queries) InsertBrowserAdminParent(ctx context.Context, arg InsertBrowserAdminParentParams) error {
+	_, err := q.db.Exec(ctx, insertBrowserAdminParent, arg.BrowserTokenDigest, arg.ParentControlSessionID)
+	return err
+}
+
 const insertBrowserLoginAttempt = `-- name: InsertBrowserLoginAttempt :exec
 INSERT INTO control.browser_login_attempts
     (state_digest, binding_digest, preview_id, public_url_id, return_path, nonce, verifier_ciphertext, verifier_storage_key_id, expires_at)
@@ -338,6 +376,49 @@ func (q *Queries) ListReadyPreviewBrowserHostnames(ctx context.Context, arg List
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAdminBrowserSourceSession = `-- name: LockAdminBrowserSourceSession :one
+SELECT session.id, session.identity_id, identity.display_name,
+       session.authentication_source_revision, session.access_token_digest,
+       session.refresh_token_id, session.refresh_token_digest,
+       session.access_expires_at, session.refresh_expires_at
+FROM control.control_sessions AS session
+JOIN control.identities AS identity ON identity.id = session.identity_id
+WHERE session.access_token_id = $1
+  AND session.authentication_method = 'login_token'
+  AND session.administrator AND identity.administrator
+  AND session.revoked_at IS NULL AND identity.disabled_at IS NULL
+FOR SHARE OF session, identity
+`
+
+type LockAdminBrowserSourceSessionRow struct {
+	ID                           string
+	IdentityID                   string
+	DisplayName                  string
+	AuthenticationSourceRevision int64
+	AccessTokenDigest            []byte
+	RefreshTokenID               string
+	RefreshTokenDigest           []byte
+	AccessExpiresAt              pgtype.Timestamptz
+	RefreshExpiresAt             pgtype.Timestamptz
+}
+
+func (q *Queries) LockAdminBrowserSourceSession(ctx context.Context, accessTokenID string) (LockAdminBrowserSourceSessionRow, error) {
+	row := q.db.QueryRow(ctx, lockAdminBrowserSourceSession, accessTokenID)
+	var i LockAdminBrowserSourceSessionRow
+	err := row.Scan(
+		&i.ID,
+		&i.IdentityID,
+		&i.DisplayName,
+		&i.AuthenticationSourceRevision,
+		&i.AccessTokenDigest,
+		&i.RefreshTokenID,
+		&i.RefreshTokenDigest,
+		&i.AccessExpiresAt,
+		&i.RefreshExpiresAt,
+	)
+	return i, err
 }
 
 const lockBrowserAccessSession = `-- name: LockBrowserAccessSession :one
@@ -462,21 +543,23 @@ func (q *Queries) ShareBrowserAccessSession(ctx context.Context, arg ShareBrowse
 
 const shareBrowserControlIdentity = `-- name: ShareBrowserControlIdentity :one
 SELECT session.identity_id, identity.display_name, session.access_token_digest,
-       session.access_expires_at, session.refresh_expires_at
+       session.access_expires_at, session.refresh_expires_at, session.authentication_method
 FROM control.control_sessions AS session
 JOIN control.identities AS identity ON identity.id = session.identity_id
 WHERE session.access_token_id = $1
-  AND session.authentication_method = 'oidc'
+  AND (session.authentication_method = 'oidc'
+    OR (session.authentication_method = 'login_token' AND session.administrator AND identity.administrator))
   AND session.revoked_at IS NULL AND identity.disabled_at IS NULL
 FOR SHARE OF session, identity
 `
 
 type ShareBrowserControlIdentityRow struct {
-	IdentityID        string
-	DisplayName       string
-	AccessTokenDigest []byte
-	AccessExpiresAt   pgtype.Timestamptz
-	RefreshExpiresAt  pgtype.Timestamptz
+	IdentityID           string
+	DisplayName          string
+	AccessTokenDigest    []byte
+	AccessExpiresAt      pgtype.Timestamptz
+	RefreshExpiresAt     pgtype.Timestamptz
+	AuthenticationMethod string
 }
 
 func (q *Queries) ShareBrowserControlIdentity(ctx context.Context, accessTokenID string) (ShareBrowserControlIdentityRow, error) {
@@ -488,6 +571,7 @@ func (q *Queries) ShareBrowserControlIdentity(ctx context.Context, accessTokenID
 		&i.AccessTokenDigest,
 		&i.AccessExpiresAt,
 		&i.RefreshExpiresAt,
+		&i.AuthenticationMethod,
 	)
 	return i, err
 }

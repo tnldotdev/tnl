@@ -668,6 +668,7 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 	}
 	configuration.ControlURL = server
 	configuration.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
+	configuration.BuiltinBrowserHandoffAvailable = services.authenticated.Discovery.BuiltinBrowserHandoffAvailable != nil && *services.authenticated.Discovery.BuiltinBrowserHandoffAvailable
 	configuration.PreviewID, configuration.ProjectRoot, configuration.Service = previewID, a.project.Root, service.Name
 	configuration.Feedback = project.Config.Feedback != nil && *project.Config.Feedback
 	configuration.InspectionMode = flags.InspectionMode

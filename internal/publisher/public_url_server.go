@@ -330,7 +330,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					return
 				}
 				if !allowed {
-					if config.BrowserAccess != nil && diagnostic.IsHTMLDocumentRequest(request) && validBrowserPath(request.URL.RequestURI()) {
+					if config.BrowserAccess != nil && config.BrowserAccess.loginAvailable && diagnostic.IsHTMLDocumentRequest(request) && validBrowserPath(request.URL.RequestURI()) {
 						if !browserSignedIn && automaticBrowserNavigation(request) {
 							response.Header().Set("Cache-Control", "no-store")
 							response.Header().Set("Referrer-Policy", "no-referrer")

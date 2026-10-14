@@ -245,6 +245,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	publisherConfig.ControlURL = authenticated.ServerEndpoint
 	publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable
+	publisherConfig.BuiltinBrowserHandoffAvailable = authenticated.Discovery.BuiltinBrowserHandoffAvailable != nil && *authenticated.Discovery.BuiltinBrowserHandoffAvailable
 	if flags.Demo {
 		publisherConfig.Demo, publisherConfig.Feedback, publisherConfig.Service = true, true, "demo"
 		publisherConfig.Purpose = controlv1.Demo

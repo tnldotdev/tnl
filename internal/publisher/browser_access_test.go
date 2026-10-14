@@ -160,7 +160,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	defer upstream.Close()
 	shares := &shareAccess{confirmed: time.Now(), teamAccessEnabled: true, shares: map[string]cachedShare{}}
 	client := &browserAccessStub{visitAllowed: true}
-	access := &browserAccess{client: client, previewID: "pv_0123456789abcdefghijkl", publicURLID: "url_0123456789abcdefghijkl",
+	access := &browserAccess{client: client, loginAvailable: true, previewID: "pv_0123456789abcdefghijkl", publicURLID: "url_0123456789abcdefghijkl",
 		runID: "pr_0123456789abcdefghijkl", version: 1, controlURL: "https://control.example.test"}
 	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, ShareAccess: shares, BrowserAccess: access})
 	if err != nil {

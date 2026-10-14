@@ -58,7 +58,7 @@ func TestRestrictedBrowserDocumentKeeps403AndOffersOnlyAvailableAction(t *testin
 		t.Run(test.name, func(t *testing.T) {
 			var browser *browserAccess
 			if test.runtime {
-				browser = &browserAccess{client: &browserAccessStub{err: test.err}}
+				browser = &browserAccess{client: &browserAccessStub{err: test.err}, loginAvailable: true}
 			}
 			server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", BrowserAccess: browser, Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("denied document reached local service") })})
 			if err != nil {
@@ -173,6 +173,30 @@ func TestAutomaticBrowserReturnChecksPermissionOnce(t *testing.T) {
 				t.Fatalf("denied return restarted sign-in: %d %s", response.Code, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestBuiltinAdministratorBrowserUsesHandoffWithoutOIDCRedirect(t *testing.T) {
+	control := &browserAccessStub{visitAllowed: true}
+	setup := controlv1.PublishRunSetup{PublicUrl: controlv1.PublicURL{Id: "url_app", Purpose: controlv1.App},
+		PublishRun: controlv1.PublishRun{Id: "pr_app", PublishRunNumber: 1}}
+	browser := browserAccessForRun(Config{Control: control, ControlURL: "https://control.example", Purpose: controlv1.App,
+		BuiltinBrowserHandoffAvailable: true}, setup, "publisher-token")
+	if browser == nil || browser.loginAvailable {
+		t.Fatal("built-in handoff did not install browser verification")
+	}
+	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", BrowserAccess: browser,
+		Handler: http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if response := restrictedRequest(server, "GET", "/", "text/html", "document", "navigate", "", true); response.Code != http.StatusForbidden || response.Header().Get("Location") != "" {
+		t.Fatalf("built-in administrator was redirected to missing OIDC provider: %d", response.Code)
+	}
+	cookie := browserAccessCookieName + "=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if response := restrictedRequest(server, "GET", "/", "text/html", "document", "navigate", cookie, true); response.Code != http.StatusNoContent {
+		t.Fatalf("built-in administrator handoff did not permit the app: %d", response.Code)
 	}
 }
 
@@ -431,7 +455,7 @@ func TestBrowserSignInFailuresDoNotRedirectOrClearSession(t *testing.T) {
 		{name: "unsafe next host", method: "GET", path: "/__tnl/team/handoff/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", client: browserAccessStub{next: "http://other.example/"}, status: 503},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			access := &browserAccess{client: &test.client, controlURL: "https://control.example"}
+			access := &browserAccess{client: &test.client, controlURL: "https://control.example", loginAvailable: true}
 			request := httptest.NewRequest(test.method, test.path, nil)
 			request.Host = "route.example"
 			request.Header.Set("Origin", "https://route.example")

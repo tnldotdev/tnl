@@ -42,6 +42,8 @@ type Config struct {
 	OIDCIssuer                        string
 	OIDCClientID                      string
 	BrowserOIDCClientID               string
+	AccessTokenLifetime               time.Duration
+	RefreshTokenLifetime              time.Duration
 	OIDCLoginFlow                     tnldconfig.OIDCLoginFlow
 	OIDCScopes                        []string
 	CertificateIssuance               bool
@@ -153,6 +155,7 @@ type BrowserAccessStore interface {
 	RotateBrowserSession(context.Context, string, string, string, time.Time) error
 	RefreshBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error)
 	RevokeBrowserSession(context.Context, string, string, time.Time) error
+	IssueAdminBrowserHandoff(context.Context, credentials.AccessToken, credentials.RefreshToken, string, int64, time.Duration, time.Duration, time.Time) (controlstate.BrowserHandoff, string, error)
 }
 
 type ShareStore interface {
@@ -319,6 +322,9 @@ func NewHandler(
 		if err != nil {
 			return nil, err
 		}
+	}
+	if cfg.BrowserOIDCClientID != "" || cfg.LoginToken != "" {
+		var err error
 		h.browserAuthority, err = authorityclient.New(cfg.ControlURL, cfg.HTTPClient, "")
 		if err != nil {
 			return nil, err
@@ -418,6 +424,7 @@ func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 		DnsAutomation:                     cfg.DNSAutomation,
 		GuestDemo:                         cfg.GuestDemoEnabled,
 		BrowserLoginAvailable:             new(cfg.BrowserOIDCClientID != ""),
+		BuiltinBrowserHandoffAvailable:    new(cfg.LoginToken != "" && cfg.BrowserOIDCClientID == ""),
 		Authentication:                    controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
 	}
 	if cfg.TrafficDefaults.Valid() {

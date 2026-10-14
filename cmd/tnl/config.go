@@ -437,6 +437,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, "")
 	case "auth logout":
 		flags.Auth.Logout.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Logout.ServerURL, project.Config.Server, "")
+	case "auth browser <url>":
+		apply(&flags.Auth.Browser.remoteFlags, true)
 	case "team current":
 		apply(&flags.Team.Current.remoteFlags, true)
 	case "team list":

@@ -121,6 +121,11 @@ type ControlBrowserAccessSession struct {
 	RevokedAt         pgtype.Timestamptz
 }
 
+type ControlBrowserAdminSession struct {
+	BrowserTokenDigest     []byte
+	ParentControlSessionID string
+}
+
 type ControlBrowserLoginAttempt struct {
 	StateDigest          []byte
 	BindingDigest        []byte

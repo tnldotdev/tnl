@@ -397,6 +397,14 @@ func (c *Client) ListAvailablePublicURLs(ctx context.Context, teamID string) ([]
 	}
 }
 
+func (c *Client) CreateAdminBrowserHandoff(ctx context.Context, publicURLID, refreshToken string) (controlv1.AdminBrowserHandoff, error) {
+	return requestWithAccess[controlv1.AdminBrowserHandoff](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateAdminBrowserHandoff(ctx, controlv1.AdminBrowserHandoffRequest{
+			PublicUrlId: publicURLID, RefreshToken: refreshToken,
+		}, editors...)
+	})
+}
+
 // GetPublicURLByHostname uses one filtered request instead of paging through a
 // team's public URLs. reject unfiltered responses from servers ignoring the filter.
 func (c *Client) GetPublicURLByHostname(ctx context.Context, teamID, hostname string) (controlv1.PublicURL, error) {

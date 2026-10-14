@@ -45,51 +45,52 @@ type PublicURLControlClient interface {
 }
 
 type Config struct {
-	Control                  PublicURLControlClient
-	ControlURL               string
-	BrowserLoginAvailable    bool
-	ReadinessProof           string
-	ReadinessPath            string
-	TeamID                   string
-	DomainID                 string
-	MembershipID             string
-	PolicyRevision           uint64
-	PublicURLScope           controlv1.PublicURLScope
-	Purpose                  controlv1.PublicURLPurpose
-	Hostname                 string
-	PreviewID                string
-	Feedback                 bool
-	Demo                     bool
-	ProjectRoot              string
-	Service                  string
-	Target                   string
-	ServiceProtocol          controlv1.PublicURLServiceProtocol
-	TargetTLSName            string
-	TargetTLS                bool
-	PreserveSavedURLTarget   bool
-	TargetOptions            localproxy.TargetOptions
-	Handler                  http.Handler // integration URL handler; no local target is dialed.
-	AdmitRequest             func(*http.Request, PublishRunIdentity) error
-	ObserveResponse          ResponseObserver
-	Mounts                   []localproxy.Mount
-	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.
-	Limits                   ApplicationLimits
-	Traffic                  trafficlimits.Selection
-	ObserveRequest           func(RequestObservation)
-	ObserveDatabase          func(DatabaseObservation)
-	InspectionMode           projectconfig.InspectionMode
-	AllowedIPPrefixes        []string
-	Ephemeral                bool
-	AllocatedPublicURL       *controlv1.PublicURL
-	State                    *clientstate.Store
-	QUICConnector            muxsession.Connector
-	TCPConnector             muxsession.Connector
-	FallbackDelay            time.Duration
-	DrainTime                time.Duration
-	ProvisioningStalledDelay time.Duration
-	Logf                     func(string, ...any)
-	Observe                  func(Event) error
-	heartbeatInterval        time.Duration
+	Control                        PublicURLControlClient
+	ControlURL                     string
+	BrowserLoginAvailable          bool
+	BuiltinBrowserHandoffAvailable bool
+	ReadinessProof                 string
+	ReadinessPath                  string
+	TeamID                         string
+	DomainID                       string
+	MembershipID                   string
+	PolicyRevision                 uint64
+	PublicURLScope                 controlv1.PublicURLScope
+	Purpose                        controlv1.PublicURLPurpose
+	Hostname                       string
+	PreviewID                      string
+	Feedback                       bool
+	Demo                           bool
+	ProjectRoot                    string
+	Service                        string
+	Target                         string
+	ServiceProtocol                controlv1.PublicURLServiceProtocol
+	TargetTLSName                  string
+	TargetTLS                      bool
+	PreserveSavedURLTarget         bool
+	TargetOptions                  localproxy.TargetOptions
+	Handler                        http.Handler // integration URL handler; no local target is dialed.
+	AdmitRequest                   func(*http.Request, PublishRunIdentity) error
+	ObserveResponse                ResponseObserver
+	Mounts                         []localproxy.Mount
+	RequestLimit                   int // zero selects localproxy.DefaultRequestLimit.
+	Limits                         ApplicationLimits
+	Traffic                        trafficlimits.Selection
+	ObserveRequest                 func(RequestObservation)
+	ObserveDatabase                func(DatabaseObservation)
+	InspectionMode                 projectconfig.InspectionMode
+	AllowedIPPrefixes              []string
+	Ephemeral                      bool
+	AllocatedPublicURL             *controlv1.PublicURL
+	State                          *clientstate.Store
+	QUICConnector                  muxsession.Connector
+	TCPConnector                   muxsession.Connector
+	FallbackDelay                  time.Duration
+	DrainTime                      time.Duration
+	ProvisioningStalledDelay       time.Duration
+	Logf                           func(string, ...any)
+	Observe                        func(Event) error
+	heartbeatInterval              time.Duration
 }
 
 type EventType string

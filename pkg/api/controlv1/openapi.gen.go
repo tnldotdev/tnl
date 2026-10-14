@@ -912,6 +912,18 @@ type AddPreviewPublicURLRequest struct {
 	PublicUrlId PublicURLID `json:"public_url_id"`
 }
 
+// AdminBrowserHandoff defines model for AdminBrowserHandoff.
+type AdminBrowserHandoff struct {
+	EntryUrl  string    `json:"entry_url"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// AdminBrowserHandoffRequest defines model for AdminBrowserHandoffRequest.
+type AdminBrowserHandoffRequest struct {
+	PublicUrlId  PublicURLID `json:"public_url_id"`
+	RefreshToken string      `json:"refresh_token"`
+}
+
 // AdminDrainRelayRequest defines model for AdminDrainRelayRequest.
 type AdminDrainRelayRequest struct {
 	Deadline           time.Time  `json:"deadline"`
@@ -1132,6 +1144,9 @@ type ControlDiscovery struct {
 
 	// BrowserLoginAvailable Whether visitors can sign in through a browser OIDC client.
 	BrowserLoginAvailable *bool `json:"browser_login_available,omitempty"`
+
+	// BuiltinBrowserHandoffAvailable Whether a built-in administrator can install browser access from their CLI session.
+	BuiltinBrowserHandoffAvailable *bool `json:"builtin_browser_handoff_available,omitempty"`
 
 	// CustomDomainsEnabled Whether teams may add new custom domains. Existing custom domains remain usable when disabled.
 	CustomDomainsEnabled bool `json:"custom_domains_enabled"`
@@ -2216,6 +2231,9 @@ type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 // DrainAdminRelayJSONRequestBody defines body for DrainAdminRelay for application/json ContentType.
 type DrainAdminRelayJSONRequestBody = AdminDrainRelayRequest
 
+// CreateAdminBrowserHandoffJSONRequestBody defines body for CreateAdminBrowserHandoff for application/json ContentType.
+type CreateAdminBrowserHandoffJSONRequestBody = AdminBrowserHandoffRequest
+
 // AllocateEphemeralPublicURLJSONRequestBody defines body for AllocateEphemeralPublicURL for application/json ContentType.
 type AllocateEphemeralPublicURLJSONRequestBody = AllocateEphemeralPublicURLRequest
 
@@ -2493,6 +2511,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateAdminBrowserHandoffWithBody Create a one-time exact-URL browser handoff from a built-in administrator session
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/browser/admin-handoff (the `CreateAdminBrowserHandoff` operationId).
+	CreateAdminBrowserHandoffWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateAdminBrowserHandoff Create a one-time exact-URL browser handoff from a built-in administrator session
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/browser/admin-handoff (the `CreateAdminBrowserHandoff` operationId).
+	CreateAdminBrowserHandoff(ctx context.Context, body CreateAdminBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CompletePreviewBrowserLogin Return a signed-in visitor to the public URL
 	//
@@ -3260,6 +3292,40 @@ func (c *Client) DrainAdminRelay(ctx context.Context, relayId RelayID, body Drai
 // Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 func (c *Client) GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAdminServerStatusRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateAdminBrowserHandoffWithBody Create a one-time exact-URL browser handoff from a built-in administrator session
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/browser/admin-handoff (the `CreateAdminBrowserHandoff` operationId).
+func (c *Client) CreateAdminBrowserHandoffWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAdminBrowserHandoffRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateAdminBrowserHandoff Create a one-time exact-URL browser handoff from a built-in administrator session
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/browser/admin-handoff (the `CreateAdminBrowserHandoff` operationId).
+func (c *Client) CreateAdminBrowserHandoff(ctx context.Context, body CreateAdminBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAdminBrowserHandoffRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5190,6 +5256,46 @@ func NewGetAdminServerStatusRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewCreateAdminBrowserHandoffRequest calls the generic CreateAdminBrowserHandoff builder with application/json body
+func NewCreateAdminBrowserHandoffRequest(server string, body CreateAdminBrowserHandoffJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateAdminBrowserHandoffRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateAdminBrowserHandoffRequestWithBody constructs an http.Request for the CreateAdminBrowserHandoff method, with any body, and a specified content type
+func NewCreateAdminBrowserHandoffRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/admin-handoff")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -8714,6 +8820,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminServerStatusResponse, error)
 
+	// CreateAdminBrowserHandoffWithBodyWithResponse Create a one-time exact-URL browser handoff from a built-in administrator session
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/browser/admin-handoff (the `CreateAdminBrowserHandoff` operationId).
+	CreateAdminBrowserHandoffWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAdminBrowserHandoffResponse, error)
+
+	// CreateAdminBrowserHandoffWithResponse Create a one-time exact-URL browser handoff from a built-in administrator session
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/browser/admin-handoff (the `CreateAdminBrowserHandoff` operationId).
+	CreateAdminBrowserHandoffWithResponse(ctx context.Context, body CreateAdminBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAdminBrowserHandoffResponse, error)
+
 	// CompletePreviewBrowserLoginWithResponse Return a signed-in visitor to the public URL
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -9691,6 +9811,54 @@ func (r GetAdminServerStatusResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAdminServerStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateAdminBrowserHandoffResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *AdminBrowserHandoff
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateAdminBrowserHandoffResponse) GetJSON201() *AdminBrowserHandoff {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateAdminBrowserHandoffResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateAdminBrowserHandoffResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateAdminBrowserHandoffResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateAdminBrowserHandoffResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateAdminBrowserHandoffResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -13234,6 +13402,32 @@ func (c *ClientWithResponses) GetAdminServerStatusWithResponse(ctx context.Conte
 	return ParseGetAdminServerStatusResponse(rsp)
 }
 
+// CreateAdminBrowserHandoffWithBodyWithResponse Create a one-time exact-URL browser handoff from a built-in administrator session
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/browser/admin-handoff (the `CreateAdminBrowserHandoff` operationId).
+func (c *ClientWithResponses) CreateAdminBrowserHandoffWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAdminBrowserHandoffResponse, error) {
+	rsp, err := c.CreateAdminBrowserHandoffWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAdminBrowserHandoffResponse(rsp)
+}
+
+// CreateAdminBrowserHandoffWithResponse Create a one-time exact-URL browser handoff from a built-in administrator session
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/browser/admin-handoff (the `CreateAdminBrowserHandoff` operationId).
+func (c *ClientWithResponses) CreateAdminBrowserHandoffWithResponse(ctx context.Context, body CreateAdminBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAdminBrowserHandoffResponse, error) {
+	rsp, err := c.CreateAdminBrowserHandoff(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAdminBrowserHandoffResponse(rsp)
+}
+
 // CompletePreviewBrowserLoginWithResponse Return a signed-in visitor to the public URL
 //
 // Returns a wrapper object for the known response body format(s).
@@ -14764,6 +14958,39 @@ func ParseGetAdminServerStatusResponse(rsp *http.Response) (*GetAdminServerStatu
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateAdminBrowserHandoffResponse parses an HTTP response from a CreateAdminBrowserHandoffWithResponse call
+func ParseCreateAdminBrowserHandoffResponse(rsp *http.Response) (*CreateAdminBrowserHandoffResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateAdminBrowserHandoffResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest AdminBrowserHandoff
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -17191,6 +17418,9 @@ type ServerInterface interface {
 	// GetAdminServerStatus Read control, ingress, and relay status
 	// (GET /v1/admin/status)
 	GetAdminServerStatus(w http.ResponseWriter, r *http.Request)
+	// CreateAdminBrowserHandoff Create a one-time exact-URL browser handoff from a built-in administrator session
+	// (POST /v1/browser/admin-handoff)
+	CreateAdminBrowserHandoff(w http.ResponseWriter, r *http.Request)
 	// CompletePreviewBrowserLogin Return a signed-in visitor to the public URL
 	// (GET /v1/browser/callback)
 	CompletePreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params CompletePreviewBrowserLoginParams)
@@ -17525,6 +17755,20 @@ func (siw *ServerInterfaceWrapper) GetAdminServerStatus(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAdminServerStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAdminBrowserHandoff operation middleware
+func (siw *ServerInterfaceWrapper) CreateAdminBrowserHandoff(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAdminBrowserHandoff(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -20036,6 +20280,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/browser/admin-handoff", wrapper.CreateAdminBrowserHandoff)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/login", wrapper.BeginPreviewBrowserLogin)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/callback", wrapper.CompletePreviewBrowserLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/browser/capability", wrapper.EnableBrowserAccess)

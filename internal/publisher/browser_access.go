@@ -36,12 +36,14 @@ type browserAccess struct {
 	previewID, publicURLID, runID, controlURL string
 	version                                   uint64
 	token                                     credentials.PublishRunToken
+	loginAvailable                            bool
 }
 
 type browserIdentityKey struct{}
 
 func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token credentials.PublishRunToken) *browserAccess {
-	if config.Demo || config.Purpose != controlv1.App || setup.PublicUrl.Purpose != controlv1.App || !config.BrowserLoginAvailable {
+	if config.Demo || config.Purpose != controlv1.App || setup.PublicUrl.Purpose != controlv1.App ||
+		!config.BrowserLoginAvailable && !config.BuiltinBrowserHandoffAvailable {
 		return nil
 	}
 	controlURL, err := url.Parse(config.ControlURL)
@@ -54,7 +56,7 @@ func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token c
 	}
 	return &browserAccess{client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,
 		runID: setup.PublishRun.Id, version: uint64(setup.PublishRun.PublishRunNumber), token: token,
-		controlURL: config.ControlURL}
+		controlURL: config.ControlURL, loginAvailable: config.BrowserLoginAvailable}
 }
 
 func browserCookie(response http.ResponseWriter, secret string, expires time.Time) {
@@ -96,6 +98,10 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 	response.Header().Set("Referrer-Policy", "no-referrer")
 	switch {
 	case request.URL.Path == root+"login" && request.Method == http.MethodGet:
+		if !a.loginAvailable {
+			http.Error(response, "use tnl auth browser to open this public URL", http.StatusForbidden)
+			return true
+		}
 		// sign-in establishes identity; control separately decides visit permission.
 		path := request.URL.Query().Get("return")
 		if path == "" {

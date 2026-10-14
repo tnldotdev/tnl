@@ -9,6 +9,27 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/browser/admin-handoff:
+    post:
+      operationId: createAdminBrowserHandoff
+      summary: Create a one-time exact-URL browser handoff from a built-in administrator session
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminBrowserHandoffRequest"
+      responses:
+        "201":
+          description: One-time URL to open in the administrator's browser
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminBrowserHandoff"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/browser/login:
     get:
       operationId: beginPreviewBrowserLogin
@@ -1992,9 +2013,34 @@ components:
         browser_login_available:
           type: boolean
           description: Whether visitors can sign in through a browser OIDC client.
-          pattern: "^https://"
+        builtin_browser_handoff_available:
+          type: boolean
+          description: Whether a built-in administrator can install browser access from their CLI session.
         authentication:
           $ref: "#/components/schemas/AuthenticationFacts"
+    AdminBrowserHandoffRequest:
+      type: object
+      additionalProperties: false
+      required: [public_url_id, refresh_token]
+      properties:
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        refresh_token:
+          type: string
+          minLength: 1
+          maxLength: 4096
+    AdminBrowserHandoff:
+      type: object
+      additionalProperties: false
+      required: [entry_url, expires_at]
+      properties:
+        entry_url:
+          type: string
+          format: uri
+          pattern: "^https://"
+        expires_at:
+          type: string
+          format: date-time
     GuestDemoSession:
       type: object
       additionalProperties: false

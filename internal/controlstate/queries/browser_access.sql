@@ -81,16 +81,43 @@ FOR SHARE;
 
 -- name: ShareBrowserControlIdentity :one
 SELECT session.identity_id, identity.display_name, session.access_token_digest,
-       session.access_expires_at, session.refresh_expires_at
+       session.access_expires_at, session.refresh_expires_at, session.authentication_method
 FROM control.control_sessions AS session
 JOIN control.identities AS identity ON identity.id = session.identity_id
 WHERE session.access_token_id = sqlc.arg(access_token_id)
-  AND session.authentication_method = 'oidc'
+  AND (session.authentication_method = 'oidc'
+    OR (session.authentication_method = 'login_token' AND session.administrator AND identity.administrator))
   AND session.revoked_at IS NULL AND identity.disabled_at IS NULL
 FOR SHARE OF session, identity;
 
 -- name: ShareBrowserPublicURL :one
 SELECT * FROM control.public_urls WHERE id = sqlc.arg(public_url_id) FOR SHARE;
+
+-- name: LockAdminBrowserSourceSession :one
+SELECT session.id, session.identity_id, identity.display_name,
+       session.authentication_source_revision, session.access_token_digest,
+       session.refresh_token_id, session.refresh_token_digest,
+       session.access_expires_at, session.refresh_expires_at
+FROM control.control_sessions AS session
+JOIN control.identities AS identity ON identity.id = session.identity_id
+WHERE session.access_token_id = sqlc.arg(access_token_id)
+  AND session.authentication_method = 'login_token'
+  AND session.administrator AND identity.administrator
+  AND session.revoked_at IS NULL AND identity.disabled_at IS NULL
+FOR SHARE OF session, identity;
+
+-- name: InsertBrowserAdminParent :exec
+INSERT INTO control.browser_admin_sessions (browser_token_digest, parent_control_session_id)
+VALUES (sqlc.arg(browser_token_digest), sqlc.arg(parent_control_session_id));
+
+-- name: BrowserAdminParentActive :one
+SELECT parent.id FROM control.browser_admin_sessions AS binding
+JOIN control.control_sessions AS parent ON parent.id = binding.parent_control_session_id
+WHERE binding.browser_token_digest = sqlc.arg(browser_token_digest)
+  AND parent.identity_id = sqlc.arg(identity_id)
+  AND parent.authentication_method = 'login_token'
+  AND parent.revoked_at IS NULL AND parent.refresh_expires_at > sqlc.arg(now)
+FOR SHARE OF parent;
 
 -- name: RotateBrowserAccessSession :exec
 UPDATE control.browser_access_sessions

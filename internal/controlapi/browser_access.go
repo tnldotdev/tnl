@@ -126,6 +126,46 @@ func (h *handler) BeginPreviewBrowserLogin(response http.ResponseWriter, request
 	http.Redirect(response, request, config.AuthCodeURL(state, options...), http.StatusFound)
 }
 
+func (h *handler) CreateAdminBrowserHandoff(response http.ResponseWriter, request *http.Request) {
+	var body controlv1.AdminBrowserHandoffRequest
+	if err := decodeJSON(response, request, &body); err != nil || body.PublicUrlId == "" || body.RefreshToken == "" {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "choose an app public URL and current administrator session")
+		return
+	}
+	if h.config.LoginToken == "" || h.config.BrowserOIDCClientID != "" || h.browserAccess == nil || h.config.ServerDomain == "" {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "built-in administrator browser handoff is unavailable")
+		return
+	}
+	principal, ok := h.authorizeRouteReads(response, request)
+	if !ok {
+		return
+	}
+	if !principal.administrator {
+		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
+		return
+	}
+	verifier, err := credentials.ParseLoginToken(credentials.LoginToken(h.config.LoginToken))
+	if err != nil {
+		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "built-in administrator browser handoff is unavailable")
+		return
+	}
+	access, _ := requestBearerToken(request)
+	now := time.Now()
+	handoff, hostname, err := h.browserAccess.IssueAdminBrowserHandoff(request.Context(), credentials.AccessToken(access),
+		credentials.RefreshToken(body.RefreshToken), body.PublicUrlId, verifier.SourceRevision(),
+		h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, now)
+	if err != nil {
+		writeControlStateProblem(response, "create administrator browser handoff", err)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Referrer-Policy", "no-referrer")
+	writeJSON(response, http.StatusCreated, controlv1.AdminBrowserHandoff{
+		EntryUrl:  "https://" + hostname + "/__tnl/team/handoff/" + handoff.Token,
+		ExpiresAt: now.Add(time.Minute).UTC(),
+	})
+}
+
 func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, request *http.Request, params controlv1.CompletePreviewBrowserLoginParams) {
 	response.Header().Set("Referrer-Policy", "no-referrer")
 	response.Header().Set("Cache-Control", "no-store")
@@ -245,7 +285,8 @@ func (h *handler) EnableBrowserAccess(response http.ResponseWriter, request *htt
 	if !ok {
 		return
 	}
-	if h.browserAccess == nil || h.browserVerifier == nil || h.browserAuthority == nil || h.config.ServerDomain == "" {
+	if h.browserAccess == nil || h.browserAuthority == nil || h.config.ServerDomain == "" ||
+		h.browserVerifier == nil && h.config.LoginToken == "" {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "browser sign-in is unavailable")
 		return
 	}

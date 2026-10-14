@@ -29,14 +29,15 @@ type BrowserLoginAttempt struct {
 }
 
 type BrowserAccessSession struct {
-	PreviewID       string
-	PublicURLID     string
-	IdentityID      string
-	DisplayName     string
-	AccessToken     string
-	RefreshToken    string
-	AccessExpiresAt time.Time
-	ExpiresAt       time.Time
+	PreviewID              string
+	PublicURLID            string
+	ParentControlSessionID string
+	IdentityID             string
+	DisplayName            string
+	AccessToken            string
+	RefreshToken           string
+	AccessExpiresAt        time.Time
+	ExpiresAt              time.Time
 }
 
 type BrowserTokenRotation struct {
@@ -277,6 +278,13 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 		AccessExpiresAt: timestamptz(session.AccessExpiresAt), ExpiresAt: timestamptz(session.ExpiresAt),
 	}); err != nil {
 		return BrowserHandoff{}, fmt.Errorf("controlstate: save browser session: %w", err)
+	}
+	if session.ParentControlSessionID != "" {
+		if err := queries.InsertBrowserAdminParent(ctx, controlstatedb.InsertBrowserAdminParentParams{
+			BrowserTokenDigest: cookieDigest, ParentControlSessionID: session.ParentControlSessionID,
+		}); err != nil {
+			return BrowserHandoff{}, fmt.Errorf("save administrator browser parent: %w", err)
+		}
 	}
 	next := "https://" + landing.CanonicalHostname + attempt.ReturnPath
 	hosts, err := queries.ListReadyPreviewBrowserHostnames(ctx, controlstatedb.ListReadyPreviewBrowserHostnamesParams{
@@ -653,6 +661,17 @@ func (d *Database) browserIdentity(ctx context.Context, queries *controlstatedb.
 	}
 	if err != nil {
 		return BrowserIdentity{}, fmt.Errorf("lock browser control identity: %w", err)
+	}
+	if identity.AuthenticationMethod == loginAuthenticationMethod {
+		_, err := queries.BrowserAdminParentActive(ctx, controlstatedb.BrowserAdminParentActiveParams{
+			BrowserTokenDigest: digest, IdentityID: identity.IdentityID, Now: timestamptz(now),
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return BrowserIdentity{}, ErrPreviewAccess
+		}
+		if err != nil {
+			return BrowserIdentity{}, fmt.Errorf("check administrator browser parent: %w", err)
+		}
 	}
 	return BrowserIdentity{IdentityID: identity.IdentityID, DisplayName: identity.DisplayName, PreviewID: row.PreviewID.String}, nil
 }

@@ -469,6 +469,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runAuthLoginOperation(ctx, flags.Auth.Login.loginCommand, flags.Auth.Login.Cancel.ID, "cancel", stdout, stderr)
 	case "auth logout":
 		return runLogout(ctx, flags.Auth.Logout, stdout, stderr)
+	case "auth browser <url>":
+		return runAdminBrowserHandoff(ctx, flags.Auth.Browser, stdout, stderr)
 	case "version":
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
 		return err

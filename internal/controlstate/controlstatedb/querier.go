@@ -36,6 +36,7 @@ type Querier interface {
 	BeginGuestPublishRun(ctx context.Context, arg BeginGuestPublishRunParams) (int64, error)
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
 	BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams) (BeginRelayDrainRow, error)
+	BrowserAdminParentActive(ctx context.Context, arg BrowserAdminParentActiveParams) (string, error)
 	BrowserLoginPublicURL(ctx context.Context, arg BrowserLoginPublicURLParams) (BrowserLoginPublicURLRow, error)
 	BrowserSessionPublicURLIncluded(ctx context.Context, arg BrowserSessionPublicURLIncludedParams) (string, error)
 	CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg CancelOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
@@ -222,6 +223,7 @@ type Querier interface {
 	InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAuditEventParams) error
 	InsertBrowserAccessHandoff(ctx context.Context, arg InsertBrowserAccessHandoffParams) error
 	InsertBrowserAccessSession(ctx context.Context, arg InsertBrowserAccessSessionParams) error
+	InsertBrowserAdminParent(ctx context.Context, arg InsertBrowserAdminParentParams) error
 	InsertBrowserLoginAttempt(ctx context.Context, arg InsertBrowserLoginAttemptParams) error
 	InsertCertificateIssuanceAuditEvent(ctx context.Context, arg InsertCertificateIssuanceAuditEventParams) error
 	InsertEphemeralPublicURLAllocation(ctx context.Context, arg InsertEphemeralPublicURLAllocationParams) (int64, error)
@@ -303,6 +305,7 @@ type Querier interface {
 	ListVisitorShareInvitations(ctx context.Context, arg ListVisitorShareInvitationsParams) ([]ControlVisitorShareInvitation, error)
 	LockACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)
 	LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrderForInstallParams) (ControlAcmeOrder, error)
+	LockAdminBrowserSourceSession(ctx context.Context, accessTokenID string) (LockAdminBrowserSourceSessionRow, error)
 	LockBrowserAccessSession(ctx context.Context, tokenDigest []byte) (ControlBrowserAccessSession, error)
 	LockCertificateIssuanceControl(ctx context.Context) (bool, error)
 	LockControlSessionByRefreshID(ctx context.Context, refreshTokenID string) (LockControlSessionByRefreshIDRow, error)
