@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"go.yaml.in/yaml/v3"
 )
@@ -306,6 +307,23 @@ func validateServerAndTeam(server, team *string) error {
 func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 	if tunnel != nil {
 		if limits := tunnel.Limits; limits != nil {
+			if traffic := limits.Traffic; traffic != nil {
+				if traffic.Connections != nil && *traffic.Connections <= 0 ||
+					traffic.Rate != nil && (traffic.Rate.Count != nil && *traffic.Rate.Count <= 0 ||
+						traffic.Rate.Per != nil && traffic.Rate.Per.Value() <= 0 ||
+						traffic.Rate.Burst != nil && *traffic.Rate.Burst <= 0) {
+					return errors.New("tunnel.limits.traffic connections and rate values must be positive")
+				}
+				if traffic.Bandwidth != nil {
+					for _, value := range []*ByteRate{traffic.Bandwidth.Upload, traffic.Bandwidth.Download} {
+						if value != nil {
+							if _, err := trafficlimits.ParseByteRate(string(*value)); err != nil {
+								return fmt.Errorf("tunnel.limits.traffic.bandwidth: %w", err)
+							}
+						}
+					}
+				}
+			}
 			for _, selected := range []struct {
 				name string
 				work *WorkLimits

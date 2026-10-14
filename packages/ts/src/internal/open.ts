@@ -1,6 +1,6 @@
 import { randomBytes, randomInt } from "node:crypto";
 import * as path from "node:path";
-import type { TnlRatePeriod } from "../config.gen.js";
+import type { TnlByteRate, TnlRatePeriod } from "../config.gen.js";
 import type { FetchHandler } from "./fetch_types.js";
 import { TnlCleanupError, TnlError } from "../errors.js";
 import { startRuntime, runtimeRequest } from "./app.js";
@@ -24,6 +24,18 @@ export interface OpenOptions {
         readonly burst?: number;
       };
       readonly concurrency?: number;
+    };
+    readonly traffic?: {
+      readonly connections?: number;
+      readonly rate?: {
+        readonly count?: number;
+        readonly per?: TnlRatePeriod;
+        readonly burst?: number;
+      };
+      readonly bandwidth?: {
+        readonly upload?: TnlByteRate;
+        readonly download?: TnlByteRate;
+      };
     };
   };
   readonly signal?: AbortSignal;
@@ -97,17 +109,18 @@ export async function openServer(
     credential,
     ...(options.allowIP === undefined ? {} : { allow_ip: [...options.allowIP] }),
     ...(options.allowAllIPs === undefined ? {} : { allow_all_ips: options.allowAllIPs }),
-    ...(options.limits?.http === undefined
+    ...(options.limits?.http === undefined && options.limits?.traffic === undefined
       ? {}
       : {
           limits: {
-            ...(options.limits.http.total === undefined
+            ...(options.limits.traffic === undefined ? {} : { traffic: options.limits.traffic }),
+            ...(options.limits.http?.total === undefined
               ? {}
               : { requests: options.limits.http.total }),
-            ...(options.limits.http.concurrency === undefined
+            ...(options.limits.http?.concurrency === undefined
               ? {}
               : { concurrency: options.limits.http.concurrency }),
-            ...(options.limits.http.rate === undefined
+            ...(options.limits.http?.rate === undefined
               ? {}
               : {
                   rate: {
@@ -414,7 +427,7 @@ function validateOptions(options: OpenOptions): void {
     (limits === null ||
       typeof limits !== "object" ||
       Array.isArray(limits) ||
-      Object.keys(limits).some((key) => key !== "http") ||
+      Object.keys(limits).some((key) => key !== "http" && key !== "traffic") ||
       (http !== undefined &&
         (http === null ||
           typeof http !== "object" ||
@@ -438,6 +451,42 @@ function validateOptions(options: OpenOptions): void {
               ))))))
   )
     throw new TnlError("sdk.configuration_invalid");
+  const traffic = limits?.traffic;
+  if (
+    traffic !== undefined &&
+    (traffic === null ||
+      typeof traffic !== "object" ||
+      Array.isArray(traffic) ||
+      Object.keys(traffic).some((key) => !["connections", "rate", "bandwidth"].includes(key)) ||
+      (traffic.connections !== undefined &&
+        (!Number.isSafeInteger(traffic.connections) || traffic.connections < 1)) ||
+      (traffic.rate !== undefined &&
+        (traffic.rate === null ||
+          typeof traffic.rate !== "object" ||
+          Array.isArray(traffic.rate) ||
+          Object.keys(traffic.rate).some((key) => !["count", "per", "burst"].includes(key)) ||
+          (traffic.rate.count !== undefined &&
+            (!Number.isSafeInteger(traffic.rate.count) || traffic.rate.count < 1)) ||
+          (traffic.rate.burst !== undefined &&
+            (!Number.isSafeInteger(traffic.rate.burst) || traffic.rate.burst < 1)) ||
+          (traffic.rate.per !== undefined &&
+            (typeof traffic.rate.per !== "string" ||
+              !/^([0-9]+(\.[0-9]+)?|\.[0-9]+)(ns|us|µs|ms|s|m|h)([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))*$/.test(
+                traffic.rate.per,
+              ))))) ||
+      (traffic.bandwidth !== undefined &&
+        (traffic.bandwidth === null ||
+          typeof traffic.bandwidth !== "object" ||
+          Array.isArray(traffic.bandwidth) ||
+          Object.keys(traffic.bandwidth).some((key) => key !== "upload" && key !== "download") ||
+          [traffic.bandwidth.upload, traffic.bandwidth.download].some(
+            (value) =>
+              value !== undefined &&
+              (typeof value !== "string" || !/^[1-9][0-9]*(KiB|MiB|GiB)\/s$/.test(value)),
+          ))))
+  ) {
+    throw new TnlError("sdk.configuration_invalid");
+  }
 }
 
 function aborted(): DOMException {

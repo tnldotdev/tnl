@@ -435,6 +435,8 @@ components:
           type: integer
           format: int64
           minimum: 1
+        traffic:
+          $ref: "#/components/schemas/PublishRunTrafficLimits"
         publisher_connections:
           type: array
           maxItems: 2
@@ -455,6 +457,17 @@ components:
         digest:
           type: string
           pattern: "^[A-Za-z0-9_-]{43}$"
+    PublishRunTrafficLimits:
+      type: object
+      additionalProperties: false
+      required: [connections, rate, rate_per_ns, burst, upload_bytes, download_bytes]
+      properties:
+        connections: { type: integer, minimum: 1 }
+        rate: { type: integer, minimum: 1 }
+        rate_per_ns: { type: integer, format: int64, minimum: 1000000 }
+        burst: { type: integer, minimum: 1 }
+        upload_bytes: { type: integer, format: int64, minimum: 65536 }
+        download_bytes: { type: integer, format: int64, minimum: 65536 }
     IngressRoutingTableEvent:
       type: object
       additionalProperties: false

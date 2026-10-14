@@ -472,6 +472,32 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	}
 }
 
+func TestTrafficLimitsValidateInBothStaticFormats(t *testing.T) {
+	for name, source := range map[string]string{
+		"tnl.json": `{"version":1,"tnl":{"tunnel":{"limits":{"traffic":{"connections":32,"rate":{"count":20,"per":"1s","burst":40},"bandwidth":{"upload":"8MiB/s","download":"16MiB/s"}}}},"services":{"web":{"target":{"type":"app"},"tunnel":{"limits":{"traffic":{"connections":16}}}},"orders":{"protocol":"postgres","target":{"type":"address","address":"db:5432"}}}}}`,
+		"tnl.yml":  "version: 1\ntnl:\n  tunnel:\n    limits:\n      traffic:\n        connections: 32\n        rate: {count: 20, per: 1s, burst: 40}\n        bandwidth: {upload: 8MiB/s, download: 16MiB/s}\n  services:\n    web:\n      target: {type: app}\n      tunnel: {limits: {traffic: {connections: 16}}}\n    orders:\n      protocol: postgres\n      target: {type: address, address: 'db:5432'}\n",
+	} {
+		path := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := LoadDocument(path)
+		if err != nil || loaded.TNL == nil || loaded.TNL.Tunnel == nil || loaded.TNL.Tunnel.Limits == nil ||
+			loaded.TNL.Tunnel.Limits.Traffic == nil || loaded.TNL.Tunnel.Limits.Traffic.Rate == nil ||
+			*loaded.TNL.Tunnel.Limits.Traffic.Rate.Count != 20 {
+			t.Fatalf("traffic in %s = %+v, %v", name, loaded, err)
+		}
+	}
+	for _, upload := range []string{"0MiB/s", "1MB/s", "32KiB/s"} {
+		value := ByteRate(upload)
+		if err := ValidateTNL(TNL{Tunnel: &Tunnel{Limits: &Limits{Traffic: &TrafficLimits{
+			Bandwidth: &Bandwidth{Upload: &value},
+		}}}}); err == nil {
+			t.Fatalf("invalid visitor bandwidth %s was accepted", upload)
+		}
+	}
+}
+
 func TestTNLDFilePrecedenceDistinguishesAbsentAndEmptyEnvironment(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tnl.json")
 	if err := os.WriteFile(path, []byte(`{"version":1,"tnld":{"metrics_listen":"file:1234","relay_stream_capacity":12}}`), 0o600); err != nil {

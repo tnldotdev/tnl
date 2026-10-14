@@ -85,6 +85,13 @@ saturated transfer is closed. tokens belong to one public URL and publish run on
 process, not to a connected relay. denied HTTPS visitors and certificate
 challenges retain their separate admission classes. these limits are process
 local: replicas behind one ingress address do not share a token bucket.
+control checks the project's optional `tunnel.limits.traffic` selection against
+operator ceilings when a publish run starts, stores the normalized budget on
+that run, and includes it in every routing projection. a later routing refresh
+or relay assignment replacement cannot reset its ingress tokens. an old run
+without a stored budget uses ingress defaults. if split control and ingress
+have different ceilings, ingress rejects a projected value above its own
+ceiling rather than silently accepting a weaker policy.
 
 for a TCP public URL, ingress uses the original destination port in the
 trusted outer PROXY v2 header instead of inspecting a ClientHello. A routing

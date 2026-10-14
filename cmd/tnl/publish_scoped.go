@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -43,6 +44,10 @@ func (c *scopedPublishControl) CreatePublishRun(ctx context.Context, publicURLID
 		return controlv1.PublishRunSetup{}, controlclient.ErrStatusConflict
 	}
 	return c.Client.CreatePublishRunWithCredential(ctx, publicURLID, key, c.credential)
+}
+
+func (c *scopedPublishControl) CreatePublishRunWithTraffic(ctx context.Context, publicURLID, key string, traffic trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+	return c.Client.CreatePublishRunWithCredentialTraffic(ctx, publicURLID, key, c.credential, traffic)
 }
 
 func (*scopedPublishControl) CreatePublicURL(context.Context, controlv1.CreatePublicURLRequest, string) (controlv1.PublicURL, error) {
@@ -121,6 +126,10 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	if err := selectPublishInspection(&flags, protocol); err != nil {
 		return err
 	}
+	traffic, err := flags.traffic()
+	if err != nil {
+		return failure.Wrap("validate traffic limits", failure.InvalidTunnelFlags, err)
+	}
 	if protocol == controlv1.Http && (flags.project.Config.OAuth || len(flags.project.Config.Webhooks) != 0 || len(flags.project.Config.Aliases) != 0) {
 		return failure.Wrap("validate scoped publish project", failure.InvalidTunnelFlags, errors.New("project integration URLs require a signed-in tnl session"))
 	}
@@ -187,7 +196,7 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 		ServiceProtocol: protocol, TargetTLSName: flags.TargetTLSName, TargetTLS: flags.TargetTLS,
 		PreserveSavedURLTarget: route.Target == "",
 		TargetOptions:          targetOptions,
-		Limits:                 flags.limits(), InspectionMode: flags.InspectionMode,
+		Limits:                 flags.limits(), Traffic: traffic, InspectionMode: flags.InspectionMode,
 		QUICConnector: muxsession.QUICConnector{TLSConfig: connectionTLS},
 		TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: connectionTLS},
 	}

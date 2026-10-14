@@ -261,6 +261,7 @@ type IngressRoutingTableEntry struct {
 	PublisherConnections []IngressRoutingPublisherConnection      `json:"publisher_connections"`
 	RecoveryEpisodeId    *int64                                   `json:"recovery_episode_id,omitempty"`
 	ServiceProtocol      *IngressRoutingTableEntryServiceProtocol `json:"service_protocol,omitempty"`
+	Traffic              *PublishRunTrafficLimits                 `json:"traffic,omitempty"`
 }
 
 // IngressRoutingTableEntryIpPolicy defines model for IngressRoutingTableEntry.IpPolicy.
@@ -364,6 +365,16 @@ type PublicURLRecoveryObservationRequest struct {
 	ObservedAt           time.Time  `json:"observed_at"`
 	PublicUrlId          Identifier `json:"public_url_id"`
 	PublishRunNumber     int64      `json:"publish_run_number"`
+}
+
+// PublishRunTrafficLimits defines model for PublishRunTrafficLimits.
+type PublishRunTrafficLimits struct {
+	Burst         int   `json:"burst"`
+	Connections   int   `json:"connections"`
+	DownloadBytes int64 `json:"download_bytes"`
+	Rate          int   `json:"rate"`
+	RatePerNs     int64 `json:"rate_per_ns"`
+	UploadBytes   int64 `json:"upload_bytes"`
 }
 
 // VisitorNetworkHashKey defines model for VisitorNetworkHashKey.

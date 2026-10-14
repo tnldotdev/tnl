@@ -963,7 +963,9 @@ type ControlDiscovery struct {
 	ManagedDomainMaxMemberChildLabels int `json:"managed_domain_max_member_child_labels"`
 
 	// ManagedUrlMode Default public URL naming on the server's managed domain.
-	ManagedUrlMode ControlDiscoveryManagedUrlMode `json:"managed_url_mode"`
+	ManagedUrlMode  ControlDiscoveryManagedUrlMode `json:"managed_url_mode"`
+	TrafficCeilings *PublishRunTrafficLimits       `json:"traffic_ceilings,omitempty"`
+	TrafficDefaults *PublishRunTrafficLimits       `json:"traffic_defaults,omitempty"`
 }
 
 // ControlDiscoveryManagedUrlMode Default public URL naming on the server's managed domain.
@@ -1026,6 +1028,11 @@ type CreatePublicURLRequest struct {
 	// Target Leave empty when the publisher supplies the target locally.
 	Target string `json:"target"`
 	TeamId TeamID `json:"team_id"`
+}
+
+// CreatePublishRunRequest defines model for CreatePublishRunRequest.
+type CreatePublishRunRequest struct {
+	Traffic *PublishRunTrafficSelection `json:"traffic,omitempty"`
 }
 
 // CreateShareRequest defines model for CreateShareRequest.
@@ -1437,11 +1444,12 @@ type PublishRunID = ResourceID
 
 // PublishRunSetup defines model for PublishRunSetup.
 type PublishRunSetup struct {
-	CertificatePlan      CertificatePlan        `json:"certificate_plan"`
-	PublicUrl            PublicURL              `json:"public_url"`
-	PublishRun           PublishRun             `json:"publish_run"`
-	PublishRunToken      string                 `json:"publish_run_token"`
-	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
+	CertificatePlan      CertificatePlan          `json:"certificate_plan"`
+	PublicUrl            PublicURL                `json:"public_url"`
+	PublishRun           PublishRun               `json:"publish_run"`
+	PublishRunToken      string                   `json:"publish_run_token"`
+	PublisherConnections []ConnectionAssignment   `json:"publisher_connections"`
+	Traffic              *PublishRunTrafficLimits `json:"traffic,omitempty"`
 }
 
 // PublishRunShareState defines model for PublishRunShareState.
@@ -1454,6 +1462,26 @@ type PublishRunShareState struct {
 
 // PublishRunState defines model for PublishRunState.
 type PublishRunState string
+
+// PublishRunTrafficLimits defines model for PublishRunTrafficLimits.
+type PublishRunTrafficLimits struct {
+	Burst         int   `json:"burst"`
+	Connections   int   `json:"connections"`
+	DownloadBytes int64 `json:"download_bytes"`
+	Rate          int   `json:"rate"`
+	RatePerNs     int64 `json:"rate_per_ns"`
+	UploadBytes   int64 `json:"upload_bytes"`
+}
+
+// PublishRunTrafficSelection defines model for PublishRunTrafficSelection.
+type PublishRunTrafficSelection struct {
+	Burst         *int    `json:"burst,omitempty"`
+	Connections   *int    `json:"connections,omitempty"`
+	DownloadBytes *int64  `json:"download_bytes,omitempty"`
+	Rate          *int    `json:"rate,omitempty"`
+	RatePer       *string `json:"rate_per,omitempty"`
+	UploadBytes   *int64  `json:"upload_bytes,omitempty"`
+}
 
 // PublishRunVersionRequest defines model for PublishRunVersionRequest.
 type PublishRunVersionRequest struct {
@@ -1832,6 +1860,9 @@ type UpdatePublicURLJSONRequestBody = UpdatePublicURLRequest
 
 // CreatePublicURLPublishCredentialJSONRequestBody defines body for CreatePublicURLPublishCredential for application/json ContentType.
 type CreatePublicURLPublishCredentialJSONRequestBody = CreatePublicURLPublishCredentialRequest
+
+// CreatePublishRunJSONRequestBody defines body for CreatePublishRun for application/json ContentType.
+type CreatePublishRunJSONRequestBody = CreatePublishRunRequest
 
 // CreateEphemeralPublishCredentialJSONRequestBody defines body for CreateEphemeralPublishCredential for application/json ContentType.
 type CreateEphemeralPublishCredentialJSONRequestBody = CreateEphemeralPublishCredentialRequest
@@ -2299,10 +2330,19 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/public-urls/{public_url_id}/publish-credentials/{credential_id} (the `RevokePublicURLPublishCredential` operationId).
 	RevokePublicURLPublishCredential(ctx context.Context, publicUrlId PublicURLID, credentialId ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreatePublishRun Create a publish run and allocate its publish run number
+	// CreatePublishRunWithBody Create a publish run and allocate its publish run number
+	//
+	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
-	CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreatePublishRunWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublishRun Create a publish run and allocate its publish run number
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
+	CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeamPublicURLPublishCredentials List publish credentials in the selected team without secrets
 	//
@@ -3337,11 +3377,30 @@ func (c *Client) RevokePublicURLPublishCredential(ctx context.Context, publicUrl
 	return c.Client.Do(req)
 }
 
-// CreatePublishRun Create a publish run and allocate its publish run number
+// CreatePublishRunWithBody Create a publish run and allocate its publish run number
+//
+// Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
-func (c *Client) CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreatePublishRunRequest(c.Server, publicUrlId, params)
+func (c *Client) CreatePublishRunWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublishRunRequestWithBody(c.Server, publicUrlId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublishRun Create a publish run and allocate its publish run number
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
+func (c *Client) CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublishRunRequest(c.Server, publicUrlId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5647,8 +5706,19 @@ func NewRevokePublicURLPublishCredentialRequest(server string, publicUrlId Publi
 	return req, nil
 }
 
-// NewCreatePublishRunRequest constructs an http.Request for the CreatePublishRun method
-func NewCreatePublishRunRequest(server string, publicUrlId PublicURLID, params *CreatePublishRunParams) (*http.Request, error) {
+// NewCreatePublishRunRequest calls the generic CreatePublishRun builder with application/json body
+func NewCreatePublishRunRequest(server string, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePublishRunRequestWithBody(server, publicUrlId, params, "application/json", bodyReader)
+}
+
+// NewCreatePublishRunRequestWithBody constructs an http.Request for the CreatePublishRun method, with any body, and a specified content type
+func NewCreatePublishRunRequestWithBody(server string, publicUrlId PublicURLID, params *CreatePublishRunParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5673,10 +5743,12 @@ func NewCreatePublishRunRequest(server string, publicUrlId PublicURLID, params *
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	if params != nil {
 
@@ -7290,12 +7362,19 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/public-urls/{public_url_id}/publish-credentials/{credential_id} (the `RevokePublicURLPublishCredential` operationId).
 	RevokePublicURLPublishCredentialWithResponse(ctx context.Context, publicUrlId PublicURLID, credentialId ResourceID, reqEditors ...RequestEditorFn) (*RevokePublicURLPublishCredentialResponse, error)
 
-	// CreatePublishRunWithResponse Create a publish run and allocate its publish run number
+	// CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
-	CreatePublishRunWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error)
+	CreatePublishRunWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error)
+
+	// CreatePublishRunWithResponse Create a publish run and allocate its publish run number
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
+	CreatePublishRunWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error)
 
 	// ListTeamPublicURLPublishCredentialsWithResponse List publish credentials in the selected team without secrets
 	//
@@ -11197,13 +11276,26 @@ func (c *ClientWithResponses) RevokePublicURLPublishCredentialWithResponse(ctx c
 	return ParseRevokePublicURLPublishCredentialResponse(rsp)
 }
 
-// CreatePublishRunWithResponse Create a publish run and allocate its publish run number
+// CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
-func (c *ClientWithResponses) CreatePublishRunWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error) {
-	rsp, err := c.CreatePublishRun(ctx, publicUrlId, params, reqEditors...)
+func (c *ClientWithResponses) CreatePublishRunWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error) {
+	rsp, err := c.CreatePublishRunWithBody(ctx, publicUrlId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublishRunResponse(rsp)
+}
+
+// CreatePublishRunWithResponse Create a publish run and allocate its publish run number
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/publish-runs (the `CreatePublishRun` operationId).
+func (c *ClientWithResponses) CreatePublishRunWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublishRunResponse, error) {
+	rsp, err := c.CreatePublishRun(ctx, publicUrlId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

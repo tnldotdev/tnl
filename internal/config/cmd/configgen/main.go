@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/webhookips"
 )
 
@@ -80,6 +81,8 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		return &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern}
 	case reflect.TypeOf(config.ByteSize(0)):
 		return &jsonschema.Schema{Type: "string", Pattern: `^[1-9][0-9]*(KiB|MiB|GiB)$`}
+	case reflect.TypeOf(config.ByteRate("")):
+		return &jsonschema.Schema{Type: "string", Pattern: trafficlimits.ByteRatePattern}
 	case reflect.TypeOf(config.Tunnel{}):
 		return tunnelSchema()
 	case reflect.TypeOf(config.Services{}):
@@ -151,6 +154,7 @@ func servicesSchema() *jsonschema.Schema {
 		required := []string{"protocol", "target"}
 		tunnel := tunnelSchema()
 		limitProperties := jsonschema.NewProperties()
+		limitProperties.Set("traffic", trafficLimitsSchema())
 		if protocol == "http" {
 			required = nil
 			limitProperties.Set("http", workLimitsSchema())
@@ -182,6 +186,7 @@ func tunnelSchema() *jsonschema.Schema {
 	properties.Set("allow_all_ips", &jsonschema.Schema{Type: "boolean", Description: "Allow visitors from every IP address."})
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the public URL when this tunnel stops."})
 	limitProperties := jsonschema.NewProperties()
+	limitProperties.Set("traffic", trafficLimitsSchema())
 	limitProperties.Set("http", workLimitsSchema())
 	limitProperties.Set("tcp", workLimitsSchema())
 	properties.Set("limits", &jsonschema.Schema{Type: "object", Properties: limitProperties, AdditionalProperties: jsonschema.FalseSchema})
@@ -199,6 +204,21 @@ func tunnelSchema() *jsonschema.Schema {
 			},
 		},
 	}
+}
+
+func trafficLimitsSchema() *jsonschema.Schema {
+	properties := jsonschema.NewProperties()
+	properties.Set("connections", &jsonschema.Schema{Type: "integer", Minimum: "1"})
+	rate := jsonschema.NewProperties()
+	rate.Set("count", &jsonschema.Schema{Type: "integer", Minimum: "1"})
+	rate.Set("per", &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern})
+	rate.Set("burst", &jsonschema.Schema{Type: "integer", Minimum: "1"})
+	properties.Set("rate", &jsonschema.Schema{Type: "object", Properties: rate, AdditionalProperties: jsonschema.FalseSchema})
+	bandwidth := jsonschema.NewProperties()
+	bandwidth.Set("upload", schemaForType(reflect.TypeOf(config.ByteRate(""))))
+	bandwidth.Set("download", schemaForType(reflect.TypeOf(config.ByteRate(""))))
+	properties.Set("bandwidth", &jsonschema.Schema{Type: "object", Properties: bandwidth, AdditionalProperties: jsonschema.FalseSchema})
+	return &jsonschema.Schema{Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema}
 }
 
 func workLimitsSchema() *jsonschema.Schema {

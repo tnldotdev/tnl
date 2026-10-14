@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,6 +14,64 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 )
+
+func TestIntegrationPublishRunTrafficMigrationKeepsExistingRunShape(t *testing.T) {
+	ctx := t.Context()
+	url := newDisposableControlStateDatabaseURL(t, "traffic_migration")
+	config, err := parseDirectConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct := stdlib.OpenDB(*config)
+	t.Cleanup(func() { _ = direct.Close() })
+	if err := ensureMigrationLock(ctx, direct); err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, direct, migrations,
+		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 28); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	columns := func() []string {
+		t.Helper()
+		rows, err := pool.Query(ctx, `SELECT column_name FROM information_schema.columns
+			WHERE table_schema = 'control' AND table_name = 'publish_runs' ORDER BY ordinal_position`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		values, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return values
+	}
+	before := columns()
+	if len(before) == 0 {
+		t.Fatal("version 28 has no publish_runs columns")
+	}
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatal(err)
+	}
+	if after := columns(); !slices.Equal(before, after) {
+		t.Fatalf("publish_runs columns changed: before=%v after=%v", before, after)
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('control.publish_run_traffic_limits') IS NOT NULL`).Scan(&exists); err != nil || !exists {
+		t.Fatalf("separate traffic table after upgrade = %t, %v", exists, err)
+	}
+}
 
 func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	databaseURL := newDisposableControlStateDatabaseURL(t, "migration")

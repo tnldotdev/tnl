@@ -109,3 +109,35 @@ func TestRetiredRequestLimitFlagIsNotAccepted(t *testing.T) {
 		t.Fatal("retired request-limit flag was accepted")
 	}
 }
+
+func TestTrafficLimitsMergeAndCLIOverride(t *testing.T) {
+	var flags cli
+	parser, err := kong.New(&flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"publish", "web", "--traffic-connections=16", "--traffic-upload=4MiB/s"}); err != nil {
+		t.Fatal(err)
+	}
+	connections, count, burst := 32, 20, 40
+	period := config.Duration(time.Second)
+	upload, download := config.ByteRate("8MiB/s"), config.ByteRate("16MiB/s")
+	target := config.Target("3000")
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
+		Tunnel: &config.Tunnel{Limits: &config.Limits{Traffic: &config.TrafficLimits{
+			Connections: &connections, Rate: &config.Rate{Count: &count, Per: &period, Burst: &burst},
+			Bandwidth: &config.Bandwidth{Upload: &upload, Download: &download},
+		}}},
+		Services: config.Services{"web": {Publish: &config.Publish{Target: &target}}},
+	}}}
+	if err := project.applyPublish(&flags.Publish); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := flags.Publish.traffic()
+	if err != nil || selected.Connections == nil || *selected.Connections != 16 ||
+		selected.Rate == nil || *selected.Rate != 20 || selected.RatePer == nil || *selected.RatePer != "1s" ||
+		selected.Burst == nil || *selected.Burst != 40 || selected.UploadBytes == nil || *selected.UploadBytes != 4<<20 ||
+		selected.DownloadBytes == nil || *selected.DownloadBytes != 16<<20 {
+		t.Fatalf("traffic selection = %+v, %v", selected, err)
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 )
 
 type projectConfiguration struct {
@@ -216,6 +217,30 @@ func applyTunnelLimits(flags *tunnelFlags, limits *config.Limits, protocol ...st
 	if limits == nil {
 		return
 	}
+	if traffic := limits.Traffic; traffic != nil {
+		if flags.TrafficConnections == nil {
+			flags.TrafficConnections = traffic.Connections
+		}
+		if traffic.Rate != nil {
+			if flags.TrafficRateCount == nil {
+				flags.TrafficRateCount = traffic.Rate.Count
+			}
+			if flags.TrafficRatePer == "" && traffic.Rate.Per != nil {
+				flags.TrafficRatePer = traffic.Rate.Per.Value().String()
+			}
+			if flags.TrafficRateBurst == nil {
+				flags.TrafficRateBurst = traffic.Rate.Burst
+			}
+		}
+		if traffic.Bandwidth != nil {
+			if flags.TrafficUpload == "" && traffic.Bandwidth.Upload != nil {
+				flags.TrafficUpload = string(*traffic.Bandwidth.Upload)
+			}
+			if flags.TrafficDownload == "" && traffic.Bandwidth.Download != nil {
+				flags.TrafficDownload = string(*traffic.Bandwidth.Download)
+			}
+		}
+	}
 	selected := limits.HTTP
 	if len(protocol) != 0 && protocol[0] != "" && protocol[0] != "http" {
 		selected = limits.TCP
@@ -261,6 +286,24 @@ func applyInspection(flags *tunnelFlags, effective config.TNL) {
 }
 
 func validateTunnelFlags(flags tunnelFlags) error {
+	for _, selected := range []*int{flags.TrafficConnections, flags.TrafficRateCount, flags.TrafficRateBurst} {
+		if selected != nil && *selected <= 0 {
+			return errors.New("traffic connection limits must be positive")
+		}
+	}
+	if flags.TrafficRatePer != "" {
+		period, err := time.ParseDuration(flags.TrafficRatePer)
+		if err != nil || period < time.Millisecond || period > 24*time.Hour {
+			return errors.New("--traffic-rate-per must be between 1ms and 24h")
+		}
+	}
+	for _, value := range []string{flags.TrafficUpload, flags.TrafficDownload} {
+		if value != "" {
+			if _, err := trafficlimits.ParseByteRate(value); err != nil {
+				return fmt.Errorf("invalid visitor bandwidth: %w", err)
+			}
+		}
+	}
 	if !flags.InspectionMode.Valid() {
 		return errors.New("--inspection-mode must be none or summary")
 	}
@@ -328,7 +371,7 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 }
 
 func projectSensitiveCommand(command string) bool {
-	return strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "admin ") ||
+	return strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "limits ") || strings.HasPrefix(command, "admin ") ||
 		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ") || strings.HasPrefix(command, "alias ")
 }
 
@@ -376,6 +419,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		}
 	}
 	switch command {
+	case "limits show <service>":
+		apply(&flags.Limits.Show.remoteFlags, false)
 	case "webhook use <endpoint>":
 		apply(&flags.Webhook.Use.remoteFlags, false)
 	case "webhook release <endpoint>":

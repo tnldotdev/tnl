@@ -4,6 +4,8 @@ import {
   type TnlConfigContext,
   type TnlConfigInput,
   type TnlConfigForServices,
+  type TnlRatePeriod,
+  type TnlByteRate,
 } from "@tnldotdev/tnl/config";
 import type { OpenOptions } from "@tnldotdev/tnl";
 
@@ -28,6 +30,11 @@ const staticConfig = {
     limits: {
       http: { rate: { count: 60, per: "1s", burst: 60 }, concurrency: 64 },
       tcp: { rate: { count: 10, per: "1s", burst: 20 }, concurrency: 24 },
+      traffic: {
+        connections: 32,
+        rate: { count: 20, per: "1s", burst: 40 },
+        bandwidth: { upload: "8MiB/s", download: "16MiB/s" },
+      },
     },
   },
 } satisfies TnlConfigInput;
@@ -125,6 +132,18 @@ defineConfig({
   publish: { target: 3000 },
 }) satisfies TnlConfig;
 
+"1m" satisfies TnlRatePeriod;
+"8MiB/s" satisfies TnlByteRate;
+// @ts-expect-error visitor bandwidth uses binary units per second.
+"8MB/s" satisfies TnlByteRate;
+"1h30m" satisfies TnlRatePeriod;
+"1h2m3s4ms" satisfies TnlRatePeriod;
+// @ts-expect-error rate periods require a numeric amount and duration unit.
+"minute" satisfies TnlRatePeriod;
+// @ts-expect-error rate periods do not use plain numbers.
+"1" satisfies TnlRatePeriod;
+// @ts-expect-error rate periods do not include spaces.
+"1 minute" satisfies TnlRatePeriod;
 ({
   tunnel: {
     // @ts-expect-error requestLimit is not a configuration alias for limits.concurrency.

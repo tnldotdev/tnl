@@ -100,6 +100,48 @@
             },
             "limits": {
               "properties": {
+                "traffic": {
+                  "properties": {
+                    "connections": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "rate": {
+                      "properties": {
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "per": {
+                          "type": "string",
+                          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                        },
+                        "burst": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object"
+                    },
+                    "bandwidth": {
+                      "properties": {
+                        "upload": {
+                          "type": "string",
+                          "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)/s$"
+                        },
+                        "download": {
+                          "type": "string",
+                          "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)/s$"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object"
+                },
                 "http": {
                   "properties": {
                     "total": {
@@ -292,6 +334,48 @@
                       },
                       "limits": {
                         "properties": {
+                          "traffic": {
+                            "properties": {
+                              "connections": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object"
+                              },
+                              "bandwidth": {
+                                "properties": {
+                                  "upload": {
+                                    "type": "string",
+                                    "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)/s$"
+                                  },
+                                  "download": {
+                                    "type": "string",
+                                    "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)/s$"
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          },
                           "http": {
                             "properties": {
                               "total": {
@@ -490,6 +574,48 @@
                       },
                       "limits": {
                         "properties": {
+                          "traffic": {
+                            "properties": {
+                              "connections": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object"
+                              },
+                              "bandwidth": {
+                                "properties": {
+                                  "upload": {
+                                    "type": "string",
+                                    "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)/s$"
+                                  },
+                                  "download": {
+                                    "type": "string",
+                                    "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)/s$"
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          },
                           "tcp": {
                             "properties": {
                               "total": {
@@ -643,6 +769,48 @@
                       },
                       "limits": {
                         "properties": {
+                          "traffic": {
+                            "properties": {
+                              "connections": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object"
+                              },
+                              "bandwidth": {
+                                "properties": {
+                                  "upload": {
+                                    "type": "string",
+                                    "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)/s$"
+                                  },
+                                  "download": {
+                                    "type": "string",
+                                    "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)/s$"
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          },
                           "tcp": {
                             "properties": {
                               "total": {
@@ -796,6 +964,48 @@
                       },
                       "limits": {
                         "properties": {
+                          "traffic": {
+                            "properties": {
+                              "connections": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object"
+                              },
+                              "bandwidth": {
+                                "properties": {
+                                  "upload": {
+                                    "type": "string",
+                                    "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)/s$"
+                                  },
+                                  "download": {
+                                    "type": "string",
+                                    "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)/s$"
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          },
                           "tcp": {
                             "properties": {
                               "total": {
@@ -949,6 +1159,48 @@
                       },
                       "limits": {
                         "properties": {
+                          "traffic": {
+                            "properties": {
+                              "connections": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "rate": {
+                                "properties": {
+                                  "count": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "per": {
+                                    "type": "string",
+                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+                                  },
+                                  "burst": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object"
+                              },
+                              "bandwidth": {
+                                "properties": {
+                                  "upload": {
+                                    "type": "string",
+                                    "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)/s$"
+                                  },
+                                  "download": {
+                                    "type": "string",
+                                    "pattern": "^[1-9][0-9]*(KiB|MiB|GiB)/s$"
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          },
                           "tcp": {
                             "properties": {
                               "total": {

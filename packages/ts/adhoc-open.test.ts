@@ -59,7 +59,14 @@ test("one supplied Node listener waits for its run and stays open on close", asy
     {
       credential: credential(),
       targetHostname: "app.internal",
-      limits: { http: { total: 9, concurrency: 3, rate: { count: 2, per: "1s", burst: 4 } } },
+      limits: {
+        http: { total: 9, concurrency: 3, rate: { count: 2, per: "1s", burst: 4 } },
+        traffic: {
+          connections: 16,
+          rate: { count: 10, per: "1s", burst: 20 },
+          bandwidth: { upload: "8MiB/s", download: "16MiB/s" },
+        },
+      },
     },
     {
       start: async () => "/tmp/tnl-test.sock",
@@ -80,6 +87,11 @@ test("one supplied Node listener waits for its run and stays open on close", asy
             requests: 9,
             concurrency: 3,
             rate: { requests: 2, per: "1s", burst: 4 },
+            traffic: {
+              connections: 16,
+              rate: { count: 10, per: "1s", burst: 20 },
+              bandwidth: { upload: "8MiB/s", download: "16MiB/s" },
+            },
           });
         }
         if (operation === "ad-hoc/unregister" || operation === "ad-hoc/renew") return undefined;

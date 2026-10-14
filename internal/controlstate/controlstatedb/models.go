@@ -686,6 +686,11 @@ type ControlPublishRunPublishCredential struct {
 	CredentialID string
 }
 
+type ControlPublishRunTrafficLimit struct {
+	PublishRunID string
+	Limits       []byte
+}
+
 type ControlRelayCertificateOrder struct {
 	ID                     string
 	AccountID              string

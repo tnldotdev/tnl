@@ -122,13 +122,21 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 			return nil
 		}
 	}
+	trafficLimits := s.config.Traffic.Default
+	if route.Traffic != nil {
+		if !route.Traffic.Within(s.config.Traffic.Ceiling) {
+			visitorOutcome = observability.VisitorInvalidProjection
+			return nil
+		}
+		trafficLimits = *route.Traffic
+	}
 	kind, key := visitorConnection, route.ID
 	if challenge {
 		kind, key = challengeConnection, hello.ServerName
 	} else if denied {
 		kind = deniedConnection
 	}
-	release, rejected := s.admitClass(kind, key)
+	release, rejected := s.admitClass(kind, key, trafficLimits.Connections)
 	if release == nil {
 		s.rejectCapacity(rejected)
 		if !challenge && !denied {
@@ -144,7 +152,7 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 	}
 	defer release()
 	trafficKey := trafficKey{url: route.ID, run: route.PublishRunNumber}
-	if kind == visitorConnection && !s.traffic.allowConnection(trafficKey) {
+	if kind == visitorConnection && !s.traffic.allowConnection(trafficKey, trafficLimits) {
 		s.rejectCapacity("public_url_connection_rate")
 		visitorOutcome = observability.VisitorCapacityDenied
 		if usage != nil {
@@ -187,7 +195,7 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 	}
 	openCtx, cancel := context.WithTimeout(s.openContext, openTimeout)
 	if kind == visitorConnection {
-		if err := s.traffic.waitBytes(openCtx, trafficKey, true, len(hello.Prefix)); err != nil {
+		if err := s.traffic.waitBytes(openCtx, trafficKey, true, len(hello.Prefix), trafficLimits); err != nil {
 			cancel()
 			if errors.Is(err, errProcessBandwidth) || errors.Is(err, errPublicURLBandwidth) {
 				reason := "public_url_upload_rate"
@@ -326,8 +334,12 @@ func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, rou
 	var left, right net.Conn = replayed, upstream
 	if route.ID != "" && !denied {
 		key := trafficKey{url: route.ID, run: route.PublishRunNumber}
+		limits := s.config.Traffic.Default
+		if route.Traffic != nil {
+			limits = *route.Traffic
+		}
 		left = &budgetConn{Conn: replayed, ctx: s.openContext, beforeWrite: func(ctx context.Context, size int) error {
-			err := s.traffic.waitBytes(ctx, key, false, size)
+			err := s.traffic.waitBytes(ctx, key, false, size, limits)
 			if errors.Is(err, errProcessBandwidth) || errors.Is(err, errPublicURLBandwidth) {
 				reason := "public_url_download_rate"
 				if errors.Is(err, errProcessBandwidth) {
@@ -338,7 +350,7 @@ func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, rou
 			return err
 		}}
 		right = &budgetConn{Conn: upstream, ctx: s.openContext, beforeWrite: func(ctx context.Context, size int) error {
-			err := s.traffic.waitBytes(ctx, key, true, size)
+			err := s.traffic.waitBytes(ctx, key, true, size, limits)
 			if errors.Is(err, errProcessBandwidth) || errors.Is(err, errPublicURLBandwidth) {
 				reason := "public_url_upload_rate"
 				if errors.Is(err, errProcessBandwidth) {

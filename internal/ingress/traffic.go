@@ -7,17 +7,13 @@ import (
 	"net/netip"
 	"sync"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 )
 
 // TrafficLimits bounds one public URL on one ingress process. bandwidth
 // directions are relative to the visitor, and count encrypted connection bytes.
-type TrafficLimits struct {
-	Connections   int
-	Rate          int
-	Burst         int
-	UploadBytes   int64
-	DownloadBytes int64
-}
+type TrafficLimits = trafficlimits.Limits
 
 type TrafficConfig struct {
 	Default                        TrafficLimits
@@ -29,10 +25,10 @@ type TrafficConfig struct {
 
 func (c *TrafficConfig) resolve() error {
 	if c.Default == (TrafficLimits{}) {
-		c.Default = defaultTrafficLimits()
+		c.Default = trafficlimits.Default()
 	}
 	if c.Ceiling == (TrafficLimits{}) {
-		c.Ceiling = TrafficLimits{Connections: 128, Rate: 100, Burst: 200, UploadBytes: 64 << 20, DownloadBytes: 128 << 20}
+		c.Ceiling = trafficlimits.Ceiling()
 	}
 	if c.SourceRate == 0 {
 		c.SourceRate = 30
@@ -152,7 +148,11 @@ func (a *trafficAdmission) allowSource(source netip.Addr) (bool, string) {
 	return true, ""
 }
 
-func (a *trafficAdmission) allowConnection(key trafficKey) bool {
+func (a *trafficAdmission) allowConnection(key trafficKey, chosen ...TrafficLimits) bool {
+	limits := a.limits
+	if len(chosen) > 0 {
+		limits = chosen[0]
+	}
 	now := time.Now()
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -165,7 +165,11 @@ func (a *trafficAdmission) allowConnection(key trafficKey) bool {
 		bucket = &trafficBucket{}
 		a.connections[key] = bucket
 	}
-	return a.consume(bucket, float64(a.limits.Rate), float64(a.limits.Burst), 1, now)
+	period := limits.RatePer
+	if period == 0 {
+		period = time.Second
+	}
+	return a.consume(bucket, float64(limits.Rate)/period.Seconds(), float64(limits.Burst), 1, now)
 }
 
 func (a *trafficAdmission) consume(bucket *trafficBucket, rate, capacity, cost float64, now time.Time) bool {
@@ -211,20 +215,24 @@ func (a *trafficAdmission) prune(now time.Time) {
 	}
 }
 
-func (a *trafficAdmission) waitBytes(ctx context.Context, key trafficKey, upload bool, size int) error {
+func (a *trafficAdmission) waitBytes(ctx context.Context, key trafficKey, upload bool, size int, chosen ...TrafficLimits) error {
 	if size == 0 {
 		return nil
+	}
+	limits := a.limits
+	if len(chosen) > 0 {
+		limits = chosen[0]
 	}
 	deadline := time.Now().Add(maxTrafficWait)
 	for {
 		now := time.Now()
 		a.mu.Lock()
 		perURL := a.download
-		rate := a.limits.DownloadBytes
+		rate := limits.DownloadBytes
 		process := &a.processDownloads
 		processRate := a.processDownload
 		if upload {
-			perURL, rate, process, processRate = a.upload, a.limits.UploadBytes, &a.processUploads, a.processUpload
+			perURL, rate, process, processRate = a.upload, limits.UploadBytes, &a.processUploads, a.processUpload
 		}
 		bucket, found := perURL[key]
 		if !found {

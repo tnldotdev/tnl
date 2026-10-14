@@ -265,7 +265,7 @@ func TestCreatePublishRunReturnsAuthoritativeRouteState(t *testing.T) {
 		},
 	}}
 	h := &handler{config: Config{DNSAutomation: true}, store: store, authorizer: authorizer}
-	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
+	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", strings.NewReader(`{"traffic":{"connections":16,"rate":5,"rate_per":"2s","burst":9,"upload_bytes":2097152,"download_bytes":4194304}}`))
 	request.Header.Set("Authorization", "Bearer access-token")
 	request.Header.Set("Idempotency-Key", "session-idempotency")
 	response := httptest.NewRecorder()
@@ -290,6 +290,27 @@ func TestCreatePublishRunReturnsAuthoritativeRouteState(t *testing.T) {
 		store.sessionRequest.PolicyRevision != 9 || !reflect.DeepEqual(store.sessionRequest.RetrySecret, authorizer.decision.RetrySecret[:]) ||
 		store.sessionRequest.RequestDigest == ([32]byte{}) {
 		t.Fatalf("session authorization = %#v, store = %#v", authorizer, store)
+	}
+	selected := store.sessionRequest.Traffic
+	if selected == nil || selected.Connections != 16 || selected.Rate != 5 || selected.RatePer != 2*time.Second ||
+		selected.Burst != 9 || selected.UploadBytes != 2<<20 || selected.DownloadBytes != 4<<20 {
+		t.Fatalf("selected publish-run traffic = %+v", selected)
+	}
+	firstDigest := store.sessionRequest.RequestDigest
+	request = httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", strings.NewReader(`{"traffic":{"connections":17,"rate":5,"rate_per":"2s","burst":9,"upload_bytes":2097152,"download_bytes":4194304}}`))
+	request.Header.Set("Authorization", "Bearer access-token")
+	request.Header.Set("Idempotency-Key", "session-idempotency")
+	response = httptest.NewRecorder()
+	h.CreatePublishRun(response, request, "public_url_1", controlv1.CreatePublishRunParams{})
+	if response.Code != http.StatusCreated || firstDigest == store.sessionRequest.RequestDigest {
+		t.Fatalf("changed traffic reused the same idempotency digest: status=%d", response.Code)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", strings.NewReader(`{"traffic":{"connections":129}}`))
+	request.Header.Set("Authorization", "Bearer access-token")
+	response = httptest.NewRecorder()
+	h.CreatePublishRun(response, request, "public_url_1", controlv1.CreatePublishRunParams{})
+	if response.Code != http.StatusBadRequest || store.sessions != 2 {
+		t.Fatalf("above-ceiling traffic = %d, writes=%d", response.Code, store.sessions)
 	}
 }
 

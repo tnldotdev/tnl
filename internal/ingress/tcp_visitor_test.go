@@ -247,13 +247,14 @@ func TestIngressTCPRateRejectsBeforeOpeningPublisherStream(t *testing.T) {
 	t.Cleanup(unblock)
 	backend := &rateOpenBackend{entered: make(chan struct{}, 2), release: release}
 	_, address := startIngress(t, Config{RequireProxyHeader: true,
-		Traffic: TrafficConfig{Default: TrafficLimits{Connections: 4, Rate: 1, Burst: 1, UploadBytes: 64 << 10, DownloadBytes: 64 << 10}},
 		LookupPort: func(port uint16) (PublicURL, LookupReason) {
 			if port != 15432 {
 				return PublicURL{}, LookupMissing
 			}
 			return PublicURL{ID: "public_url_db", PublishRunNumber: 1, PublicPort: testPublicPort(port),
-				AllowAll: true, Backends: []routebackend.Backend{backend}}, LookupCurrent
+				AllowAll: true, Backends: []routebackend.Backend{backend},
+				Traffic: &TrafficLimits{Connections: 4, Rate: 1, RatePer: time.Second, Burst: 1,
+					UploadBytes: 64 << 10, DownloadBytes: 64 << 10}}, LookupCurrent
 		},
 	})
 	connect := func() net.Conn {

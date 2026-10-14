@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/relayapi"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 )
 
 func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) controlapi.Config {
@@ -42,6 +43,10 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 		HTTPClient:                        httpClient,
 		DNSAutomation:                     cfg.DNSAutomationEnabled(),
 		GuestDemoEnabled:                  cfg.GuestDemoEnabled,
+		TrafficDefaults: trafficlimits.Limits{Connections: cfg.TrafficDefaultConnections, Rate: cfg.TrafficDefaultRate,
+			RatePer: time.Second, Burst: cfg.TrafficDefaultBurst, UploadBytes: cfg.TrafficDefaultUploadBytes, DownloadBytes: cfg.TrafficDefaultDownloadBytes},
+		TrafficCeiling: trafficlimits.Limits{Connections: cfg.TrafficMaxConnections, Rate: cfg.TrafficMaxRate,
+			RatePer: time.Second, Burst: cfg.TrafficMaxBurst, UploadBytes: cfg.TrafficMaxUploadBytes, DownloadBytes: cfg.TrafficMaxDownloadBytes},
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -79,5 +80,13 @@ func TestRunRejectsInvalidLimitsBeforeAllocating(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("invalid rate was accepted before publication")
+	}
+	invalid := -1
+	err = Run(t.Context(), Options{ControlURL: "https://control.example.test", State: &clientstate.Store{},
+		Credential: credential, InvocationID: invocation, Target: "http://127.0.0.1:3000",
+		Traffic: trafficlimits.Selection{Connections: &invalid},
+	})
+	if err == nil {
+		t.Fatal("invalid visitor connection limit was accepted before allocation")
 	}
 }

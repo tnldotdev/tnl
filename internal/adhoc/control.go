@@ -6,6 +6,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -29,6 +30,10 @@ func (c *scopedControl) CreatePublishRun(ctx context.Context, publicURLID, key s
 		return controlv1.PublishRunSetup{}, controlclient.ErrStatusConflict
 	}
 	return c.Client.CreatePublishRunWithEphemeralCredential(ctx, publicURLID, key, c.credential)
+}
+
+func (c *scopedControl) CreatePublishRunWithTraffic(ctx context.Context, publicURLID, key string, traffic trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+	return c.Client.CreatePublishRunWithEphemeralCredentialTraffic(ctx, publicURLID, key, c.credential, traffic)
 }
 
 func (c *scopedControl) CreatePublicURL(context.Context, controlv1.CreatePublicURLRequest, string) (controlv1.PublicURL, error) {

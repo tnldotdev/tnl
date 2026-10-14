@@ -11,6 +11,9 @@ export type TnlRatePeriod =
   | `${TnlRateSegment}${TnlRateSegment}${TnlRateSegment}`
   | `${TnlRateSegment}${TnlRateSegment}${TnlRateSegment}${TnlRateSegment}`;
 
+/** visitor bandwidth as a binary byte count per second. */
+export type TnlByteRate = `${number}${"KiB" | "MiB" | "GiB"}/s`;
+
 export interface TnlConfig {
   /**
    * Control URL used by this project.
@@ -46,6 +49,18 @@ export interface TnlConfig {
      */
     ephemeral?: boolean;
     limits?: {
+      traffic?: {
+        connections?: number;
+        rate?: {
+          count?: number;
+          per?: TnlRatePeriod;
+          burst?: number;
+        };
+        bandwidth?: {
+          upload?: TnlByteRate;
+          download?: TnlByteRate;
+        };
+      };
       http?: {
         total?: number;
         concurrency?: number;
@@ -111,6 +126,18 @@ export interface TnlConfig {
              */
             ephemeral?: boolean;
             limits?: {
+              traffic?: {
+                connections?: number;
+                rate?: {
+                  count?: number;
+                  per?: TnlRatePeriod;
+                  burst?: number;
+                };
+                bandwidth?: {
+                  upload?: TnlByteRate;
+                  download?: TnlByteRate;
+                };
+              };
               http?: {
                 total?: number;
                 concurrency?: number;
@@ -178,6 +205,18 @@ export interface TnlConfig {
              */
             ephemeral?: boolean;
             limits?: {
+              traffic?: {
+                connections?: number;
+                rate?: {
+                  count?: number;
+                  per?: TnlRatePeriod;
+                  burst?: number;
+                };
+                bandwidth?: {
+                  upload?: TnlByteRate;
+                  download?: TnlByteRate;
+                };
+              };
               tcp?: {
                 total?: number;
                 concurrency?: number;
@@ -227,6 +266,18 @@ export interface TnlConfig {
              */
             ephemeral?: boolean;
             limits?: {
+              traffic?: {
+                connections?: number;
+                rate?: {
+                  count?: number;
+                  per?: TnlRatePeriod;
+                  burst?: number;
+                };
+                bandwidth?: {
+                  upload?: TnlByteRate;
+                  download?: TnlByteRate;
+                };
+              };
               tcp?: {
                 total?: number;
                 concurrency?: number;
@@ -276,6 +327,18 @@ export interface TnlConfig {
              */
             ephemeral?: boolean;
             limits?: {
+              traffic?: {
+                connections?: number;
+                rate?: {
+                  count?: number;
+                  per?: TnlRatePeriod;
+                  burst?: number;
+                };
+                bandwidth?: {
+                  upload?: TnlByteRate;
+                  download?: TnlByteRate;
+                };
+              };
               tcp?: {
                 total?: number;
                 concurrency?: number;
@@ -325,6 +388,18 @@ export interface TnlConfig {
              */
             ephemeral?: boolean;
             limits?: {
+              traffic?: {
+                connections?: number;
+                rate?: {
+                  count?: number;
+                  per?: TnlRatePeriod;
+                  burst?: number;
+                };
+                bandwidth?: {
+                  upload?: TnlByteRate;
+                  download?: TnlByteRate;
+                };
+              };
               tcp?: {
                 total?: number;
                 concurrency?: number;
