@@ -440,19 +440,6 @@ type ProjectSnapshot struct {
 	Services []ServiceStatus `json:"services"`
 }
 
-// ReadinessObservation defines model for ReadinessObservation.
-type ReadinessObservation struct {
-	CheckedAt        time.Time `json:"checked_at"`
-	PublishRunNumber int       `json:"publish_run_number"`
-	Readiness        struct {
-		Path string `json:"path"`
-	} `json:"readiness"`
-	Ready          bool    `json:"ready"`
-	Reason         *string `json:"reason,omitempty"`
-	RegistrationId string  `json:"registration_id"`
-	Status         *int    `json:"status,omitempty"`
-}
-
 // PublicationEvent defines model for PublicationEvent.
 type PublicationEvent struct {
 	Hostname         *string                    `json:"hostname,omitempty"`
@@ -482,6 +469,19 @@ type PublicationRequest struct {
 	Owner   string      `json:"owner"`
 	Pid     int         `json:"pid"`
 	Service ServiceName `json:"service"`
+}
+
+// ReadinessObservation defines model for ReadinessObservation.
+type ReadinessObservation struct {
+	CheckedAt        time.Time `json:"checked_at"`
+	PublishRunNumber int       `json:"publish_run_number"`
+	Readiness        struct {
+		Path string `json:"path"`
+	} `json:"readiness"`
+	Ready          bool    `json:"ready"`
+	Reason         *string `json:"reason,omitempty"`
+	RegistrationId string  `json:"registration_id"`
+	Status         *int    `json:"status,omitempty"`
 }
 
 // ServiceName defines model for ServiceName.

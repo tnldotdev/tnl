@@ -175,7 +175,7 @@ func TestNamedCLIReportsNewOwnerWithTheSamePublishRunNumber(t *testing.T) {
 			url := "orders.example:15432"
 			number := int64(1)
 			privateprotocol.Write(w, http.StatusOK, localpublisherv1.ProjectSnapshot{Project: "/project", Cursor: "0", Services: []localpublisherv1.ServiceStatus{{
-				Service: "orders", Protocol: localpublisherv1.ServiceStatusProtocolPostgres, State: localpublisherv1.Routable,
+				Service: "orders", Protocol: localpublisherv1.ServiceStatusProtocolPostgres, State: localpublisherv1.ServiceStatusStateRoutable,
 				PublicationId: &id, TunnelId: &tunnelID, PublicUrl: &url, PublishRunNumber: &number,
 			}}})
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/publications/"):
