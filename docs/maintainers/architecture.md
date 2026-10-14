@@ -560,6 +560,13 @@ OAuth client-credentials token scoped to one current grant. control records the
 assertion ID to reject replay, checks the current identity and grant on token
 exchange, and closes a linked publish run on heartbeat after revocation. a
 publisher grant does not confer team administration or visitor access.
+for an identity-authenticated run, control verifies an Ed25519 proof over the
+public URL ID and idempotency key, derives a retry secret from that proof, and
+attaches the identity and grant in the run creation transaction. namespace
+grants can start runs only for URLs allocated to that exact identity and grant.
+existing public URL publish credentials and ephemeral credentials still start
+and renew their runs through their own checks; migration 32 adds the namespace
+allocation table without replacing any credential rows or publish run columns.
 
 Visitor TLS is separate from relay transport TLS. Visitor TLS passes through ingress
 and relay unchanged and terminates in the publisher.

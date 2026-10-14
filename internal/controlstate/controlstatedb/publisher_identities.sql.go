@@ -192,7 +192,8 @@ const getPublisherAccessToken = `-- name: GetPublisherAccessToken :one
 SELECT tokens.digest, tokens.publisher_identity_id, tokens.grant_id, tokens.key_id, tokens.created_at, tokens.expires_at, grants.kind, grants.public_url_id, grants.domain_id,
     grants.namespace, grants.expires_at AS grant_expires_at,
     grants.revoked_at AS grant_revoked_at, identities.team_id,
-    identities.revoked_at AS identity_revoked_at
+    identities.revoked_at AS identity_revoked_at,
+    identities.created_by_identity_id
 FROM control.publisher_access_tokens AS tokens
 JOIN control.publisher_identity_grants AS grants ON grants.id = tokens.grant_id
 JOIN control.publisher_identities AS identities ON identities.id = tokens.publisher_identity_id
@@ -214,6 +215,7 @@ type GetPublisherAccessTokenRow struct {
 	GrantRevokedAt      pgtype.Timestamptz
 	TeamID              string
 	IdentityRevokedAt   pgtype.Timestamptz
+	CreatedByIdentityID pgtype.Text
 }
 
 func (q *Queries) GetPublisherAccessToken(ctx context.Context, digest []byte) (GetPublisherAccessTokenRow, error) {
@@ -234,6 +236,7 @@ func (q *Queries) GetPublisherAccessToken(ctx context.Context, digest []byte) (G
 		&i.GrantRevokedAt,
 		&i.TeamID,
 		&i.IdentityRevokedAt,
+		&i.CreatedByIdentityID,
 	)
 	return i, err
 }
@@ -349,6 +352,79 @@ func (q *Queries) GetPublisherIdentityKey(ctx context.Context, arg GetPublisherI
 		&i.RetiredAt,
 		&i.TeamID,
 		&i.IdentityRevokedAt,
+	)
+	return i, err
+}
+
+const getPublisherNamespaceAllocation = `-- name: GetPublisherNamespaceAllocation :one
+SELECT public_url_id, publisher_identity_id, publisher_grant_id, invocation_id
+FROM control.publisher_namespace_allocations WHERE public_url_id = $1
+`
+
+type GetPublisherNamespaceAllocationRow struct {
+	PublicURLID         string
+	PublisherIdentityID string
+	PublisherGrantID    string
+	InvocationID        string
+}
+
+func (q *Queries) GetPublisherNamespaceAllocation(ctx context.Context, publicUrlID string) (GetPublisherNamespaceAllocationRow, error) {
+	row := q.db.QueryRow(ctx, getPublisherNamespaceAllocation, publicUrlID)
+	var i GetPublisherNamespaceAllocationRow
+	err := row.Scan(
+		&i.PublicURLID,
+		&i.PublisherIdentityID,
+		&i.PublisherGrantID,
+		&i.InvocationID,
+	)
+	return i, err
+}
+
+const getPublisherRunNamespace = `-- name: GetPublisherRunNamespace :one
+SELECT namespace FROM control.public_urls
+WHERE id = $1 AND team_id = $2
+`
+
+type GetPublisherRunNamespaceParams struct {
+	PublicURLID string
+	TeamID      string
+}
+
+func (q *Queries) GetPublisherRunNamespace(ctx context.Context, arg GetPublisherRunNamespaceParams) (string, error) {
+	row := q.db.QueryRow(ctx, getPublisherRunNamespace, arg.PublicURLID, arg.TeamID)
+	var namespace string
+	err := row.Scan(&namespace)
+	return namespace, err
+}
+
+const getReadyPublisherDomain = `-- name: GetReadyPublisherDomain :one
+SELECT id, canonical_domain, kind, dns_authority_reference
+FROM control.domains
+WHERE id = $1 AND state = 'ready' AND released_at IS NULL
+    AND (kind = 'managed' OR team_id = $2)
+FOR SHARE
+`
+
+type GetReadyPublisherDomainParams struct {
+	DomainID string
+	TeamID   pgtype.Text
+}
+
+type GetReadyPublisherDomainRow struct {
+	ID                    string
+	CanonicalDomain       string
+	Kind                  string
+	DnsAuthorityReference pgtype.Text
+}
+
+func (q *Queries) GetReadyPublisherDomain(ctx context.Context, arg GetReadyPublisherDomainParams) (GetReadyPublisherDomainRow, error) {
+	row := q.db.QueryRow(ctx, getReadyPublisherDomain, arg.DomainID, arg.TeamID)
+	var i GetReadyPublisherDomainRow
+	err := row.Scan(
+		&i.ID,
+		&i.CanonicalDomain,
+		&i.Kind,
+		&i.DnsAuthorityReference,
 	)
 	return i, err
 }
@@ -506,6 +582,39 @@ func (q *Queries) InsertPublisherIdentityKey(ctx context.Context, arg InsertPubl
 		&i.RetiredAt,
 	)
 	return i, err
+}
+
+const insertPublisherNamespaceAllocation = `-- name: InsertPublisherNamespaceAllocation :execrows
+INSERT INTO control.publisher_namespace_allocations (
+    public_url_id, publisher_identity_id, publisher_grant_id, invocation_id, created_at
+)
+SELECT $1, identities.id, grants.id, $2, $3
+FROM control.publisher_identity_grants AS grants
+JOIN control.publisher_identities AS identities ON identities.id = grants.publisher_identity_id
+WHERE grants.id = $4 AND identities.id = $5
+    AND grants.kind = 'namespace' AND grants.revoked_at IS NULL AND identities.revoked_at IS NULL
+`
+
+type InsertPublisherNamespaceAllocationParams struct {
+	PublicURLID         string
+	InvocationID        string
+	CreatedAt           pgtype.Timestamptz
+	GrantID             string
+	PublisherIdentityID string
+}
+
+func (q *Queries) InsertPublisherNamespaceAllocation(ctx context.Context, arg InsertPublisherNamespaceAllocationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertPublisherNamespaceAllocation,
+		arg.PublicURLID,
+		arg.InvocationID,
+		arg.CreatedAt,
+		arg.GrantID,
+		arg.PublisherIdentityID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const listPublisherIdentityManagementGrants = `-- name: ListPublisherIdentityManagementGrants :many

@@ -2034,6 +2034,9 @@ components:
       type: object
       additionalProperties: false
       properties:
+        publisher_proof:
+          type: string
+          description: Ed25519 proof of the publisher key for an identity-authenticated run.
         traffic:
           $ref: "#/components/schemas/PublishRunTrafficSelection"
     PublishRunTrafficSelection:

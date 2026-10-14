@@ -769,6 +769,14 @@ type ControlPublisherIdentityKey struct {
 	RetiredAt           pgtype.Timestamptz
 }
 
+type ControlPublisherNamespaceAllocation struct {
+	PublicURLID         string
+	PublisherIdentityID string
+	PublisherGrantID    string
+	InvocationID        string
+	CreatedAt           pgtype.Timestamptz
+}
+
 type ControlRelayCertificateOrder struct {
 	ID                     string
 	AccountID              string

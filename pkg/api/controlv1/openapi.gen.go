@@ -1106,7 +1106,9 @@ type CreatePublicURLRequest struct {
 
 // CreatePublishRunRequest defines model for CreatePublishRunRequest.
 type CreatePublishRunRequest struct {
-	Traffic *PublishRunTrafficSelection `json:"traffic,omitempty"`
+	// PublisherProof Ed25519 proof of the publisher key for an identity-authenticated run.
+	PublisherProof *string                     `json:"publisher_proof,omitempty"`
+	Traffic        *PublishRunTrafficSelection `json:"traffic,omitempty"`
 }
 
 // CreatePublisherEnrollmentRequest defines model for CreatePublisherEnrollmentRequest.

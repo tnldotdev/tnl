@@ -22,6 +22,31 @@ SELECT * FROM control.publisher_identities WHERE id = sqlc.arg(id) FOR UPDATE;
 SELECT id, team_id, lifecycle_state, purpose, ephemeral, public_url_scope, membership_id
 FROM control.public_urls WHERE id = sqlc.arg(public_url_id);
 
+-- name: GetReadyPublisherDomain :one
+SELECT id, canonical_domain, kind, dns_authority_reference
+FROM control.domains
+WHERE id = sqlc.arg(domain_id) AND state = 'ready' AND released_at IS NULL
+    AND (kind = 'managed' OR team_id = sqlc.arg(team_id))
+FOR SHARE;
+
+-- name: GetPublisherRunNamespace :one
+SELECT namespace FROM control.public_urls
+WHERE id = sqlc.arg(public_url_id) AND team_id = sqlc.arg(team_id);
+
+-- name: GetPublisherNamespaceAllocation :one
+SELECT public_url_id, publisher_identity_id, publisher_grant_id, invocation_id
+FROM control.publisher_namespace_allocations WHERE public_url_id = sqlc.arg(public_url_id);
+
+-- name: InsertPublisherNamespaceAllocation :execrows
+INSERT INTO control.publisher_namespace_allocations (
+    public_url_id, publisher_identity_id, publisher_grant_id, invocation_id, created_at
+)
+SELECT sqlc.arg(public_url_id), identities.id, grants.id, sqlc.arg(invocation_id), sqlc.arg(created_at)
+FROM control.publisher_identity_grants AS grants
+JOIN control.publisher_identities AS identities ON identities.id = grants.publisher_identity_id
+WHERE grants.id = sqlc.arg(grant_id) AND identities.id = sqlc.arg(publisher_identity_id)
+    AND grants.kind = 'namespace' AND grants.revoked_at IS NULL AND identities.revoked_at IS NULL;
+
 -- name: RedeemPublisherEnrollment :execrows
 UPDATE control.publisher_enrollment_keys
 SET redeemed_identity_id = sqlc.arg(publisher_identity_id),
@@ -97,7 +122,8 @@ INSERT INTO control.publisher_access_tokens (
 SELECT tokens.*, grants.kind, grants.public_url_id, grants.domain_id,
     grants.namespace, grants.expires_at AS grant_expires_at,
     grants.revoked_at AS grant_revoked_at, identities.team_id,
-    identities.revoked_at AS identity_revoked_at
+    identities.revoked_at AS identity_revoked_at,
+    identities.created_by_identity_id
 FROM control.publisher_access_tokens AS tokens
 JOIN control.publisher_identity_grants AS grants ON grants.id = tokens.grant_id
 JOIN control.publisher_identities AS identities ON identities.id = tokens.publisher_identity_id

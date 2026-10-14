@@ -55,6 +55,7 @@ type CreatePublisherEnrollmentRequest struct {
 
 type PublisherIdentity struct {
 	ID, KeyID, GrantID string
+	CreatorID          string
 	Scope              PublisherScope
 }
 
@@ -424,7 +425,7 @@ func (d *Database) AuthenticatePublisherAccess(ctx context.Context, token string
 	if err != nil {
 		return PublisherIdentity{}, fmt.Errorf("read publisher access token: %w", err)
 	}
-	return PublisherIdentity{ID: row.PublisherIdentityID, GrantID: row.GrantID, KeyID: row.KeyID,
+	return PublisherIdentity{ID: row.PublisherIdentityID, GrantID: row.GrantID, KeyID: row.KeyID, CreatorID: row.CreatedByIdentityID.String,
 		Scope: PublisherScope{TeamID: row.TeamID, Kind: row.Kind, PublicURLID: row.PublicURLID.String,
 			DomainID: row.DomainID.String, Namespace: row.Namespace.String}}, nil
 }

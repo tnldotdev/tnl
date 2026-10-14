@@ -3,6 +3,7 @@ package controlapi
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -91,6 +93,10 @@ type PublicURLPublishCredentialStore interface {
 }
 
 type PublisherIdentityStore interface {
+	AuthenticatePublisherAccess(context.Context, string, time.Time) (controlstate.PublisherIdentity, error)
+	PublisherKeyForAccess(context.Context, controlstate.PublisherIdentity) (ed25519.PublicKey, error)
+	PublisherMayStartRun(context.Context, controlstate.PublisherIdentity, string) (bool, error)
+	PublisherRunPlan(context.Context, controlstate.PublisherIdentity, controlstate.PublicURL, bool) (authorization.CertificatePlan, error)
 	IssuePublisherEnrollment(context.Context, controlstate.CreatePublisherEnrollmentRequest) (controlstate.PublisherEnrollment, error)
 	CreatePublisherGrant(context.Context, controlstate.CreatePublisherGrantRequest) (string, error)
 	PublisherManagementGrants(context.Context, string, string) ([]controlstate.PublisherManagementGrant, error)

@@ -180,7 +180,10 @@ type Querier interface {
 	GetPublisherGrantURL(ctx context.Context, publicUrlID string) (GetPublisherGrantURLRow, error)
 	GetPublisherIdentityGrant(ctx context.Context, arg GetPublisherIdentityGrantParams) (GetPublisherIdentityGrantRow, error)
 	GetPublisherIdentityKey(ctx context.Context, arg GetPublisherIdentityKeyParams) (GetPublisherIdentityKeyRow, error)
+	GetPublisherNamespaceAllocation(ctx context.Context, publicUrlID string) (GetPublisherNamespaceAllocationRow, error)
+	GetPublisherRunNamespace(ctx context.Context, arg GetPublisherRunNamespaceParams) (string, error)
 	GetReadyEphemeralCredentialDomain(ctx context.Context, arg GetReadyEphemeralCredentialDomainParams) (GetReadyEphemeralCredentialDomainRow, error)
+	GetReadyPublisherDomain(ctx context.Context, arg GetReadyPublisherDomainParams) (GetReadyPublisherDomainRow, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)
 	// claims and readiness share the relay-service guard across processes.
 	// claims take NO KEY UPDATE on the selected lease to serialize capacity with
@@ -236,6 +239,7 @@ type Querier interface {
 	InsertPublisherIdentity(ctx context.Context, arg InsertPublisherIdentityParams) (ControlPublisherIdentity, error)
 	InsertPublisherIdentityGrant(ctx context.Context, arg InsertPublisherIdentityGrantParams) (ControlPublisherIdentityGrant, error)
 	InsertPublisherIdentityKey(ctx context.Context, arg InsertPublisherIdentityKeyParams) (ControlPublisherIdentityKey, error)
+	InsertPublisherNamespaceAllocation(ctx context.Context, arg InsertPublisherNamespaceAllocationParams) (int64, error)
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
 	InsertShareCookie(ctx context.Context, arg InsertShareCookieParams) ([]byte, error)
 	InsertShareHandoff(ctx context.Context, arg InsertShareHandoffParams) ([]byte, error)

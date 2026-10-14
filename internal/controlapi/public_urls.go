@@ -276,6 +276,10 @@ func (h *handler) CreatePublishRun(
 		writeBearerProblem(response)
 		return
 	}
+	if strings.HasPrefix(token, "pta_") {
+		h.createPublisherIdentityRun(response, request, publicURLID)
+		return
+	}
 	var credential controlstate.PublicURLPublishCredential
 	var retrySecret []byte
 	if credentials.IsPublicURLPublishCredential(token) {

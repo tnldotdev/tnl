@@ -58,6 +58,8 @@ type PublishRunRequest struct {
 	CertificateChallenge     certificateidentity.ChallengeMethod
 	ExpectedMutationRevision uint64
 	PublishCredentialID      string
+	PublisherIdentityID      string
+	PublisherGrantID         string
 	Traffic                  *trafficlimits.Limits
 }
 
@@ -172,6 +174,29 @@ func (d *Database) createPublishRun(
 	if err := authenticatePublishRunRequest(route, request); err != nil {
 		return PublishRunSetup{}, err
 	}
+	if request.PublisherIdentityID != "" {
+		identity, err := queries.LockPublisherIdentity(ctx, request.PublisherIdentityID)
+		if err != nil || identity.TeamID != route.TeamID || identity.RevokedAt.Valid ||
+			identity.CreatedByIdentityID.String != request.ActingIdentityID {
+			return PublishRunSetup{}, ErrPublisherIdentity
+		}
+		grant, err := queries.GetPublisherIdentityGrant(ctx, controlstatedb.GetPublisherIdentityGrantParams{
+			GrantID: request.PublisherGrantID, PublisherIdentityID: request.PublisherIdentityID,
+		})
+		if err != nil || grant.RevokedAt.Valid || grant.ExpiresAt.Valid && !grant.ExpiresAt.Time.After(now) ||
+			grant.TeamID != route.TeamID ||
+			!(grant.Kind == "saved_url" && !route.Ephemeral && grant.PublicURLID.String == route.ID ||
+				grant.Kind == "namespace" && route.Ephemeral && grant.DomainID.String == route.DomainID && grant.Namespace.String == route.Namespace) {
+			return PublishRunSetup{}, ErrPublisherIdentity
+		}
+		if grant.Kind == "namespace" {
+			allocation, err := queries.GetPublisherNamespaceAllocation(ctx, route.ID)
+			if err != nil || allocation.PublisherIdentityID != request.PublisherIdentityID ||
+				allocation.PublisherGrantID != request.PublisherGrantID {
+				return PublishRunSetup{}, ErrPublisherIdentity
+			}
+		}
+	}
 	issuedRole := ""
 	if request.PublishCredentialID != "" {
 		credential, credentialErr := queries.GetPublicURLPublishCredentialByID(ctx, request.PublishCredentialID)
@@ -207,7 +232,7 @@ func (d *Database) createPublishRun(
 	if PublicURLLifecycleState(route.LifecycleState) == PublicURLLifecycleDeleted {
 		return PublishRunSetup{}, ErrPublicURLNotEnabled
 	}
-	if request.GuestID == "" {
+	if request.GuestID == "" && request.PublisherIdentityID == "" {
 		membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
 			TeamID: request.TeamID, IdentityID: request.ActingIdentityID,
 		})
@@ -348,6 +373,15 @@ func (d *Database) createPublishRun(
 		})
 		if err != nil || attached != 1 {
 			return PublishRunSetup{}, fmt.Errorf("controlstate: attach publish credential: %w", err)
+		}
+	}
+	if request.PublisherIdentityID != "" {
+		attached, err := queries.AttachPublishRunIdentity(ctx, controlstatedb.AttachPublishRunIdentityParams{
+			PublisherIdentityID: request.PublisherIdentityID, GrantID: request.PublisherGrantID,
+			PublishRunID: publishRunID, PublicURLID: route.ID, CreatedAt: timestamptz(now),
+		})
+		if err != nil || attached != 1 {
+			return PublishRunSetup{}, ErrPublisherIdentity
 		}
 	}
 	if _, err := queries.GuestForPublicURL(ctx, request.PublicURLID); err == nil {
@@ -620,6 +654,11 @@ func validatePublishRunRequest(
 	}
 	if request.GuestID != "" && !validStateText(request.GuestID) {
 		return errors.New("controlstate: publish-run guest ID is invalid")
+	}
+	if (request.PublisherIdentityID == "") != (request.PublisherGrantID == "") ||
+		request.PublisherIdentityID != "" && (!opaqueid.Valid(request.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) ||
+			!opaqueid.Valid(request.PublisherGrantID, opaqueid.PublisherGrantPrefix) || request.PublishCredentialID != "" || request.GuestID != "") {
+		return ErrPublisherIdentity
 	}
 	if len(request.RetrySecret) < 32 {
 		return ErrPublicURLCredential
