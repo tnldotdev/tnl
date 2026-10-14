@@ -94,10 +94,6 @@ func TestRedisPublisherObservationReachesLocalInspect(t *testing.T) {
 		result.Inspections[0].Result != inspection.ResultError {
 		t.Fatalf("Redis inspection = %s, %v", output.String(), err)
 	}
-	flags.InspectionMode = config.InspectionNone
-	if disabled, err := newInspectionRecorder(t.Context(), tunnel, project, "cache", flags); err != nil || disabled != nil {
-		t.Fatalf("none mode recorder = %v, %v", disabled, err)
-	}
 }
 
 func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {

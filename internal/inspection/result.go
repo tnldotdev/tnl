@@ -29,6 +29,20 @@ const (
 
 func (o Operation) Valid() bool { return o == OperationQuery || o == OperationExecute }
 
+func ValidRedisCommand(value string) bool {
+	if len(value) == 0 || len(value) > 64 {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' ||
+			character == '.' || character == '_' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func ValidSQLState(value string) bool {
 	if len(value) != 5 {
 		return false

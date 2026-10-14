@@ -87,7 +87,7 @@ func redisObservation(recorder *clientstate.InspectionRecorder) func(publisher.R
 	return func(event publisher.RedisObservation) {
 		recorder.Observe(clientstate.InspectionRecord{
 			Protocol: controlv1.Redis, ReceivedAt: event.ReceivedAt, DurationMS: event.Duration.Milliseconds(),
-			Origin: "tnl", RedisCommand: event.Command, Result: event.Result,
+			Origin: "tnl", CaptureMode: config.InspectionSummary, RedisCommand: event.Command, Result: event.Result,
 		})
 	}
 }

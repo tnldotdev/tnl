@@ -39,6 +39,7 @@ type InspectionRecord struct {
 	Rows                int64                              `json:"rows,omitempty"`
 	ResultSets          int64                              `json:"result_sets,omitempty"`
 	MySQLErrorCode      int64                              `json:"mysql_error_code,omitempty"`
+	RedisCommand        string                             `json:"redis_command,omitempty"`
 }
 
 // InspectionRecorder drops observations instead of blocking visitor traffic.
@@ -99,10 +100,17 @@ func validInspectionRecord(record InspectionRecord) bool {
 	if record.Protocol == controlv1.Http {
 		return record.Method != "" && record.Status >= 100 && record.Status <= 599 &&
 			record.Operation == "" && record.Result == "" && record.SQLState == "" &&
-			record.Rows == 0 && record.ResultSets == 0 && record.MySQLErrorCode == 0
+			record.Rows == 0 && record.ResultSets == 0 && record.MySQLErrorCode == 0 && record.RedisCommand == ""
+	}
+	if record.Protocol == controlv1.Redis {
+		return inspection.ValidRedisCommand(record.RedisCommand) && record.Result.Valid() &&
+			record.CaptureMode == config.InspectionSummary && record.Origin == "tnl" && len(record.Detail) == 0 &&
+			record.Method == "" && record.Path == "" && record.Status == 0 && record.Operation == "" &&
+			record.SQLState == "" && record.Rows == 0 && record.ResultSets == 0 && record.MySQLErrorCode == 0
 	}
 	if record.Protocol != controlv1.Postgres && record.Protocol != controlv1.Mysql ||
 		!record.Operation.Valid() || !record.Result.Valid() || record.Method != "" || record.Path != "" || record.Status != 0 ||
+		record.RedisCommand != "" ||
 		record.MySQLErrorCode != 0 && record.Protocol != controlv1.Mysql ||
 		record.ResultSets != 0 && record.Protocol != controlv1.Mysql {
 		return false
@@ -165,6 +173,7 @@ func (d *Database) saveInspection(ctx context.Context, tunnelID, primary, projec
 		Origin: record.Origin, CaptureMode: string(record.CaptureMode), DetailJson: detail,
 		DatabaseOperation: string(record.Operation), DatabaseResult: string(record.Result), SqlState: record.SQLState,
 		DatabaseRows: record.Rows, DatabaseResultSets: record.ResultSets, MysqlErrorCode: record.MySQLErrorCode,
+		RedisCommand: record.RedisCommand,
 	}); err != nil {
 		return err
 	}
@@ -207,7 +216,7 @@ type InspectionFilter struct {
 func (d *Database) ListInspections(ctx context.Context, filter InspectionFilter) ([]InspectionRecord, error) {
 	if filter.Project == "" || filter.SharedProject == "" || filter.Limit < 1 || filter.Limit > 500 ||
 		filter.Result != "" && !filter.Result.Valid() ||
-		filter.Protocol != "" && filter.Protocol != controlv1.Http && filter.Protocol != controlv1.Postgres && filter.Protocol != controlv1.Mysql ||
+		filter.Protocol != "" && filter.Protocol != controlv1.Http && filter.Protocol != controlv1.Postgres && filter.Protocol != controlv1.Mysql && filter.Protocol != controlv1.Redis ||
 		filter.Protocol != "" && filter.Protocol != controlv1.Http && (filter.Method != "" || filter.Status != 0) {
 		return nil, errors.New("clientstate: invalid inspection filter")
 	}
@@ -219,7 +228,7 @@ func (d *Database) ListInspections(ctx context.Context, filter InspectionFilter)
 	query := `SELECT number, primary_checkout_root, tunnel_id, project_root, shared_project_root,
 		service, service_protocol, received_at, method, path, status, duration_ms, origin, capture_mode,
 		NULL AS detail_json, (detail_json IS NOT NULL) AS detail_available,
-		database_operation, database_result, sql_state, database_rows, database_result_sets, mysql_error_code
+		database_operation, database_result, sql_state, database_rows, database_result_sets, mysql_error_code, redis_command
 		FROM local_inspections WHERE ` + column + ` = ? AND expires_at > ? AND (? = '' OR service = ?)
 		AND (? = '' OR service_protocol = ?) AND (? = '' OR method = ?) AND (? = 0 OR status = ?)
 		AND (? = '' OR CASE WHEN service_protocol = 'http' THEN
@@ -257,7 +266,7 @@ func scanInspection(row inspectionScanner) (InspectionRecord, error) {
 	err := row.Scan(&item.Number, &item.PrimaryCheckoutRoot, &item.TunnelID, &item.Project,
 		&item.SharedProjectRoot, &item.Service, &item.Protocol, &nanos, &item.Method, &item.Path, &item.Status,
 		&item.DurationMS, &item.Origin, &item.CaptureMode, &detail, &available,
-		&item.Operation, &item.Result, &item.SQLState, &item.Rows, &item.ResultSets, &item.MySQLErrorCode)
+		&item.Operation, &item.Result, &item.SQLState, &item.Rows, &item.ResultSets, &item.MySQLErrorCode, &item.RedisCommand)
 	if err != nil {
 		return item, fmt.Errorf("clientstate: read inspection: %w", err)
 	}
@@ -274,7 +283,7 @@ func (d *Database) GetInspection(ctx context.Context, primary string, number int
 	row := d.db.QueryRowContext(ctx, `SELECT number, primary_checkout_root, tunnel_id, project_root,
 		shared_project_root, service, service_protocol, received_at, method, path, status, duration_ms, origin, capture_mode,
 		detail_json, (detail_json IS NOT NULL) AS detail_available, database_operation, database_result,
-		sql_state, database_rows, database_result_sets, mysql_error_code
+		sql_state, database_rows, database_result_sets, mysql_error_code, redis_command
 		FROM local_inspections WHERE primary_checkout_root = ? AND number = ? AND expires_at > ?`,
 		primary, number, d.now().UnixNano())
 	return scanInspection(row)

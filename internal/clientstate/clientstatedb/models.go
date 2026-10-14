@@ -123,6 +123,7 @@ type LocalInspection struct {
 	DatabaseRows        int64
 	DatabaseResultSets  int64
 	MysqlErrorCode      int64
+	RedisCommand        string
 }
 
 type LocalInspectionCounter struct {

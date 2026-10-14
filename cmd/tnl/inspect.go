@@ -54,6 +54,11 @@ type inspectionRecord struct {
 	HTTP            *inspectionHTTP                    `json:"http,omitempty"`
 	Postgres        *inspectionSQL                     `json:"postgres,omitempty"`
 	MySQL           *inspectionMySQL                   `json:"mysql,omitempty"`
+	Redis           *inspectionRedis                   `json:"redis,omitempty"`
+}
+
+type inspectionRedis struct {
+	Command string `json:"command"`
 }
 
 type inspectionHTTP struct {
@@ -115,6 +120,11 @@ func inspectionFromRecord(item clientstate.InspectionRecord, includeDetail bool)
 		} else {
 			record.MySQL = &inspectionMySQL{inspectionSQL: sql, ErrorCode: item.MySQLErrorCode, ResultSets: item.ResultSets}
 		}
+	case controlv1.Redis:
+		if !inspection.ValidRedisCommand(item.RedisCommand) || !item.Result.Valid() {
+			return record, errors.New("inspection has an invalid Redis result")
+		}
+		record.Redis = &inspectionRedis{Command: item.RedisCommand}
 	default:
 		return record, fmt.Errorf("inspection has an unknown protocol %q", item.Protocol)
 	}
@@ -128,8 +138,8 @@ func runInspectList(ctx context.Context, flags inspectListCommand, project strin
 	}
 	flags.Method = strings.ToUpper(flags.Method)
 	protocol := controlv1.PublicURLServiceProtocol(flags.Protocol)
-	if flags.Protocol != "" && protocol != controlv1.Http && protocol != controlv1.Postgres && protocol != controlv1.Mysql {
-		return errors.New("protocol must be http, postgres, or mysql")
+	if flags.Protocol != "" && protocol != controlv1.Http && protocol != controlv1.Postgres && protocol != controlv1.Mysql && protocol != controlv1.Redis {
+		return errors.New("protocol must be http, postgres, mysql, or redis")
 	}
 	if protocol != "" && protocol != controlv1.Http && (flags.Method != "" || flags.Status != 0) {
 		return errors.New("method and status only filter HTTP inspections")
@@ -172,7 +182,7 @@ func runInspectList(ctx context.Context, flags inspectListCommand, project strin
 			return err
 		}
 		records = append(records, record)
-		if !item.DetailAvailable && item.CaptureMode == config.InspectionSummary {
+		if item.Protocol != controlv1.Redis && !item.DetailAvailable && item.CaptureMode == config.InspectionSummary {
 			hint = inspectionDetailHint
 		}
 	}
@@ -188,6 +198,13 @@ func runInspectList(ctx context.Context, flags inspectListCommand, project strin
 	}
 	blocks := make([]clioutput.Block, 0, len(records))
 	for _, record := range records {
+		if record.Redis != nil {
+			blocks = append(blocks, clioutput.Section(fmt.Sprintf("%d / redis %s", record.Number, record.Redis.Command),
+				clioutput.Fields(clioutput.Field{Label: "service", Value: record.Service},
+					clioutput.Field{Label: "result", Value: string(record.Result)},
+					clioutput.Field{Label: "time", Value: record.ReceivedAt.Format(time.RFC3339)})))
+			continue
+		}
 		if record.Postgres != nil || record.MySQL != nil {
 			var sql inspectionSQL
 			if record.Postgres != nil {
@@ -244,7 +261,7 @@ func runInspectShow(ctx context.Context, flags inspectShowCommand, project strin
 		return err
 	}
 	hint := ""
-	if !item.DetailAvailable && item.CaptureMode == config.InspectionSummary {
+	if record.Redis == nil && !item.DetailAvailable && item.CaptureMode == config.InspectionSummary {
 		hint = inspectionDetailHint
 	}
 	if flags.Output == "json" {
@@ -267,6 +284,8 @@ func runInspectShow(ctx context.Context, flags inspectShowCommand, project strin
 		fields = append(fields, clioutput.Field{Label: "method", Value: record.HTTP.Method},
 			clioutput.Field{Label: "path", Value: record.HTTP.Path}, clioutput.Field{Label: "status", Value: fmt.Sprint(record.HTTP.Status)},
 			clioutput.Field{Label: "from", Value: record.HTTP.Origin})
+	} else if record.Redis != nil {
+		fields = append(fields, clioutput.Field{Label: "command", Value: record.Redis.Command})
 	} else {
 		var sql inspectionSQL
 		if record.Postgres != nil {

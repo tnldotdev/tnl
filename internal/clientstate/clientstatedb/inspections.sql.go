@@ -24,14 +24,16 @@ INSERT INTO local_inspections (
     number, primary_checkout_root, tunnel_id, project_root, shared_project_root,
     service, service_protocol, received_at, expires_at, stored_bytes,
     method, path, status, duration_ms, origin, capture_mode, detail_json,
-    database_operation, database_result, sql_state, database_rows, database_result_sets, mysql_error_code
+    database_operation, database_result, sql_state, database_rows, database_result_sets, mysql_error_code,
+    redis_command
 ) VALUES (
     ?1, ?2, ?3,
     ?4, ?5, ?6, ?7,
     ?8, ?9, ?10,
     ?11, ?12, ?13, ?14, ?15,
     ?16, ?17, ?18, ?19,
-    ?20, ?21, ?22, ?23
+    ?20, ?21, ?22, ?23,
+    ?24
 )
 `
 
@@ -59,6 +61,7 @@ type InsertInspectionParams struct {
 	DatabaseRows        int64
 	DatabaseResultSets  int64
 	MysqlErrorCode      int64
+	RedisCommand        string
 }
 
 func (q *Queries) InsertInspection(ctx context.Context, arg InsertInspectionParams) error {
@@ -86,6 +89,7 @@ func (q *Queries) InsertInspection(ctx context.Context, arg InsertInspectionPara
 		arg.DatabaseRows,
 		arg.DatabaseResultSets,
 		arg.MysqlErrorCode,
+		arg.RedisCommand,
 	)
 	return err
 }

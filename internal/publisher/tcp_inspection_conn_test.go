@@ -19,7 +19,7 @@ func TestDatabaseInspectionConnPropagatesVisitorEOF(t *testing.T) {
 	const deadline = 5 * time.Second
 	client, visitor := inspectionTCPPair(t)
 	backend, target := inspectionTCPPair(t)
-	observed := &databaseInspectionConn{Conn: backend, observer: discardDatabaseInspector{}}
+	observed := &tcpInspectionConn{Conn: backend, observer: discardDatabaseInspector{}}
 	copyDone := make(chan struct{})
 	var copyErr error
 	go func() {
