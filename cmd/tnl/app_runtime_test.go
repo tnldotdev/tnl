@@ -213,8 +213,18 @@ func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 		t.Fatal("TCP service sent an HTTP readiness probe")
 		return clientruntime.Observation{}
 	}
+	publicReady := true
+	tcpProbe := func(_ context.Context, service clientruntime.Service) error {
+		if service.PublicURL != "orders.example:15432" || service.ServiceProtocol != "postgres" {
+			t.Errorf("TCP readiness did not check the public run: %+v", service)
+		}
+		if !publicReady {
+			return errors.New("public visitor path unavailable")
+		}
+		return nil
+	}
 	flags := waitCommand{Service: []string{"orders"}, Timeout: 500 * time.Millisecond, Output: "json"}
-	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err == nil {
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe, tcpProbe); err == nil {
 		t.Fatal("unready TCP publication passed wait")
 	}
 	if err := tunnel.SetReady(t.Context(), "orders.example:15432", 1); err != nil {
@@ -222,7 +232,7 @@ func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 	}
 	output.Reset()
 	flags.Timeout = 2 * time.Second
-	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err != nil {
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe, tcpProbe); err != nil {
 		t.Fatal(err)
 	}
 	var snapshot clientruntime.Snapshot
@@ -231,13 +241,11 @@ func TestTCPServicesPublishAndWaitWithoutHTTPReadinessProbe(t *testing.T) {
 		snapshot.Services[0].ServiceProtocol != protocol || snapshot.Services[0].TunnelID != tunnel.ID() {
 		t.Fatalf("TCP wait = %s, %v", output.String(), err)
 	}
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
+	publicReady = false
 	output.Reset()
 	flags.Timeout = 500 * time.Millisecond
-	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe); err == nil {
-		t.Fatal("wait passed with closed TCP target")
+	if err := runAppWaitWithProbe(t.Context(), project, stateDir, flags, &output, probe, tcpProbe); err == nil {
+		t.Fatal("wait passed with unavailable public visitor path")
 	}
 	if err := os.WriteFile(filepath.Join(project.Root, "tnl.json"), []byte(`{"version":1,"tnl":{"services":{"web":{"target":{"type":"app"}},"orders":{"protocol":"postgres","target":{"type":"address","address":"`+string(target)+`"}}}}}`), 0600); err != nil {
 		t.Fatal(err)

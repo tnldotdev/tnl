@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
@@ -67,6 +68,19 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 				return err
 			}
 			appSnapshot = mergeTCPServices(appSnapshot, project, snapshot.Tunnels)
+			var probes sync.WaitGroup
+			for index := range appSnapshot.Services {
+				service := &appSnapshot.Services[index]
+				if service.ServiceProtocol == "" || !service.Registered || !service.Routable {
+					continue
+				}
+				probes.Add(1)
+				go func() {
+					defer probes.Done()
+					service.Ready = probeTCPService(ctx, *service) == nil
+				}()
+			}
+			probes.Wait()
 		}
 	} else {
 		projects, err := clientruntime.ListSnapshots(root)

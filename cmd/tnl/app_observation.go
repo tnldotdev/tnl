@@ -21,7 +21,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/tcptarget"
 )
 
 type waitCommand struct {
@@ -217,7 +216,7 @@ func runAppWait(ctx context.Context, project projectConfiguration, state string,
 	})
 }
 
-func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, state string, flags waitCommand, output io.Writer, probe func(context.Context, clientruntime.Service) clientruntime.Observation) error {
+func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, state string, flags waitCommand, output io.Writer, probe func(context.Context, clientruntime.Service) clientruntime.Observation, tcpProbes ...func(context.Context, clientruntime.Service) error) error {
 	if flags.Timeout <= 0 {
 		return failure.Wrap("wait for apps", failure.InvalidCommand, errors.New("timeout must be positive"))
 	}
@@ -248,7 +247,11 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 			go func() {
 				defer workers.Done()
 				if service.ServiceProtocol != "" {
-					service.Ready = probeTCPTarget(ctx, service.Target)
+					check := probeTCPService
+					if len(tcpProbes) != 0 {
+						check = tcpProbes[0]
+					}
+					service.Ready = check(ctx, *service) == nil
 					return
 				}
 				observation := probe(ctx, *service)
@@ -322,18 +325,8 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 	return failure.Wrap("wait for public readiness", failure.AppReadinessTimeout, ctx.Err())
 }
 
-func probeTCPTarget(ctx context.Context, target string) bool {
-	if _, err := tcptarget.Host(target); err != nil {
-		return false
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	connection, err := (&net.Dialer{}).DialContext(probeCtx, "tcp", target)
-	if err != nil {
-		return false
-	}
-	connection.Close()
-	return true
+func probeTCPService(ctx context.Context, service clientruntime.Service) error {
+	return clientruntime.ProbeTCP(ctx, service.PublicURL, service.ServiceProtocol, nil)
 }
 
 func writeAppWait(output io.Writer, mode string, snapshot clientruntime.Snapshot, state string) error {

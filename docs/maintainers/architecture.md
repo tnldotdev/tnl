@@ -143,7 +143,7 @@ host:port such as `postgres:5432` reaches a service on the publisher's network.
 `--target-ca-file` extends the trust roots for an explicit `--target-tls`
 connection, while `--target-tls-name` sets its expected certificate hostname.
 project configuration uses `services.NAME.target.tls` for the same private
-target trust settings, separate from `services.NAME.tcp.visitorTLS`.
+target trust settings, separate from the publisher's public URL certificate.
 
 `tnl publish redis:6379 --protocol redis` uses the same saved TCP port and
 publisher-owned private target. Redis visitors start TLS immediately, before
@@ -277,7 +277,15 @@ DNS/TLS, send no app credentials, follow no redirects, and read headers only
 with a five-second deadline. retries start at
 500 milliseconds and double to two seconds for up to two minutes. each new run
 gets an automatic check; `tnl wait` checks again. a failed check leaves the
-publication running. `tnl status` only reads observations.
+publication running. `tnl status` only reads app observations.
+
+configured TCP services use their public hostname and port for readiness, not
+the private target address. `tnl wait` checks PostgreSQL SSL negotiation,
+MySQL SSL request, or Redis TLS and verifies the public URL certificate against
+the public hostname. SSH checks its protocol banner; SSH clients must verify
+the host key separately. these checks send no credentials or commands.
+`tnl status` probes routable configured TCP services when reading their state; a
+reachable private target alone cannot make them ready.
 
 `tnl watch` resumes after a local event cursor. a status or initial watch
 snapshot includes the cursor for its service state. cursors older than retained
