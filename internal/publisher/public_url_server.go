@@ -92,6 +92,7 @@ type PublicURLServer struct {
 }
 
 type denialContextKey struct{}
+type admissionContextKey struct{}
 type shareConnectionKey struct{}
 type responseOriginKey struct{}
 
@@ -348,6 +349,22 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					return
 				}
 				if denied {
+					promotion, ok := request.Context().Value(admissionContextKey{}).(*admissionPromotion)
+					if !ok {
+						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAdmissionUnavailable)
+						return
+					}
+					if err := promotion.allow(request.Context()); err != nil {
+						var denied *tunnel.ProtocolError
+						if errors.As(err, &denied) && denied.Code == tunnelv1.CapacityExceeded {
+							diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+						} else {
+							diagnostic.WriteHTTP(response, request, diagnostic.VisitorAdmissionUnavailable)
+						}
+						return
+					}
+				}
+				if denied {
 					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
 						_ = connection.SetDeadline(time.Time{})
 					}
@@ -389,6 +406,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					if tracked, ok := secured.NetConn().(*doneConn); ok {
 						if metadata, ok := tracked.Conn.(*metadataConn); ok {
 							ctx = context.WithValue(ctx, shareConnectionKey{}, secured)
+							if metadata.promote != nil {
+								ctx = context.WithValue(ctx, admissionContextKey{}, metadata.promote)
+							}
 							return context.WithValue(ctx, denialContextKey{}, metadata.denied)
 						}
 					}
@@ -597,7 +617,7 @@ func (r *PublicURLServer) ServePublisherConnection(
 					_ = incoming.Stream.Close()
 					return
 				}
-				if err := r.acceptVisitor(incoming, ref); err != nil {
+				if err := r.acceptVisitor(incoming, session, ref); err != nil {
 					results <- err
 					return
 				}
@@ -615,7 +635,7 @@ func (r *PublicURLServer) ServePublisherConnection(
 	}
 }
 
-func (r *PublicURLServer) acceptVisitor(incoming *tunnel.IncomingVisitorStream, ref tunnelv1.PublisherConnectionRef) error {
+func (r *PublicURLServer) acceptVisitor(incoming *tunnel.IncomingVisitorStream, session *tunnel.Session, ref tunnelv1.PublisherConnectionRef) error {
 	code := r.validateIncomingPublicURL(incoming.Header, ref)
 	r.mu.Lock()
 	if r.closed || r.draining {
@@ -643,7 +663,10 @@ func (r *PublicURLServer) acceptVisitor(incoming *tunnel.IncomingVisitorStream, 
 			delete(r.streams, incoming.Stream)
 			r.mu.Unlock()
 		}()
-		r.handleVisitor(incoming.Stream, incoming.Header.IPPolicyDenied)
+		decision := func(ctx context.Context) error {
+			return promoteVisitorConnection(ctx, session, ref, incoming.Header.VisitorConnectionID)
+		}
+		r.handleVisitor(incoming.Stream, incoming.Header.IPPolicyDenied, decision)
 	}()
 	return nil
 }
@@ -717,7 +740,7 @@ func (r *PublicURLServer) handle(connection net.Conn) {
 	r.handleVisitor(connection, false)
 }
 
-func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
+func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool, authorize ...func(context.Context) error) {
 	defer connection.Close()
 	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
 	header, replay, err := proxyproto.Decode(connection)
@@ -725,6 +748,9 @@ func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
 		return
 	}
 	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied}
+	if denied && len(authorize) != 0 {
+		metadata.promote = &admissionPromotion{request: authorize[0]}
+	}
 	if r.tcp != nil {
 		if header.Destination.Port() == r.tcp.publicPort {
 			if !denied {
@@ -845,8 +871,9 @@ func (c *publicURLReaderConn) Read(destination []byte) (int, error) {
 
 type metadataConn struct {
 	net.Conn
-	header proxyproto.Header
-	denied bool
+	header  proxyproto.Header
+	denied  bool
+	promote *admissionPromotion
 }
 
 func (c *metadataConn) RemoteAddr() net.Addr { return tcpAddress(c.header.Source) }

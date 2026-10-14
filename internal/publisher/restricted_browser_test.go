@@ -23,7 +23,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
+	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func restrictedRequest(server *PublicURLServer, method, path, accept, dest, mode, cookie string, denied bool) *httptest.ResponseRecorder {
@@ -35,6 +37,9 @@ func restrictedRequest(server *PublicURLServer, method, path, accept, dest, mode
 	request.Header.Set("Sec-Fetch-Mode", mode)
 	request.Header.Set("Cookie", cookie)
 	request = request.WithContext(context.WithValue(request.Context(), denialContextKey{}, denied))
+	if denied {
+		request = request.WithContext(context.WithValue(request.Context(), admissionContextKey{}, &admissionPromotion{request: func(context.Context) error { return nil }}))
+	}
 	response := httptest.NewRecorder()
 	server.http.Handler.ServeHTTP(response, request)
 	return response
@@ -176,6 +181,33 @@ func TestAutomaticBrowserReturnChecksPermissionOnce(t *testing.T) {
 	}
 }
 
+func TestDeniedAuthenticatedVisitorRequiresIngressAcknowledgement(t *testing.T) {
+	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", BrowserAccess: &browserAccess{client: &browserAccessStub{visitAllowed: true}},
+		Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("unadmitted request reached local service") })})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	check := func(promotion *admissionPromotion, expected diagnostic.Code) {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Host = "route.example"
+		request.TLS = &tls.ConnectionState{ServerName: "route.example"}
+		request.Header.Set("Cookie", browserAccessCookieName+"=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+		ctx := context.WithValue(request.Context(), denialContextKey{}, true)
+		if promotion != nil {
+			ctx = context.WithValue(ctx, admissionContextKey{}, promotion)
+		}
+		response := httptest.NewRecorder()
+		server.http.Handler.ServeHTTP(response, request.WithContext(ctx))
+		if response.Code != http.StatusServiceUnavailable || response.Header().Get("Tnl-Error-Code") != string(expected) {
+			t.Fatalf("unconfirmed admission = %d %#v", response.Code, response.Header())
+		}
+	}
+	check(nil, diagnostic.VisitorAdmissionUnavailable)
+	check(&admissionPromotion{request: func(context.Context) error { return &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded} }}, diagnostic.RequestLimitReached)
+}
+
 func TestBuiltinAdministratorBrowserUsesHandoffWithoutOIDCRedirect(t *testing.T) {
 	control := &browserAccessStub{visitAllowed: true}
 	setup := controlv1.PublishRunSetup{PublicUrl: controlv1.PublicURL{Id: "url_app", Purpose: controlv1.App},
@@ -223,6 +255,7 @@ func TestRunScopedReadinessProofForwardsOnlyItsConfiguredGET(t *testing.T) {
 			request.Header.Set(localproxy.ReadinessAuthorizationHeader, proof)
 		}
 		request = request.WithContext(context.WithValue(request.Context(), denialContextKey{}, true))
+		request = request.WithContext(context.WithValue(request.Context(), admissionContextKey{}, &admissionPromotion{request: func(context.Context) error { return nil }}))
 		response := httptest.NewRecorder()
 		server.http.Handler.ServeHTTP(response, request)
 		return response
@@ -331,7 +364,10 @@ func TestRestrictedBrowserSignInAndSwitchAccountOverRealTLS(t *testing.T) {
 	tracked := &shareDeadlineConn{Conn: publisher}
 	_ = ingress.SetDeadline(time.Now().Add(10 * time.Second))
 	done := make(chan struct{})
-	go func() { defer close(done); server.handleVisitor(tracked, true) }()
+	go func() {
+		defer close(done)
+		server.handleVisitor(tracked, true, func(context.Context) error { return nil })
+	}()
 	defer func() { _ = ingress.Close(); awaitPublisherTest(t, done) }()
 	header, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:1234"), Destination: netip.MustParseAddrPort("127.0.0.1:443")})
 	if err != nil {

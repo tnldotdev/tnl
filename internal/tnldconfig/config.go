@@ -123,6 +123,14 @@ type Config struct {
 	StandaloneControlConnectionLimit int           `name:"standalone-control-connection-limit" env:"TNLD_STANDALONE_CONTROL_CONNECTION_LIMIT" default:"-1" help:"Maximum control connections handed off by standalone, held until close (default: automatic)."`
 	StandaloneRelayConnectionLimit   int           `name:"standalone-relay-connection-limit" env:"TNLD_STANDALONE_RELAY_CONNECTION_LIMIT" default:"-1" help:"Maximum relay TCP connections handed off by standalone, held until close (default: automatic)."`
 	VisitorConnectionLimit           int64         `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"-1" help:"Maximum concurrent visitor connections (default: automatic)."`
+	PendingConnectionLimit           int           `name:"pending-connection-limit" env:"TNLD_PENDING_CONNECTION_LIMIT" default:"0" help:"Concurrent unauthenticated visitor connections per ingress process (default: 16)."`
+	PendingURLConnectionLimit        int           `name:"pending-url-connection-limit" env:"TNLD_PENDING_URL_CONNECTION_LIMIT" default:"0" help:"Concurrent unauthenticated visitors per public URL and ingress process (default: 8)."`
+	PendingSourceConnectionLimit     int           `name:"pending-source-connection-limit" env:"TNLD_PENDING_SOURCE_CONNECTION_LIMIT" default:"0" help:"Concurrent unauthenticated visitors per IPv4 address or IPv6 /64 (default: 4)."`
+	PendingConnectionBytes           int           `name:"pending-connection-bytes" env:"TNLD_PENDING_CONNECTION_BYTES" default:"0" help:"Encrypted bytes allowed before visitor authorization (default: 64 KiB)."`
+	PendingURLRate                   int           `name:"pending-url-rate" env:"TNLD_PENDING_URL_RATE" default:"0" help:"Unauthenticated visitor attempts per second for one public URL (default: 10)."`
+	PendingURLBurst                  int           `name:"pending-url-burst" env:"TNLD_PENDING_URL_BURST" default:"0" help:"Unauthenticated visitor attempt burst per public URL (default: 20)."`
+	PendingSourceRate                int           `name:"pending-source-rate" env:"TNLD_PENDING_SOURCE_RATE" default:"0" help:"Unauthenticated visitor attempts per second per source network (default: 10)."`
+	PendingSourceBurst               int           `name:"pending-source-burst" env:"TNLD_PENDING_SOURCE_BURST" default:"0" help:"Unauthenticated visitor attempt burst per source network (default: 20)."`
 	TrafficDefaultConnections        int           `name:"traffic-default-connections" env:"TNLD_TRAFFIC_DEFAULT_CONNECTIONS" default:"32" help:"Concurrent visitor connections per public URL and ingress process by default."`
 	TrafficMaxConnections            int           `name:"traffic-max-connections" env:"TNLD_TRAFFIC_MAX_CONNECTIONS" default:"128" help:"Operator ceiling on concurrent visitor connections per public URL and ingress process."`
 	TrafficDefaultRate               int           `name:"traffic-default-rate" env:"TNLD_TRAFFIC_DEFAULT_RATE" default:"20" help:"New visitor connections per second for one public URL by default."`
@@ -246,6 +254,12 @@ func (c Config) Validate() (retErr error) {
 	if c.VisitorConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
 		c.RelayStreamCapacity <= 0 || c.QUICMaxIncomingStreams <= 0 {
 		return errors.New("connection and stream capacities must be positive")
+	}
+	if c.Role.RunsIngress() && (c.PendingConnectionLimit < 0 || c.PendingURLConnectionLimit < 0 ||
+		c.PendingSourceConnectionLimit < 0 || c.PendingConnectionBytes < 0 || c.PendingConnectionBytes > 1<<20 ||
+		c.PendingURLRate < 0 || c.PendingURLBurst < 0 || c.PendingSourceRate < 0 || c.PendingSourceBurst < 0 ||
+		c.PendingConnectionLimit > 0 && c.PendingURLConnectionLimit > c.PendingConnectionLimit) {
+		return errors.New("pending visitor admission limits must be nonnegative and within safety bounds")
 	}
 	if (c.Role.RunsControl() || c.Role.RunsIngress()) && (c.TrafficDefaultConnections <= 0 || c.TrafficMaxConnections < c.TrafficDefaultConnections ||
 		c.TrafficDefaultRate <= 0 || c.TrafficMaxRate < c.TrafficDefaultRate ||

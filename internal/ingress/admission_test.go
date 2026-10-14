@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -16,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/routebackend"
 	"github.com/tnldotdev/tnl/internal/router"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestActiveChallengeDoesNotConsumeVisitorBudget(t *testing.T) {
@@ -142,6 +144,154 @@ func TestPublicURLConnectionLimitTracksHalfOfIngressCapacity(t *testing.T) {
 		if len(server.byPublicURL) != 0 || server.Load() != 0 {
 			t.Fatal("public URL accounting retained closed connections")
 		}
+	}
+}
+
+func TestAuthorizedVisitorsLeavePendingCapacityWithoutReplayingAdmission(t *testing.T) {
+	server, _ := startIngress(t, Config{MaxConnections: 40, Lookup: func(host string) (PublicURL, LookupReason) {
+		if host == "app.example" {
+			return PublicURL{ID: "url_1", PublishRunNumber: 2}, LookupCurrent
+		}
+		return PublicURL{}, LookupMissing
+	}})
+	for index := range 9 {
+		release, rejected := server.admitClass(deniedConnection, "url_1")
+		if release == nil {
+			t.Fatalf("pending visitor %d: %s", index, rejected)
+		}
+		ticket := &classTicket{release: release, deadline: time.Now().Add(time.Minute)}
+		id := fmt.Sprintf("visitor_%d", index)
+		unregister := server.registerPendingVisitor(id, &pendingVisitorState{ticket: ticket, urlID: "url_1", run: 2,
+			hostname: "app.example", deadline: ticket.deadline})
+		t.Cleanup(func() { unregister(); ticket.close() })
+		result := server.PromotePendingAdmission(t.Context(), tunnelv1.AdmissionHeader{
+			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.IngressAdmissionStream,
+			VisitorConnectionID: id, PublicURLID: "url_1", PublishRunNumber: 2,
+		})
+		if result.Type != tunnelv1.StreamAccepted || result.Code != "" {
+			t.Fatalf("authorized visitor %d = %+v", index, result)
+		}
+		if replay := server.PromotePendingAdmission(t.Context(), tunnelv1.AdmissionHeader{
+			Kind: tunnelv1.IngressAdmissionStream, VisitorConnectionID: id, PublicURLID: "url_1", PublishRunNumber: 2,
+		}); replay.Type != tunnelv1.StreamRejected {
+			t.Fatalf("replayed decision = %+v", replay)
+		}
+	}
+	server.mu.Lock()
+	pendingCount, ordinaryCount, urlCount := server.admitted[deniedConnection], server.admitted[visitorConnection], server.byPublicURL["url_1"]
+	server.mu.Unlock()
+	if pendingCount != 0 || ordinaryCount != 9 || urlCount != 9 {
+		t.Fatalf("promoted class counts = pending:%d ordinary:%d url:%d", pendingCount, ordinaryCount, urlCount)
+	}
+}
+
+func TestPendingVisitorCannotUseOrdinaryCapacityWithoutItsToken(t *testing.T) {
+	server, _ := startIngress(t, Config{MaxConnections: 1, Lookup: func(string) (PublicURL, LookupReason) {
+		return PublicURL{ID: "url_1", PublishRunNumber: 2}, LookupCurrent
+	}})
+	ordinary, rejected := server.admitClass(visitorConnection, "url_1")
+	if ordinary == nil {
+		t.Fatal(rejected)
+	}
+	defer ordinary()
+	release, rejected := server.admitClass(deniedConnection, "url_1")
+	if release == nil {
+		t.Fatal(rejected)
+	}
+	ticket := &classTicket{release: release, deadline: time.Now().Add(time.Minute)}
+	defer ticket.close()
+	unregister := server.registerPendingVisitor("visitor_1", &pendingVisitorState{ticket: ticket, urlID: "url_1", run: 2,
+		hostname: "app.example", deadline: ticket.deadline})
+	defer unregister()
+	result := server.PromotePendingAdmission(t.Context(), tunnelv1.AdmissionHeader{
+		Kind: tunnelv1.IngressAdmissionStream, VisitorConnectionID: "visitor_1", PublicURLID: "url_1", PublishRunNumber: 2,
+	})
+	if result.Type != tunnelv1.StreamRejected || result.Code != tunnelv1.CapacityExceeded || ticket.isPromoted() {
+		t.Fatalf("full ingress admitted pending visitor: %+v", result)
+	}
+	server.mu.Lock()
+	pendingCount, ordinaryCount := server.admitted[deniedConnection], server.admitted[visitorConnection]
+	server.mu.Unlock()
+	if pendingCount != 1 || ordinaryCount != 1 {
+		t.Fatalf("failed transfer changed capacities: pending=%d ordinary=%d", pendingCount, ordinaryCount)
+	}
+	if err := ticket.pendingBytesAllowed(DefaultPendingConnectionBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := ticket.pendingBytesAllowed(1); err == nil {
+		t.Fatal("pending visitor exceeded the bounded byte budget")
+	}
+}
+
+func TestPendingVisitorUsesCurrentPublicURLCapacity(t *testing.T) {
+	var limits TrafficLimits
+	server, _ := startIngress(t, Config{MaxConnections: 40, Lookup: func(string) (PublicURL, LookupReason) {
+		return PublicURL{ID: "url_1", PublishRunNumber: 2, Traffic: &limits}, LookupCurrent
+	}})
+	limits = server.config.Traffic.Default
+	limits.Connections = 1
+	ordinary, rejected := server.admitClass(visitorConnection, "url_1")
+	if ordinary == nil {
+		t.Fatal(rejected)
+	}
+	defer ordinary()
+	release, rejected := server.admitClass(deniedConnection, "url_1")
+	if release == nil {
+		t.Fatal(rejected)
+	}
+	ticket := &classTicket{release: release, deadline: time.Now().Add(time.Minute)}
+	defer ticket.close()
+	unregister := server.registerPendingVisitor("visitor_1", &pendingVisitorState{ticket: ticket, urlID: "url_1", run: 2,
+		hostname: "app.example", deadline: ticket.deadline})
+	defer unregister()
+	result := server.PromotePendingAdmission(t.Context(), tunnelv1.AdmissionHeader{
+		Kind: tunnelv1.IngressAdmissionStream, VisitorConnectionID: "visitor_1", PublicURLID: "url_1", PublishRunNumber: 2,
+	})
+	if result.Type != tunnelv1.StreamRejected || result.Code != tunnelv1.CapacityExceeded || ticket.isPromoted() {
+		t.Fatalf("current public URL limit admitted pending visitor: %+v", result)
+	}
+}
+
+func TestPendingSourceCapacityAndAttemptRatesAreIndependent(t *testing.T) {
+	if pendingSourceNetwork(netip.MustParseAddr("2001:db8:1::1")) != pendingSourceNetwork(netip.MustParseAddr("2001:db8:1::2")) ||
+		pendingSourceNetwork(netip.MustParseAddr("2001:db8:1::1")) == pendingSourceNetwork(netip.MustParseAddr("2001:db8:2::1")) {
+		t.Fatal("pending IPv6 source capacity does not use /64 networks")
+	}
+	server, _ := startIngress(t, Config{MaxConnections: 40, MaxPendingSourceConnections: 2})
+	first, reason := server.admitPending("url_1", "192.0.2.10", server.config.Traffic.Default.Connections)
+	if first == nil {
+		t.Fatal(reason)
+	}
+	defer first()
+	second, reason := server.admitPending("url_1", "192.0.2.10", server.config.Traffic.Default.Connections)
+	if second == nil {
+		t.Fatal(reason)
+	}
+	defer second()
+	if third, reason := server.admitPending("url_1", "192.0.2.10", server.config.Traffic.Default.Connections); third != nil || reason != "pending_source_connections" {
+		t.Fatalf("source exhausted pending capacity: %s", reason)
+	}
+	other, reason := server.admitPending("url_1", "192.0.2.11", server.config.Traffic.Default.Connections)
+	if other == nil {
+		t.Fatalf("unrelated source was blocked: %s", reason)
+	}
+	other()
+	first()
+	reopened, reason := server.admitPending("url_1", "192.0.2.10", server.config.Traffic.Default.Connections)
+	if reopened == nil {
+		t.Fatalf("released source slot remained full: %s", reason)
+	}
+	reopened()
+	key := trafficKey{url: "url_1", run: 2}
+	source := netip.MustParseAddr("192.0.2.10")
+	if allowed, _ := server.traffic.allowPendingAttempt(key, source, 1, 1, 1, 1); !allowed {
+		t.Fatal("first pending attempt was refused")
+	}
+	if allowed, reason := server.traffic.allowPendingAttempt(key, source, 1, 1, 1, 1); allowed || reason != "pending_public_url_rate" {
+		t.Fatalf("pending URL rate was not enforced: %s", reason)
+	}
+	if allowed, reason := server.traffic.allowPendingAttempt(trafficKey{url: "url_2", run: 2}, source, 1, 1, 1, 1); allowed || reason != "pending_source_rate" {
+		t.Fatalf("pending source rate was not enforced across URLs: %s", reason)
 	}
 }
 

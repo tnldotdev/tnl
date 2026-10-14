@@ -172,6 +172,9 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 		request.Host = "route.example"
 		request.TLS = &tls.ConnectionState{ServerName: "route.example"}
 		request = request.WithContext(context.WithValue(request.Context(), denialContextKey{}, denied))
+		if denied {
+			request = request.WithContext(context.WithValue(request.Context(), admissionContextKey{}, &admissionPromotion{request: func(context.Context) error { return nil }}))
+		}
 		if cookie != "" {
 			request.Header.Set("Cookie", cookie)
 		}

@@ -105,6 +105,9 @@ func TestShareHTTPDenialsRedemptionAndCookieIsolation(t *testing.T) {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		request.Host, request.TLS = "route.example", &tls.ConnectionState{ServerName: "route.example"}
 		request = request.WithContext(context.WithValue(request.Context(), denialContextKey{}, denied))
+		if denied {
+			request = request.WithContext(context.WithValue(request.Context(), admissionContextKey{}, &admissionPromotion{request: func(context.Context) error { return nil }}))
+		}
 		if cookie != "" {
 			request.Header.Set("Cookie", cookie)
 		}
@@ -202,7 +205,7 @@ func TestShareVisitorClearsDeniedTLSDeadlineAfterRealHandshake(t *testing.T) {
 	tracked := &shareDeadlineConn{Conn: publisher}
 	_ = ingress.SetDeadline(time.Now().Add(10 * time.Second))
 	done := make(chan struct{})
-	go func() { route.handleVisitor(tracked, true); close(done) }()
+	go func() { route.handleVisitor(tracked, true, func(context.Context) error { return nil }); close(done) }()
 	defer func() { _ = ingress.Close(); <-done }()
 	header, err := proxyproto.Encode(proxyproto.Header{
 		Source: netip.MustParseAddrPort("192.0.2.10:1234"), Destination: netip.MustParseAddrPort("127.0.0.1:443"),

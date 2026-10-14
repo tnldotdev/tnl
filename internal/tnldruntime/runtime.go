@@ -102,8 +102,36 @@ func serveWithRelayClientTLS(
 		metrics.SetCapacityLimit("public_url_download_rate", cfg.TrafficDefaultDownloadBytes)
 		metrics.SetCapacityLimit("process_upload_rate", cfg.TrafficProcessUploadBytes)
 		metrics.SetCapacityLimit("process_download_rate", cfg.TrafficProcessDownloadBytes)
-		metrics.SetCapacityLimit("denied_connections", int64(ingress.DefaultDeniedConnectionLimit))
-		metrics.SetCapacityLimit("denied_public_url_connections", int64(max(1, ingress.DefaultDeniedConnectionLimit/2)))
+		pending := cfg.PendingConnectionLimit
+		if pending == 0 {
+			pending = ingress.DefaultDeniedConnectionLimit
+		}
+		pendingURL := cfg.PendingURLConnectionLimit
+		if pendingURL == 0 {
+			pendingURL = min(ingress.DefaultPendingURLConnectionLimit, max(1, pending/2))
+		}
+		pendingSource := cfg.PendingSourceConnectionLimit
+		if pendingSource == 0 {
+			pendingSource = ingress.DefaultPendingSourceConnectionLimit
+		}
+		pendingBytes := cfg.PendingConnectionBytes
+		if pendingBytes == 0 {
+			pendingBytes = ingress.DefaultPendingConnectionBytes
+		}
+		metrics.SetCapacityLimit("denied_connections", int64(pending))
+		metrics.SetCapacityLimit("denied_public_url_connections", int64(pendingURL))
+		metrics.SetCapacityLimit("pending_source_connections", int64(pendingSource))
+		metrics.SetCapacityLimit("pending_bytes", int64(pendingBytes))
+		pendingURLRate := cfg.PendingURLRate
+		if pendingURLRate == 0 {
+			pendingURLRate = ingress.DefaultPendingURLRate
+		}
+		pendingSourceRate := cfg.PendingSourceRate
+		if pendingSourceRate == 0 {
+			pendingSourceRate = ingress.DefaultPendingSourceRate
+		}
+		metrics.SetCapacityLimit("pending_public_url_rate", int64(pendingURLRate))
+		metrics.SetCapacityLimit("pending_source_rate", int64(pendingSourceRate))
 	}
 	if cfg.Role.RunsRelay() {
 		relayCount := int64(1)

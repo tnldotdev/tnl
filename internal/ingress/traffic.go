@@ -95,6 +95,8 @@ type trafficAdmission struct {
 	processUpload, processDownload int64
 	sources                        map[netip.Prefix]*trafficBucket
 	connections                    map[trafficKey]*trafficBucket
+	pendingURLs                    map[trafficKey]*trafficBucket
+	pendingSources                 map[netip.Prefix]*trafficBucket
 	upload                         map[trafficKey]*trafficBucket
 	download                       map[trafficKey]*trafficBucket
 	processConnections             trafficBucket
@@ -114,7 +116,47 @@ func newTrafficAdmission(limits TrafficLimits, sourceRate, sourceBurst, processR
 	return &trafficAdmission{limits: limits, sourceRate: sourceRate, sourceBurst: sourceBurst,
 		processRate: processRate, processBurst: processBurst, processUpload: processUpload, processDownload: processDownload,
 		sources: make(map[netip.Prefix]*trafficBucket), connections: make(map[trafficKey]*trafficBucket),
+		pendingURLs: make(map[trafficKey]*trafficBucket), pendingSources: make(map[netip.Prefix]*trafficBucket),
 		upload: make(map[trafficKey]*trafficBucket), download: make(map[trafficKey]*trafficBucket)}, nil
+}
+
+func (a *trafficAdmission) allowPendingAttempt(key trafficKey, source netip.Addr, urlRate, urlBurst, sourceRate, sourceBurst int) (bool, string) {
+	if !source.IsValid() || source.Zone() != "" {
+		return false, "pending_source_rate"
+	}
+	source = source.Unmap()
+	bits := source.BitLen()
+	if source.Is6() {
+		bits = 64
+	}
+	now := time.Now()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.prune(now)
+	urlBucket := a.pendingURLs[key]
+	if urlBucket == nil {
+		if len(a.pendingURLs) >= maxTrafficKeys {
+			return false, "pending_public_url_rate"
+		}
+		urlBucket = &trafficBucket{}
+		a.pendingURLs[key] = urlBucket
+	}
+	if !a.consume(urlBucket, float64(urlRate), float64(urlBurst), 1, now) {
+		return false, "pending_public_url_rate"
+	}
+	sourceKey := netip.PrefixFrom(source, bits).Masked()
+	sourceBucket := a.pendingSources[sourceKey]
+	if sourceBucket == nil {
+		if len(a.pendingSources) >= maxTrafficKeys {
+			return false, "pending_source_rate"
+		}
+		sourceBucket = &trafficBucket{}
+		a.pendingSources[sourceKey] = sourceBucket
+	}
+	if !a.consume(sourceBucket, float64(sourceRate), float64(sourceBurst), 1, now) {
+		return false, "pending_source_rate"
+	}
+	return true, ""
 }
 
 func (a *trafficAdmission) allowSource(source netip.Addr) (bool, string) {
@@ -201,6 +243,16 @@ func (a *trafficAdmission) prune(now time.Time) {
 	for key, bucket := range a.connections {
 		if now.Sub(bucket.seen) > trafficIdleRetention {
 			delete(a.connections, key)
+		}
+	}
+	for key, bucket := range a.pendingURLs {
+		if now.Sub(bucket.seen) > trafficIdleRetention {
+			delete(a.pendingURLs, key)
+		}
+	}
+	for key, bucket := range a.pendingSources {
+		if now.Sub(bucket.seen) > trafficIdleRetention {
+			delete(a.pendingSources, key)
 		}
 	}
 	for key, bucket := range a.upload {

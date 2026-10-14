@@ -323,7 +323,7 @@ func NewHandler(
 			return nil, err
 		}
 	}
-	if cfg.BrowserOIDCClientID != "" || cfg.LoginToken != "" {
+	if cfg.BrowserOIDCClientID != "" || cfg.LoginToken != "" && cfg.ControlURL != "" {
 		var err error
 		h.browserAuthority, err = authorityclient.New(cfg.ControlURL, cfg.HTTPClient, "")
 		if err != nil {
@@ -424,7 +424,7 @@ func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 		DnsAutomation:                     cfg.DNSAutomation,
 		GuestDemo:                         cfg.GuestDemoEnabled,
 		BrowserLoginAvailable:             new(cfg.BrowserOIDCClientID != ""),
-		BuiltinBrowserHandoffAvailable:    new(cfg.LoginToken != "" && cfg.BrowserOIDCClientID == ""),
+		BuiltinBrowserHandoffAvailable:    new(cfg.LoginToken != "" && cfg.BrowserOIDCClientID == "" && cfg.ControlURL != "" && cfg.ServerDomain != ""),
 		Authentication:                    controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
 	}
 	if cfg.TrafficDefaults.Valid() {

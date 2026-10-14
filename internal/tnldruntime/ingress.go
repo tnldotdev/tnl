@@ -80,6 +80,14 @@ type ingressSettings struct {
 	standaloneControlConnectionLimit int
 	standaloneRelayConnectionLimit   int
 	visitorConnectionLimit           int64
+	pendingConnectionLimit           int
+	pendingURLConnectionLimit        int
+	pendingSourceConnectionLimit     int
+	pendingConnectionBytes           int
+	pendingURLRate                   int
+	pendingURLBurst                  int
+	pendingSourceRate                int
+	pendingSourceBurst               int
 	traffic                          ingress.TrafficConfig
 	ingressPoolID                    ingresspool.ID
 	requireProxyHeader               bool
@@ -96,6 +104,14 @@ func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
 		standaloneControlConnectionLimit: cfg.StandaloneControlConnectionLimit,
 		standaloneRelayConnectionLimit:   cfg.StandaloneRelayConnectionLimit,
 		visitorConnectionLimit:           cfg.VisitorConnectionLimit,
+		pendingConnectionLimit:           cfg.PendingConnectionLimit,
+		pendingURLConnectionLimit:        cfg.PendingURLConnectionLimit,
+		pendingSourceConnectionLimit:     cfg.PendingSourceConnectionLimit,
+		pendingConnectionBytes:           cfg.PendingConnectionBytes,
+		pendingURLRate:                   cfg.PendingURLRate,
+		pendingURLBurst:                  cfg.PendingURLBurst,
+		pendingSourceRate:                cfg.PendingSourceRate,
+		pendingSourceBurst:               cfg.PendingSourceBurst,
 		traffic: ingress.TrafficConfig{
 			Default: ingress.TrafficLimits{Connections: cfg.TrafficDefaultConnections, Rate: cfg.TrafficDefaultRate,
 				Burst: cfg.TrafficDefaultBurst, UploadBytes: cfg.TrafficDefaultUploadBytes, DownloadBytes: cfg.TrafficDefaultDownloadBytes},
@@ -232,6 +248,14 @@ func (d *daemon) startIngressRuntime(
 			return backends, ingress.LookupCurrent
 		},
 		RequireProxyHeader: settings.requireProxyHeader, MaxConnections: publicCapacity,
+		MaxDeniedConnections:            settings.pendingConnectionLimit,
+		MaxPendingURLConnections:        settings.pendingURLConnectionLimit,
+		MaxPendingSourceConnections:     settings.pendingSourceConnectionLimit,
+		PendingConnectionBytes:          settings.pendingConnectionBytes,
+		PendingURLRate:                  settings.pendingURLRate,
+		PendingURLBurst:                 settings.pendingURLBurst,
+		PendingSourceRate:               settings.pendingSourceRate,
+		PendingSourceBurst:              settings.pendingSourceBurst,
 		MaxClientHelloConnections:       settings.clientHelloConnectionLimit,
 		MaxChallengeConnections:         settings.challengeConnectionLimit,
 		MaxHostnameChallengeConnections: settings.challengeHostnameConnectionLimit,
@@ -255,6 +279,7 @@ func (d *daemon) startIngressRuntime(
 		_ = forwarder.Close()
 		return err
 	}
+	forwarder.SetAdmissionHandler(server.PromotePendingAdmission)
 	runtime.server = server
 	publicServer = server
 	d.ingresses = append(d.ingresses, runtime)

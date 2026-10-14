@@ -132,7 +132,7 @@ func (h *handler) CreateAdminBrowserHandoff(response http.ResponseWriter, reques
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "choose an app public URL and current administrator session")
 		return
 	}
-	if h.config.LoginToken == "" || h.config.BrowserOIDCClientID != "" || h.browserAccess == nil || h.config.ServerDomain == "" {
+	if h.config.LoginToken == "" || h.config.BrowserOIDCClientID != "" || h.browserAccess == nil || h.config.ServerDomain == "" || h.config.ControlURL == "" {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "built-in administrator browser handoff is unavailable")
 		return
 	}

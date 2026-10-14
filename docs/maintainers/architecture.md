@@ -70,10 +70,12 @@ target service
 ```
 
 Ingress creates one PROXY v2 metadata header with the original source and
-destination. Relay preserves that header and the visitor TLS bytes. A denied
-visitor may use a separate, bounded forwarding budget to reach the publisher
-for an HTTPS 403, but never reaches the target. The publisher removes
-untrusted forwarding headers before proxying an allowed HTTP request.
+destination. Relay preserves that header and the visitor TLS bytes. An HTTPS
+visitor outside the saved IP policy can reach the publisher under a separate
+pending budget. The publisher either denies the request or checks a browser,
+share, or run-scoped readiness credential, then asks ingress to move that
+connection to ordinary capacity before contacting the app. The publisher
+removes untrusted forwarding headers before proxying an allowed HTTP request.
 
 ingress bounds new connections by the trusted visitor source and per-process
 rate before routing; standalone control and relay handoffs on the same public
@@ -82,8 +84,11 @@ IP policy, it also bounds concurrent and new connections per public URL. byte
 budgets count encrypted bytes in both directions before each write to the
 forwarding stream or visitor; a bounded wait paces compliant streams before a
 saturated transfer is closed. tokens belong to one public URL and publish run on each ingress
-process, not to a connected relay. denied HTTPS visitors and certificate
-challenges retain their separate admission classes. these limits are process
+process, not to a connected relay. pending HTTPS visitors get a short deadline,
+a bounded encrypted-byte allowance, separate per-source and per-URL attempt
+rates, and concurrency limits. admission acknowledgement charges the ordinary
+new-connection token once; a failed acknowledgement leaves app work blocked.
+certificate challenges retain their separate admission class. these limits are process
 local: replicas behind one ingress address do not share a token bucket.
 control checks the project's optional `tunnel.limits.traffic` selection against
 operator ceilings when a publish run starts, stores the normalized budget on

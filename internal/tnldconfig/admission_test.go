@@ -2,6 +2,7 @@ package tnldconfig
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -90,5 +91,26 @@ func TestTrafficDefaultsAndOperatorCeilings(t *testing.T) {
 	cfg, err = Parse(append(append([]string{}, base...), "--traffic-default-rate=30", "--traffic-max-rate=31"))
 	if err != nil || cfg.TrafficDefaultRate != 30 || cfg.TrafficMaxRate != 31 {
 		t.Fatalf("explicit traffic rate = %+v, %v", cfg, err)
+	}
+}
+
+func TestPendingAdmissionOperatorLimits(t *testing.T) {
+	base := []string{"--role", "ingress", "--control-hostname", "control.example.test",
+		"--cluster-secret", testClusterSecret, "--ingress-id", "ingress-1"}
+	selected, err := Parse(append(append([]string{}, base...),
+		"--pending-connection-limit=32", "--pending-url-connection-limit=12", "--pending-source-connection-limit=3",
+		"--pending-connection-bytes=32768", "--pending-url-rate=8", "--pending-url-burst=12",
+		"--pending-source-rate=6", "--pending-source-burst=10"))
+	if err != nil || selected.PendingConnectionLimit != 32 || selected.PendingURLConnectionLimit != 12 ||
+		selected.PendingSourceConnectionLimit != 3 || selected.PendingConnectionBytes != 32768 ||
+		selected.PendingURLRate != 8 || selected.PendingURLBurst != 12 || selected.PendingSourceRate != 6 || selected.PendingSourceBurst != 10 {
+		t.Fatalf("pending operator settings = %+v, %v", selected, err)
+	}
+	for _, setting := range []string{"--pending-connection-limit=-1", "--pending-url-rate=-1",
+		"--pending-connection-bytes=1048577", "--pending-connection-limit=4 --pending-url-connection-limit=5"} {
+		arguments := append(append([]string{}, base...), strings.Fields(setting)...)
+		if _, err := Parse(arguments); err == nil {
+			t.Fatalf("invalid pending setting %s was accepted", setting)
+		}
 	}
 }

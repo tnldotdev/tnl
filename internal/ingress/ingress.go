@@ -81,6 +81,13 @@ type Config struct {
 	RequireProxyHeader              bool
 	MaxConnections                  int
 	MaxDeniedConnections            int
+	MaxPendingURLConnections        int
+	MaxPendingSourceConnections     int
+	PendingConnectionBytes          int
+	PendingURLRate                  int
+	PendingURLBurst                 int
+	PendingSourceRate               int
+	PendingSourceBurst              int
 	MaxClientHelloConnections       int
 	MaxChallengeConnections         int
 	MaxHostnameChallengeConnections int
@@ -102,20 +109,22 @@ type Server struct {
 	openContext context.Context
 	cancelOpens context.CancelFunc
 
-	mu          sync.Mutex
-	connections map[net.Conn]struct{}
-	backends    map[net.Conn]struct{}
-	byPublicURL map[string]int
-	byDenied    map[string]int
-	byChallenge map[string]int
-	pending     int
-	admitted    [connectionKinds]int
-	serving     bool
-	closing     bool
-	done        chan struct{}
-	active      sync.WaitGroup
-	nextBackend atomic.Uint64
-	traffic     *trafficAdmission
+	mu              sync.Mutex
+	connections     map[net.Conn]struct{}
+	backends        map[net.Conn]struct{}
+	byPublicURL     map[string]int
+	byDenied        map[string]int
+	byPendingSource map[string]int
+	byChallenge     map[string]int
+	pendingVisitors map[string]*pendingVisitorState
+	pending         int
+	admitted        [connectionKinds]int
+	serving         bool
+	closing         bool
+	done            chan struct{}
+	active          sync.WaitGroup
+	nextBackend     atomic.Uint64
+	traffic         *trafficAdmission
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
@@ -153,17 +162,19 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	}
 	openContext, cancelOpens := context.WithCancel(context.Background())
 	return &Server{
-		listener:    listener,
-		config:      config,
-		openContext: openContext,
-		cancelOpens: cancelOpens,
-		traffic:     traffic,
-		connections: make(map[net.Conn]struct{}),
-		backends:    make(map[net.Conn]struct{}),
-		byPublicURL: make(map[string]int),
-		byDenied:    make(map[string]int),
-		byChallenge: make(map[string]int),
-		done:        make(chan struct{}),
+		listener:        listener,
+		config:          config,
+		openContext:     openContext,
+		cancelOpens:     cancelOpens,
+		traffic:         traffic,
+		connections:     make(map[net.Conn]struct{}),
+		backends:        make(map[net.Conn]struct{}),
+		byPublicURL:     make(map[string]int),
+		byDenied:        make(map[string]int),
+		byPendingSource: make(map[string]int),
+		byChallenge:     make(map[string]int),
+		pendingVisitors: make(map[string]*pendingVisitorState),
+		done:            make(chan struct{}),
 	}, nil
 }
 

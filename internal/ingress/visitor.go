@@ -113,12 +113,12 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 	denied := !challenge && !route.allowsIP(source.Addr())
 	if denied {
 		visitorOutcome = observability.VisitorPolicyDenied
-		if usage != nil {
-			usage.PolicyDenied(time.Now().UTC())
-		}
 		// database visitors have no HTTPS denial response. do not send their
 		// startup bytes to the publisher when ingress has denied the source.
 		if byPort {
+			if usage != nil {
+				usage.PolicyDenied(time.Now().UTC())
+			}
 			return nil
 		}
 	}
@@ -136,7 +136,25 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 	} else if denied {
 		kind = deniedConnection
 	}
-	release, rejected := s.admitClass(kind, key, trafficLimits.Connections)
+	trafficKey := trafficKey{url: route.ID, run: route.PublishRunNumber}
+	if denied {
+		if allowed, reason := s.traffic.allowPendingAttempt(trafficKey, source.Addr(), s.config.PendingURLRate, s.config.PendingURLBurst,
+			s.config.PendingSourceRate, s.config.PendingSourceBurst); !allowed {
+			s.rejectCapacity(reason)
+			visitorOutcome = observability.VisitorCapacityDenied
+			if usage != nil {
+				usage.CapacityDenied(time.Now().UTC())
+			}
+			return nil
+		}
+	}
+	var release func()
+	var rejected string
+	if denied {
+		release, rejected = s.admitPending(key, pendingSourceNetwork(source.Addr()), trafficLimits.Connections)
+	} else {
+		release, rejected = s.admitClass(kind, key, trafficLimits.Connections)
+	}
 	if release == nil {
 		s.rejectCapacity(rejected)
 		if !challenge && !denied {
@@ -146,12 +164,26 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 			}
 		}
 		if usage != nil {
+			if denied {
+				usage.PolicyDenied(time.Now().UTC())
+			}
 			usage.CapacityDenied(time.Now().UTC())
 		}
 		return nil
 	}
-	defer release()
-	trafficKey := trafficKey{url: route.ID, run: route.PublishRunNumber}
+	ticket := &classTicket{release: release}
+	if denied {
+		ticket.deadline = time.Now().Add(pendingAuthorizationTimeout)
+		ticket.pendingByteLimit = s.config.PendingConnectionBytes
+		if usage != nil {
+			defer func() {
+				if !ticket.isPromoted() {
+					usage.PolicyDenied(time.Now().UTC())
+				}
+			}()
+		}
+	}
+	defer ticket.close()
 	if kind == visitorConnection && !s.traffic.allowConnection(trafficKey, trafficLimits) {
 		s.rejectCapacity("public_url_connection_rate")
 		visitorOutcome = observability.VisitorCapacityDenied
@@ -186,6 +218,14 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 	visitorID, err := opaqueid.New(visitorConnectionIDPrefix)
 	if err != nil {
 		return fmt.Errorf("ingress: create visitor connection ID: %w", err)
+	}
+	if denied {
+		unregister := s.registerPendingVisitor(visitorID, &pendingVisitorState{
+			ticket: ticket, urlID: route.ID, run: route.PublishRunNumber,
+			hostname: hello.ServerName, port: destination.Port(), byPort: byPort,
+			deadline: ticket.deadline,
+		})
+		defer unregister()
 	}
 	openTimeout := s.config.OpenTimeout
 	if challenge {
@@ -247,8 +287,13 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 			return err
 		}
 	}
-	err = s.copyVisitor(public, opened.connection, hello.Remainder, route, denied, usage)
-	if !denied {
+	if denied {
+		if err := ticket.setPendingDeadline(public, opened.connection); err != nil {
+			return err
+		}
+	}
+	err = s.copyVisitor(public, opened.connection, hello.Remainder, route, denied, ticket, usage)
+	if !denied || ticket.isPromoted() {
 		visitorOutcome = observability.VisitorForwarded
 		if err != nil {
 			visitorOutcome = observability.VisitorCommittedFailed
@@ -329,16 +374,27 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []routebackend.
 	return committedVisitorStream{}, lastErr
 }
 
-func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, route PublicURL, denied bool, usage UsageConnection) error {
+func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, route PublicURL, denied bool, ticket *classTicket, usage UsageConnection) error {
 	replayed := &readerConn{Conn: public, reader: remainder}
 	var left, right net.Conn = replayed, upstream
-	if route.ID != "" && !denied {
+	if route.ID != "" {
 		key := trafficKey{url: route.ID, run: route.PublishRunNumber}
 		limits := s.config.Traffic.Default
 		if route.Traffic != nil {
 			limits = *route.Traffic
 		}
 		left = &budgetConn{Conn: replayed, ctx: s.openContext, beforeWrite: func(ctx context.Context, size int) error {
+			if denied {
+				if err := ticket.pendingBytesAllowed(size); err != nil {
+					if errors.Is(err, errPendingBytes) {
+						s.rejectCapacity("pending_bytes")
+					}
+					return err
+				}
+				if !ticket.isPromoted() {
+					return nil
+				}
+			}
 			err := s.traffic.waitBytes(ctx, key, false, size, limits)
 			if errors.Is(err, errProcessBandwidth) || errors.Is(err, errPublicURLBandwidth) {
 				reason := "public_url_download_rate"
@@ -350,6 +406,17 @@ func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, rou
 			return err
 		}}
 		right = &budgetConn{Conn: upstream, ctx: s.openContext, beforeWrite: func(ctx context.Context, size int) error {
+			if denied {
+				if err := ticket.pendingBytesAllowed(size); err != nil {
+					if errors.Is(err, errPendingBytes) {
+						s.rejectCapacity("pending_bytes")
+					}
+					return err
+				}
+				if !ticket.isPromoted() {
+					return nil
+				}
+			}
 			err := s.traffic.waitBytes(ctx, key, true, size, limits)
 			if errors.Is(err, errProcessBandwidth) || errors.Is(err, errPublicURLBandwidth) {
 				reason := "public_url_upload_rate"
@@ -365,14 +432,14 @@ func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, rou
 	if usage != nil {
 		observeIngress = func(bytes int64) { usage.AddIngress(bytes, time.Now().UTC()) }
 	}
-	if usage != nil || !denied && route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
+	if usage != nil || route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
 		var recoveryOnce sync.Once
 		observeEgress = func(bytes int64) {
 			now := time.Now().UTC()
 			if usage != nil {
 				usage.AddEgress(bytes, now)
 			}
-			if !denied && route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
+			if (!denied || ticket.isPromoted()) && route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
 				recoveryOnce.Do(func() {
 					s.config.ObserveRecovery(route.ID, route.PublishRunNumber, route.RecoveryEpisodeID, now)
 				})

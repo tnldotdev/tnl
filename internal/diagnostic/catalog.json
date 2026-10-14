@@ -354,6 +354,32 @@
       }
     },
     {
+      "code": "TNL_VISITOR_ADMISSION_UNAVAILABLE",
+      "slug": "visitor-admission",
+      "category": "visitor access",
+      "title": "visitor admission unavailable",
+      "summary": "tnl could not confirm this visitor's access at ingress. wait briefly and retry.",
+      "description": "the publisher did not receive an ingress acknowledgement for this authorized visitor and did not contact the local service.",
+      "diagram_label": "ingress did not acknowledge visitor access",
+      "surfaces": ["browser"],
+      "http_status": 503,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "ingress", "detail": "admission not confirmed", "failure": true },
+        { "label": "relay" },
+        { "label": "tnl" },
+        { "label": "local service (not contacted)" }
+      ],
+      "causes": [
+        "the connected relay or ingress stopped before confirming the decision",
+        "the visitor's publish run or connection assignment changed during authorization"
+      ],
+      "actions": {
+        "visitor": ["wait briefly, then retry the public URL"],
+        "publisher": ["check ingress and relay health if visitor admission keeps failing"]
+      }
+    },
+    {
       "code": "TNL_REQUEST_RATE_LIMITED",
       "slug": "request-rate",
       "category": "visitor request",

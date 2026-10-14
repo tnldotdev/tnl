@@ -368,6 +368,7 @@ func admissionResource(resource string) bool {
 		"public_url_connection_rate", "source_connection_rate", "process_connection_rate",
 		"public_url_upload_rate", "public_url_download_rate", "process_upload_rate", "process_download_rate",
 		"denied_connections", "denied_public_url_connections", "challenge_connections",
+		"pending_source_connections", "pending_public_url_rate", "pending_source_rate", "pending_bytes",
 		"challenge_hostname_connections", "control_connections", "relay_tcp_connections",
 		"publisher_connections", "relay_streams":
 		return true

@@ -40,6 +40,116 @@ func TestIntegrationSplitPublishAndVisit(t *testing.T) {
 	})
 }
 
+func TestIntegrationAuthorizedBrowserConnectionsLeavePendingIngressCapacity(t *testing.T) {
+	fixture := newSplitPublishFixture(t, "browser-admission")
+	entered := make(chan struct{}, 12)
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/hold" {
+			response.WriteHeader(http.StatusNoContent)
+			return
+		}
+		entered <- struct{}{}
+		select {
+		case <-release:
+		case <-request.Context().Done():
+		}
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	cleanupIntegrationHTTPServer(t, target, fixture.owner)
+	quic, tcp := fixture.connectors()
+	config := fixture.identity.publisherConfig(target.URL, quic, tcp)
+	config.AllowedIPPrefixes = []string{"192.0.2.10/32"} // the visitor comes from 127.0.0.1.
+	config.ControlURL = fixture.identity.controlOrigin
+	config.BuiltinBrowserHandoffAvailable = true
+	handle := startOwnedIntegrationPublisher(t, fixture.owner, config, func() string {
+		return integrationPublisherDiagnostics(fixture.inspect, fixture.pebble.logPath)
+	})
+	ready := fixture.waitReady(t, handle)
+	visitor := &http.Client{Transport: fixture.visitor.transport, Timeout: 10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	unauthorized, err := visitor.Get(ready.PublicURL + "/hold")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthorized.Body.Close()
+	if unauthorized.StatusCode != http.StatusForbidden {
+		t.Fatalf("unsigned browser reached target: %d", unauthorized.StatusCode)
+	}
+	admin, found, err := fixture.identity.state.ControlSession(t.Context())
+	if err != nil || !found {
+		t.Fatalf("saved administrator session = %t, %v", found, err)
+	}
+	handoff, err := fixture.identity.routes.CreateAdminBrowserHandoff(t.Context(), ready.PublicURLID, admin.RefreshToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed, err := visitor.Get(handoff.EntryUrl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed.Body.Close()
+	var cookie *http.Cookie
+	for _, candidate := range installed.Cookies() {
+		if candidate.Name == "__Host-tnl-browser" {
+			cookie = candidate
+		}
+	}
+	if installed.StatusCode != http.StatusSeeOther || cookie == nil {
+		t.Fatalf("admin handoff did not install a host-bound visitor cookie: %d", installed.StatusCode)
+	}
+	probe, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ready.PublicURL+"/health", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe.AddCookie(cookie)
+	admitted, err := visitor.Do(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admissionBody, _ := io.ReadAll(admitted.Body)
+	admitted.Body.Close()
+	if admitted.StatusCode != http.StatusNoContent {
+		t.Fatalf("authorized visitor admission = %d %s", admitted.StatusCode, admissionBody)
+	}
+	const visitors = 10 // more than the former eight denied slots per public URL.
+	results := make(chan error, visitors)
+	deadline := time.After(7 * time.Second)
+	for index := range visitors {
+		go func() {
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ready.PublicURL+"/hold", nil)
+			if err != nil {
+				results <- err
+				return
+			}
+			request.AddCookie(cookie)
+			response, err := visitor.Do(request)
+			if err == nil {
+				response.Body.Close()
+				if response.StatusCode != http.StatusNoContent {
+					err = fmt.Errorf("visitor response = %d", response.StatusCode)
+				}
+			}
+			results <- err
+		}()
+		select {
+		case <-entered:
+		case err := <-results:
+			t.Fatalf("authorized visitor rejected after %d/%d reached target: %v", index, visitors, err)
+		case <-deadline:
+			t.Fatalf("authorized visitors remained in pending ingress capacity after %d/%d reached target", index, visitors)
+		}
+	}
+	unblock()
+	for range visitors {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestIntegrationSplitRelayLossAndReplenishment(t *testing.T) {
 	fixture := newSplitPublishFixture(t, "relay-loss")
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
