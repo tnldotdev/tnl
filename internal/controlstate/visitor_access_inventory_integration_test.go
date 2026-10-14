@@ -38,6 +38,13 @@ func TestIntegrationVisitorInventoryDistinguishesMembershipAndShares(t *testing.
 		}
 		return page
 	}
+	canUseCertificate := func(urlID, identityID string, at time.Time, want bool) {
+		t.Helper()
+		allowed, err := database.DatabaseVisitorAllowed(t.Context(), urlID, identityID, at)
+		if err != nil || allowed != want {
+			t.Fatalf("database certificate access for %s on %s at %s = %t, %v; want %t", identityID, urlID, at, allowed, err, want)
+		}
+	}
 	access := func(page AvailablePublicURLPage) map[string]string {
 		result := make(map[string]string, len(page.PublicURLs))
 		for _, url := range page.PublicURLs {
@@ -54,6 +61,10 @@ func TestIntegrationVisitorInventoryDistinguishesMembershipAndShares(t *testing.
 	if page := list(visitor.Identity.ID, now); len(page.PublicURLs) != 0 {
 		t.Fatalf("external identity saw unshared URLs = %+v", page)
 	}
+	canUseCertificate(postgres.ID, request.ActingIdentityID, now, true)
+	canUseCertificate(postgres.ID, member.IdentityID, now, false)
+	canUseCertificate(postgres.ID, visitor.Identity.ID, now, false)
+	canUseCertificate(web.ID, request.ActingIdentityID, now, false)
 	digest := sha256.Sum256([]byte("visitor inventory grant"))
 	insert := func(id, kind, previewID, publicURLID, identityID string, expires time.Time) {
 		t.Helper()
@@ -96,6 +107,7 @@ func TestIntegrationVisitorInventoryDistinguishesMembershipAndShares(t *testing.
 	if page := list(member.IdentityID, now); access(page)[web.ID] != "team" || access(page)[postgres.ID] != "inventory" {
 		t.Fatalf("mixed preview enabled database access = %+v", page)
 	}
+	canUseCertificate(postgres.ID, member.IdentityID, now, false)
 	if _, err := database.SetPreviewTeamAccess(t.Context(), SetPreviewTeamAccessRequest{
 		PreviewID: preview.ID, TeamID: request.TeamID, IdentityID: request.ActingIdentityID,
 	}, now); err != nil {
@@ -105,14 +117,18 @@ func TestIntegrationVisitorInventoryDistinguishesMembershipAndShares(t *testing.
 	if page := list(member.IdentityID, now); len(page.PublicURLs) != 2 || access(page)[web.ID] != "team" || access(page)[postgres.ID] != "inventory" {
 		t.Fatalf("preview share reached database = %+v", page)
 	}
+	canUseCertificate(postgres.ID, member.IdentityID, now, false)
 	insert("grant-database", "team_url", "", postgres.ID, "", now.Add(time.Hour))
 	if page := list(member.IdentityID, now); len(page.PublicURLs) != 2 || access(page)[postgres.ID] != "team" {
 		t.Fatalf("deliberate database team share = %+v", page)
 	}
+	canUseCertificate(postgres.ID, member.IdentityID, now, true)
 	insert("grant-invite", "identity_url", "", postgres.ID, visitor.Identity.ID, now.Add(time.Hour))
 	if page := list(visitor.Identity.ID, now); len(page.PublicURLs) != 1 || page.PublicURLs[0].ID != postgres.ID || page.PublicURLs[0].VisitorAccess != "invite" || page.PublicURLs[0].PublicPort == nil {
 		t.Fatalf("external invite inventory = %+v", page)
 	}
+	canUseCertificate(postgres.ID, visitor.Identity.ID, now, true)
+	canUseCertificate(postgres.ID, visitor.Identity.ID, now.Add(2*time.Hour), false)
 	if page := list(visitor.Identity.ID, now.Add(2*time.Hour)); len(page.PublicURLs) != 0 {
 		t.Fatalf("expired invite still visible = %+v", page)
 	}
@@ -126,10 +142,16 @@ func TestIntegrationVisitorInventoryDistinguishesMembershipAndShares(t *testing.
 	if page := list(visitor.Identity.ID, now.Add(time.Minute)); len(page.PublicURLs) != 0 {
 		t.Fatalf("revoked invite still visible = %+v", page)
 	}
+	canUseCertificate(postgres.ID, visitor.Identity.ID, now.Add(time.Minute), false)
 	if err := database.RemoveMembership(t.Context(), request.ActingIdentityID, request.TeamID, member.ID, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if page := list(member.IdentityID, now.Add(time.Minute)); len(page.PublicURLs) != 0 {
 		t.Fatalf("removed member still saw the team's public URLs = %+v", page)
 	}
+	canUseCertificate(postgres.ID, member.IdentityID, now.Add(time.Minute), false)
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET lifecycle_state = 'suspended', suspended_at = $2 WHERE id = $1`, postgres.ID, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	canUseCertificate(postgres.ID, request.ActingIdentityID, now.Add(time.Minute), false)
 }

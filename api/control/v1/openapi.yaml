@@ -556,6 +556,27 @@ paths:
                 $ref: "#/components/schemas/VisitorInvitationPage"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/visitor-certificates:
+    post:
+      operationId: createVisitorCertificate
+      summary: Issue a URL-bound database visitor certificate for the signed-in identity
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVisitorCertificateRequest"
+      responses:
+        "201":
+          description: Short-lived visitor certificate and its private issuer certificate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VisitorCertificate"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/shares/invitations/accept:
     post:
       operationId: acceptVisitorInvitation
@@ -2715,6 +2736,30 @@ components:
             $ref: "#/components/schemas/VisitorInvitation"
         next_cursor:
           $ref: "#/components/schemas/ShareID"
+    CreateVisitorCertificateRequest:
+      type: object
+      additionalProperties: false
+      required: [public_url_id, csr]
+      properties:
+        public_url_id:
+          $ref: "#/components/schemas/PublicURLID"
+        csr:
+          type: string
+          format: byte
+          minLength: 1
+          maxLength: 10924
+    VisitorCertificate:
+      type: object
+      additionalProperties: false
+      required: [certificate_pem, issuer_pem, not_after]
+      properties:
+        certificate_pem:
+          type: string
+        issuer_pem:
+          type: string
+        not_after:
+          type: string
+          format: date-time
     Share:
       type: object
       additionalProperties: false

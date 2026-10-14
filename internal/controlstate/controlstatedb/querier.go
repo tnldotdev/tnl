@@ -97,6 +97,7 @@ type Querier interface {
 	CreateTeamURLVisitorGrant(ctx context.Context, arg CreateTeamURLVisitorGrantParams) (ControlVisitorAccessGrant, error)
 	CreateVisitorShareInvitation(ctx context.Context, arg CreateVisitorShareInvitationParams) (ControlVisitorShareInvitation, error)
 	DNSAuthorityReleaseReady(ctx context.Context, arg DNSAuthorityReleaseReadyParams) (pgtype.Bool, error)
+	DatabaseVisitorAllowed(ctx context.Context, arg DatabaseVisitorAllowedParams) (pgtype.Bool, error)
 	DeleteControlTLSCacheEntry(ctx context.Context, arg DeleteControlTLSCacheEntryParams) error
 	DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteExpiredPublisherAccessTokens(ctx context.Context, now pgtype.Timestamptz) error

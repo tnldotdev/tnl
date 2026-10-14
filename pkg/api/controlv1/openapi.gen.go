@@ -1270,6 +1270,12 @@ type CreateShareRequest struct {
 	SecretFingerprint string        `json:"secret_fingerprint"`
 }
 
+// CreateVisitorCertificateRequest defines model for CreateVisitorCertificateRequest.
+type CreateVisitorCertificateRequest struct {
+	Csr         []byte      `json:"csr"`
+	PublicUrlId PublicURLID `json:"public_url_id"`
+}
+
 // CreateVisitorInvitationRequest defines model for CreateVisitorInvitationRequest.
 type CreateVisitorInvitationRequest struct {
 	Email             string      `json:"email"`
@@ -2003,6 +2009,13 @@ type UpdatePublicURLRequest struct {
 	Target string `json:"target"`
 }
 
+// VisitorCertificate defines model for VisitorCertificate.
+type VisitorCertificate struct {
+	CertificatePem string    `json:"certificate_pem"`
+	IssuerPem      string    `json:"issuer_pem"`
+	NotAfter       time.Time `json:"not_after"`
+}
+
 // VisitorInvitation defines model for VisitorInvitation.
 type VisitorInvitation struct {
 	AcceptedAt          *time.Time  `json:"accepted_at,omitempty"`
@@ -2332,6 +2345,9 @@ type CreateVisitorInvitationJSONRequestBody = CreateVisitorInvitationRequest
 
 // AcceptVisitorInvitationJSONRequestBody defines body for AcceptVisitorInvitation for application/json ContentType.
 type AcceptVisitorInvitationJSONRequestBody = AcceptVisitorInvitationRequest
+
+// CreateVisitorCertificateJSONRequestBody defines body for CreateVisitorCertificate for application/json ContentType.
+type CreateVisitorCertificateJSONRequestBody = CreateVisitorCertificateRequest
 
 // AsWebhookProviderSourceResponseSource0 returns the union data inside the WebhookProviderSourceResponse_Source as a WebhookProviderSourceResponseSource0
 func (t WebhookProviderSourceResponse_Source) AsWebhookProviderSourceResponseSource0() (WebhookProviderSourceResponseSource0, error) {
@@ -3182,6 +3198,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
 	RevokeShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateVisitorCertificateWithBody Issue a URL-bound database visitor certificate for the signed-in identity
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/visitor-certificates (the `CreateVisitorCertificate` operationId).
+	CreateVisitorCertificateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateVisitorCertificate Issue a URL-bound database visitor certificate for the signed-in identity
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/visitor-certificates (the `CreateVisitorCertificate` operationId).
+	CreateVisitorCertificate(ctx context.Context, body CreateVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetWebhookProviderSource Read one webhook provider source policy
 	//
@@ -5033,6 +5063,40 @@ func (c *Client) GetShare(ctx context.Context, shareId ShareID, reqEditors ...Re
 // Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
 func (c *Client) RevokeShare(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeShareRequest(c.Server, shareId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateVisitorCertificateWithBody Issue a URL-bound database visitor certificate for the signed-in identity
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/visitor-certificates (the `CreateVisitorCertificate` operationId).
+func (c *Client) CreateVisitorCertificateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVisitorCertificateRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateVisitorCertificate Issue a URL-bound database visitor certificate for the signed-in identity
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/visitor-certificates (the `CreateVisitorCertificate` operationId).
+func (c *Client) CreateVisitorCertificate(ctx context.Context, body CreateVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVisitorCertificateRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8693,6 +8757,46 @@ func NewRevokeShareRequest(server string, shareId ShareID) (*http.Request, error
 	return req, nil
 }
 
+// NewCreateVisitorCertificateRequest calls the generic CreateVisitorCertificate builder with application/json body
+func NewCreateVisitorCertificateRequest(server string, body CreateVisitorCertificateJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateVisitorCertificateRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateVisitorCertificateRequestWithBody constructs an http.Request for the CreateVisitorCertificate method, with any body, and a specified content type
+func NewCreateVisitorCertificateRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/visitor-certificates")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetWebhookProviderSourceRequest constructs an http.Request for the GetWebhookProviderSource method
 func NewGetWebhookProviderSourceRequest(server string, provider WebhookProvider) (*http.Request, error) {
 	var err error
@@ -9568,6 +9672,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/shares/{share_id}/revoke (the `RevokeShare` operationId).
 	RevokeShareWithResponse(ctx context.Context, shareId ShareID, reqEditors ...RequestEditorFn) (*RevokeShareResponse, error)
+
+	// CreateVisitorCertificateWithBodyWithResponse Issue a URL-bound database visitor certificate for the signed-in identity
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/visitor-certificates (the `CreateVisitorCertificate` operationId).
+	CreateVisitorCertificateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorCertificateResponse, error)
+
+	// CreateVisitorCertificateWithResponse Issue a URL-bound database visitor certificate for the signed-in identity
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/visitor-certificates (the `CreateVisitorCertificate` operationId).
+	CreateVisitorCertificateWithResponse(ctx context.Context, body CreateVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorCertificateResponse, error)
 
 	// GetWebhookProviderSourceWithResponse Read one webhook provider source policy
 	//
@@ -13255,6 +13373,54 @@ func (r RevokeShareResponse) ContentType() string {
 	return ""
 }
 
+type CreateVisitorCertificateResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *VisitorCertificate
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateVisitorCertificateResponse) GetJSON201() *VisitorCertificate {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateVisitorCertificateResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateVisitorCertificateResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateVisitorCertificateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateVisitorCertificateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateVisitorCertificateResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetWebhookProviderSourceResponse200Headers the declared response headers of an HTTP 200 response for GetWebhookProviderSource
 type GetWebhookProviderSourceResponse200Headers struct {
 	CacheControl *string
@@ -14791,6 +14957,32 @@ func (c *ClientWithResponses) RevokeShareWithResponse(ctx context.Context, share
 		return nil, err
 	}
 	return ParseRevokeShareResponse(rsp)
+}
+
+// CreateVisitorCertificateWithBodyWithResponse Issue a URL-bound database visitor certificate for the signed-in identity
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/visitor-certificates (the `CreateVisitorCertificate` operationId).
+func (c *ClientWithResponses) CreateVisitorCertificateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorCertificateResponse, error) {
+	rsp, err := c.CreateVisitorCertificateWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateVisitorCertificateResponse(rsp)
+}
+
+// CreateVisitorCertificateWithResponse Issue a URL-bound database visitor certificate for the signed-in identity
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/visitor-certificates (the `CreateVisitorCertificate` operationId).
+func (c *ClientWithResponses) CreateVisitorCertificateWithResponse(ctx context.Context, body CreateVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorCertificateResponse, error) {
+	rsp, err := c.CreateVisitorCertificate(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateVisitorCertificateResponse(rsp)
 }
 
 // GetWebhookProviderSourceWithResponse Read one webhook provider source policy
@@ -17345,6 +17537,39 @@ func ParseRevokeShareResponse(rsp *http.Response) (*RevokeShareResponse, error) 
 	return response, nil
 }
 
+// ParseCreateVisitorCertificateResponse parses an HTTP response from a CreateVisitorCertificateWithResponse call
+func ParseCreateVisitorCertificateResponse(rsp *http.Response) (*CreateVisitorCertificateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateVisitorCertificateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest VisitorCertificate
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetWebhookProviderSourceResponse parses an HTTP response from a GetWebhookProviderSourceWithResponse call
 func ParseGetWebhookProviderSourceResponse(rsp *http.Response) (*GetWebhookProviderSourceResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17637,6 +17862,9 @@ type ServerInterface interface {
 	// RevokeShare Stop new access through one share
 	// (POST /v1/shares/{share_id}/revoke)
 	RevokeShare(w http.ResponseWriter, r *http.Request, shareId ShareID)
+	// CreateVisitorCertificate Issue a URL-bound database visitor certificate for the signed-in identity
+	// (POST /v1/visitor-certificates)
+	CreateVisitorCertificate(w http.ResponseWriter, r *http.Request)
 	// GetWebhookProviderSource Read one webhook provider source policy
 	// (GET /v1/webhook-providers/{provider}/source)
 	GetWebhookProviderSource(w http.ResponseWriter, r *http.Request, provider WebhookProvider)
@@ -20134,6 +20362,20 @@ func (siw *ServerInterfaceWrapper) RevokeShare(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// CreateVisitorCertificate operation middleware
+func (siw *ServerInterfaceWrapper) CreateVisitorCertificate(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateVisitorCertificate(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetWebhookProviderSource operation middleware
 func (siw *ServerInterfaceWrapper) GetWebhookProviderSource(w http.ResponseWriter, r *http.Request) {
 
@@ -20307,6 +20549,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/grants/{share_id}/revoke", wrapper.RevokeShareGrant)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/invitations", wrapper.ListVisitorInvitations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/invitations", wrapper.CreateVisitorInvitation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/visitor-certificates", wrapper.CreateVisitorCertificate)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/invitations/accept", wrapper.AcceptVisitorInvitation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/invitations/{share_id}/revoke", wrapper.RevokeVisitorInvitation)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/{share_id}", wrapper.GetShare)

@@ -3,6 +3,7 @@ package tnldruntime
 import (
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/visitorcert"
 )
 
 func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) controlapi.Config {
@@ -78,6 +80,17 @@ func newPublicAPIHandler(
 	route53Readiness func(context.Context) error,
 ) (http.Handler, error) {
 	controlConfig := controlAPIConfigFrom(cfg, httpClient)
+	if cfg.VisitorIssuerSeed != "" {
+		seed, err := hex.DecodeString(cfg.VisitorIssuerSeed)
+		if err != nil {
+			return nil, fmt.Errorf("configure visitor issuer: %w", err)
+		}
+		issuer, err := visitorcert.New(seed)
+		if err != nil {
+			return nil, fmt.Errorf("configure visitor issuer: %w", err)
+		}
+		controlConfig.VisitorIssuer = issuer
+	}
 	controlConfig.StartedAt = startedAt
 	controlConfig.Metrics = metrics
 	controlConfig.Route53CredentialsReadiness = route53Readiness

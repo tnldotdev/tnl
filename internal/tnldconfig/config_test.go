@@ -1,6 +1,7 @@
 package tnldconfig
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +107,28 @@ func TestParseRequiresValidStorageKey(t *testing.T) {
 		"--storage-key-previous", testStorageKey,
 	)); err == nil {
 		t.Fatal("repeated current and previous storage keys were accepted")
+	}
+}
+
+func TestVisitorIssuerSecretStaysOnControl(t *testing.T) {
+	base := []string{
+		"--role", "standalone", "--database-url", "postgres://tnl:secret@database.example/tnl",
+		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--acme-email", "operator@example.com", "--acme-accept-terms",
+		"--login-token", testLoginToken, "--storage-key", testStorageKey,
+	}
+	seed := strings.Repeat("ab", 32)
+	if cfg, err := Parse(append(append([]string{}, base...), "--visitor-issuer-seed", seed)); err != nil || cfg.VisitorIssuerSeed != seed {
+		t.Fatalf("valid private issuer setting was rejected: %v", err)
+	}
+	for _, invalid := range []string{"abc", strings.ToUpper(seed), strings.Repeat("z", 64)} {
+		if _, err := Parse(append(append([]string{}, base...), "--visitor-issuer-seed", invalid)); err == nil {
+			t.Fatal("invalid visitor issuer seed was accepted")
+		}
+	}
+	if _, err := Parse([]string{"--role", "ingress", "--control-hostname", "control.example.test",
+		"--cluster-secret", testClusterSecret, "--ingress-id", "ingress-1", "--visitor-issuer-seed", seed}); err == nil {
+		t.Fatal("ingress accepted the private visitor issuer seed")
 	}
 }
 

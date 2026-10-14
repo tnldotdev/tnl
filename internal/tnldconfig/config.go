@@ -1,6 +1,7 @@
 package tnldconfig
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -109,6 +110,7 @@ type Config struct {
 	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
 	StorageKey            string `name:"storage-key" env:"TNLD_STORAGE_KEY" help:"Unpadded base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."`
 	StorageKeyPrevious    string `name:"storage-key-previous" env:"TNLD_STORAGE_KEY_PREVIOUS" help:"Previous storage key retained only during re-encryption."`
+	VisitorIssuerSeed     string `name:"visitor-issuer-seed" env:"TNLD_VISITOR_ISSUER_SEED" help:"Optional separate 32-byte hex seed for control's private database visitor certificate issuer."`
 
 	IngressID            string         `name:"ingress-id" env:"TNLD_INGRESS_ID" help:"Stable ingress process identity."`
 	IngressPoolID        ingresspool.ID `name:"ingress-pool-id" env:"TNLD_INGRESS_POOL_ID" default:"ingress-a" help:"Ingress pool served by this ingress process."`
@@ -199,7 +201,7 @@ func (c Config) Validate() (retErr error) {
 		if _, err := serviceapi.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
 			return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
 		}
-		if c.EmailURL != "" || c.WebhookSecret != "" || c.WebServiceSecret != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
+		if c.EmailURL != "" || c.WebhookSecret != "" || c.WebServiceSecret != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" || c.VisitorIssuerSeed != "" ||
 			c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
 			len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0 {
 			return errors.New("ingress and relay roles cannot receive hosted, storage, or DNS provider configuration")
@@ -282,6 +284,12 @@ func (c Config) Validate() (retErr error) {
 }
 
 func (c Config) validateControl() error {
+	if c.VisitorIssuerSeed != "" {
+		seed, err := hex.DecodeString(c.VisitorIssuerSeed)
+		if err != nil || len(seed) != 32 || hex.EncodeToString(seed) != c.VisitorIssuerSeed {
+			return errors.New("visitor issuer seed must be 64 lowercase hex characters")
+		}
+	}
 	if (c.EmailURL == "") != (c.WebhookSecret == "") {
 		setting := failure.SettingWebhookSecret
 		if c.EmailURL == "" {

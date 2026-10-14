@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/visitorcert"
 	"github.com/tnldotdev/tnl/internal/webhookcatalog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -47,6 +48,7 @@ type Config struct {
 	OIDCLoginFlow                     tnldconfig.OIDCLoginFlow
 	OIDCScopes                        []string
 	CertificateIssuance               bool
+	VisitorIssuer                     *visitorcert.Issuer
 	ACMEDirectoryURL                  string
 	ServerDomain                      string
 	HTTPClient                        *http.Client
@@ -114,6 +116,10 @@ type CertificateStore interface {
 	GetCertificateIssuance(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
 	MarkCertificateChallengeReady(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
 	MarkCertificateChallengeRemoved(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
+}
+
+type VisitorCertificateStore interface {
+	DatabaseVisitorAllowed(context.Context, string, string, time.Time) (bool, error)
 }
 
 // AdminStore owns administrator operations.
@@ -222,6 +228,7 @@ type handler struct {
 	shares              ShareStore
 	visitorGrants       VisitorGrantStore
 	visitorInvitations  VisitorInvitationStore
+	visitorCertificates VisitorCertificateStore
 	shareAccess         ShareAccessStore
 	feedback            FeedbackStore
 	guests              interface {
@@ -280,6 +287,9 @@ func NewHandler(
 	}
 	if invitations, ok := store.(VisitorInvitationStore); ok {
 		h.visitorInvitations = invitations
+	}
+	if certificates, ok := store.(VisitorCertificateStore); ok {
+		h.visitorCertificates = certificates
 	}
 	if shareAccess, ok := store.(ShareAccessStore); ok {
 		h.shareAccess = shareAccess

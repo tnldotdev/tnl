@@ -118,6 +118,14 @@ public URL certificate. by default the private target receives plaintext TCP;
 `--target-tls` selects a separate, certificate-verified TLS connection instead.
 the publisher never retries in plaintext after a target TLS failure. a
 PostgreSQL GSS request gets a refusal so the client can request TLS instead.
+`internal/visitorcert` holds the separate private visitor-client issuer: it
+signs a verified CSR for one identity and public URL for no more than seven
+days and embeds only those server-selected identifiers in the certificate.
+the client keeps its private key. the issuer checks the certificate chain and
+URL binding, but its caller must check current identity and URL access at
+issuance and again before forwarding each new database connection; a valid
+certificate alone does not grant access. this package does not use the public
+URL's ACME signing key.
 PostgreSQL clients must set `channel_binding=disable` when visitor TLS ends at
 the publisher and the private target is plaintext or uses a different TLS
 certificate. if a client chooses SCRAM-SHA-256-PLUS across different visitor

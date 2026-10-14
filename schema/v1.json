@@ -1649,6 +1649,10 @@
           "type": "string",
           "description": "Previous storage key retained only during re-encryption."
         },
+        "visitor_issuer_seed": {
+          "type": "string",
+          "description": "Optional separate 32-byte hex seed for control's private database visitor certificate issuer."
+        },
         "ingress_id": {
           "type": "string",
           "description": "Stable ingress process identity."
@@ -1703,6 +1707,46 @@
           "type": "integer",
           "description": "Maximum concurrent visitor connections (default: automatic).",
           "default": -1
+        },
+        "pending_connection_limit": {
+          "type": "integer",
+          "description": "Concurrent unauthenticated visitor connections per ingress process (default: 16).",
+          "default": 0
+        },
+        "pending_url_connection_limit": {
+          "type": "integer",
+          "description": "Concurrent unauthenticated visitors per public URL and ingress process (default: 8).",
+          "default": 0
+        },
+        "pending_source_connection_limit": {
+          "type": "integer",
+          "description": "Concurrent unauthenticated visitors per IPv4 address or IPv6 /64 (default: 4).",
+          "default": 0
+        },
+        "pending_connection_bytes": {
+          "type": "integer",
+          "description": "Encrypted bytes allowed before visitor authorization (default: 64 KiB).",
+          "default": 0
+        },
+        "pending_url_rate": {
+          "type": "integer",
+          "description": "Unauthenticated visitor attempts per second for one public URL (default: 10).",
+          "default": 0
+        },
+        "pending_url_burst": {
+          "type": "integer",
+          "description": "Unauthenticated visitor attempt burst per public URL (default: 20).",
+          "default": 0
+        },
+        "pending_source_rate": {
+          "type": "integer",
+          "description": "Unauthenticated visitor attempts per second per source network (default: 10).",
+          "default": 0
+        },
+        "pending_source_burst": {
+          "type": "integer",
+          "description": "Unauthenticated visitor attempt burst per source network (default: 20).",
+          "default": 0
         },
         "traffic_default_connections": {
           "type": "integer",
