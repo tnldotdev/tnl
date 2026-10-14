@@ -179,8 +179,10 @@ can read project status and events, submit readiness observations, and manage
 ad-hoc invocations. Processes running as the same OS user can also read the
 owner's private file, so file placement is the OS trust boundary.
 
-Named CLI publication leases need the same manager ownership and journal as
-app registrations; add their API operations with those workers.
+`internal/clientruntime.Manager` accepts separate CLI-owned named leases for
+configured HTTP and TCP targets. It checks ownership, target protocol, lease
+expiry, and the current publish run before admitting work. The CLI and owner API
+connect those leases to publisher workers in the next lifecycle boundary.
 
 ## resolve project configuration
 
