@@ -116,7 +116,7 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 					return
 				}
 				group.Go(func() {
-					if err := a.forward(acceptCtx, incoming); err != nil && acceptCtx.Err() == nil {
+					if err := a.forward(acceptCtx, session, incoming); err != nil && acceptCtx.Err() == nil {
 						a.report(err)
 					}
 				})
@@ -134,7 +134,7 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 	}
 }
 
-func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream) (retErr error) {
+func (a *ForwardingAcceptor) forward(ctx context.Context, ingressSession *tunnel.Session, incoming *tunnel.IncomingInternalForwardingStream) (retErr error) {
 	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
 	opened := false
 	var rejected error
@@ -169,6 +169,16 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 		return errors.Join(incoming.Reject(code), err)
 	}
 	defer publisher.Close()
+	if incoming.Header.IPPolicyDenied {
+		release, err := a.registry.registerAdmission(incoming.Header.VisitorConnectionID, &activeAdmission{
+			ingress: ingressSession, header: incoming.Header, connection: connection,
+			currentLease: a.currentLease, now: a.now,
+		})
+		if err != nil {
+			return errors.Join(incoming.Reject(tunnelv1.StaleConnectionAssignment), err)
+		}
+		defer release()
+	}
 	if err := incoming.Accept(); err != nil {
 		return err
 	}

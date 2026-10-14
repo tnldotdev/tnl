@@ -233,10 +233,19 @@ type Registry struct {
 	mu          sync.Mutex
 	connections map[string]*PublisherConnection
 	slots       map[slotKey]*PublisherConnection
+	admissions  map[string]*activeAdmission
 	draining    bool
 	closed      bool
 	closeDone   chan struct{}
 	closeErr    error
+}
+
+type activeAdmission struct {
+	ingress      *tunnel.Session
+	header       tunnelv1.InternalForwardingHeader
+	connection   *PublisherConnection
+	currentLease func() relayv1.RelayLease
+	now          func() time.Time
 }
 
 func NewRegistry() *Registry { return new(Registry) }
@@ -260,6 +269,7 @@ func (r *Registry) Insert(connection *PublisherConnection) error {
 	if r.connections == nil {
 		r.connections = make(map[string]*PublisherConnection)
 		r.slots = make(map[slotKey]*PublisherConnection)
+		r.admissions = make(map[string]*activeAdmission)
 	}
 	ref := connection.ref
 	if _, exists := r.connections[ref.PublisherConnectionID]; exists {
@@ -287,6 +297,66 @@ func (r *Registry) Insert(connection *PublisherConnection) error {
 		_ = previous.Close()
 	}
 	return nil
+}
+
+func (r *Registry) registerAdmission(id string, active *activeAdmission) (func(), error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || r.draining || active == nil || active.connection == nil || !active.header.IPPolicyDenied ||
+		r.connections[active.connection.ref.PublisherConnectionID] != active.connection || r.admissions[id] != nil {
+		return nil, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+	}
+	r.admissions[id] = active
+	return func() {
+		r.mu.Lock()
+		if r.admissions[id] == active {
+			delete(r.admissions, id)
+		}
+		r.mu.Unlock()
+	}, nil
+}
+
+func (r *Registry) forwardAdmission(ctx context.Context, publisher *PublisherConnection, proposed tunnelv1.AdmissionHeader) (tunnelv1.AdmissionResult, error) {
+	r.mu.Lock()
+	active := r.admissions[proposed.VisitorConnectionID]
+	current := !r.closed && !r.draining && publisher != nil && active != nil && active.connection == publisher &&
+		r.connections[publisher.ref.PublisherConnectionID] == publisher
+	r.mu.Unlock()
+	if !current {
+		return tunnelv1.AdmissionResult{}, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+	}
+	header := active.header
+	if proposed.Kind != tunnelv1.PublisherAdmissionStream || proposed.PublicURLID != header.PublicURLID ||
+		proposed.PublishRunID != header.PublishRunID || proposed.PublishRunNumber != header.PublishRunNumber ||
+		proposed.PublisherConnectionID != header.PublisherConnectionID ||
+		proposed.ConnectionAssignmentRevision != header.ConnectionAssignmentRevision ||
+		proposed.RelayServiceID != header.RelayServiceID ||
+		active.currentLease == nil || active.now == nil {
+		return tunnelv1.AdmissionResult{}, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+	}
+	if candidate, ok := r.Candidate(header, active.currentLease(), active.now()); !ok || candidate != publisher {
+		return tunnelv1.AdmissionResult{}, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+	}
+	decision := tunnelv1.AdmissionHeader{
+		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.IngressAdmissionStream,
+		VisitorConnectionID: header.VisitorConnectionID, PublicURLID: header.PublicURLID,
+		PublishRunID: header.PublishRunID, PublishRunNumber: header.PublishRunNumber,
+		PublisherConnectionID:        header.PublisherConnectionID,
+		ConnectionAssignmentRevision: header.ConnectionAssignmentRevision,
+		RelayServiceID:               header.RelayServiceID, RelayID: header.RelayID, RelayRunID: header.RelayRunID,
+		RelayLeaseRevision: header.RelayLeaseRevision,
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	stream, err := active.ingress.OpenIngressAdmissionStream(requestCtx, decision)
+	if err != nil {
+		return tunnelv1.AdmissionResult{}, err
+	}
+	defer stream.Close()
+	if err := stream.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return tunnelv1.AdmissionResult{}, err
+	}
+	return tunnelv1.ReadAdmissionResult(stream)
 }
 
 func (r *Registry) Candidate(
@@ -403,6 +473,7 @@ func (r *Registry) Close() error {
 	connections := r.snapshotLocked()
 	clear(r.connections)
 	clear(r.slots)
+	clear(r.admissions)
 	if observer, ok := r.observer.(interface{ AddRegisteredPublisherConnections(int) }); ok {
 		observer.AddRegisteredPublisherConnections(-len(connections))
 	}

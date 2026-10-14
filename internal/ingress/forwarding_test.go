@@ -182,6 +182,96 @@ func TestForwarderPreservesStaleAssignmentRejection(t *testing.T) {
 	}
 }
 
+func TestIngressAdmissionSidebandRequiresOneExactPendingVisitor(t *testing.T) {
+	material := newForwardingTestMaterial(t)
+	ready := make(chan tunnelv1.InternalForwardingHeader, 1)
+	proceed := make(chan struct{})
+	results := make(chan error, 1)
+	server := startForwardingTestServer(t, material, func(ctx context.Context, transport muxsession.Session) error {
+		session, _, err := tunnel.Accept(ctx, transport, func(_ context.Context, message tunnelv1.Message) error {
+			if message.Role != tunnelv1.Ingress || message.Credential != forwardingClusterSecret {
+				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		defer session.Close()
+		incoming, err := session.AcceptInternalForwardingStream(ctx)
+		if err != nil {
+			return err
+		}
+		defer incoming.Stream.Close()
+		if err := incoming.Accept(); err != nil {
+			return err
+		}
+		ready <- incoming.Header
+		select {
+		case <-proceed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		decision := tunnelv1.AdmissionHeader{
+			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.IngressAdmissionStream,
+			VisitorConnectionID: incoming.Header.VisitorConnectionID, PublicURLID: incoming.Header.PublicURLID,
+			PublishRunID: incoming.Header.PublishRunID, PublishRunNumber: incoming.Header.PublishRunNumber,
+			PublisherConnectionID:        incoming.Header.PublisherConnectionID,
+			ConnectionAssignmentRevision: incoming.Header.ConnectionAssignmentRevision,
+			RelayServiceID:               incoming.Header.RelayServiceID, RelayID: incoming.Header.RelayID,
+			RelayRunID: incoming.Header.RelayRunID, RelayLeaseRevision: incoming.Header.RelayLeaseRevision,
+		}
+		invalid := decision
+		invalid.RelayLeaseRevision++
+		_, err = session.OpenIngressAdmissionStream(ctx, invalid)
+		var rejected *tunnel.ProtocolError
+		if !errors.As(err, &rejected) || rejected.Code != tunnelv1.StaleConnectionAssignment {
+			return errors.New("replacement relay lease promoted a pending visitor")
+		}
+		stream, err := session.OpenIngressAdmissionStream(ctx, decision)
+		if err != nil {
+			return err
+		}
+		result, err := tunnelv1.ReadAdmissionResult(stream)
+		_ = stream.Close()
+		if err != nil || result.Type != tunnelv1.StreamAccepted {
+			return errors.New("current visitor was not acknowledged")
+		}
+		_, err = session.OpenIngressAdmissionStream(ctx, decision)
+		if !errors.As(err, &rejected) || rejected.Code != tunnelv1.StaleConnectionAssignment {
+			return errors.New("admission replay was accepted")
+		}
+		results <- nil
+		<-ctx.Done()
+		return nil
+	})
+	forwarder := newTestForwarder(t, material)
+	var admitted atomic.Int32
+	forwarder.SetAdmissionHandler(func(_ context.Context, _ tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult {
+		admitted.Add(1)
+		return tunnelv1.AdmissionResult{Type: tunnelv1.StreamAccepted}
+	})
+	entry := forwardingTestEntry(time.Now(), server.address())
+	backend := mustOnlyBackend(t, forwarder, entry)
+	denied, ok := backend.(routebackend.DenialBackend)
+	if !ok {
+		t.Fatal("forwarding backend cannot open pending visitors")
+	}
+	connection, err := denied.OpenDenied(ingressContext(t), "visitor_connection_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	header := ingressAwait(t, ready)
+	if header.VisitorConnectionID != "visitor_connection_1" || !header.IPPolicyDenied {
+		t.Fatalf("pending visitor lost its identity: %+v", header)
+	}
+	close(proceed)
+	if err := ingressAwait(t, results); err != nil || admitted.Load() != 1 {
+		t.Fatalf("ingress admission sideband = %v, decisions=%d", err, admitted.Load())
+	}
+}
+
 func TestForwarderConvertsRoutingPolicyWithoutSharingMutableState(t *testing.T) {
 	material := newForwardingTestMaterial(t)
 	forwarder := newTestForwarder(t, material)

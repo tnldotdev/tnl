@@ -680,6 +680,11 @@ to relay and relay to ingress. each header names the visitor connection,
 publish run, connection assignment, and, at ingress, the connected relay lease.
 an acknowledgement can flow back without entering the visitor stream or
 changing visitor TLS bytes.
+relay records a pending visitor before it acknowledges ingress stream setup.
+it accepts a publisher's decision only for that live visitor, its current
+publisher connection, and its unexpired relay lease. ingress requires the
+decision to arrive on the same authenticated relay session as that visitor,
+with matching run and assignment identities. replayed decisions are rejected.
 
 ## keep local packages focused
 

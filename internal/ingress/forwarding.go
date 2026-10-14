@@ -39,6 +39,8 @@ type Forwarder struct {
 
 	mu        sync.Mutex
 	sessions  map[relaySessionKey]*relaySession
+	pending   map[string]*pendingAdmission
+	admit     func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
 	closed    bool
 	closeDone chan struct{}
 	closeErr  error
@@ -57,7 +59,23 @@ func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
 
 func newForwarder(connector relayConnector) *Forwarder {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Forwarder{connector: connector, context: ctx, cancel: cancel, sessions: make(map[relaySessionKey]*relaySession)}
+	return &Forwarder{connector: connector, context: ctx, cancel: cancel,
+		sessions: make(map[relaySessionKey]*relaySession), pending: make(map[string]*pendingAdmission)}
+}
+
+type pendingAdmission struct {
+	header  tunnelv1.InternalForwardingHeader
+	target  relayTarget
+	session *tunnel.Session
+	claimed bool
+}
+
+// SetAdmissionHandler installs the ingress server's admission boundary.
+// a missing handler rejects sideband decisions without affecting visitor bytes.
+func (f *Forwarder) SetAdmissionHandler(handler func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult) {
+	f.mu.Lock()
+	f.admit = handler
+	f.mu.Unlock()
 }
 
 // Backends preserves control's publisher-connection order. every returned
@@ -173,6 +191,7 @@ func (f *Forwarder) Close() error {
 		entries = append(entries, entry)
 	}
 	clear(f.sessions)
+	clear(f.pending)
 	f.mu.Unlock()
 	result := closeRelaySessions(entries)
 	f.mu.Lock()
@@ -215,7 +234,27 @@ func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string,
 		stream, err := session.OpenInternalForwardingStream(ctx, header)
 		b.forwarder.observe("IngressForwardingAck", err, started)
 		if err == nil {
-			return stream, nil
+			if !denied {
+				return stream, nil
+			}
+			pending := &pendingAdmission{header: header, target: b.target, session: session}
+			f := b.forwarder
+			f.mu.Lock()
+			entry := f.sessions[b.target.key()]
+			if f.closed || f.pending[visitorConnectionID] != nil || entry == nil || entry.session != session {
+				f.mu.Unlock()
+				_ = stream.Close()
+				return nil, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+			}
+			f.pending[visitorConnectionID] = pending
+			f.mu.Unlock()
+			return &admissionConn{Conn: stream, release: func() {
+				f.mu.Lock()
+				if f.pending[visitorConnectionID] == pending {
+					delete(f.pending, visitorConnectionID)
+				}
+				f.mu.Unlock()
+			}}, nil
 		}
 		var protocolError *tunnel.ProtocolError
 		if errors.As(err, &protocolError) || ctx.Err() != nil && session.Err() == nil {
@@ -234,6 +273,32 @@ func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string,
 			return nil, fmt.Errorf("ingress: open internal forwarding stream: %w", err)
 		}
 	}
+}
+
+type admissionConn struct {
+	net.Conn
+	once    sync.Once
+	release func()
+}
+
+func (c *admissionConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(c.release)
+	return err
+}
+
+func (c *admissionConn) CloseRead() error {
+	if half, ok := c.Conn.(interface{ CloseRead() error }); ok {
+		return half.CloseRead()
+	}
+	return errors.ErrUnsupported
+}
+
+func (c *admissionConn) CloseWrite() error {
+	if half, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return half.CloseWrite()
+	}
+	return errors.ErrUnsupported
 }
 
 func (b forwardingBackend) connectionSlot() string {
@@ -341,6 +406,76 @@ func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target rel
 		return
 	}
 	go f.removeWhenDone(key, entry, session)
+	go f.serveAdmission(session)
+}
+
+func (f *Forwarder) serveAdmission(session *tunnel.Session) {
+	const maxDecisions = 64
+	slots := make(chan struct{}, maxDecisions)
+	var active sync.WaitGroup
+	defer active.Wait()
+	for {
+		select {
+		case slots <- struct{}{}:
+		case <-f.context.Done():
+			return
+		}
+		incoming, err := session.AcceptIngressAdmissionStream(f.context)
+		if err != nil {
+			<-slots
+			var headerErr *tunnel.StreamHeaderError
+			if errors.As(err, &headerErr) && f.context.Err() == nil {
+				continue
+			}
+			return
+		}
+		active.Go(func() {
+			defer func() { <-slots }()
+			f.handleAdmission(session, incoming)
+		})
+	}
+}
+
+func (f *Forwarder) handleAdmission(session *tunnel.Session, incoming *tunnel.IncomingAdmissionStream) {
+	defer incoming.Stream.Close()
+	proposed := incoming.Header
+	f.mu.Lock()
+	pending := f.pending[proposed.VisitorConnectionID]
+	valid := !f.closed && pending != nil && !pending.claimed && pending.session == session
+	if valid {
+		entry := f.sessions[pending.target.key()]
+		valid = entry != nil && entry.session == session
+	}
+	if valid {
+		expected := pending.header
+		valid = proposed.Kind == tunnelv1.IngressAdmissionStream && proposed.PublicURLID == expected.PublicURLID &&
+			proposed.PublishRunID == expected.PublishRunID && proposed.PublishRunNumber == expected.PublishRunNumber &&
+			proposed.PublisherConnectionID == expected.PublisherConnectionID &&
+			proposed.ConnectionAssignmentRevision == expected.ConnectionAssignmentRevision &&
+			proposed.RelayServiceID == expected.RelayServiceID && proposed.RelayID == expected.RelayID &&
+			proposed.RelayRunID == expected.RelayRunID && proposed.RelayLeaseRevision == expected.RelayLeaseRevision
+	}
+	if valid {
+		pending.claimed = true
+	}
+	handler := f.admit
+	f.mu.Unlock()
+	if !valid {
+		_ = incoming.Reject(tunnelv1.StaleConnectionAssignment)
+		return
+	}
+	if err := incoming.Accept(); err != nil {
+		return
+	}
+	result := tunnelv1.AdmissionResult{Type: tunnelv1.StreamRejected, Code: tunnelv1.Unavailable}
+	if handler != nil {
+		result = handler(f.context, proposed)
+		if result.Validate() != nil {
+			result = tunnelv1.AdmissionResult{Type: tunnelv1.StreamRejected, Code: tunnelv1.Internal}
+		}
+	}
+	_ = incoming.Stream.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = tunnelv1.WriteAdmissionResult(incoming.Stream, result)
 }
 
 func (f *Forwarder) currentSession(key relaySessionKey, session *tunnel.Session) bool {

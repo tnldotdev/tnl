@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
@@ -149,6 +150,17 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	a.readyDelta(1)
 	// admission ends after readiness; the connection and drain loop can outlive it.
 	finishAdmission(nil)
+	admissionCtx, cancelAdmissions := context.WithCancel(ctx)
+	admissionDone := make(chan struct{})
+	go func() {
+		defer close(admissionDone)
+		a.servePublisherAdmissions(admissionCtx, session, connection, registry)
+	}()
+	defer func() {
+		cancelAdmissions()
+		_ = session.Close()
+		<-admissionDone
+	}()
 	retErr = session.HandlePublisherDrain(ctx, connection.Drain)
 	drained := retErr == nil
 	if retErr == nil {
@@ -171,6 +183,46 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		retErr = nil
 	}
 	return retErr
+}
+
+func (a *PublisherAcceptor) servePublisherAdmissions(ctx context.Context, session *tunnel.Session, connection *PublisherConnection, registry *Registry) {
+	const maxDecisions = 64
+	slots := make(chan struct{}, maxDecisions)
+	var active sync.WaitGroup
+	defer active.Wait()
+	for {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		incoming, err := session.AcceptPublisherAdmissionStream(ctx)
+		if err != nil {
+			<-slots
+			var headerErr *tunnel.StreamHeaderError
+			if errors.As(err, &headerErr) && ctx.Err() == nil {
+				continue
+			}
+			return
+		}
+		active.Go(func() {
+			defer func() { <-slots }()
+			defer incoming.Stream.Close()
+			if err := incoming.Accept(); err != nil {
+				return
+			}
+			result, err := registry.forwardAdmission(ctx, connection, incoming.Header)
+			if err != nil {
+				code := tunnelv1.Unavailable
+				var rejected *tunnel.ProtocolError
+				if errors.As(err, &rejected) {
+					code = rejected.Code
+				}
+				result = tunnelv1.AdmissionResult{Type: tunnelv1.StreamRejected, Code: code}
+			}
+			_ = tunnelv1.WriteAdmissionResult(incoming.Stream, result)
+		})
+	}
 }
 
 func (a *PublisherAcceptor) controlError(err error) error {
