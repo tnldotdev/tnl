@@ -3,6 +3,7 @@ package controlapi
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -41,11 +42,11 @@ func (h *handler) feedbackBrowserActor(request *http.Request, auth controlstate.
 		return actor, nil
 	}
 	token := base64.RawURLEncoding.EncodeToString(actor.BrowserCookieSecret)
-	session, principal, teamMember, err := h.browserSessionAccess(request, auth, token)
+	session, principal, err := h.browserSessionIdentity(request, auth, token)
 	if err != nil {
-		return actor, controlstate.ErrFeedbackAccess
+		return actor, errors.Join(controlstate.ErrFeedbackAccess, err)
 	}
-	actor.IdentityID, actor.DisplayName, actor.TeamMember = session.IdentityID, principal.displayName, teamMember
+	actor.IdentityID, actor.DisplayName = session.IdentityID, principal.displayName
 	return actor, nil
 }
 

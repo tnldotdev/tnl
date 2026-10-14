@@ -109,7 +109,7 @@ type ControlBrowserAccessHandoff struct {
 
 type ControlBrowserAccessSession struct {
 	TokenDigest       []byte
-	PreviewID         string
+	PreviewID         pgtype.Text
 	PublicURLID       string
 	IdentityID        string
 	DisplayName       string
@@ -124,7 +124,7 @@ type ControlBrowserAccessSession struct {
 type ControlBrowserLoginAttempt struct {
 	StateDigest          []byte
 	BindingDigest        []byte
-	PreviewID            string
+	PreviewID            pgtype.Text
 	PublicURLID          string
 	ReturnPath           string
 	Nonce                string
@@ -654,6 +654,10 @@ type ControlPublishRun struct {
 	ShareCapable               bool
 }
 
+type ControlPublishRunBrowserCapability struct {
+	PublishRunID string
+}
+
 type ControlPublishRunConnectionSlot struct {
 	ID                                     int64
 	PublishRunID                           string
@@ -842,6 +846,11 @@ type ControlTeam struct {
 	UpdatedAt              pgtype.Timestamptz
 	DeletedAt              pgtype.Timestamptz
 	IngressPoolID          string
+}
+
+type ControlTeamFeedbackPolicy struct {
+	TeamID        string
+	RequireSignIn bool
 }
 
 type ControlTeamInvitation struct {

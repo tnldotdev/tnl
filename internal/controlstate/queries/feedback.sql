@@ -106,11 +106,12 @@ JOIN control.public_urls AS url ON url.id = run.public_url_id
 JOIN control.preview_public_urls AS included ON included.public_url_id = url.id
 JOIN control.previews AS preview ON preview.id = included.preview_id
 WHERE run.id = sqlc.arg(publish_run_id)
-  AND preview.id = sqlc.arg(preview_id)
+  AND run.public_url_id = sqlc.arg(public_url_id)
+  AND preview.id = sqlc.arg(preview_id) AND preview.team_id = url.team_id
   AND run.publish_run_number = sqlc.arg(publish_run_number)
   AND run.publisher_expires_at > sqlc.arg(now)
   AND run.state IN ('starting', 'ready')
-   AND url.lifecycle_state = 'enabled'
+  AND url.lifecycle_state = 'enabled'
 FOR UPDATE OF run;
 
 -- name: CreatePublishRunPreview :one
@@ -141,4 +142,5 @@ WHERE share.id = sqlc.arg(share_id)
   AND cookie.token_digest = sqlc.arg(token_digest)
   AND cookie.expires_at > sqlc.arg(now)
   AND share.expires_at > sqlc.arg(now)
-  AND share.revoked_at IS NULL;
+  AND share.revoked_at IS NULL
+FOR SHARE OF share, cookie, included;

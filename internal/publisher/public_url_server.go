@@ -288,26 +288,26 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 				}
 				browser := controlv1.BrowserAccessResponse{}
-				browserPermitted := false
+				browserSignedIn := false
 				if config.BrowserAccess != nil {
-					browser, browserPermitted = config.BrowserAccess.check(request)
+					browser, browserSignedIn = config.BrowserAccess.check(request)
 				}
-				if browserPermitted {
+				if browserSignedIn {
 					request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
 				}
-				allowed := !denied || sharePermitted || browserPermitted && browser.TeamMember
+				allowed := !denied || sharePermitted || browserSignedIn && browser.VisitAllowed
 				if request.URL.Path == "/__tnl/access" {
 					if request.Method != http.MethodGet || config.PreviewID == "" {
 						http.NotFound(response, request)
 						return
 					}
-					result := previewAccessStatus(config, denied, sharePermitted, browserPermitted && browser.TeamMember, shareExpiry)
+					result := previewAccessStatus(config, denied, sharePermitted, browserSignedIn && browser.VisitAllowed, shareExpiry)
 					request = request.WithContext(context.WithValue(request.Context(), accessStatusContextKey{}, result))
 					(&feedbackHTTP{}).GetBrowserAccessStatus(response, request)
 					return
 				}
 				if !allowed {
-					if !browserPermitted && config.BrowserAccess != nil && config.BrowserAccess.shares.permitsTeamLogin() &&
+					if !browserSignedIn && config.BrowserAccess != nil && config.BrowserAccess.shares.permitsTeamLogin() &&
 						request.Method == http.MethodGet && strings.Contains(request.Header.Get("Accept"), "text/html") {
 						response.Header().Set("Cache-Control", "no-store")
 						response.Header().Set("Referrer-Policy", "no-referrer")

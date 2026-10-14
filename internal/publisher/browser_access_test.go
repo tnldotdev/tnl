@@ -15,9 +15,9 @@ import (
 )
 
 type browserAccessStub struct {
-	member bool
-	next   string
-	bridge bool
+	visitAllowed bool
+	next         string
+	bridge       bool
 }
 
 func (s *browserAccessStub) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
@@ -33,7 +33,7 @@ func (s *browserAccessStub) CheckBrowserAccess(_ context.Context, _ string, _ ui
 	if secret != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" {
 		return controlv1.BrowserAccessResponse{}, errors.New("invalid browser cookie")
 	}
-	return controlv1.BrowserAccessResponse{IdentityId: "user-one", DisplayName: "Sam", TeamMember: s.member}, nil
+	return controlv1.BrowserAccessResponse{IdentityId: "user-one", DisplayName: "Sam", VisitAllowed: s.visitAllowed}, nil
 }
 
 func (*browserAccessStub) RevokeBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
@@ -48,7 +48,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	}))
 	defer upstream.Close()
 	shares := &shareAccess{confirmed: time.Now(), teamAccessEnabled: true, shares: map[string]cachedShare{}}
-	client := &browserAccessStub{member: true}
+	client := &browserAccessStub{visitAllowed: true}
 	access := &browserAccess{client: client, previewID: "pv_0123456789abcdefghijkl", publicURLID: "url_0123456789abcdefghijkl",
 		runID: "pr_0123456789abcdefghijkl", version: 1, controlURL: "https://control.example.test", shares: shares}
 	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, ShareAccess: shares, BrowserAccess: access})
@@ -102,7 +102,12 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	if got := <-cookies; got != "app_session=ok" {
 		t.Fatalf("local app received browser credential: %q", got)
 	}
-	client.member = false
+	client.visitAllowed = false
+	session := serve("/__tnl/team/session", visitorCookie, true)
+	if session.Code != http.StatusOK || !strings.Contains(session.Body.String(), `"signed_in":true`) ||
+		!strings.Contains(session.Body.String(), `"visit_allowed":false`) || strings.Contains(session.Body.String(), "team_member") {
+		t.Fatalf("signed-in identity without visit permission = %d %s", session.Code, session.Body.String())
+	}
 	if response := serve("/settings", visitorCookie, true); response.Code != http.StatusForbidden {
 		t.Fatalf("nonmember without share or IP = %d", response.Code)
 	}

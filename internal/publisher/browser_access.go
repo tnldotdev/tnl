@@ -143,10 +143,10 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			return true
 		}
 		httpjson.Write(response, http.StatusOK, struct {
-			SignedIn    bool   `json:"signed_in"`
-			DisplayName string `json:"display_name"`
-			TeamMember  bool   `json:"team_member"`
-		}{SignedIn: true, DisplayName: result.DisplayName, TeamMember: result.TeamMember})
+			SignedIn     bool   `json:"signed_in"`
+			DisplayName  string `json:"display_name"`
+			VisitAllowed bool   `json:"visit_allowed"`
+		}{SignedIn: true, DisplayName: result.DisplayName, VisitAllowed: result.VisitAllowed})
 		return true
 	case request.URL.Path == root+"logout" && request.Method == http.MethodPost:
 		if request.Header.Get("Origin") != "https://"+request.Host {

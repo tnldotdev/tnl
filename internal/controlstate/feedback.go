@@ -64,7 +64,6 @@ type FeedbackActor struct {
 	IdentityID               string
 	DisplayName              string
 	BrowserCookieSecret      []byte
-	TeamMember               bool
 	ShareID                  string
 	CookieSecret             []byte
 	AllowedIP                bool
@@ -177,43 +176,43 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 	if err := d.requireOpen(); err != nil {
 		return FeedbackThread{}, err
 	}
-	if request.Actor.IdentityID != "" {
-		request.AuthorDisplayName = request.Actor.DisplayName
-	}
-	digestInput, err := json.Marshal(struct {
-		PreviewID, Service, PagePath, PageTitle, ReportText, AuthorDisplayName, AuthorIdentityID string
-		Anchor, Evidence, SourceAtReport                                                         json.RawMessage
-	}{request.PreviewID, request.Service, request.PagePath, request.PageTitle, request.ReportText, request.AuthorDisplayName,
-		request.Actor.IdentityID,
-		request.Anchor, request.Evidence, request.SourceAtReport})
-	if err != nil {
-		return FeedbackThread{}, ErrFeedbackInvalid
-	}
-	digest := sha256.Sum256(digestInput)
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return FeedbackThread{}, fmt.Errorf("controlstate: create feedback: begin transaction: %w", err)
 	}
 	defer rollback(ctx, tx, "create feedback", &retErr)()
 	queries := controlstatedb.New(tx)
-	// follow public URL -> publish run -> thread order during demo cleanup.
-	if _, err := queries.LockPublicURLForRun(ctx, auth.PublicURLID); err != nil {
-		return FeedbackThread{}, ErrFeedbackAccess
+	publicURL, err := lockReviewerPublicURL(ctx, queries, auth.PublicURLID)
+	if err != nil {
+		return FeedbackThread{}, err
 	}
 	scope, err := queries.FeedbackRunScope(ctx, controlstatedb.FeedbackRunScopeParams{
-		PublishRunID: auth.PublishRunID, PreviewID: request.PreviewID,
+		PublishRunID: auth.PublishRunID, PublicURLID: publicURL.ID, PreviewID: request.PreviewID,
 		PublishRunNumber: int64(auth.PublishRunNumber), Now: timestamptz(now),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (scope.PublicURLID != publicURL.ID || scope.TeamID != publicURL.TeamID) {
 		return FeedbackThread{}, ErrFeedbackAccess
 	}
 	if err != nil {
 		return FeedbackThread{}, fmt.Errorf("controlstate: resolve report publish run: %w", err)
 	}
-	actorRef, err := reviewerReference(ctx, queries, scope.PublicURLID, scope.PreviewID, request.Actor, now)
+	actor, actorRef, err := d.reviewerAccess(ctx, queries, publicURL, scope.PreviewID, request.Actor, now)
 	if err != nil {
 		return FeedbackThread{}, err
 	}
+	request.Actor = actor
+	if actor.IdentityID != "" {
+		request.AuthorDisplayName = actor.DisplayName
+	}
+	digestInput, err := json.Marshal(struct {
+		PreviewID, Service, PagePath, PageTitle, ReportText, AuthorDisplayName, AuthorIdentityID string
+		Anchor, Evidence, SourceAtReport                                                         json.RawMessage
+	}{request.PreviewID, request.Service, request.PagePath, request.PageTitle, request.ReportText, request.AuthorDisplayName,
+		actor.IdentityID, request.Anchor, request.Evidence, request.SourceAtReport})
+	if err != nil {
+		return FeedbackThread{}, ErrFeedbackInvalid
+	}
+	digest := sha256.Sum256(digestInput)
 	id, err := opaqueid.New(opaqueid.FeedbackPrefix)
 	if err != nil {
 		return FeedbackThread{}, fmt.Errorf("controlstate: create feedback ID: %w", err)
@@ -303,15 +302,11 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 	if err != nil {
 		return FeedbackEvent{}, err
 	}
-	if request.Actor.Kind == "reviewer" {
-		if _, err := queries.LockPublicURLForRun(ctx, candidate.PublicURLID); err != nil {
-			return FeedbackEvent{}, ErrFeedbackAccess
-		}
-	}
-	actorRef, err := d.authorizeFeedbackActor(ctx, queries, candidate, request.Actor, now)
+	actor, actorRef, err := d.authorizeFeedbackActor(ctx, queries, candidate, request.Actor, now)
 	if err != nil {
 		return FeedbackEvent{}, err
 	}
+	request.Actor = actor
 	thread, err := queries.LockFeedbackThread(ctx, request.FeedbackID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return FeedbackEvent{}, ErrFeedbackNotFound
@@ -377,23 +372,27 @@ func verifiedFeedbackAuthorID(actor FeedbackActor) string {
 	return actor.IdentityID
 }
 
-func (d *Database) authorizeFeedbackActor(ctx context.Context, queries *controlstatedb.Queries, thread controlstatedb.ControlFeedbackThread, actor FeedbackActor, now time.Time) (string, error) {
+func (d *Database) authorizeFeedbackActor(ctx context.Context, queries *controlstatedb.Queries, thread controlstatedb.ControlFeedbackThread, actor FeedbackActor, now time.Time) (FeedbackActor, string, error) {
 	if actor.Kind == "reviewer" {
-		return reviewerReference(ctx, queries, thread.PublicURLID, thread.PreviewID, actor, now)
+		publicURL, err := lockReviewerPublicURL(ctx, queries, thread.PublicURLID)
+		if err != nil {
+			return FeedbackActor{}, "", err
+		}
+		return d.reviewerAccess(ctx, queries, publicURL, thread.PreviewID, actor, now)
 	}
 	if actor.Kind != "implementer" || actor.IdentityID == "" || actor.PolicyRevision == 0 || actor.ExpectedMutationRevision == 0 {
-		return "", ErrFeedbackAccess
+		return FeedbackActor{}, "", ErrFeedbackAccess
 	}
 	revision := positive(actor.PolicyRevision)
 	{
 		if _, err := queries.LockLocalTeamForMutation(ctx, thread.TeamID); err != nil {
-			return "", ErrFeedbackAccess
+			return FeedbackActor{}, "", ErrFeedbackAccess
 		}
 	}
 	route, err := queries.LockPublicURLForRun(ctx, thread.PublicURLID)
 	if err != nil || route.TeamID != thread.TeamID ||
 		route.MutationRevision != int64(actor.ExpectedMutationRevision) || route.PolicyRevision > revision {
-		return "", ErrFeedbackAccess
+		return FeedbackActor{}, "", ErrFeedbackAccess
 	}
 	{
 		membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
@@ -402,89 +401,10 @@ func (d *Database) authorizeFeedbackActor(ctx context.Context, queries *controls
 		if err != nil || membership.PolicyRevision != revision ||
 			route.PublicURLScope == string(PublicURLScopeMember) && (!route.MembershipID.Valid || membership.ID != route.MembershipID.String) ||
 			route.PublicURLScope == string(PublicURLScopeShared) && membership.Role != "admin" && membership.Role != "owner" {
-			return "", ErrFeedbackAccess
+			return FeedbackActor{}, "", ErrFeedbackAccess
 		}
 	}
-	return actor.IdentityID, nil
-}
-
-func reviewerReference(ctx context.Context, queries *controlstatedb.Queries, publicURLID, previewID string, actor FeedbackActor, now time.Time) (string, error) {
-	if actor.Kind != "reviewer" {
-		return "", ErrFeedbackAccess
-	}
-	identity := ""
-	if len(actor.BrowserCookieSecret) != 0 {
-		if actor.IdentityID == "" || !validFeedbackText(actor.DisplayName, 256) || len(actor.BrowserCookieSecret) != 32 {
-			return "", ErrFeedbackAccess
-		}
-		digest := sha256.Sum256(actor.BrowserCookieSecret)
-		session, err := queries.GetBrowserAccessSession(ctx, digest[:])
-		if err != nil || session.IdentityID != actor.IdentityID || session.PreviewID != previewID ||
-			session.RevokedAt.Valid || !session.ExpiresAt.Time.After(now) {
-			return "", ErrFeedbackAccess
-		}
-		if _, err := queries.BrowserSessionPublicURLIncluded(ctx, controlstatedb.BrowserSessionPublicURLIncludedParams{
-			TokenDigest: digest[:], PublicURLID: publicURLID,
-		}); err != nil {
-			return "", ErrFeedbackAccess
-		}
-		identity = actor.IdentityID
-	} else if actor.IdentityID != "" || actor.TeamMember {
-		return "", ErrFeedbackAccess
-	}
-	if actor.AllowedIP {
-		if identity != "" {
-			return "identity:" + identity, nil
-		}
-		return "allowed_ip", nil
-	}
-	if opaqueid.Valid(actor.ShareID, opaqueid.SharePrefix) && len(actor.CookieSecret) == 32 {
-		digest := sha256.Sum256(actor.CookieSecret)
-		if _, err := queries.ReviewerShareCookieValid(ctx, controlstatedb.ReviewerShareCookieValidParams{
-			ShareID: actor.ShareID, PublicURLID: publicURLID,
-			TokenDigest: digest[:], Now: timestamptz(now),
-		}); err == nil {
-			if identity != "" {
-				return "identity:" + identity, nil
-			}
-			return actor.ShareID, nil
-		}
-	}
-	if !actor.TeamMember || identity == "" {
-		return "", ErrFeedbackAccess
-	}
-	preview, err := queries.GetPreview(ctx, previewID)
-	if err != nil || !preview.TeamAccessEnabled {
-		return "", ErrFeedbackAccess
-	}
-	return "identity:" + identity, nil
-}
-
-func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth PublishRunAuthentication, previewID string, actor FeedbackActor, now time.Time) (string, string, error) {
-	if err := validatePublishRunAuthentication(auth); err != nil {
-		return "", "", err
-	}
-	if !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) {
-		return "", "", ErrFeedbackInvalid
-	}
-	if err := d.requireOpen(); err != nil {
-		return "", "", err
-	}
-	queries := controlstatedb.New(d.pool)
-	scope, err := queries.FeedbackRunScope(ctx, controlstatedb.FeedbackRunScopeParams{
-		PublishRunID: auth.PublishRunID, PreviewID: previewID,
-		PublishRunNumber: int64(auth.PublishRunNumber), Now: timestamptz(now),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", ErrFeedbackAccess
-	}
-	if err != nil {
-		return "", "", fmt.Errorf("controlstate: read reviewer preview: %w", err)
-	}
-	if _, err := reviewerReference(ctx, queries, scope.PublicURLID, previewID, actor, now); err != nil {
-		return "", "", err
-	}
-	return scope.TeamID, scope.PublicURLID, nil
+	return actor, actor.IdentityID, nil
 }
 
 func nextFeedbackState(state FeedbackThreadState, event FeedbackEventType, actorKind string) (FeedbackThreadState, error) {
