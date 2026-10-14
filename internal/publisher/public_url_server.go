@@ -57,6 +57,7 @@ type PublicURLServerConfig struct {
 	OnCancelUnsupported func()
 	ObserveRequest      func(RequestObservation)
 	ObserveDatabase     func(DatabaseObservation)
+	ObserveRedis        func(RedisObservation)
 	InspectionMode      projectconfig.InspectionMode
 	Certificate         tls.Certificate
 	CertificatePlan     controlv1.CertificatePlan

@@ -74,6 +74,7 @@ type Config struct {
 	Limits                   ApplicationLimits
 	ObserveRequest           func(RequestObservation)
 	ObserveDatabase          func(DatabaseObservation)
+	ObserveRedis             func(RedisObservation)
 	InspectionMode           projectconfig.InspectionMode
 	AllowedIPPrefixes        []string
 	Ephemeral                bool

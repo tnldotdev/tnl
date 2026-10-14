@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/inspection"
+	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -174,6 +176,10 @@ func TestInspectSQLAndRedisListAndShowSummaries(t *testing.T) {
 		Protocol: controlv1.Redis, ReceivedAt: time.Now().UTC().Add(2 * time.Second), Origin: "tnl",
 		RedisCommand: "PING", Result: inspection.ResultOK,
 	})
+	redisObservation(recorder)(publisher.RedisObservation{
+		ReceivedAt: time.Now().UTC().Add(3 * time.Second), Command: "AUTH", Result: inspection.ResultError,
+		Duration: 3 * time.Millisecond,
+	})
 	recorder.Close()
 	var output bytes.Buffer
 	if err := run(t.Context(), []string{"inspect", "list", "--protocol=postgres", "--result=error", "--output=json"}, &output, &bytes.Buffer{}, nil); err != nil {
@@ -226,6 +232,21 @@ func TestInspectSQLAndRedisListAndShowSummaries(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &show); err != nil || show.Inspection.Redis == nil ||
 		show.Inspection.Redis.Command != "PING" || show.Inspection.Result != inspection.ResultOK {
 		t.Fatalf("Redis inspection summary = %s, %v", output.String(), err)
+	}
+	for _, args := range [][]string{
+		{"inspect", "list", "--protocol=redis", "--output=json"},
+		{"inspect", "show", "4", "--output=json"},
+		{"inspect", "list", "--protocol=redis"},
+		{"inspect", "show", "4"},
+	} {
+		output.Reset()
+		if err := run(t.Context(), args, &output, &bytes.Buffer{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.String(), "AUTH") || strings.Contains(output.String(), "testpass") ||
+			strings.Contains(output.String(), "reply_body") || strings.Contains(output.String(), "arguments") {
+			t.Fatalf("Redis inspection output for %v = %s", args, output.String())
+		}
 	}
 	if err := run(t.Context(), []string{"inspect", "list", "--protocol=mysql", "--status=500"}, &bytes.Buffer{}, &bytes.Buffer{}, nil); err == nil {
 		t.Fatal("HTTP-only status filter was accepted for MySQL")

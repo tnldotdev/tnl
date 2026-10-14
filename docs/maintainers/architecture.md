@@ -306,16 +306,18 @@ credentials, request bodies, or OAuth state. older `client-v2.db` state is not
 imported when starting `client-v3.db`.
 
 `tnl inspect` keeps numbered HTTP and supported TCP summaries in client SQLite.
-HTTP, PostgreSQL, and MySQL default to summary; `inspection.mode: none` or
+HTTP, PostgreSQL, MySQL, and Redis default to summary; `inspection.mode: none` or
 `--inspection-mode=none` disables capture. project and service inspection
 settings can override the retention (24h by default) and the per-service byte
 budget; `tnl publish` accepts `--inspection-retention` and
 `--inspection-max-bytes` for the same policy. MySQL inspection starts after
 visitor TLS and target authentication; it counts completed queries, prepared
 executions, rows, result sets, and server errors. it stops attributing results
-when a packet exchange cannot be tracked. the record contract also accepts
-Redis command names and outcomes for a later publisher observer, without
-arguments or reply bodies. SSH does not create inspection records. no protocol
+when a packet exchange cannot be tracked. Redis inspection pairs RESP2/RESP3
+commands with their replies and records only the command name, result, and
+duration. push messages are skipped; subscriptions, monitor mode, unknown
+frames, and exceeded inspection limits stop observation for that connection
+without stopping forwarding. SSH does not create inspection records. no protocol
 retains request headers, bodies, SQL statements, or Redis arguments in this
 history.
 

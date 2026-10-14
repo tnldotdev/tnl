@@ -232,6 +232,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if protocol == controlv1.Mysql || protocol == controlv1.Postgres {
 		publisherConfig.ObserveDatabase = sqlObservation(recorder)
 	}
+	if protocol == controlv1.Redis {
+		publisherConfig.ObserveRedis = redisObservation(recorder)
+	}
 	publisherConfig.InspectionMode = flags.InspectionMode
 	if oauthHostname != "" {
 		publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauthHostname, integrationGroup, tunnel.ID())

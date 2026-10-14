@@ -33,6 +33,7 @@ type tcpForwarding struct {
 	onTargetFailure     func()
 	onCancelUnsupported func()
 	observeDatabase     func(DatabaseObservation)
+	observeRedis        func(RedisObservation)
 }
 
 func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
@@ -65,6 +66,7 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 		onTargetFailure:     config.OnTargetFailure,
 		onCancelUnsupported: config.OnCancelUnsupported,
 		observeDatabase:     config.ObserveDatabase,
+		observeRedis:        config.ObserveRedis,
 	}, nil
 }
 
@@ -133,6 +135,11 @@ func (d *tcpForwarding) redis(visitor, backend net.Conn, publicTLS *tls.Config) 
 			return err
 		}
 		backend = secured
+	}
+	if d.observeRedis != nil {
+		observer := newRedisInspector(d.observeRedis)
+		defer observer.drain()
+		backend = &databaseInspectionConn{Conn: backend, observer: observer}
 	}
 	return copyTCPConnections(visitor, securedVisitor, backend, d.admission)
 }
