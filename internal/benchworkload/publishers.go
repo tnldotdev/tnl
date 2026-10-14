@@ -37,12 +37,12 @@ func (transport TransportChoice) Valid() bool {
 }
 
 type PublisherConfig struct {
-	Server, LoginToken, Domain, StateRoot, Target string
-	HostnamePrefix                                string
-	Ephemeral                                     bool
-	HTTPClient                                    *http.Client
-	RelayTLS                                      *tls.Config
-	AllowedIPPrefixes                             []string
+	Server, LoginToken, Team, Domain, StateRoot, Target string
+	HostnamePrefix                                      string
+	Ephemeral                                           bool
+	HTTPClient                                          *http.Client
+	RelayTLS                                            *tls.Config
+	AllowedIPPrefixes                                   []string
 	// mixed forces alternating QUIC/TLS-TCP cohorts; auto uses production fallback.
 	Transport                   TransportChoice
 	QUICDisablePathMTUDiscovery bool
@@ -166,19 +166,20 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	if err != nil {
 		return nil, err
 	}
-	var membership authorityv1.Membership
-	for _, member := range identity.Memberships {
-		if member.TeamId == identity.PersonalTeamId {
-			membership = member
-			break
-		}
+	teamID := config.Team
+	if teamID == "" {
+		teamID = identity.PersonalTeamId
 	}
-	if membership.Id == "" {
-		return nil, errors.New("publisher identity has no personal membership")
+	membership, err := publisherMembership(identity, teamID)
+	if err != nil {
+		return nil, err
 	}
 	team, err := auth.Authority.GetTeam(ctx, membership.TeamId)
 	if err != nil {
 		return nil, err
+	}
+	if team.Id != teamID {
+		return nil, errors.New("server returned a different publisher team")
 	}
 	domains, err := auth.Authority.ListTeamDomains(ctx, team.Id)
 	if err != nil {
@@ -210,6 +211,18 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 			TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: config.RelayTLS},
 			FallbackDelay: 250 * time.Millisecond},
 	}, nil
+}
+
+func publisherMembership(identity authorityv1.IdentityContext, teamID string) (authorityv1.Membership, error) {
+	if teamID == "" {
+		return authorityv1.Membership{}, errors.New("publisher requires a team ID")
+	}
+	for _, member := range identity.Memberships {
+		if member.TeamId == teamID && member.Id != "" && member.ManagedLabel != "" {
+			return member, nil
+		}
+	}
+	return authorityv1.Membership{}, fmt.Errorf("publisher identity has no membership in team %s", teamID)
 }
 
 func benchmarkQUICConfig(disablePathMTUDiscovery, trace bool, keepAlive time.Duration) muxsession.QUICConfig {

@@ -44,6 +44,7 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | Go races                         | `task go:test:race`                                          | No database                                                               |
 | Database and service boundaries  | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                |
 | Real TCP clients                 | `task go:test:integration:tcp-clients`                       | Docker; Task manages disposable PostgreSQL, MySQL, Redis, and SSH targets |
+| Split PostgreSQL TLS             | `task go:test:integration:postgres-tls`                      | Docker; Task manages a disposable TLS-enabled PostgreSQL target           |
 | MySQL inspection attribution     | `task go:test:integration:mysql-oracle`                      | Test-only Vitess decoder; no Docker required                              |
 | Binary behavior                  | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available  |
 | Authoritative DNS                | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers               |
@@ -53,6 +54,7 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | Python ASGI and socket contract  | `task py:check`                                              | Pinned Python and uv; uses the locked dependencies in `packages/py`       |
 | Local release snapshot           | `task package`                                               | Builds and checks packages; does not publish                              |
 | Deployed release check           | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain               |
+| Opt-in deployed visitor check    | `task staging:check:smoke` / `task staging:check:full`       | Explicit server, organization test team, binary, revision, token file     |
 
 Use `RUN` to select an integration test, for example:
 
