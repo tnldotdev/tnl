@@ -47,7 +47,12 @@ func TestIntegrationComposePublisherAppScopedNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	label := projectconfig.ApplyWorktreeHashSalt(worktree, root, salt).Label
-	config := fmt.Sprintf(`{"version":1,"tnl":{"publisher":{"type":"docker","compose":{"file":"compose.yaml","project":%q,"service":"publisher"},"container_port":3781},"services":{"web":{"target":{"type":"app"}},"api":{"target":{"type":"app"}}}}}`, label.FullLabel)
+	ownerDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerFile := filepath.Join(ownerDir, "publisher-owner")
+	config := fmt.Sprintf(`{"version":1,"tnl":{"publisher":{"type":"docker","compose":{"file":"compose.yaml","project":%q,"service":"publisher"},"container_port":3781,"owner_credential_file":%q},"services":{"web":{"target":{"type":"app"}},"api":{"target":{"type":"app"}}}}}`, label.FullLabel, ownerFile)
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -80,8 +85,12 @@ process.on("SIGTERM", () => server.close());
   publisher-app-init:
     image: tnl:publisher-dev-integration
     user: "0:0"
-    entrypoint: ["/bin/sh", "-c", "chown ${TNL_UID}:${TNL_GID} /run/tnl-apps/web /run/tnl-apps/api && chmod 0700 /run/tnl-apps/web /run/tnl-apps/api"]
-    volumes: [web-endpoint:/run/tnl-apps/web, api-endpoint:/run/tnl-apps/api]
+    entrypoint: ["/bin/sh", "-c", "chown ${TNL_UID}:${TNL_GID} /run/tnl-apps/web /run/tnl-apps/api && chmod 0700 /run/tnl-apps/web /run/tnl-apps/api && install -m 0600 -o ${TNL_UID} -g ${TNL_GID} /seed/publisher-owner ${OWNER_FILE}"]
+    volumes:
+      - web-endpoint:/run/tnl-apps/web
+      - api-endpoint:/run/tnl-apps/api
+      - "owner-credential:${OWNER_DIR}"
+      - "${OWNER_FILE}:/seed/publisher-owner:ro"
   publisher:
     image: tnl:publisher-dev-integration
     user: "${TNL_UID}:${TNL_GID}"
@@ -94,6 +103,7 @@ process.on("SIGTERM", () => server.close());
       TNL_SERVER: https://control.example.test
     volumes:
       - ${PROJECT_ROOT}:${PROJECT_ROOT}
+      - owner-credential:${OWNER_DIR}:ro
       - web-endpoint:/run/tnl-apps/web
       - api-endpoint:/run/tnl-apps/api
     tmpfs:
@@ -118,14 +128,22 @@ process.on("SIGTERM", () => server.close());
 volumes:
   web-endpoint:
   api-endpoint:
+  owner-credential:
 `
 	if err := os.WriteFile(filepath.Join(root, "compose.yaml"), []byte(compose), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	var credentialOutput, credentialDiagnostics bytes.Buffer
+	if err := run(t.Context(), []string{"project", "publisher", "credential", "create", "--state-dir", state}, &credentialOutput, &credentialDiagnostics); err != nil {
 		t.Fatal(err)
 	}
 	uid, gid := strconv.Itoa(os.Getuid()), strconv.Itoa(os.Getgid())
 	t.Setenv("TNL_UID", uid)
 	t.Setenv("TNL_GID", gid)
 	t.Setenv("PROJECT_ROOT", root)
+	t.Setenv("OWNER_DIR", ownerDir)
+	t.Setenv("OWNER_FILE", ownerFile)
 	command := func(timeout time.Duration, arguments ...string) (string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
@@ -148,7 +166,6 @@ volumes:
 	if output, err := command(90*time.Second, "up", "-d", "publisher"); err != nil {
 		t.Fatalf("start Compose publisher: %v (%s)", err, output)
 	}
-	t.Chdir(root)
 	deadline := time.Now().Add(15 * time.Second)
 	var output, diagnostics bytes.Buffer
 	for {
@@ -159,6 +176,12 @@ volumes:
 		time.Sleep(100 * time.Millisecond)
 	}
 	if err != nil {
+		if processes, processErr := command(10*time.Second, "ps", "-a"); processErr == nil {
+			t.Logf("Compose publisher/app state:\n%s", processes)
+		}
+		if permissions, statErr := command(10*time.Second, "run", "--rm", "--no-deps", "--entrypoint", "stat", "publisher", "-c", "%u:%g:%a %n", "/state", ownerFile); statErr == nil {
+			t.Logf("publisher state and owner file permissions: %s", permissions)
+		}
 		t.Fatalf("publisher did not write the app credential volume: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".tnl", "publisher-web.endpoint.json")); !os.IsNotExist(err) {

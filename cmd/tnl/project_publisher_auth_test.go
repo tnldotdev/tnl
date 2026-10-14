@@ -91,7 +91,7 @@ func TestProjectPublisherLoginKeepsAnIndependentContainerSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, _, err := startRuntimeTCPWithOptions(key, runtime.handler(), "127.0.0.1:0", owner)
+	server, _, err := startRuntimeTCPWithOptions(key, runtime.handler(), "127.0.0.1:0", owner, "")
 	if err != nil {
 		t.Fatal(err)
 	}

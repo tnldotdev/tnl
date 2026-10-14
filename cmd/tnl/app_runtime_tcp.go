@@ -53,6 +53,8 @@ type localScopeContextKey struct{}
 type localPublisherAuthorization struct {
 	mu              sync.RWMutex
 	key             string
+	appEndpointDir  string
+	appEndpointURL  string
 	endpoint        localPublisherEndpoint
 	handler         http.Handler
 	scoped          map[string]localPublisherScope
@@ -77,10 +79,10 @@ func publisherCredential() (string, error) {
 }
 
 func startRuntimeTCP(key string, handler http.Handler, services ...clientruntime.Service) (*http.Server, <-chan error, error) {
-	return startRuntimeTCPWithOptions(key, handler, "127.0.0.1:0", "", services...)
+	return startRuntimeTCPWithOptions(key, handler, "127.0.0.1:0", "", "", services...)
 }
 
-func startRuntimeTCPWithOptions(key string, handler http.Handler, listen, ownerCredential string, services ...clientruntime.Service) (*http.Server, <-chan error, error) {
+func startRuntimeTCPWithOptions(key string, handler http.Handler, listen, ownerCredential, appEndpointURL string, services ...clientruntime.Service) (*http.Server, <-chan error, error) {
 	listener, err := net.Listen("tcp", listen)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listen for local publisher requests: %w", err)
@@ -94,7 +96,12 @@ func startRuntimeTCPWithOptions(key string, handler http.Handler, listen, ownerC
 		}
 	}
 	endpoint := localPublisherEndpoint{Version: privateprotocol.Version, URL: "http://" + listener.Addr().String(), Credential: credential}
+	appEndpointDir := ""
+	if ownerCredential != "" {
+		appEndpointDir = os.Getenv("TNL_PUBLISHER_APP_ENDPOINT_DIR")
+	}
 	auth := &localPublisherAuthorization{key: key, endpoint: endpoint, handler: handler,
+		appEndpointDir: appEndpointDir, appEndpointURL: appEndpointURL,
 		scoped: map[string]localPublisherScope{}, apps: map[string]string{},
 		paths: []string{runtimeAdHocEndpointPath(key)},
 	}
@@ -147,7 +154,14 @@ func (a *localPublisherAuthorization) issueApp(service string) error {
 		}
 	}
 	path := runtimeAppEndpointPath(a.key, service)
-	if err := writeRuntimeTCPEndpoint(path, localPublisherEndpoint{Version: privateprotocol.Version, URL: a.endpoint.URL, Credential: token}); err != nil {
+	appURL := a.endpoint.URL
+	if a.appEndpointDir != "" {
+		path = filepath.Join(a.appEndpointDir, service, "publisher.endpoint.json")
+		if a.appEndpointURL != "" {
+			appURL = a.appEndpointURL
+		}
+	}
+	if err := writeRuntimeTCPEndpoint(path, localPublisherEndpoint{Version: privateprotocol.Version, URL: appURL, Credential: token}); err != nil {
 		return failure.Wrap("write app credential", failure.ClientStateUnavailable, err)
 	}
 	if a.apps[service] == "" {

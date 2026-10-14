@@ -319,6 +319,7 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	defer runtime.adhoc.Close()
 	listen := "127.0.0.1:0"
 	ownerCredential := ""
+	appEndpointURL := ""
 	if selection := project.Config.Publisher; selection != nil && selection.Type != "local" {
 		ownerCredential, err = readPublisherOwnerCredential(project.Root, selection.CredentialFile())
 		if err != nil {
@@ -326,6 +327,11 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		}
 		if selection.Type == "docker" {
 			listen = net.JoinHostPort("0.0.0.0", strconv.Itoa(*selection.ContainerPort))
+			appEndpoint, err := containerAppEndpoint(*selection, localPublisherEndpoint{})
+			if err != nil {
+				return err
+			}
+			appEndpointURL = appEndpoint.URL
 		} else {
 			if options.Listen == "" {
 				return failure.Wrap("start external publisher", failure.ProjectConfigInvalid, errors.New("url publishers require --listen behind HTTPS"))
@@ -342,7 +348,7 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	} else if options.Listen != "" {
 		return failure.Wrap("start local publisher", failure.InvalidCommand, errors.New("--listen requires a docker or url publisher in project configuration"))
 	}
-	tcpServer, tcpDone, err := startRuntimeTCPWithOptions(key, runtime.handler(), listen, ownerCredential, configuredRuntimeServices(project)...)
+	tcpServer, tcpDone, err := startRuntimeTCPWithOptions(key, runtime.handler(), listen, ownerCredential, appEndpointURL, configuredRuntimeServices(project)...)
 	if err != nil {
 		return err
 	}
