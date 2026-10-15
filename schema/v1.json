@@ -48,25 +48,6 @@
               "not": {
                 "required": ["name", "public_url"]
               }
-            },
-            {
-              "if": {
-                "properties": {
-                  "allow_all_ips": {
-                    "const": true
-                  }
-                },
-                "required": ["allow_all_ips"]
-              },
-              "then": {
-                "not": {
-                  "anyOf": [
-                    {
-                      "required": ["allow_ip"]
-                    }
-                  ]
-                }
-              }
             }
           ],
           "properties": {
@@ -82,17 +63,32 @@
               "type": "string",
               "description": "Exact public URL hostname or HTTPS origin to publish."
             },
-            "allow_ip": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array",
-              "uniqueItems": true,
-              "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
-            },
-            "allow_all_ips": {
-              "type": "boolean",
-              "description": "Allow visitors from every IP address."
+            "access": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "enum": ["restricted", "anonymous"]
+                },
+                {
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": ["restricted", "anonymous"]
+                    },
+                    "ip": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array",
+                      "maxItems": 256,
+                      "minItems": 1,
+                      "uniqueItems": true
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object"
+                }
+              ]
             },
             "ephemeral": {
               "type": "boolean",
@@ -280,25 +276,6 @@
                         "not": {
                           "required": ["name", "public_url"]
                         }
-                      },
-                      {
-                        "if": {
-                          "properties": {
-                            "allow_all_ips": {
-                              "const": true
-                            }
-                          },
-                          "required": ["allow_all_ips"]
-                        },
-                        "then": {
-                          "not": {
-                            "anyOf": [
-                              {
-                                "required": ["allow_ip"]
-                              }
-                            ]
-                          }
-                        }
                       }
                     ],
                     "properties": {
@@ -314,17 +291,32 @@
                         "type": "string",
                         "description": "Exact public URL hostname or HTTPS origin to publish."
                       },
-                      "allow_ip": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array",
-                        "uniqueItems": true,
-                        "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
-                      },
-                      "allow_all_ips": {
-                        "type": "boolean",
-                        "description": "Allow visitors from every IP address."
+                      "access": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "enum": ["restricted", "anonymous"]
+                          },
+                          {
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["restricted", "anonymous"]
+                              },
+                              "ip": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array",
+                                "maxItems": 256,
+                                "minItems": 1,
+                                "uniqueItems": true
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        ]
                       },
                       "ephemeral": {
                         "type": "boolean",
@@ -645,25 +637,6 @@
                         "not": {
                           "required": ["name", "public_url"]
                         }
-                      },
-                      {
-                        "if": {
-                          "properties": {
-                            "allow_all_ips": {
-                              "const": true
-                            }
-                          },
-                          "required": ["allow_all_ips"]
-                        },
-                        "then": {
-                          "not": {
-                            "anyOf": [
-                              {
-                                "required": ["allow_ip"]
-                              }
-                            ]
-                          }
-                        }
                       }
                     ],
                     "properties": {
@@ -679,17 +652,32 @@
                         "type": "string",
                         "description": "Exact public URL hostname or HTTPS origin to publish."
                       },
-                      "allow_ip": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array",
-                        "uniqueItems": true,
-                        "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
-                      },
-                      "allow_all_ips": {
-                        "type": "boolean",
-                        "description": "Allow visitors from every IP address."
+                      "access": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "enum": ["restricted", "anonymous"]
+                          },
+                          {
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["restricted", "anonymous"]
+                              },
+                              "ip": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array",
+                                "maxItems": 256,
+                                "minItems": 1,
+                                "uniqueItems": true
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          }
+                        ]
                       },
                       "ephemeral": {
                         "type": "boolean",
@@ -1028,25 +1016,6 @@
                 "not": {
                   "required": ["domain", "public_url"]
                 }
-              },
-              {
-                "if": {
-                  "properties": {
-                    "allow_all_ips": {
-                      "const": true
-                    }
-                  },
-                  "required": ["allow_all_ips"]
-                },
-                "then": {
-                  "not": {
-                    "anyOf": [
-                      {
-                        "required": ["allow_ip"]
-                      }
-                    ]
-                  }
-                }
               }
             ],
             "properties": {
@@ -1070,17 +1039,32 @@
                 "type": "string",
                 "description": "Exact authorized public URL hostname or HTTPS origin; mutually exclusive with name and domain."
               },
-              "allow_ip": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array",
-                "uniqueItems": true,
-                "description": "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically."
-              },
-              "allow_all_ips": {
-                "type": "boolean",
-                "description": "Allow visitors from every IP address."
+              "access": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enum": ["restricted", "anonymous"]
+                  },
+                  {
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": ["restricted", "anonymous"]
+                      },
+                      "ip": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "maxItems": 256,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  }
+                ]
               }
             },
             "additionalProperties": false,

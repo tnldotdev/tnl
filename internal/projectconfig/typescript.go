@@ -249,9 +249,7 @@ type ProjectContext struct {
 }
 
 var typeScriptKeyMappings = map[string]string{
-	"allow_ip":             "allowIP",
 	"source_ips":           "sourceIPs",
-	"allow_all_ips":        "allowAllIPs",
 	"server_name":          "serverName",
 	"ca_file":              "caFile",
 	"max_bytes":            "maxBytes",

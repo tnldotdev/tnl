@@ -7,7 +7,8 @@
     "target": "http://127.0.0.1:3000",
     "server_url": "https://control.example.test",
     "credential": "tnl_eph_test-credential",
-    "allow_ip": ["198.51.100.9/32"],
+    "access_mode": "restricted",
+    "ip": ["198.51.100.9/32"],
     "limits": {
       "requests": 20,
       "rate": { "requests": 5, "per": "1m" },

@@ -716,10 +716,29 @@ func (e SourceFileStateStatus) Valid() bool {
 	}
 }
 
+// Defines values for VisitorAccessMode.
+const (
+	Anonymous  VisitorAccessMode = "anonymous"
+	Restricted VisitorAccessMode = "restricted"
+)
+
+// Valid indicates whether the value is a known member of the VisitorAccessMode enum.
+func (e VisitorAccessMode) Valid() bool {
+	switch e {
+	case Anonymous:
+		return true
+	case Restricted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VisitorGrantKind.
 const (
 	Identity VisitorGrantKind = "identity"
 	Team     VisitorGrantKind = "team"
+	Token    VisitorGrantKind = "token"
 )
 
 // Valid indicates whether the value is a known member of the VisitorGrantKind enum.
@@ -728,6 +747,8 @@ func (e VisitorGrantKind) Valid() bool {
 	case Identity:
 		return true
 	case Team:
+		return true
+	case Token:
 		return true
 	default:
 		return false
@@ -901,9 +922,9 @@ type AdminServerStatusRole string
 
 // AllocateEphemeralPublicURLRequest defines model for AllocateEphemeralPublicURLRequest.
 type AllocateEphemeralPublicURLRequest struct {
-	AllowAllIps  *bool                       `json:"allow_all_ips,omitempty"`
-	AllowIp      *[]string                   `json:"allow_ip,omitempty"`
+	AccessMode   *VisitorAccessMode          `json:"access_mode,omitempty"`
 	InvocationId ResourceID                  `json:"invocation_id"`
+	Ip           *[]string                   `json:"ip,omitempty"`
 	Limits       *PublisherApplicationLimits `json:"limits,omitempty"`
 
 	// Target Local service address, such as http://app.internal:3000.
@@ -1115,6 +1136,7 @@ type CreatePreviewRequest struct {
 
 // CreatePublicURLRequest defines model for CreatePublicURLRequest.
 type CreatePublicURLRequest struct {
+	AccessMode        *VisitorAccessMode        `json:"access_mode,omitempty"`
 	AllowedIpPrefixes *[]string                 `json:"allowed_ip_prefixes,omitempty"`
 	CanonicalHostname CanonicalHostname         `json:"canonical_hostname"`
 	DomainId          DomainID                  `json:"domain_id"`
@@ -1171,6 +1193,13 @@ type CreateTeamVisitorGrantRequest struct {
 type CreateVisitorInvitationRequest struct {
 	Email       string    `json:"email"`
 	ExpiresAt   time.Time `json:"expires_at"`
+	TokenDigest string    `json:"token_digest"`
+}
+
+// CreateVisitorTokenRequest defines model for CreateVisitorTokenRequest.
+type CreateVisitorTokenRequest struct {
+	ExpiresAt   time.Time `json:"expires_at"`
+	Label       string    `json:"label"`
 	TokenDigest string    `json:"token_digest"`
 }
 
@@ -1287,11 +1316,12 @@ type FeedbackReport struct {
 
 // FeedbackReviewerAccess defines model for FeedbackReviewerAccess.
 type FeedbackReviewerAccess struct {
-	AllowedIp           bool     `json:"allowed_ip"`
 	BrowserCookieSecret *string  `json:"browser_cookie_secret,omitempty"`
 	CookieSecret        *string  `json:"cookie_secret,omitempty"`
 	ShareId             *ShareID `json:"share_id,omitempty"`
 	SourceIp            *string  `json:"source_ip,omitempty"`
+	VisitAllowed        bool     `json:"visit_allowed"`
+	VisitorToken        *string  `json:"visitor_token,omitempty"`
 }
 
 // FeedbackScope defines model for FeedbackScope.
@@ -1392,6 +1422,7 @@ type HTTPVisitorRequest struct {
 	ShareCookieSecret   *string `json:"share_cookie_secret,omitempty"`
 	ShareId             *string `json:"share_id,omitempty"`
 	SourceIp            string  `json:"source_ip"`
+	VisitorToken        *string `json:"visitor_token,omitempty"`
 }
 
 // HTTPVisitorResponse defines model for HTTPVisitorResponse.
@@ -1487,6 +1518,7 @@ type ProblemCode string
 
 // PublicURL defines model for PublicURL.
 type PublicURL struct {
+	AccessMode           VisitorAccessMode       `json:"access_mode"`
 	AllowedIpPrefixes    *[]string               `json:"allowed_ip_prefixes,omitempty"`
 	CanonicalHostname    CanonicalHostname       `json:"canonical_hostname"`
 	CreatedAt            time.Time               `json:"created_at"`
@@ -1496,6 +1528,7 @@ type PublicURL struct {
 	Id                   PublicURLID             `json:"id"`
 	LifecycleState       PublicURLLifecycleState `json:"lifecycle_state"`
 	MembershipId         *MembershipID           `json:"membership_id,omitempty"`
+	MutationRevision     int64                   `json:"mutation_revision"`
 	NextPublishRunNumber int64                   `json:"next_publish_run_number"`
 	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
 	PolicyRevision       int64                   `json:"policy_revision"`
@@ -1716,6 +1749,13 @@ type RelayID = ResourceID
 // RelayServiceID defines model for RelayServiceID.
 type RelayServiceID = ResourceID
 
+// ReplaceVisitorAccessRequest defines model for ReplaceVisitorAccessRequest.
+type ReplaceVisitorAccessRequest struct {
+	ExpectedRevision int64             `json:"expected_revision"`
+	Ip               []string          `json:"ip"`
+	Mode             VisitorAccessMode `json:"mode"`
+}
+
 // ResourceID defines model for ResourceID.
 type ResourceID = string
 
@@ -1861,6 +1901,9 @@ type UpdatePublicURLRequest struct {
 	Target string `json:"target"`
 }
 
+// VisitorAccessMode defines model for VisitorAccessMode.
+type VisitorAccessMode string
+
 // VisitorCertificate defines model for VisitorCertificate.
 type VisitorCertificate struct {
 	CertificatePem string      `json:"certificate_pem"`
@@ -1876,25 +1919,13 @@ type VisitorGrant struct {
 	Id          string           `json:"id"`
 	IdentityId  *string          `json:"identity_id,omitempty"`
 	Kind        VisitorGrantKind `json:"kind"`
+	Label       *string          `json:"label,omitempty"`
 	PublicUrlId PublicURLID      `json:"public_url_id"`
 	RevokedAt   *time.Time       `json:"revoked_at,omitempty"`
 }
 
 // VisitorGrantKind defines model for VisitorGrant.Kind.
 type VisitorGrantKind string
-
-// VisitorIPGrant defines model for VisitorIPGrant.
-type VisitorIPGrant struct {
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	Id        string     `json:"id"`
-	Prefix    string     `json:"prefix"`
-}
-
-// VisitorIPGrantInput defines model for VisitorIPGrantInput.
-type VisitorIPGrantInput struct {
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	Prefix    string     `json:"prefix"`
-}
 
 // VisitorInvitation defines model for VisitorInvitation.
 type VisitorInvitation struct {
@@ -2042,8 +2073,10 @@ type CreateVisitorInvitationParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
-// SetVisitorIPGrantsJSONBody defines parameters for SetVisitorIPGrants.
-type SetVisitorIPGrantsJSONBody = []VisitorIPGrantInput
+// CreateVisitorTokenParams defines parameters for CreateVisitorToken.
+type CreateVisitorTokenParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
 
 // CreateCertificateIssuanceParams defines parameters for CreateCertificateIssuance.
 type CreateCertificateIssuanceParams struct {
@@ -2130,6 +2163,9 @@ type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
 // UpdatePublicURLJSONRequestBody defines body for UpdatePublicURL for application/json ContentType.
 type UpdatePublicURLJSONRequestBody = UpdatePublicURLRequest
 
+// ReplaceVisitorAccessJSONRequestBody defines body for ReplaceVisitorAccess for application/json ContentType.
+type ReplaceVisitorAccessJSONRequestBody = ReplaceVisitorAccessRequest
+
 // CreatePublishRunJSONRequestBody defines body for CreatePublishRun for application/json ContentType.
 type CreatePublishRunJSONRequestBody = CreatePublishRunRequest
 
@@ -2142,11 +2178,8 @@ type CreateTeamVisitorGrantJSONRequestBody = CreateTeamVisitorGrantRequest
 // CreateVisitorInvitationJSONRequestBody defines body for CreateVisitorInvitation for application/json ContentType.
 type CreateVisitorInvitationJSONRequestBody = CreateVisitorInvitationRequest
 
-// AddVisitorIPGrantJSONRequestBody defines body for AddVisitorIPGrant for application/json ContentType.
-type AddVisitorIPGrantJSONRequestBody = VisitorIPGrantInput
-
-// SetVisitorIPGrantsJSONRequestBody defines body for SetVisitorIPGrants for application/json ContentType.
-type SetVisitorIPGrantsJSONRequestBody = SetVisitorIPGrantsJSONBody
+// CreateVisitorTokenJSONRequestBody defines body for CreateVisitorToken for application/json ContentType.
+type CreateVisitorTokenJSONRequestBody = CreateVisitorTokenRequest
 
 // CheckPreviewBrowserAccessJSONRequestBody defines body for CheckPreviewBrowserAccess for application/json ContentType.
 type CheckPreviewBrowserAccessJSONRequestBody = BrowserAccessRequest
@@ -2594,6 +2627,20 @@ type ClientInterface interface {
 	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 	UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReplaceVisitorAccessWithBody Replace the complete live visitor access policy
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
+	ReplaceVisitorAccessWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReplaceVisitorAccess Replace the complete live visitor access policy
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
+	ReplaceVisitorAccess(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreatePublishRunWithBody Create a publish run and allocate its publish run number
 	//
 	// Takes any type of body and a specified content type.
@@ -2644,27 +2691,13 @@ type ClientInterface interface {
 	// RevokeVisitorInvitation performs a DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId) request.
 	RevokeVisitorInvitation(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListVisitorIPGrants performs a GET /v1/public-urls/{public_url_id}/visitor-ip (the `ListVisitorIPGrants` operationId) request.
-	ListVisitorIPGrants(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AddVisitorIPGrantWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-ip (the `AddVisitorIPGrant` operationId) request,
+	// CreateVisitorTokenWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request,
 	// with any type of body and a specified content type.
-	AddVisitorIPGrantWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateVisitorTokenWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AddVisitorIPGrant performs a POST /v1/public-urls/{public_url_id}/visitor-ip (the `AddVisitorIPGrant` operationId) request.
+	// CreateVisitorToken performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request.
 	// Takes a body of the `application/json` content type.
-	AddVisitorIPGrant(ctx context.Context, publicUrlId PublicURLID, body AddVisitorIPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SetVisitorIPGrantsWithBody performs a PUT /v1/public-urls/{public_url_id}/visitor-ip (the `SetVisitorIPGrants` operationId) request,
-	// with any type of body and a specified content type.
-	SetVisitorIPGrantsWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SetVisitorIPGrants performs a PUT /v1/public-urls/{public_url_id}/visitor-ip (the `SetVisitorIPGrants` operationId) request.
-	// Takes a body of the `application/json` content type.
-	SetVisitorIPGrants(ctx context.Context, publicUrlId PublicURLID, body SetVisitorIPGrantsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RemoveVisitorIPGrant performs a DELETE /v1/public-urls/{public_url_id}/visitor-ip/{grant_id} (the `RemoveVisitorIPGrant` operationId) request.
-	RemoveVisitorIPGrant(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateVisitorToken(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, body CreateVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClosePublishRun Close and drain a publish run without deleting its public URL
 	//
@@ -3671,6 +3704,40 @@ func (c *Client) UpdatePublicURL(ctx context.Context, publicUrlId PublicURLID, b
 	return c.Client.Do(req)
 }
 
+// ReplaceVisitorAccessWithBody Replace the complete live visitor access policy
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
+func (c *Client) ReplaceVisitorAccessWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceVisitorAccessRequestWithBody(c.Server, publicUrlId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReplaceVisitorAccess Replace the complete live visitor access policy
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
+func (c *Client) ReplaceVisitorAccess(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceVisitorAccessRequest(c.Server, publicUrlId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CreatePublishRunWithBody Create a publish run and allocate its publish run number
 //
 // Takes any type of body and a specified content type.
@@ -3841,23 +3908,10 @@ func (c *Client) RevokeVisitorInvitation(ctx context.Context, publicUrlId Public
 	return c.Client.Do(req)
 }
 
-// ListVisitorIPGrants performs a GET /v1/public-urls/{public_url_id}/visitor-ip (the `ListVisitorIPGrants` operationId) request.
-func (c *Client) ListVisitorIPGrants(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListVisitorIPGrantsRequest(c.Server, publicUrlId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AddVisitorIPGrantWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-ip (the `AddVisitorIPGrant` operationId) request,
+// CreateVisitorTokenWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request,
 // with any type of body and a specified content type.
-func (c *Client) AddVisitorIPGrantWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAddVisitorIPGrantRequestWithBody(c.Server, publicUrlId, contentType, body)
+func (c *Client) CreateVisitorTokenWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVisitorTokenRequestWithBody(c.Server, publicUrlId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3868,51 +3922,10 @@ func (c *Client) AddVisitorIPGrantWithBody(ctx context.Context, publicUrlId Publ
 	return c.Client.Do(req)
 }
 
-// AddVisitorIPGrant performs a POST /v1/public-urls/{public_url_id}/visitor-ip (the `AddVisitorIPGrant` operationId) request.
+// CreateVisitorToken performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request.
 // Takes a body of the `application/json` content type.
-func (c *Client) AddVisitorIPGrant(ctx context.Context, publicUrlId PublicURLID, body AddVisitorIPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAddVisitorIPGrantRequest(c.Server, publicUrlId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// SetVisitorIPGrantsWithBody performs a PUT /v1/public-urls/{public_url_id}/visitor-ip (the `SetVisitorIPGrants` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) SetVisitorIPGrantsWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetVisitorIPGrantsRequestWithBody(c.Server, publicUrlId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// SetVisitorIPGrants performs a PUT /v1/public-urls/{public_url_id}/visitor-ip (the `SetVisitorIPGrants` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) SetVisitorIPGrants(ctx context.Context, publicUrlId PublicURLID, body SetVisitorIPGrantsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetVisitorIPGrantsRequest(c.Server, publicUrlId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RemoveVisitorIPGrant performs a DELETE /v1/public-urls/{public_url_id}/visitor-ip/{grant_id} (the `RemoveVisitorIPGrant` operationId) request.
-func (c *Client) RemoveVisitorIPGrant(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRemoveVisitorIPGrantRequest(c.Server, publicUrlId, grantId)
+func (c *Client) CreateVisitorToken(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, body CreateVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVisitorTokenRequest(c.Server, publicUrlId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6265,6 +6278,53 @@ func NewUpdatePublicURLRequestWithBody(server string, publicUrlId PublicURLID, c
 	return req, nil
 }
 
+// NewReplaceVisitorAccessRequest calls the generic ReplaceVisitorAccess builder with application/json body
+func NewReplaceVisitorAccessRequest(server string, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReplaceVisitorAccessRequestWithBody(server, publicUrlId, "application/json", bodyReader)
+}
+
+// NewReplaceVisitorAccessRequestWithBody constructs an http.Request for the ReplaceVisitorAccess method, with any body, and a specified content type
+func NewReplaceVisitorAccessRequestWithBody(server string, publicUrlId PublicURLID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/public-urls/%s/access", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCreatePublishRunRequest calls the generic CreatePublishRun builder with application/json body
 func NewCreatePublishRunRequest(server string, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -6651,53 +6711,19 @@ func NewRevokeVisitorInvitationRequest(server string, publicUrlId PublicURLID, i
 	return req, nil
 }
 
-// NewListVisitorIPGrantsRequest constructs an http.Request for the ListVisitorIPGrants method
-func NewListVisitorIPGrantsRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-ip", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewAddVisitorIPGrantRequest calls the generic AddVisitorIPGrant builder with application/json body
-func NewAddVisitorIPGrantRequest(server string, publicUrlId PublicURLID, body AddVisitorIPGrantJSONRequestBody) (*http.Request, error) {
+// NewCreateVisitorTokenRequest calls the generic CreateVisitorToken builder with application/json body
+func NewCreateVisitorTokenRequest(server string, publicUrlId PublicURLID, params *CreateVisitorTokenParams, body CreateVisitorTokenJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewAddVisitorIPGrantRequestWithBody(server, publicUrlId, "application/json", bodyReader)
+	return NewCreateVisitorTokenRequestWithBody(server, publicUrlId, params, "application/json", bodyReader)
 }
 
-// NewAddVisitorIPGrantRequestWithBody constructs an http.Request for the AddVisitorIPGrant method, with any body, and a specified content type
-func NewAddVisitorIPGrantRequestWithBody(server string, publicUrlId PublicURLID, contentType string, body io.Reader) (*http.Request, error) {
+// NewCreateVisitorTokenRequestWithBody constructs an http.Request for the CreateVisitorToken method, with any body, and a specified content type
+func NewCreateVisitorTokenRequestWithBody(server string, publicUrlId PublicURLID, params *CreateVisitorTokenParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -6712,7 +6738,7 @@ func NewAddVisitorIPGrantRequestWithBody(server string, publicUrlId PublicURLID,
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-ip", pathParam0)
+	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-tokens", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -6729,92 +6755,17 @@ func NewAddVisitorIPGrantRequestWithBody(server string, publicUrlId PublicURLID,
 
 	req.Header.Add("Content-Type", contentType)
 
-	return req, nil
-}
+	if params != nil {
 
-// NewSetVisitorIPGrantsRequest calls the generic SetVisitorIPGrants builder with application/json body
-func NewSetVisitorIPGrantsRequest(server string, publicUrlId PublicURLID, body SetVisitorIPGrantsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewSetVisitorIPGrantsRequestWithBody(server, publicUrlId, "application/json", bodyReader)
-}
+		var headerParam0 string
 
-// NewSetVisitorIPGrantsRequestWithBody constructs an http.Request for the SetVisitorIPGrants method, with any body, and a specified content type
-func NewSetVisitorIPGrantsRequestWithBody(server string, publicUrlId PublicURLID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
 
-	var pathParam0 string
+		req.Header.Set("Idempotency-Key", headerParam0)
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-ip", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRemoveVisitorIPGrantRequest constructs an http.Request for the RemoveVisitorIPGrant method
-func NewRemoveVisitorIPGrantRequest(server string, publicUrlId PublicURLID, grantId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "grant_id", grantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-ip/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
 	}
 
 	return req, nil
@@ -8762,6 +8713,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /v1/public-urls/{public_url_id} (the `UpdatePublicURL` operationId).
 	UpdatePublicURLWithResponse(ctx context.Context, publicUrlId PublicURLID, body UpdatePublicURLJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublicURLResponse, error)
 
+	// ReplaceVisitorAccessWithBodyWithResponse Replace the complete live visitor access policy
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
+	ReplaceVisitorAccessWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceVisitorAccessResponse, error)
+
+	// ReplaceVisitorAccessWithResponse Replace the complete live visitor access policy
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
+	ReplaceVisitorAccessWithResponse(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceVisitorAccessResponse, error)
+
 	// CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -8826,35 +8791,15 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	RevokeVisitorInvitationWithResponse(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*RevokeVisitorInvitationResponse, error)
 
-	// ListVisitorIPGrantsWithResponse performs a GET /v1/public-urls/{public_url_id}/visitor-ip (the `ListVisitorIPGrants` operationId) request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	ListVisitorIPGrantsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListVisitorIPGrantsResponse, error)
-
-	// AddVisitorIPGrantWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-ip (the `AddVisitorIPGrant` operationId) request,
+	// CreateVisitorTokenWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request,
 	// with any type of body and a specified content type.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	AddVisitorIPGrantWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddVisitorIPGrantResponse, error)
+	CreateVisitorTokenWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorTokenResponse, error)
 
-	// AddVisitorIPGrantWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-ip (the `AddVisitorIPGrant` operationId) request.
+	// CreateVisitorTokenWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	AddVisitorIPGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, body AddVisitorIPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVisitorIPGrantResponse, error)
-
-	// SetVisitorIPGrantsWithBodyWithResponse performs a PUT /v1/public-urls/{public_url_id}/visitor-ip (the `SetVisitorIPGrants` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	SetVisitorIPGrantsWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetVisitorIPGrantsResponse, error)
-
-	// SetVisitorIPGrantsWithResponse performs a PUT /v1/public-urls/{public_url_id}/visitor-ip (the `SetVisitorIPGrants` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	SetVisitorIPGrantsWithResponse(ctx context.Context, publicUrlId PublicURLID, body SetVisitorIPGrantsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetVisitorIPGrantsResponse, error)
-
-	// RemoveVisitorIPGrantWithResponse performs a DELETE /v1/public-urls/{public_url_id}/visitor-ip/{grant_id} (the `RemoveVisitorIPGrant` operationId) request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RemoveVisitorIPGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*RemoveVisitorIPGrantResponse, error)
+	CreateVisitorTokenWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, body CreateVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorTokenResponse, error)
 
 	// ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
 	//
@@ -10744,6 +10689,54 @@ func (r UpdatePublicURLResponse) ContentType() string {
 	return ""
 }
 
+type ReplaceVisitorAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicURL
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReplaceVisitorAccessResponse) GetJSON200() *PublicURL {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReplaceVisitorAccessResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReplaceVisitorAccessResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReplaceVisitorAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReplaceVisitorAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReplaceVisitorAccessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CreatePublishRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -11114,80 +11107,32 @@ func (r RevokeVisitorInvitationResponse) ContentType() string {
 	return ""
 }
 
-type ListVisitorIPGrantsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]VisitorIPGrant
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListVisitorIPGrantsResponse) GetJSON200() *[]VisitorIPGrant {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListVisitorIPGrantsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListVisitorIPGrantsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListVisitorIPGrantsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListVisitorIPGrantsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListVisitorIPGrantsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AddVisitorIPGrantResponse struct {
+type CreateVisitorTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *[]VisitorIPGrant
+	JSON201 *VisitorGrant
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r AddVisitorIPGrantResponse) GetJSON201() *[]VisitorIPGrant {
+func (r CreateVisitorTokenResponse) GetJSON201() *VisitorGrant {
 	return r.JSON201
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AddVisitorIPGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r CreateVisitorTokenResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r AddVisitorIPGrantResponse) GetBody() []byte {
+func (r CreateVisitorTokenResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r AddVisitorIPGrantResponse) Status() string {
+func (r CreateVisitorTokenResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -11195,7 +11140,7 @@ func (r AddVisitorIPGrantResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r AddVisitorIPGrantResponse) StatusCode() int {
+func (r CreateVisitorTokenResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11203,96 +11148,7 @@ func (r AddVisitorIPGrantResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AddVisitorIPGrantResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type SetVisitorIPGrantsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]VisitorIPGrant
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r SetVisitorIPGrantsResponse) GetJSON200() *[]VisitorIPGrant {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r SetVisitorIPGrantsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r SetVisitorIPGrantsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r SetVisitorIPGrantsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r SetVisitorIPGrantsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r SetVisitorIPGrantsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RemoveVisitorIPGrantResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RemoveVisitorIPGrantResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RemoveVisitorIPGrantResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RemoveVisitorIPGrantResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RemoveVisitorIPGrantResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RemoveVisitorIPGrantResponse) ContentType() string {
+func (r CreateVisitorTokenResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -13452,6 +13308,32 @@ func (c *ClientWithResponses) UpdatePublicURLWithResponse(ctx context.Context, p
 	return ParseUpdatePublicURLResponse(rsp)
 }
 
+// ReplaceVisitorAccessWithBodyWithResponse Replace the complete live visitor access policy
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
+func (c *ClientWithResponses) ReplaceVisitorAccessWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceVisitorAccessResponse, error) {
+	rsp, err := c.ReplaceVisitorAccessWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceVisitorAccessResponse(rsp)
+}
+
+// ReplaceVisitorAccessWithResponse Replace the complete live visitor access policy
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
+func (c *ClientWithResponses) ReplaceVisitorAccessWithResponse(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceVisitorAccessResponse, error) {
+	rsp, err := c.ReplaceVisitorAccess(ctx, publicUrlId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReplaceVisitorAccessResponse(rsp)
+}
+
 // CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -13588,70 +13470,26 @@ func (c *ClientWithResponses) RevokeVisitorInvitationWithResponse(ctx context.Co
 	return ParseRevokeVisitorInvitationResponse(rsp)
 }
 
-// ListVisitorIPGrantsWithResponse performs a GET /v1/public-urls/{public_url_id}/visitor-ip (the `ListVisitorIPGrants` operationId) request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ListVisitorIPGrantsWithResponse(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*ListVisitorIPGrantsResponse, error) {
-	rsp, err := c.ListVisitorIPGrants(ctx, publicUrlId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListVisitorIPGrantsResponse(rsp)
-}
-
-// AddVisitorIPGrantWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-ip (the `AddVisitorIPGrant` operationId) request,
+// CreateVisitorTokenWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request,
 // with any type of body and a specified content type.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AddVisitorIPGrantWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddVisitorIPGrantResponse, error) {
-	rsp, err := c.AddVisitorIPGrantWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) CreateVisitorTokenWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorTokenResponse, error) {
+	rsp, err := c.CreateVisitorTokenWithBody(ctx, publicUrlId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseAddVisitorIPGrantResponse(rsp)
+	return ParseCreateVisitorTokenResponse(rsp)
 }
 
-// AddVisitorIPGrantWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-ip (the `AddVisitorIPGrant` operationId) request.
+// CreateVisitorTokenWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AddVisitorIPGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, body AddVisitorIPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVisitorIPGrantResponse, error) {
-	rsp, err := c.AddVisitorIPGrant(ctx, publicUrlId, body, reqEditors...)
+func (c *ClientWithResponses) CreateVisitorTokenWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, body CreateVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorTokenResponse, error) {
+	rsp, err := c.CreateVisitorToken(ctx, publicUrlId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseAddVisitorIPGrantResponse(rsp)
-}
-
-// SetVisitorIPGrantsWithBodyWithResponse performs a PUT /v1/public-urls/{public_url_id}/visitor-ip (the `SetVisitorIPGrants` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) SetVisitorIPGrantsWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetVisitorIPGrantsResponse, error) {
-	rsp, err := c.SetVisitorIPGrantsWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetVisitorIPGrantsResponse(rsp)
-}
-
-// SetVisitorIPGrantsWithResponse performs a PUT /v1/public-urls/{public_url_id}/visitor-ip (the `SetVisitorIPGrants` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) SetVisitorIPGrantsWithResponse(ctx context.Context, publicUrlId PublicURLID, body SetVisitorIPGrantsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetVisitorIPGrantsResponse, error) {
-	rsp, err := c.SetVisitorIPGrants(ctx, publicUrlId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetVisitorIPGrantsResponse(rsp)
-}
-
-// RemoveVisitorIPGrantWithResponse performs a DELETE /v1/public-urls/{public_url_id}/visitor-ip/{grant_id} (the `RemoveVisitorIPGrant` operationId) request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RemoveVisitorIPGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*RemoveVisitorIPGrantResponse, error) {
-	rsp, err := c.RemoveVisitorIPGrant(ctx, publicUrlId, grantId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRemoveVisitorIPGrantResponse(rsp)
+	return ParseCreateVisitorTokenResponse(rsp)
 }
 
 // ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
@@ -15406,6 +15244,39 @@ func ParseUpdatePublicURLResponse(rsp *http.Response) (*UpdatePublicURLResponse,
 	return response, nil
 }
 
+// ParseReplaceVisitorAccessResponse parses an HTTP response from a ReplaceVisitorAccessWithResponse call
+func ParseReplaceVisitorAccessResponse(rsp *http.Response) (*ReplaceVisitorAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReplaceVisitorAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicURL
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreatePublishRunResponse parses an HTTP response from a CreatePublishRunWithResponse call
 func ParseCreatePublishRunResponse(rsp *http.Response) (*CreatePublishRunResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -15662,121 +15533,26 @@ func ParseRevokeVisitorInvitationResponse(rsp *http.Response) (*RevokeVisitorInv
 	return response, nil
 }
 
-// ParseListVisitorIPGrantsResponse parses an HTTP response from a ListVisitorIPGrantsWithResponse call
-func ParseListVisitorIPGrantsResponse(rsp *http.Response) (*ListVisitorIPGrantsResponse, error) {
+// ParseCreateVisitorTokenResponse parses an HTTP response from a CreateVisitorTokenWithResponse call
+func ParseCreateVisitorTokenResponse(rsp *http.Response) (*CreateVisitorTokenResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ListVisitorIPGrantsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []VisitorIPGrant
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAddVisitorIPGrantResponse parses an HTTP response from a AddVisitorIPGrantWithResponse call
-func ParseAddVisitorIPGrantResponse(rsp *http.Response) (*AddVisitorIPGrantResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AddVisitorIPGrantResponse{
+	response := &CreateVisitorTokenResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest []VisitorIPGrant
+		var dest VisitorGrant
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseSetVisitorIPGrantsResponse parses an HTTP response from a SetVisitorIPGrantsWithResponse call
-func ParseSetVisitorIPGrantsResponse(rsp *http.Response) (*SetVisitorIPGrantsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &SetVisitorIPGrantsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []VisitorIPGrant
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRemoveVisitorIPGrantResponse parses an HTTP response from a RemoveVisitorIPGrantWithResponse call
-func ParseRemoveVisitorIPGrantResponse(rsp *http.Response) (*RemoveVisitorIPGrantResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RemoveVisitorIPGrantResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -17019,6 +16795,9 @@ type ServerInterface interface {
 	// UpdatePublicURL Update a public URL's target and IP policy
 	// (PATCH /v1/public-urls/{public_url_id})
 	UpdatePublicURL(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
+	// ReplaceVisitorAccess Replace the complete live visitor access policy
+	// (PUT /v1/public-urls/{public_url_id}/access)
+	ReplaceVisitorAccess(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
 	// CreatePublishRun Create a publish run and allocate its publish run number
 	// (POST /v1/public-urls/{public_url_id}/publish-runs)
 	CreatePublishRun(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreatePublishRunParams)
@@ -17044,17 +16823,8 @@ type ServerInterface interface {
 	// (DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id})
 	RevokeVisitorInvitation(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, invitationId string)
 
-	// (GET /v1/public-urls/{public_url_id}/visitor-ip)
-	ListVisitorIPGrants(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-
-	// (POST /v1/public-urls/{public_url_id}/visitor-ip)
-	AddVisitorIPGrant(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-
-	// (PUT /v1/public-urls/{public_url_id}/visitor-ip)
-	SetVisitorIPGrants(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-
-	// (DELETE /v1/public-urls/{public_url_id}/visitor-ip/{grant_id})
-	RemoveVisitorIPGrant(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, grantId string)
+	// (POST /v1/public-urls/{public_url_id}/visitor-tokens)
+	CreateVisitorToken(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreateVisitorTokenParams)
 	// ClosePublishRun Close and drain a publish run without deleting its public URL
 	// (DELETE /v1/publish-runs/{publish_run_id})
 	ClosePublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
@@ -18176,6 +17946,32 @@ func (siw *ServerInterfaceWrapper) UpdatePublicURL(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// ReplaceVisitorAccess operation middleware
+func (siw *ServerInterfaceWrapper) ReplaceVisitorAccess(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReplaceVisitorAccess(w, r, publicUrlId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreatePublishRun operation middleware
 func (siw *ServerInterfaceWrapper) CreatePublishRun(w http.ResponseWriter, r *http.Request) {
 
@@ -18509,8 +18305,8 @@ func (siw *ServerInterfaceWrapper) RevokeVisitorInvitation(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
-// ListVisitorIPGrants operation middleware
-func (siw *ServerInterfaceWrapper) ListVisitorIPGrants(w http.ResponseWriter, r *http.Request) {
+// CreateVisitorToken operation middleware
+func (siw *ServerInterfaceWrapper) CreateVisitorToken(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
@@ -18524,95 +18320,36 @@ func (siw *ServerInterfaceWrapper) ListVisitorIPGrants(w http.ResponseWriter, r 
 		return
 	}
 
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListVisitorIPGrants(w, r, publicUrlId)
-	}))
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateVisitorTokenParams
 
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
+	headers := r.Header
 
-	handler.ServeHTTP(w, r)
-}
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
 
-// AddVisitorIPGrant operation middleware
-func (siw *ServerInterfaceWrapper) AddVisitorIPGrant(w http.ResponseWriter, r *http.Request) {
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
 
-	var err error
-	_ = err
+		params.IdempotencyKey = IdempotencyKey
 
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AddVisitorIPGrant(w, r, publicUrlId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// SetVisitorIPGrants operation middleware
-func (siw *ServerInterfaceWrapper) SetVisitorIPGrants(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SetVisitorIPGrants(w, r, publicUrlId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RemoveVisitorIPGrant operation middleware
-func (siw *ServerInterfaceWrapper) RemoveVisitorIPGrant(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "grant_id" -------------
-	var grantId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "grant_id", r.PathValue("grant_id"), &grantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "grant_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RemoveVisitorIPGrant(w, r, publicUrlId, grantId)
+		siw.Handler.CreateVisitorToken(w, r, publicUrlId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19782,15 +19519,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/visitor/public-urls", wrapper.ListAvailablePublicURLs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.ListVisitorGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.CreateTeamVisitorGrant)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-tokens", wrapper.CreateVisitorToken)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants/{grant_id}", wrapper.RevokeVisitorGrant)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-invitations", wrapper.ListVisitorInvitations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-invitations", wrapper.CreateVisitorInvitation)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id}", wrapper.RevokeVisitorInvitation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/visitor-invitations/accept", wrapper.AcceptVisitorInvitation)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-ip", wrapper.ListVisitorIPGrants)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-ip", wrapper.AddVisitorIPGrant)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-ip", wrapper.SetVisitorIPGrants)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-ip/{grant_id}", wrapper.RemoveVisitorIPGrant)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/access", wrapper.ReplaceVisitorAccess)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-certificate", wrapper.IssueVisitorCertificate)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/visitor-certificate", wrapper.AuthorizeVisitorCertificate)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/guest-demo/publisher", wrapper.EnrollGuestPublisher)

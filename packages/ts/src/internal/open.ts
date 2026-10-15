@@ -13,8 +13,10 @@ export interface OpenOptions {
   readonly directory?: string;
   /** hostname the publisher uses to reach this listener. */
   readonly targetHostname?: string;
-  readonly allowIP?: readonly string[];
-  readonly allowAllIPs?: boolean;
+  readonly access?:
+    | "restricted"
+    | "anonymous"
+    | { readonly mode?: "restricted" | "anonymous"; readonly ip?: readonly string[] };
   readonly limits?: {
     readonly requests?: number;
     readonly rate?: { readonly requests: number; readonly per: TnlRatePeriod };
@@ -89,8 +91,17 @@ export async function openServer(
     target,
     ...(options.server === undefined ? {} : { server_url: options.server }),
     credential,
-    ...(options.allowIP === undefined ? {} : { allow_ip: [...options.allowIP] }),
-    ...(options.allowAllIPs === undefined ? {} : { allow_all_ips: options.allowAllIPs }),
+    ...(options.access === undefined
+      ? {}
+      : {
+          access_mode:
+            typeof options.access === "string"
+              ? options.access
+              : (options.access.mode ?? "restricted"),
+          ...(typeof options.access === "string" || options.access.ip === undefined
+            ? {}
+            : { ip: [...options.access.ip] }),
+        }),
     ...(options.limits === undefined ? {} : { limits: options.limits }),
   };
   let socket = await runtime.start(directory);
@@ -357,8 +368,7 @@ function validateOptions(options: OpenOptions): void {
           "server",
           "directory",
           "targetHostname",
-          "allowIP",
-          "allowAllIPs",
+          "access",
           "limits",
           "signal",
         ].includes(key),
@@ -370,11 +380,7 @@ function validateOptions(options: OpenOptions): void {
       (typeof options.directory !== "string" || options.directory === "")) ||
     (options.targetHostname !== undefined &&
       (typeof options.targetHostname !== "string" || options.targetHostname === "")) ||
-    (options.allowAllIPs !== undefined && typeof options.allowAllIPs !== "boolean") ||
-    (options.allowIP !== undefined &&
-      (!Array.isArray(options.allowIP) ||
-        options.allowIP.some((value) => typeof value !== "string"))) ||
-    (options.allowAllIPs === true && options.allowIP !== undefined) ||
+    (options.access !== undefined && !validAccess(options.access)) ||
     (options.signal !== undefined && !(options.signal instanceof AbortSignal))
   )
     throw new TnlError("sdk.configuration_invalid");
@@ -399,6 +405,24 @@ function validateOptions(options: OpenOptions): void {
           ))))
   )
     throw new TnlError("sdk.configuration_invalid");
+}
+
+function validAccess(value: unknown): boolean {
+  if (value === "restricted" || value === "anonymous") return true;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const policy = value as Record<string, unknown>;
+  if (Object.keys(policy).some((key) => !["mode", "ip"].includes(key))) return false;
+  if (policy.mode !== undefined && policy.mode !== "restricted" && policy.mode !== "anonymous")
+    return false;
+  if (
+    policy.ip !== undefined &&
+    (!Array.isArray(policy.ip) ||
+      policy.ip.length === 0 ||
+      policy.ip.length > 32 ||
+      policy.ip.some((ip: unknown) => typeof ip !== "string"))
+  )
+    return false;
+  return true;
 }
 
 function aborted(): DOMException {

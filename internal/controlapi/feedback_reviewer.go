@@ -14,7 +14,10 @@ import (
 )
 
 func feedbackReviewerActor(access controlv1.FeedbackReviewerAccess) (controlstate.FeedbackActor, error) {
-	actor := controlstate.FeedbackActor{Kind: "reviewer", AllowedIP: access.AllowedIp}
+	actor := controlstate.FeedbackActor{Kind: "reviewer", VisitAllowed: access.VisitAllowed}
+	if access.VisitorToken != nil {
+		actor.VisitorToken = *access.VisitorToken
+	}
 	if access.SourceIp != nil {
 		actor.SourceIP = *access.SourceIp
 	}
@@ -25,11 +28,8 @@ func feedbackReviewerActor(access controlv1.FeedbackReviewerAccess) (controlstat
 		}
 		actor.BrowserCookieSecret = secret
 	}
-	if access.AllowedIp {
-		return actor, nil
-	}
 	if access.ShareId == nil || access.CookieSecret == nil {
-		if len(actor.BrowserCookieSecret) != 0 {
+		if actor.VisitAllowed || actor.VisitorToken != "" || len(actor.BrowserCookieSecret) != 0 {
 			return actor, nil
 		}
 		return actor, controlstate.ErrFeedbackAccess

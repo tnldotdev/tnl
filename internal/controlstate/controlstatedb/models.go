@@ -492,6 +492,7 @@ type ControlPublicUrl struct {
 	PublicPort                  pgtype.Int4
 	PublicURLScope              string
 	PolicyRevision              int64
+	AccessMode                  string
 	IpPolicy                    string
 	AllowedIpPolicyCiphertext   []byte
 	AllowedIpPolicyStorageKeyID pgtype.Text
@@ -937,7 +938,9 @@ type ControlVisitorGrant struct {
 	PublicURLID         string
 	TeamID              string
 	Kind                string
+	Label               string
 	IdentityID          pgtype.Text
+	TokenDigest         []byte
 	CreatedByIdentityID string
 	IdempotencyKey      string
 	RequestDigest       []byte

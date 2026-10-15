@@ -162,7 +162,7 @@ func TestLoadAliasesValidatesComputedServiceReferences(t *testing.T) {
 	}{{"api", true}, {"missing", false}} {
 		directory := t.TempDir()
 		path := filepath.Join(directory, "tnl.config.ts")
-		source := fmt.Sprintf(`export default () => ({ services: {api: {}}, aliases: {review: {service: [%q].join(""), name: "api.shop", allowAllIPs: true}} });`, test.service)
+		source := fmt.Sprintf(`export default () => ({ services: {api: {}}, aliases: {review: {service: [%q].join(""), name: "api.shop", access: "anonymous"}} });`, test.service)
 		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -170,7 +170,7 @@ func TestLoadAliasesValidatesComputedServiceReferences(t *testing.T) {
 		if (err == nil) != test.valid {
 			t.Fatalf("computed alias service %q: %v", test.service, err)
 		}
-		if test.valid && (value.Aliases["review"].RelativeName("review") != "api.shop" || value.Aliases["review"].AllowAllIPs == nil || !*value.Aliases["review"].AllowAllIPs) {
+		if test.valid && (value.Aliases["review"].RelativeName("review") != "api.shop" || value.Aliases["review"].Access == nil || value.Aliases["review"].Access.VisitorMode() != "anonymous") {
 			t.Fatal("TypeScript alias fields were not normalized")
 		}
 	}
@@ -202,8 +202,8 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 		"inspection":        {`export default {services: {api: {inspection: {mode: "all"}}}};`, "services.api.inspection: mode must be none or summary"},
 		"retired dev":       {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "dev"},
 		"target":            {`export default {services: {api: {target: {type: "address", address: "https://example.com/path"}}}};`, "services.api: target.address:"},
-		"ip":                {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.7/24"]}}}};`, "must be a canonical IP address or prefix"},
-		"duplicate":         {`export default {services: {api: {tunnel: {allowIP: ["192.0.2.1", "192.0.2.1/32"]}}}};`, "is duplicated"},
+		"ip":                {`export default {services: {api: {tunnel: {access: {ip: ["192.0.2.7/24"]}}}}};`, "distinct canonical addresses or prefixes"},
+		"duplicate":         {`export default {services: {api: {tunnel: {access: {ip: ["192.0.2.1", "192.0.2.1/32"]}}}}};`, "distinct canonical addresses or prefixes"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl.config.ts")
@@ -367,13 +367,13 @@ func TestLoadPreservesParentDeadline(t *testing.T) {
 func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 	value, err := unmarshalTypeScriptTNL([]byte(`{
   "team":"Team One",
-   "services":{"web":{"tunnel":{"allowIP":["192.0.2.1"],"ephemeral":true},"http":{"readiness":{"path":"/health"}}}}
+    "services":{"web":{"tunnel":{"access":{"ip":["192.0.2.1"]},"ephemeral":true},"http":{"readiness":{"path":"/health"}}}}
 }`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	service := value.Services["web"]
-	if service.Tunnel == nil || len(service.Tunnel.AllowIP) != 1 || service.Tunnel.Ephemeral == nil || !*service.Tunnel.Ephemeral ||
+	if service.Tunnel == nil || service.Tunnel.Access == nil || len(service.Tunnel.Access.IP) != 1 || service.Tunnel.Ephemeral == nil || !*service.Tunnel.Ephemeral ||
 		service.HTTP.Readiness == nil || service.HTTP.Readiness.Path != "/health" {
 		t.Fatalf("service = %#v", service)
 	}

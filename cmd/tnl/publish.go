@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
@@ -156,14 +157,25 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if protocol == controlv1.Http {
 		output.openURL = browserOpener(ctx, flags.Open, authenticated.Discovery.DnsAutomation)
 	}
-	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
+	policy, err := resolveVisitorAccess(ctx, authenticated.Control, flags.access, flags.Anonymous, flags.IP)
 	if err != nil {
 		return err
 	}
-	if policy.current != "" {
-		if err := output.currentIP(policy.current); err != nil {
-			return err
+	if protocol == controlv1.Ssh {
+		if flags.access != nil && flags.access.VisitorMode() != "anonymous" {
+			return failure.Wrap("validate SSH visitor access", failure.InvalidTunnelFlags, errors.New("SSH uses target authentication; select anonymous access for an optional IP list"))
 		}
+		policy.access = controlv1.Anonymous
+		policy.explicit = true
+	}
+	if guest != nil {
+		// guest publication remains bound to its issuing IP. control discards
+		// that prefix after checking it, so browser visits use the guest link.
+		guestSource, sourceErr := resolveIPPolicy(ctx, authenticated.Control, nil, false)
+		if sourceErr != nil {
+			return sourceErr
+		}
+		policy.prefixes = guestSource.prefixes
 	}
 	if guest != nil {
 		allocated, err := authenticated.Control.AllocateGuestDemoNumber(ctx)
@@ -211,6 +223,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.limits())
+	if policy.explicit {
+		publisherConfig.AccessMode = policy.access
+	}
 	publisherConfig.ServiceProtocol = protocol
 	publisherConfig.TargetTLSName = flags.TargetTLSName
 	publisherConfig.TargetTLS = flags.TargetTLS
@@ -242,6 +257,13 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {
+		if guest != nil && event.Type == publisher.EventPublicURLAssigned {
+			token, err := credentials.GuestVisitorToken(credentials.AccessToken(guest.AccessToken), guest.GuestID, event.PublicURLID)
+			if err != nil {
+				return err
+			}
+			output.setGuestVisitorToken(token)
+		}
 		if localDemo != nil && event.Type == publisher.EventReady {
 			localDemo.SetPublicURL(event.PublicURL)
 		}

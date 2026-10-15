@@ -453,6 +453,7 @@ type Querier interface {
 	SetMaintenanceControl(ctx context.Context, arg SetMaintenanceControlParams) (ControlMaintenanceControl, error)
 	SetPersonalTeamDefaultDomain(ctx context.Context, arg SetPersonalTeamDefaultDomainParams) error
 	SetPreviewTeamAccess(ctx context.Context, arg SetPreviewTeamAccessParams) error
+	SetPublicURLAccessMode(ctx context.Context, arg SetPublicURLAccessModeParams) (int64, error)
 	SetPublicURLTCPPort(ctx context.Context, arg SetPublicURLTCPPortParams) (int64, error)
 	SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error)
 	SetVisitorFeedbackPolicy(ctx context.Context, arg SetVisitorFeedbackPolicyParams) error
@@ -473,6 +474,7 @@ type Querier interface {
 	UpdatePublicURL(ctx context.Context, arg UpdatePublicURLParams) (ControlPublicUrl, error)
 	UpdatePublicURLRecoveryHistogram(ctx context.Context, arg UpdatePublicURLRecoveryHistogramParams) (ControlPublicUrlRecoveryHistogram, error)
 	UpsertDNSChallengeChange(ctx context.Context, arg UpsertDNSChallengeChangeParams) error
+	ValidVisitorToken(ctx context.Context, arg ValidVisitorTokenParams) (string, error)
 	VisitorCurrentMembership(ctx context.Context, arg VisitorCurrentMembershipParams) (string, error)
 	VisitorFeedbackPolicy(ctx context.Context, id string) (string, error)
 	VisitorPermission(ctx context.Context, arg VisitorPermissionParams) (VisitorPermissionRow, error)

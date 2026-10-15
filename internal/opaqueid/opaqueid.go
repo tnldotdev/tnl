@@ -56,6 +56,7 @@ const (
 	TCPPortClaimPrefix               = "tpc_"
 	UsageReportPrefix                = "ur_"
 	VisitorConnectionPrefix          = "vc_"
+	VisitorTokenPrefix               = "vt_"
 	PreviewPrefix                    = "pv_"
 )
 

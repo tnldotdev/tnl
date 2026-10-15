@@ -231,7 +231,7 @@ func (b *pendingDatabaseBackend) Open(context.Context, string) (net.Conn, error)
 	b.ordinary.Add(1)
 	return nil, errors.New("ordinary backend opened for denied database")
 }
-func (b *pendingDatabaseBackend) OpenDenied(context.Context, string) (net.Conn, error) {
+func (b *pendingDatabaseBackend) OpenPending(context.Context, string) (net.Conn, error) {
 	b.pending.Add(1)
 	return b.connection, nil
 }

@@ -50,7 +50,7 @@ func TestPendingPromotionTransfersCapacityExactlyOnce(t *testing.T) {
 		t.Fatalf("accepted %d, ordinary %d", accepted.Load(), s.Load())
 	}
 	s.mu.Lock()
-	pending := s.admitted[deniedConnection]
+	pending := s.admitted[pendingConnection]
 	s.mu.Unlock()
 	if pending != 0 {
 		t.Fatal("promotion retained pending capacity")

@@ -73,6 +73,7 @@ type publishOutput struct {
 	current               string
 	demo                  bool
 	guestDemo             bool
+	guestVisitorToken     string
 	openURL               func(string) error
 }
 
@@ -238,6 +239,12 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			if err := writeHumanFrame(o.stderr, o.command, "ready", footer, blocks...); err != nil {
 				return err
 			}
+			if o.guestDemo && o.guestVisitorToken != "" {
+				// a guest link is a one-time credential, not a diagram field or log.
+				if _, err := io.WriteString(o.stdout, url+"/__tnl/access/"+o.guestVisitorToken+"\n"); err != nil {
+					return err
+				}
+			}
 			if openErr != nil {
 				presented := presentFailure(failure.Wrap("open browser", failure.BrowserOpenFailed, openErr))
 				_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "public URL remains ready",
@@ -274,6 +281,9 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 
 // openPublicURL releases the output lock while DNS and the browser opener run.
 func (o *publishOutput) openPublicURL(url string) error {
+	if o.guestDemo && o.guestVisitorToken != "" {
+		url += "/__tnl/access/" + o.guestVisitorToken
+	}
 	o.mu.Unlock()
 	err := o.openURL(url)
 	o.mu.Lock()
@@ -299,6 +309,12 @@ func (o *publishOutput) setDemo() {
 func (o *publishOutput) setGuestDemo() {
 	o.mu.Lock()
 	o.guestDemo = true
+	o.mu.Unlock()
+}
+
+func (o *publishOutput) setGuestVisitorToken(token string) {
+	o.mu.Lock()
+	o.guestVisitorToken = token
 	o.mu.Unlock()
 }
 

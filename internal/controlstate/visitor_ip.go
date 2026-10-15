@@ -63,10 +63,6 @@ func (d *Database) refreshVisitorIPPolicy(ctx context.Context, q *controlstatedb
 	if err != nil {
 		return err
 	}
-	if len(prefixes) == 0 {
-		hashes = []byte("[]")
-		keyID = d.storageKey.CurrentID()
-	}
 	changed, err := q.SaveVisitorIPPolicy(ctx, controlstatedb.SaveVisitorIPPolicyParams{PublicURLID: urlID, Ciphertext: cipher, StorageKeyID: nullableText(func() string {
 		if len(cipher) == 0 {
 			return ""
@@ -102,36 +98,88 @@ func (d *Database) refreshVisitorIPPolicy(ctx context.Context, q *controlstatedb
 		return err
 	}
 	pending := pendingIngressRoutingTableEvents{}
-	projectionURL := url
-	if len(grants) == 0 {
-		// an empty set still publishes connected relays for browser/certificate
-		// admission. its keyed empty hashed allowlist denies every source IP.
-		projectionURL.IpPolicy = string(IPPolicyAllowAll)
-		projectionURL.AllowedIpHashes = nil
-	}
-	if err = pending.addPublisherConnectionChanges(ctx, q, projectionURL, run, connections, now); err != nil {
+	if err = pending.addPublisherConnectionChanges(ctx, q, url, run, connections, now); err != nil {
 		return err
 	}
-	if len(grants) == 0 {
-		for index := range pending.events {
-			event := &pending.events[index]
-			if event.eventKind != IngressPublicURLUpsert {
-				continue
-			}
-			var projection IngressRoutingTableProjection
-			if err = json.Unmarshal(event.projection, &projection); err != nil {
-				return err
-			}
-			projection.IPPolicy = IPPolicyHashedAllowlist
-			projection.IPPolicyKeyID = keyID
-			projection.AllowedIPHashes = []ippolicy.Entry{}
-			event.projection, err = json.Marshal(projection)
-			if err != nil {
-				return err
-			}
+	return pending.publish(ctx, q)
+}
+
+// ReplaceVisitorAccess updates the complete access policy in one transaction.
+// the current publish run and its publisher connections remain unchanged.
+func (d *Database) ReplaceVisitorAccess(ctx context.Context, urlID, actorID string, mode VisitorAccessMode, values []string, expected uint64, now time.Time) (result PublicURL, retErr error) {
+	if !mode.Valid() || len(values) > 256 || expected == 0 || expected > 9223372036854775807 {
+		return result, ErrPublicURLInvalid
+	}
+	prefixes := make([]netip.Prefix, len(values))
+	for i, value := range values {
+		var err error
+		prefixes[i], err = netip.ParsePrefix(value)
+		if err != nil || prefixes[i] != prefixes[i].Masked() || prefixes[i].Addr().Is4In6() || prefixes[i].Addr().Zone() != "" {
+			return result, ErrPublicURLInvalid
 		}
 	}
-	return pending.publish(ctx, q)
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer rollback(ctx, tx, "replace visitor access", &retErr)()
+	q := controlstatedb.New(tx)
+	url, err := lockVisitorURL(ctx, q, urlID)
+	if err != nil {
+		return result, err
+	}
+	if url.Purpose != "app" && url.Purpose != "alias" {
+		return result, ErrPublicURLInvalid
+	}
+	if url.ServiceProtocol == "ssh" && mode != VisitorAccessAnonymous {
+		return result, ErrPublicURLInvalid
+	}
+	if err = visitorManager(ctx, q, url, actorID); err != nil {
+		return result, err
+	}
+	changed, err := q.SetPublicURLAccessMode(ctx, controlstatedb.SetPublicURLAccessModeParams{
+		PublicURLID: urlID, AccessMode: string(mode), ExpectedRevision: int64(expected), Now: timestamptz(now),
+	})
+	if err != nil {
+		return result, err
+	}
+	if changed != 1 {
+		return result, ErrPublicURLMutationStale
+	}
+	if err = q.RevokeVisitorIPGrants(ctx, controlstatedb.RevokeVisitorIPGrantsParams{PublicURLID: urlID, RevokedAt: timestamptz(now)}); err != nil {
+		return result, err
+	}
+	if err = q.MarkVisitorIPSet(ctx, urlID); err != nil {
+		return result, err
+	}
+	for _, prefix := range prefixes {
+		id, idErr := opaqueid.New(opaqueid.SharePrefix)
+		if idErr != nil {
+			return result, idErr
+		}
+		cipher, sealErr := d.storageKey.Seal(ipGrantContext(urlID, id), []byte(prefix.String()))
+		if sealErr != nil {
+			return result, sealErr
+		}
+		if err = q.CreateVisitorIPGrant(ctx, controlstatedb.CreateVisitorIPGrantParams{
+			ID: id, PublicURLID: urlID, PrefixCiphertext: cipher, StorageKeyID: d.storageKey.CurrentID(), CreatedAt: timestamptz(now),
+		}); err != nil {
+			return result, err
+		}
+	}
+	if err = d.refreshVisitorIPPolicy(ctx, q, urlID, now, false); err != nil {
+		return result, err
+	}
+	updated, err := q.LockPublicURLForRun(ctx, urlID)
+	if err != nil {
+		return result, err
+	}
+	result = publicURLFromModel(updated, "")
+	result.AllowedIPPrefixes = prefixes
+	if err = tx.Commit(ctx); err != nil {
+		return PublicURL{}, err
+	}
+	return result, nil
 }
 
 func (d *Database) MutateVisitorIPs(ctx context.Context, urlID, actorID, operation, removeID string, input []VisitorIPGrantInput, now time.Time) (result []VisitorIPGrant, retErr error) {
@@ -269,6 +317,9 @@ func (d *Database) visitorIPAllowed(ctx context.Context, q *controlstatedb.Queri
 		return false, nil
 	}
 	addr = addr.Unmap()
+	if url.IpPolicy == string(IPPolicyAllowAll) {
+		return true, nil
+	}
 	initialized, err := q.HasVisitorIPSet(ctx, url.ID)
 	if err != nil {
 		return false, err

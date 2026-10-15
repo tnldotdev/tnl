@@ -111,6 +111,7 @@ type OperationRequest struct {
 	CanonicalHostname         string
 	PublicURLScope            PublicURLScope
 	PublicURLPurpose          string
+	AccessMode                string
 	ServiceProtocol           string
 	PublicURLID               string
 	PublishRunNumber          uint64
@@ -134,6 +135,7 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 		}
 		value = struct {
 			AllowedIPPrefixes []string `json:"allowed_ip_prefixes,omitempty"`
+			AccessMode        string   `json:"access_mode,omitempty"`
 			CanonicalHostname string   `json:"canonical_hostname"`
 			DomainID          string   `json:"domain_id"`
 			Ephemeral         bool     `json:"ephemeral,omitempty"`
@@ -143,7 +145,7 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 			ServiceProtocol   string   `json:"service_protocol,omitempty"`
 			Target            string   `json:"target"`
 			TeamID            string   `json:"team_id"`
-		}{request.AllowedIPPrefixes, request.CanonicalHostname, request.DomainID, request.Ephemeral, request.MembershipID, string(request.PublicURLScope), request.PublicURLPurpose, request.ServiceProtocol, request.Target, request.TeamID}
+		}{request.AllowedIPPrefixes, request.AccessMode, request.CanonicalHostname, request.DomainID, request.Ephemeral, request.MembershipID, string(request.PublicURLScope), request.PublicURLPurpose, request.ServiceProtocol, request.Target, request.TeamID}
 	case OperationPublicURLUpdate:
 		if request.TeamID == "" || request.DomainID == "" || request.CanonicalHostname == "" || request.PublicURLScope == "" ||
 			request.PublicURLID == "" || request.PublicURLMutationRevision == 0 || request.PolicyRevision == 0 ||

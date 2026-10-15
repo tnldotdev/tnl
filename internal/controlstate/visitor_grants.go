@@ -19,6 +19,7 @@ type VisitorGrant struct {
 	ID          string     `json:"id"`
 	PublicURLID string     `json:"public_url_id"`
 	Kind        string     `json:"kind"`
+	Label       string     `json:"label,omitempty"`
 	IdentityID  string     `json:"identity_id,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
@@ -42,8 +43,57 @@ func visitorManager(ctx context.Context, q *controlstatedb.Queries, url controls
 }
 
 func visitorGrantFromRow(row controlstatedb.ControlVisitorGrant) VisitorGrant {
-	return VisitorGrant{ID: row.ID, PublicURLID: row.PublicURLID, Kind: row.Kind, IdentityID: row.IdentityID.String,
+	return VisitorGrant{ID: row.ID, PublicURLID: row.PublicURLID, Kind: row.Kind, Label: row.Label, IdentityID: row.IdentityID.String,
 		CreatedAt: row.CreatedAt.Time, ExpiresAt: optionalTime(row.ExpiresAt), RevokedAt: optionalTime(row.RevokedAt)}
+}
+
+// CreateVisitorToken stores only a digest. the caller presents the one-time
+// secret to the visitor; its URL and expiration are checked on every request.
+func (d *Database) CreateVisitorToken(ctx context.Context, urlID, actorID, key, label string, digest [32]byte, expires, now time.Time) (result VisitorGrant, retErr error) {
+	if !validFeedbackKey(key) || label == "" || len(label) > 64 || digest == ([32]byte{}) || !expires.After(now) || expires.After(now.Add(maximumShareLifetime)) {
+		return result, ErrShareInvalid
+	}
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer rollback(ctx, tx, "create visitor token", &retErr)()
+	q := controlstatedb.New(tx)
+	url, err := lockVisitorURL(ctx, q, urlID)
+	if err != nil {
+		return result, err
+	}
+	if url.Purpose != "app" && url.Purpose != "alias" || url.ServiceProtocol != "http" {
+		return result, ErrShareInvalid
+	}
+	if err = visitorManager(ctx, q, url, actorID); err != nil {
+		return result, err
+	}
+	id, err := opaqueid.New(opaqueid.VisitorTokenPrefix)
+	if err != nil {
+		return result, err
+	}
+	encoded, _ := json.Marshal(struct {
+		URL, Label string
+		Digest     [32]byte
+		Expiry     time.Time
+	}{urlID, label, digest, expires})
+	requestDigest := sha256.Sum256(encoded)
+	row, err := q.CreateVisitorGrant(ctx, controlstatedb.CreateVisitorGrantParams{
+		ID: id, PublicURLID: urlID, TeamID: url.TeamID, Kind: "token", Label: label,
+		TokenDigest: digest[:], CreatedByIdentityID: actorID, IdempotencyKey: key,
+		RequestDigest: requestDigest[:], CreatedAt: timestamptz(now), ExpiresAt: timestamptz(expires),
+	})
+	if err != nil {
+		return result, err
+	}
+	if row.RevokedAt.Valid || subtle.ConstantTimeCompare(row.RequestDigest, requestDigest[:]) != 1 {
+		return result, ErrShareIdempotency
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return result, err
+	}
+	return visitorGrantFromRow(row), nil
 }
 
 func (d *Database) CreateTeamVisitorGrant(ctx context.Context, urlID, actorID, key string, expires *time.Time, now time.Time) (result VisitorGrant, retErr error) {

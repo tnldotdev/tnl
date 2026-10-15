@@ -15,11 +15,11 @@ type Backend interface {
 	Open(ctx context.Context, visitorConnectionID string) (net.Conn, error)
 }
 
-// DenialBackend opens a separate visitor stream marked as IP-policy denied.
-// the publisher may complete visitor TLS to send a 403, but must never forward
-// a denied request to the local service. ingress drops denied connections if
+// PendingBackend opens a visitor stream with bounded authorization capacity.
+// the publisher may complete visitor TLS and check credentials, but must never
+// forward a request before promotion. ingress drops pending connections if
 // a backend does not implement this interface.
-type DenialBackend interface {
+type PendingBackend interface {
 	Backend
-	OpenDenied(context.Context, string) (net.Conn, error)
+	OpenPending(context.Context, string) (net.Conn, error)
 }

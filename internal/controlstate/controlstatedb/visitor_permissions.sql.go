@@ -94,10 +94,10 @@ func (q *Queries) CleanupVisitorSessions(ctx context.Context, now pgtype.Timesta
 }
 
 const createVisitorGrant = `-- name: CreateVisitorGrant :one
-INSERT INTO control.visitor_grants(id, public_url_id, team_id, kind, identity_id, created_by_identity_id,
+INSERT INTO control.visitor_grants(id, public_url_id, team_id, kind, label, identity_id, token_digest, created_by_identity_id,
     idempotency_key, request_digest, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $9, $5, $6, $7, $8, $10)
-ON CONFLICT (created_by_identity_id, kind, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, public_url_id, team_id, kind, identity_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
+VALUES ($1, $2, $3, $4, $9, $10, $11, $5, $6, $7, $8, $12)
+ON CONFLICT (created_by_identity_id, kind, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, public_url_id, team_id, kind, label, identity_id, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
 `
 
 type CreateVisitorGrantParams struct {
@@ -109,7 +109,9 @@ type CreateVisitorGrantParams struct {
 	IdempotencyKey      string
 	RequestDigest       []byte
 	CreatedAt           pgtype.Timestamptz
+	Label               string
 	IdentityID          pgtype.Text
+	TokenDigest         []byte
 	ExpiresAt           pgtype.Timestamptz
 }
 
@@ -123,7 +125,9 @@ func (q *Queries) CreateVisitorGrant(ctx context.Context, arg CreateVisitorGrant
 		arg.IdempotencyKey,
 		arg.RequestDigest,
 		arg.CreatedAt,
+		arg.Label,
 		arg.IdentityID,
+		arg.TokenDigest,
 		arg.ExpiresAt,
 	)
 	var i ControlVisitorGrant
@@ -132,7 +136,9 @@ func (q *Queries) CreateVisitorGrant(ctx context.Context, arg CreateVisitorGrant
 		&i.PublicURLID,
 		&i.TeamID,
 		&i.Kind,
+		&i.Label,
 		&i.IdentityID,
+		&i.TokenDigest,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -261,7 +267,7 @@ func (q *Queries) ExpiringVisitorIPURLs(ctx context.Context, expiresAt pgtype.Ti
 }
 
 const getVisitorGrant = `-- name: GetVisitorGrant :one
-SELECT id, public_url_id, team_id, kind, identity_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE id = $1
+SELECT id, public_url_id, team_id, kind, label, identity_id, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE id = $1
 `
 
 func (q *Queries) GetVisitorGrant(ctx context.Context, id string) (ControlVisitorGrant, error) {
@@ -272,7 +278,9 @@ func (q *Queries) GetVisitorGrant(ctx context.Context, id string) (ControlVisito
 		&i.PublicURLID,
 		&i.TeamID,
 		&i.Kind,
+		&i.Label,
 		&i.IdentityID,
+		&i.TokenDigest,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -349,7 +357,7 @@ func (q *Queries) HasVisitorIPSet(ctx context.Context, publicUrlID string) (bool
 }
 
 const listVisitorGrants = `-- name: ListVisitorGrants :many
-SELECT id, public_url_id, team_id, kind, identity_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE public_url_id = $1 ORDER BY id
+SELECT id, public_url_id, team_id, kind, label, identity_id, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE public_url_id = $1 ORDER BY id
 `
 
 func (q *Queries) ListVisitorGrants(ctx context.Context, publicUrlID string) ([]ControlVisitorGrant, error) {
@@ -366,7 +374,9 @@ func (q *Queries) ListVisitorGrants(ctx context.Context, publicUrlID string) ([]
 			&i.PublicURLID,
 			&i.TeamID,
 			&i.Kind,
+			&i.Label,
 			&i.IdentityID,
+			&i.TokenDigest,
 			&i.CreatedByIdentityID,
 			&i.IdempotencyKey,
 			&i.RequestDigest,
@@ -605,7 +615,7 @@ func (q *Queries) MarkVisitorIPSet(ctx context.Context, publicUrlID string) erro
 const readyBrowserHosts = `-- name: ReadyBrowserHosts :many
 SELECT u.id AS public_url_id, u.canonical_hostname, r.id AS publish_run_id
 FROM control.public_urls u JOIN control.publish_runs r ON r.public_url_id = u.id
-WHERE u.lifecycle_state = 'enabled' AND u.purpose = 'app' AND u.service_protocol = 'http'
+WHERE u.lifecycle_state = 'enabled' AND u.purpose IN ('app', 'alias') AND u.service_protocol = 'http'
   AND r.state = 'ready' AND r.publisher_expires_at > $1 AND r.closed_at IS NULL
   AND (u.id = $2 OR EXISTS (SELECT 1 FROM control.preview_public_urls included
        WHERE included.preview_id = $3::text AND included.public_url_id = u.id))
@@ -705,17 +715,17 @@ func (q *Queries) RevokeVisitorInvitation(ctx context.Context, arg RevokeVisitor
 }
 
 const saveVisitorIPPolicy = `-- name: SaveVisitorIPPolicy :execrows
-UPDATE control.public_urls SET ip_policy = 'allowlist',
-    allowed_ip_policy_ciphertext = $1, allowed_ip_policy_storage_key_id = $2,
-    allowed_ip_hashes = $3, allowed_ip_hash_key_id = $4, updated_at = $5,
+UPDATE control.public_urls SET ip_policy = CASE WHEN $1::bytea IS NULL THEN 'allow_all' ELSE 'allowlist' END,
+    allowed_ip_policy_ciphertext = $2, allowed_ip_policy_storage_key_id = $3,
+    allowed_ip_hashes = $1, allowed_ip_hash_key_id = $4, updated_at = $5,
     mutation_revision = mutation_revision + CASE WHEN $6::boolean THEN 1 ELSE 0 END
 WHERE id = $7 AND (mutation_revision < 9223372036854775807 OR NOT $6)
 `
 
 type SaveVisitorIPPolicyParams struct {
+	Hashes          []byte
 	Ciphertext      []byte
 	StorageKeyID    pgtype.Text
-	Hashes          []byte
 	HashKeyID       pgtype.Text
 	Now             pgtype.Timestamptz
 	AdvanceMutation bool
@@ -724,13 +734,40 @@ type SaveVisitorIPPolicyParams struct {
 
 func (q *Queries) SaveVisitorIPPolicy(ctx context.Context, arg SaveVisitorIPPolicyParams) (int64, error) {
 	result, err := q.db.Exec(ctx, saveVisitorIPPolicy,
+		arg.Hashes,
 		arg.Ciphertext,
 		arg.StorageKeyID,
-		arg.Hashes,
 		arg.HashKeyID,
 		arg.Now,
 		arg.AdvanceMutation,
 		arg.PublicURLID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setPublicURLAccessMode = `-- name: SetPublicURLAccessMode :execrows
+UPDATE control.public_urls SET access_mode = $1, mutation_revision = mutation_revision + 1,
+    updated_at = $2
+WHERE id = $3 AND lifecycle_state = 'enabled'
+  AND mutation_revision = $4 AND mutation_revision < 9223372036854775807
+`
+
+type SetPublicURLAccessModeParams struct {
+	AccessMode       string
+	Now              pgtype.Timestamptz
+	PublicURLID      string
+	ExpectedRevision int64
+}
+
+func (q *Queries) SetPublicURLAccessMode(ctx context.Context, arg SetPublicURLAccessModeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setPublicURLAccessMode,
+		arg.AccessMode,
+		arg.Now,
+		arg.PublicURLID,
+		arg.ExpectedRevision,
 	)
 	if err != nil {
 		return 0, err
@@ -750,6 +787,30 @@ type SetVisitorFeedbackPolicyParams struct {
 func (q *Queries) SetVisitorFeedbackPolicy(ctx context.Context, arg SetVisitorFeedbackPolicyParams) error {
 	_, err := q.db.Exec(ctx, setVisitorFeedbackPolicy, arg.ID, arg.FeedbackAuthors)
 	return err
+}
+
+const validVisitorToken = `-- name: ValidVisitorToken :one
+SELECT id FROM control.visitor_grants WHERE id = $1 AND public_url_id = $2 AND kind = 'token'
+  AND token_digest = $3 AND revoked_at IS NULL AND expires_at > $4
+`
+
+type ValidVisitorTokenParams struct {
+	ID          string
+	PublicURLID string
+	TokenDigest []byte
+	Now         pgtype.Timestamptz
+}
+
+func (q *Queries) ValidVisitorToken(ctx context.Context, arg ValidVisitorTokenParams) (string, error) {
+	row := q.db.QueryRow(ctx, validVisitorToken,
+		arg.ID,
+		arg.PublicURLID,
+		arg.TokenDigest,
+		arg.Now,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const visitorCurrentMembership = `-- name: VisitorCurrentMembership :one

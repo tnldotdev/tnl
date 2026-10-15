@@ -79,6 +79,18 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		return
 	}
 	storedProtocol := controlstate.PublicURLServiceProtocol(protocol)
+	accessMode := controlstate.VisitorAccessRestricted
+	if storedProtocol == controlstate.PublicURLServiceSSH || body.Purpose == controlv1.Oauth || body.Purpose == controlv1.Webhooks {
+		accessMode = controlstate.VisitorAccessAnonymous
+	}
+	if body.AccessMode != nil {
+		accessMode = controlstate.VisitorAccessMode(*body.AccessMode)
+	}
+	if !accessMode.Valid() ||
+		(storedProtocol == controlstate.PublicURLServiceSSH || body.Purpose == controlv1.Oauth || body.Purpose == controlv1.Webhooks) && accessMode != controlstate.VisitorAccessAnonymous {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid visitor access mode")
+		return
+	}
 	allowedIPPrefixes := []string(nil)
 	if body.AllowedIpPrefixes != nil {
 		var err error
@@ -114,7 +126,7 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		Operation: authorization.OperationPublicURLCreate, TeamID: decision.TeamID, MembershipID: decision.PublicURLMembershipID,
 		DomainID: decision.DomainID, CanonicalHostname: decision.CanonicalHostname, PublicURLScope: decision.PublicURLScope,
 		PublicURLPurpose: string(body.Purpose), ServiceProtocol: hashProtocol,
-		Target: body.Target, AllowedIPPrefixes: allowedIPPrefixes, Ephemeral: ephemeral,
+		Target: body.Target, AllowedIPPrefixes: allowedIPPrefixes, AccessMode: string(accessMode), Ephemeral: ephemeral,
 	})
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
@@ -126,13 +138,19 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		dnsState = controlstate.PublicURLDNSPending
 		dnsAuthorityReference = decision.DNSAuthorityReference
 	}
+	storedIPPrefixes := allowedIPPrefixes
+	if decision.GuestID != "" {
+		// the issuing IP still constrains guest publication, but visitors use
+		// a separate URL-bound guest capability rather than that IP.
+		storedIPPrefixes = nil
+	}
 	route, err := h.store.CreatePublicURL(request.Context(), controlstate.CreatePublicURLRequest{
 		GuestID: decision.GuestID,
 		TeamID:  decision.TeamID, DomainID: decision.DomainID, MembershipID: decision.PublicURLMembershipID,
 		ActingIdentityID: decision.IdentityID, IdempotencyKey: request.Header.Get("Idempotency-Key"),
 		RequestDigest: [32]byte(digest), CanonicalHostname: decision.CanonicalHostname, Target: body.Target,
 		ServiceProtocol: storedProtocol,
-		PublicURLScope:  controlstate.PublicURLScope(decision.PublicURLScope), Purpose: controlstate.PublicURLPurpose(body.Purpose), AllowedIPPrefixes: allowedIPPrefixes,
+		PublicURLScope:  controlstate.PublicURLScope(decision.PublicURLScope), Purpose: controlstate.PublicURLPurpose(body.Purpose), AccessMode: accessMode, AllowedIPPrefixes: storedIPPrefixes,
 		ManagedURLMode: h.config.ManagedURLMode,
 		DNSState:       dnsState, DNSAuthorityReference: dnsAuthorityReference,
 		PolicyRevision: decision.PolicyRevision,

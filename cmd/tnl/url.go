@@ -20,17 +20,15 @@ type publicURLCommand struct {
 	Available   urlAvailableCommand       `cmd:"" help:"List public URLs you may visit."`
 	Inventory   publicURLInventoryCommand `cmd:"" help:"List saved public URLs owned by the selected team."`
 	Certificate visitorCertificateCommand `cmd:"" help:"Save a locally generated visitor key and database certificate."`
-	IP          urlIPCommand              `cmd:"" name:"ip" help:"Manage visitor IP grants."`
-	Update      publicURLUpdateCommand    `cmd:"" help:"Change a saved public URL target or visitor policy."`
+	Access      urlAccessCommand          `cmd:"" help:"Show or replace one public URL's complete visitor access policy."`
+	Update      publicURLUpdateCommand    `cmd:"" help:"Change a saved public URL target."`
 	Delete      publicURLDeleteCommand    `cmd:"" help:"Delete a public URL by ID; use tnl url list to find it."`
 }
 
 type publicURLUpdateCommand struct {
 	scopedTeamFlags `embed:""`
-	PublicURLID     string   `arg:"" name:"public-url-id" required:""`
-	Target          string   `name:"target" help:"New HTTP or HTTPS target origin; no connection is made from this command."`
-	AllowIP         []string `name:"allow-ip" help:"Replace visitor addresses; repeat for each address or prefix."`
-	AllowAllIPs     bool     `name:"allow-all-ips" help:"Allow visitors from every IP."`
+	PublicURLID     string `arg:"" name:"public-url-id" required:""`
+	Target          string `name:"target" help:"New HTTP or HTTPS target origin; no connection is made from this command."`
 }
 
 type publicURLListCommand struct {
@@ -183,11 +181,8 @@ func runURLDelete(ctx context.Context, command publicURLDeleteCommand, output, d
 }
 
 func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, diagnostics io.Writer) error {
-	if flags.Target == "" && flags.AllowIP == nil && !flags.AllowAllIPs {
-		return failure.Wrap("validate URL update", failure.InvalidTunnelFlags, errors.New("set --target, --allow-ip, or --allow-all-ips to update this public URL"))
-	}
-	if flags.AllowAllIPs && flags.AllowIP != nil {
-		return failure.Wrap("validate URL update", failure.InvalidTunnelFlags, errors.New("--allow-all-ips cannot be combined with --allow-ip"))
+	if flags.Target == "" {
+		return failure.Wrap("validate URL update", failure.InvalidTunnelFlags, errors.New("set --target to update this public URL"))
 	}
 	session, err := openTeamSession(ctx, flags.selection(), "tnl url update", diagnostics)
 	if err != nil {
@@ -220,13 +215,6 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 	if route.AllowedIpPrefixes != nil {
 		allowed = *route.AllowedIpPrefixes
 	}
-	if flags.AllowIP != nil || flags.AllowAllIPs {
-		policy, policyErr := resolveIPPolicy(ctx, session.authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
-		if policyErr != nil {
-			return policyErr
-		}
-		allowed = policy.prefixes
-	}
 	updated, err := session.authenticated.Control.UpdatePublicURL(ctx, flags.PublicURLID, controlv1.UpdatePublicURLRequest{
 		Target: target, AllowedIpPrefixes: allowed,
 	})
@@ -241,6 +229,6 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 	if updated.Target != "" {
 		fields = append(fields, clioutput.Field{Label: "target", Value: updated.Target})
 	}
-	return writeHumanFrame(output, "tnl url update", "updated", "restart the publisher to use the new target or policy",
+	return writeHumanFrame(output, "tnl url update", "updated", "restart the publisher to use the new target",
 		clioutput.Fields(fields...))
 }

@@ -22,6 +22,7 @@ import (
 type VisitorStore interface {
 	HTTPVisitorPermission(context.Context, controlstate.PublishRunAuthentication, controlstate.HTTPVisitorRequest, time.Time) (controlstate.VisitorPermission, error)
 	CreateTeamVisitorGrant(context.Context, string, string, string, *time.Time, time.Time) (controlstate.VisitorGrant, error)
+	CreateVisitorToken(context.Context, string, string, string, string, [32]byte, time.Time, time.Time) (controlstate.VisitorGrant, error)
 	ListVisitorGrants(context.Context, string, string) ([]controlstate.VisitorGrant, error)
 	RevokeVisitorGrant(context.Context, string, string, string, time.Time) error
 	CreateVisitorInvitation(context.Context, string, string, string, string, [32]byte, time.Time, time.Time) (controlstate.VisitorInvitation, error)
@@ -29,7 +30,7 @@ type VisitorStore interface {
 	RevokeVisitorInvitation(context.Context, string, string, string, time.Time) error
 	AcceptVisitorInvitation(context.Context, string, string, time.Time) (controlstate.VisitorGrant, error)
 	ListAvailablePublicURLs(context.Context, string, string, string, time.Time) (controlstate.AvailablePublicURLPage, error)
-	MutateVisitorIPs(context.Context, string, string, string, string, []controlstate.VisitorIPGrantInput, time.Time) ([]controlstate.VisitorIPGrant, error)
+	ReplaceVisitorAccess(context.Context, string, string, controlstate.VisitorAccessMode, []string, uint64, time.Time) (controlstate.PublicURL, error)
 	IssueVisitorCertificateScope(context.Context, credentials.AccessToken, string, time.Time, func(string, string, time.Time) ([]byte, error)) ([]byte, time.Time, error)
 	DatabaseVisitorPermission(context.Context, controlstate.PublishRunAuthentication, string, string, time.Time) (controlstate.VisitorPermission, error)
 }
@@ -48,7 +49,7 @@ func (h *handler) AuthorizeHTTPVisitor(w http.ResponseWriter, r *http.Request, r
 	if !ok {
 		return
 	}
-	input := controlstate.HTTPVisitorRequest{SourceIP: body.SourceIp, BrowserCookieSecret: optionalFeedbackString(body.BrowserCookieSecret), ShareID: optionalFeedbackString(body.ShareId)}
+	input := controlstate.HTTPVisitorRequest{SourceIP: body.SourceIp, BrowserCookieSecret: optionalFeedbackString(body.BrowserCookieSecret), ShareID: optionalFeedbackString(body.ShareId), VisitorToken: optionalFeedbackString(body.VisitorToken)}
 	if body.ShareCookieSecret != nil {
 		raw, err := base64.RawURLEncoding.Strict().DecodeString(*body.ShareCookieSecret)
 		if err != nil || len(raw) != 32 {
@@ -142,6 +143,27 @@ func (h *handler) CreateTeamVisitorGrant(w http.ResponseWriter, r *http.Request,
 	result, err := h.visitorState.CreateTeamVisitorGrant(r.Context(), id, actor, p.IdempotencyKey, body.ExpiresAt, time.Now())
 	visitorResult(w, "create team visitor grant", result, err, 201)
 }
+
+func (h *handler) CreateVisitorToken(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, p controlv1.CreateVisitorTokenParams) {
+	actor, ok := h.visitorActor(w, r)
+	if !ok {
+		return
+	}
+	var body controlv1.CreateVisitorTokenRequest
+	if decodeJSON(w, r, &body) != nil {
+		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid visitor token")
+		return
+	}
+	raw, err := hex.DecodeString(body.TokenDigest)
+	if err != nil || len(raw) != 32 {
+		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid visitor token digest")
+		return
+	}
+	var digest [32]byte
+	copy(digest[:], raw)
+	result, err := h.visitorState.CreateVisitorToken(r.Context(), id, actor, p.IdempotencyKey, body.Label, digest, body.ExpiresAt, time.Now())
+	visitorResult(w, "create visitor token", result, err, http.StatusCreated)
+}
 func (h *handler) ListVisitorGrants(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
 	actor, ok := h.visitorActor(w, r)
 	if !ok {
@@ -208,49 +230,33 @@ func (h *handler) AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request
 	visitorResult(w, "accept visitor invitation", result, err, 200)
 }
 
-func (h *handler) mutateVisitorIP(w http.ResponseWriter, r *http.Request, id, operation, removeID string) {
+func (h *handler) ReplaceVisitorAccess(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
 	actor, ok := h.visitorActor(w, r)
 	if !ok {
 		return
 	}
-	var input []controlstate.VisitorIPGrantInput
-	if operation == "set" {
-		if decodeJSON(w, r, &input) != nil {
-			writeProblem(w, 400, controlv1.InvalidRequest, "invalid IP set")
-			return
-		}
+	var body controlv1.ReplaceVisitorAccessRequest
+	if decodeJSON(w, r, &body) != nil || body.ExpectedRevision < 1 {
+		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid visitor access policy")
+		return
 	}
-	if operation == "add" {
-		var one controlstate.VisitorIPGrantInput
-		if decodeJSON(w, r, &one) != nil {
-			writeProblem(w, 400, controlv1.InvalidRequest, "invalid IP grant")
-			return
-		}
-		input = []controlstate.VisitorIPGrantInput{one}
+	mode := controlstate.VisitorAccessMode(body.Mode)
+	if !mode.Valid() || body.Ip == nil {
+		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid visitor access policy")
+		return
 	}
-	result, err := h.visitorState.MutateVisitorIPs(r.Context(), id, actor, operation, removeID, input, time.Now())
-	status := 200
-	if operation == "add" {
-		status = 201
+	prefixes, err := authorization.CanonicalizeIPPrefixes(body.Ip)
+	if err != nil || len(prefixes) > 256 {
+		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid visitor IP policy")
+		return
 	}
-	if operation == "remove" {
-		status = 204
+	result, err := h.visitorState.ReplaceVisitorAccess(r.Context(), id, actor, mode, prefixes, uint64(body.ExpectedRevision), time.Now())
+	if err != nil {
+		writeControlStateProblem(w, "replace visitor access", err)
+		return
 	}
-	visitorResult(w, "update visitor IP set", result, err, status)
+	writeJSON(w, http.StatusOK, publicURLResponse(result))
 }
-func (h *handler) ListVisitorIPGrants(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
-	h.mutateVisitorIP(w, r, id, "list", "")
-}
-func (h *handler) SetVisitorIPGrants(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
-	h.mutateVisitorIP(w, r, id, "set", "")
-}
-func (h *handler) AddVisitorIPGrant(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
-	h.mutateVisitorIP(w, r, id, "add", "")
-}
-func (h *handler) RemoveVisitorIPGrant(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, grantID string) {
-	h.mutateVisitorIP(w, r, id, "remove", grantID)
-}
-
 func (h *handler) IssueVisitorCertificate(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
 	if _, ok := h.visitorActor(w, r); !ok {
 		return

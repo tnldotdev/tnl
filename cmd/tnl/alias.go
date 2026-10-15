@@ -208,17 +208,19 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 			}
 			continue
 		}
-		prefixes := base.AllowedIPPrefixes
-		if definition.AllowIP != nil || definition.AllowAllIPs != nil {
-			policy, err := resolveIPPolicy(ctx, services.authenticated.Control, definition.AllowIP, definition.AllowAllIPs != nil && *definition.AllowAllIPs)
+		policy := resolvedIPPolicy{access: controlv1.Restricted}
+		if definition.Access != nil {
+			policy, err = resolveVisitorAccess(ctx, services.authenticated.Control, definition.Access, false, nil)
 			if err != nil {
 				_ = state.RecordAliasFailure(ctx, selection, failure.ServerUnavailable)
 				continue
 			}
-			prefixes = policy.prefixes
 		}
-		config := services.config(base.Target, slices.Clone(prefixes), base.Limits)
+		config := services.config(base.Target, slices.Clone(policy.prefixes), base.Limits)
+		config.AccessMode = policy.access
 		config.Purpose = controlv1.Alias
+		config.ControlURL = services.authenticated.ServerEndpoint
+		config.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
 		config.Mounts, config.ObserveResponse = base.Mounts, base.ObserveResponse
 		config.AdmitRequest = base.AdmitRequest
 		var mu sync.Mutex

@@ -181,7 +181,11 @@ func runSession(
 	identity := PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, Number: version}
 	authorizeVisitor := config.AuthorizeVisitorCertificate
 	if authorizeVisitor == nil {
-		if client, ok := config.Control.(VisitorCertificateAuthorizer); ok {
+		var candidate any = config.Control
+		if config.VisitorControl != nil {
+			candidate = config.VisitorControl
+		}
+		if client, ok := candidate.(VisitorCertificateAuthorizer); ok {
 			authorizeVisitor = VisitorCertificateAuthorization(client, controlclient.VisitorCertificateScope{
 				PublishRunID: setup.PublishRun.Id, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version, PublishRunToken: publishRunToken,
 			})
@@ -201,6 +205,8 @@ func runSession(
 		PreviewID:             config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, PublishRunNumber: version,
 		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, ResolveTarget: config.ResolveTarget, TargetOptions: config.TargetOptions, CertificatePlan: plan,
 		ServiceProtocol: setup.PublicUrl.ServiceProtocol, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS,
+		Purpose:                     setup.PublicUrl.Purpose,
+		AccessMode:                  setup.PublicUrl.AccessMode,
 		PromoteVisitor:              config.PromoteVisitor,
 		AdmitVisitor:                config.AdmitVisitor,
 		AuthorizeVisitorCertificate: authorizeVisitor,

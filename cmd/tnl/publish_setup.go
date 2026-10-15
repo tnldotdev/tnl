@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/muxsession"
@@ -46,6 +47,36 @@ type clientIPLookup interface {
 type resolvedIPPolicy struct {
 	prefixes []string
 	current  string
+	access   controlv1.VisitorAccessMode
+	explicit bool
+}
+
+func resolveVisitorAccess(ctx context.Context, control clientIPLookup, configured *config.Access, anonymous bool, ips []string) (resolvedIPPolicy, error) {
+	result := resolvedIPPolicy{access: controlv1.Restricted}
+	if configured != nil {
+		if err := configured.Validate(); err != nil {
+			return result, err
+		}
+		result.access = controlv1.VisitorAccessMode(configured.VisitorMode())
+		result.prefixes = slices.Clone(configured.IP)
+		result.explicit = true
+	}
+	if anonymous || len(ips) != 0 {
+		result.access = controlv1.Restricted
+		if anonymous {
+			result.access = controlv1.Anonymous
+		}
+		result.prefixes = ips
+		result.explicit = true
+	}
+	if result.explicit {
+		var err error
+		result.prefixes, err = accessIPPrefixes(ctx, control, result.prefixes)
+		if err != nil {
+			return resolvedIPPolicy{}, err
+		}
+	}
+	return result, nil
 }
 
 func authenticatePublisher(

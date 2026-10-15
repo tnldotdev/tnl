@@ -491,7 +491,7 @@ func TestDeniedDatabaseVisitorReachesTLSAuthorization(t *testing.T) {
 			var authorized, promoted atomic.Int32
 			route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", ServiceProtocol: protocol, PublicPort: 5432, Target: address, Certificate: certificate,
 				AuthorizeVisitorCertificate: func(_ context.Context, v Visitor, state tls.ConnectionState) error {
-					if !v.Header.IPPolicyDenied || !state.HandshakeComplete {
+					if !v.Header.AccessPending || !state.HandshakeComplete {
 						t.Error("missing trusted denial or TLS")
 					}
 					authorized.Add(1)

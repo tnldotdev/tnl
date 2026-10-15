@@ -66,7 +66,7 @@ func (c *PublisherConnection) OpenVisitor(ctx context.Context, visitorConnection
 	return c.openVisitor(ctx, visitorConnectionID, false)
 }
 
-func (c *PublisherConnection) OpenDeniedVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
+func (c *PublisherConnection) OpenPendingVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
 	return c.openVisitor(ctx, visitorConnectionID, true)
 }
 
@@ -80,7 +80,7 @@ func (c *PublisherConnection) openVisitor(ctx context.Context, visitorConnection
 		PublishRunID: c.ref.PublishRunID, PublishRunNumber: c.ref.PublishRunNumber,
 		PublisherConnectionID:        c.ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: c.ref.ConnectionAssignmentRevision,
-		IPPolicyDenied:               denied,
+		AccessPending:                denied,
 	})
 	return c.finishOpen(stream, err)
 }

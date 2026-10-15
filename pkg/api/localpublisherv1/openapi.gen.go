@@ -90,6 +90,24 @@ func (e EndpointVersion) Valid() bool {
 	}
 }
 
+// Defines values for InvocationAccessMode.
+const (
+	Anonymous  InvocationAccessMode = "anonymous"
+	Restricted InvocationAccessMode = "restricted"
+)
+
+// Valid indicates whether the value is a known member of the InvocationAccessMode enum.
+func (e InvocationAccessMode) Valid() bool {
+	switch e {
+	case Anonymous:
+		return true
+	case Restricted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InvocationVersion.
 const (
 	InvocationVersionN1 InvocationVersion = 1
@@ -285,17 +303,20 @@ type Event struct {
 
 // Invocation defines model for Invocation.
 type Invocation struct {
-	AllowAllIps   *bool             `json:"allow_all_ips,omitempty"`
-	AllowIp       *[]string         `json:"allow_ip,omitempty"`
-	InvocationId  string            `json:"invocation_id"`
-	Owner         string            `json:"owner"`
-	Pid           int               `json:"pid"`
-	PublisherFile string            `json:"publisher_file,omitempty"`
-	PublisherId   string            `json:"publisher_id,omitempty"`
-	ServerUrl     *string           `json:"server_url,omitempty"`
-	Target        string            `json:"target"`
-	Version       InvocationVersion `json:"version"`
+	AccessMode    *InvocationAccessMode `json:"access_mode,omitempty"`
+	InvocationId  string                `json:"invocation_id"`
+	Ip            *[]string             `json:"ip,omitempty"`
+	Owner         string                `json:"owner"`
+	Pid           int                   `json:"pid"`
+	PublisherFile string                `json:"publisher_file,omitempty"`
+	PublisherId   string                `json:"publisher_id,omitempty"`
+	ServerUrl     *string               `json:"server_url,omitempty"`
+	Target        string                `json:"target"`
+	Version       InvocationVersion     `json:"version"`
 }
+
+// InvocationAccessMode defines model for Invocation.AccessMode.
+type InvocationAccessMode string
 
 // InvocationVersion defines model for Invocation.Version.
 type InvocationVersion int

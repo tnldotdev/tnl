@@ -29,6 +29,12 @@ func (c *Client) CreateTeamVisitorGrant(ctx context.Context, id, key string, bod
 		return c.api.CreateTeamVisitorGrant(ctx, id, &controlv1.CreateTeamVisitorGrantParams{IdempotencyKey: key}, body, e...)
 	})
 }
+
+func (c *Client) CreateVisitorToken(ctx context.Context, id, key string, body controlv1.CreateVisitorTokenRequest) (controlv1.VisitorGrant, error) {
+	return requestWithAccess[controlv1.VisitorGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateVisitorToken(ctx, id, &controlv1.CreateVisitorTokenParams{IdempotencyKey: key}, body, e...)
+	})
+}
 func (c *Client) ListVisitorGrants(ctx context.Context, id string) ([]controlv1.VisitorGrant, error) {
 	return requestWithAccess[[]controlv1.VisitorGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.ListVisitorGrants(ctx, id, e...)
@@ -61,26 +67,10 @@ func (c *Client) AcceptVisitorInvitation(ctx context.Context, secret string) (co
 		return c.api.AcceptVisitorInvitation(ctx, controlv1.AcceptVisitorInvitationJSONRequestBody{Secret: secret}, e...)
 	})
 }
-func (c *Client) ListVisitorIPGrants(ctx context.Context, id string) ([]controlv1.VisitorIPGrant, error) {
-	return requestWithAccess[[]controlv1.VisitorIPGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ListVisitorIPGrants(ctx, id, e...)
+func (c *Client) ReplaceVisitorAccess(ctx context.Context, id string, body controlv1.ReplaceVisitorAccessRequest) (controlv1.PublicURL, error) {
+	return requestWithAccess[controlv1.PublicURL](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ReplaceVisitorAccess(ctx, id, body, e...)
 	})
-}
-func (c *Client) SetVisitorIPGrants(ctx context.Context, id string, input []controlv1.VisitorIPGrantInput) ([]controlv1.VisitorIPGrant, error) {
-	return requestWithAccess[[]controlv1.VisitorIPGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.SetVisitorIPGrants(ctx, id, input, e...)
-	})
-}
-func (c *Client) AddVisitorIPGrant(ctx context.Context, id string, input controlv1.VisitorIPGrantInput) ([]controlv1.VisitorIPGrant, error) {
-	return requestWithAccess[[]controlv1.VisitorIPGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.AddVisitorIPGrant(ctx, id, input, e...)
-	})
-}
-func (c *Client) RemoveVisitorIPGrant(ctx context.Context, id, grantID string) error {
-	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RemoveVisitorIPGrant(ctx, id, grantID, e...)
-	})
-	return err
 }
 func (c *Client) IssueVisitorCertificate(ctx context.Context, id string, csr []byte) (controlv1.VisitorCertificate, error) {
 	return requestWithAccess[controlv1.VisitorCertificate](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {

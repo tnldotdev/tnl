@@ -1,6 +1,6 @@
 """publish Python ASGI applications through the app-owned tnl runtime."""
 
-from ._asgi import Limits, RateLimit, Tunnel, open
+from ._asgi import AccessPolicy, Limits, RateLimit, Tunnel, open
 from ._handler import handler
 from ._protocol import (
     CredentialRequired,
@@ -11,6 +11,7 @@ from ._protocol import (
 )
 
 __all__ = [
+    "AccessPolicy",
     "CredentialRequired",
     "InvalidResponse",
     "Limits",

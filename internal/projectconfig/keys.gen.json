@@ -1,6 +1,4 @@
 {
-  "allow_all_ips": "allowAllIPs",
-  "allow_ip": "allowIP",
   "ca_file": "caFile",
   "download_bytes": "downloadBytes",
   "max_bytes": "maxBytes",

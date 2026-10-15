@@ -59,7 +59,7 @@ func (*scopedPublishControl) DeletePublicURL(context.Context, string) error {
 
 func runScopedPublish(ctx context.Context, flags publishCommand, output *publishOutput, telemetry telemetryReporter) (result error) {
 	if flags.AccessToken != "" || flags.Name != "" || flags.Domain != "" || flags.Team != "" ||
-		flags.Ephemeral || flags.AllowAllIPs || len(flags.AllowIP) != 0 {
+		flags.Ephemeral || flags.Anonymous || len(flags.IP) != 0 {
 		return failure.Wrap("validate scoped publish options", failure.InvalidTunnelFlags, errors.New("a scoped publish credential cannot change saved URL settings"))
 	}
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
@@ -167,8 +167,9 @@ func runScopedPublish(ctx context.Context, flags publishCommand, output *publish
 	}
 	connectionTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	publisherConfig := publisher.Config{
-		Control:    &scopedPublishControl{Client: client, credential: credential, urlID: route.Id},
-		ControlURL: serverURL, State: profile,
+		Control:        &scopedPublishControl{Client: client, credential: credential, urlID: route.Id},
+		VisitorControl: client,
+		ControlURL:     serverURL, State: profile,
 		TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membershipID,
 		PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: publicURLScope, Purpose: controlv1.App,
 		Hostname: route.CanonicalHostname, Target: target, AllowedIPPrefixes: allowed,

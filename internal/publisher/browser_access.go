@@ -19,6 +19,8 @@ import (
 )
 
 const browserAccessCookieName = "__Host-tnl-browser"
+const visitorAccessCookieName = "__Host-tnl-visitor"
+const visitorAccessHeaderName = "Tnl-Visitor-Token"
 
 type browserAccessClient interface {
 	RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error)
@@ -37,10 +39,14 @@ type browserAccess struct {
 type browserIdentityKey struct{}
 
 func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token credentials.PublishRunToken, shares *shareAccess) *browserAccess {
-	if config.Demo || !strings.HasPrefix(config.ControlURL, "https://") || setup.PublicUrl.ServiceProtocol != controlv1.Http {
+	if !strings.HasPrefix(config.ControlURL, "https://") || setup.PublicUrl.ServiceProtocol != controlv1.Http {
 		return nil
 	}
-	client, ok := config.Control.(browserAccessClient)
+	var candidate any = config.Control
+	if config.VisitorControl != nil {
+		candidate = config.VisitorControl
+	}
+	client, ok := candidate.(browserAccessClient)
 	if !ok {
 		return nil
 	}
@@ -103,6 +109,11 @@ func (a *browserAccess) decision(request *http.Request) (controlv1.HTTPVisitorRe
 		return controlv1.HTTPVisitorResponse{}, errors.New("visitor source is invalid")
 	}
 	input := controlv1.HTTPVisitorRequest{PublishRunNumber: int64(a.version), SourceIp: source.Addr().Unmap().String()}
+	if token := request.Header.Get(visitorAccessHeaderName); token != "" {
+		input.VisitorToken = &token
+	} else if cookie, err := request.Cookie(visitorAccessCookieName); err == nil {
+		input.VisitorToken = &cookie.Value
+	}
 	if cookie, err := request.Cookie(browserAccessCookieName); err == nil {
 		input.BrowserCookieSecret = &cookie.Value
 	}

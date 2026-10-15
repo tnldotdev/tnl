@@ -4,39 +4,70 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 type HTTPVisitorRequest struct {
-	SourceIP, BrowserCookieSecret, ShareID string
-	ShareCookieSecret                      []byte
+	SourceIP, BrowserCookieSecret, ShareID, VisitorToken string
+	ShareCookieSecret                                    []byte
 }
 
 func (d *Database) httpVisitorDecision(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, input HTTPVisitorRequest, now time.Time) (VisitorPermission, error) {
 	result := VisitorPermission{}
+	ip, err := d.visitorIPAllowed(ctx, q, url, input.SourceIP, now)
+	if err != nil || !ip {
+		return result, err
+	}
 	if input.BrowserCookieSecret != "" {
-		var err error
-		result, err = d.browserPermission(ctx, q, url.ID, input.BrowserCookieSecret, now)
-		if err != nil {
-			return result, err
+		verified, verifyErr := d.browserPermission(ctx, q, url.ID, input.BrowserCookieSecret, now)
+		if verifyErr == nil {
+			result = verified
+		} else if !errors.Is(verifyErr, ErrVisitorSignIn) {
+			return result, verifyErr
 		}
+	}
+	if url.AccessMode == string(VisitorAccessAnonymous) {
+		result.VisitAllowed, result.Reason = true, "anonymous"
+		return result, nil
 	}
 	if result.VisitAllowed {
 		return result, nil
 	}
-	ip, err := d.visitorIPAllowed(ctx, q, url, input.SourceIP, now)
-	if err != nil {
-		return result, err
+	if url.Purpose == "demo" && input.VisitorToken != "" {
+		guest, guestErr := q.GetGuestTrialByID(ctx, url.CreatedByIdentityID)
+		if guestErr != nil && !errors.Is(guestErr, pgx.ErrNoRows) {
+			return result, guestErr
+		}
+		if guestErr == nil && guest.EndedAt.Valid == false && guest.ExpiresAt.Time.After(now) &&
+			credentials.GuestVisitorTokenMatches(input.VisitorToken, guest.ID, url.ID, guest.CredentialHash) {
+			result.VisitAllowed, result.Reason = true, "guest_link"
+			return result, nil
+		}
 	}
-	if ip {
-		result.VisitAllowed = true
-		result.Reason = "allowed_ip"
+	if id, encoded, found := strings.Cut(input.VisitorToken, "."); found && opaqueid.Valid(id, opaqueid.VisitorTokenPrefix) {
+		raw, decodeErr := base64.RawURLEncoding.Strict().DecodeString(encoded)
+		if decodeErr == nil && len(raw) == 32 && base64.RawURLEncoding.EncodeToString(raw) == encoded {
+			digest := sha256.Sum256(raw)
+			_, lookupErr := q.ValidVisitorToken(ctx, controlstatedb.ValidVisitorTokenParams{
+				ID: id, PublicURLID: url.ID, TokenDigest: digest[:], Now: timestamptz(now),
+			})
+			if lookupErr == nil {
+				result.VisitAllowed, result.Reason = true, "visitor_token"
+				return result, nil
+			}
+			if !errors.Is(lookupErr, pgx.ErrNoRows) {
+				return result, lookupErr
+			}
+		}
 	}
 	if !result.VisitAllowed && len(input.ShareCookieSecret) == 32 && url.Purpose == "app" {
 		digest := sha256.Sum256(input.ShareCookieSecret)
@@ -227,7 +258,7 @@ func (d *Database) BrowserAuthorizationForRun(ctx context.Context, auth PublishR
 	if err != nil {
 		return result, err
 	}
-	if url.Purpose != "app" || url.ServiceProtocol != "http" {
+	if url.Purpose != "app" && url.Purpose != "alias" || url.ServiceProtocol != "http" {
 		return result, ErrPreviewAccess
 	}
 	if _, err = d.lockAuthenticatedRun(ctx, q, auth, now); err != nil {
@@ -295,10 +326,13 @@ func (d *Database) DatabaseVisitorPermission(ctx context.Context, auth PublishRu
 	if _, err = d.lockAuthenticatedRun(ctx, q, auth, now); err != nil {
 		return result, err
 	}
-	if identityID == "" {
-		result.VisitAllowed, err = d.visitorIPAllowed(ctx, q, url, sourceIP, now)
-		result.Reason = "allowed_ip"
-	} else {
+	ip, err := d.visitorIPAllowed(ctx, q, url, sourceIP, now)
+	if err != nil || !ip {
+		return result, err
+	}
+	if url.AccessMode == string(VisitorAccessAnonymous) {
+		result.VisitAllowed, result.Reason = true, "anonymous"
+	} else if identityID != "" {
 		result, err = identityPermission(ctx, q, url.ID, identityID, "", now)
 	}
 	if err != nil {

@@ -334,6 +334,7 @@ CREATE TABLE control.public_urls (
     public_port integer CHECK (public_port BETWEEN 1024 AND 65535),
     public_url_scope text NOT NULL CHECK (public_url_scope IN ('member', 'shared')),
     policy_revision bigint NOT NULL CHECK (policy_revision >= 1),
+    access_mode text NOT NULL DEFAULT 'restricted' CHECK (access_mode IN ('restricted', 'anonymous')),
     ip_policy text NOT NULL CHECK (ip_policy IN ('allow_all', 'allowlist')),
     allowed_ip_policy_ciphertext bytea,
     allowed_ip_policy_storage_key_id text,
@@ -1326,12 +1327,15 @@ CREATE TABLE control.visitor_grants (
     id text PRIMARY KEY CHECK (id <> ''),
     public_url_id text NOT NULL REFERENCES control.public_urls(id) ON DELETE RESTRICT,
     team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
-    kind text NOT NULL CHECK (kind IN ('team', 'identity')),
+    kind text NOT NULL CHECK (kind IN ('team', 'identity', 'token')),
+    label text NOT NULL DEFAULT '' CHECK (length(label) <= 64),
     identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    token_digest bytea CHECK (token_digest IS NULL OR octet_length(token_digest) = 32),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL, request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     created_at timestamptz NOT NULL, expires_at timestamptz, revoked_at timestamptz,
     CHECK ((kind = 'identity') = (identity_id IS NOT NULL)),
+    CHECK ((kind = 'token') = (token_digest IS NOT NULL)),
     CHECK (expires_at IS NULL OR expires_at > created_at),
     UNIQUE (created_by_identity_id, kind, idempotency_key)
 );
@@ -1384,7 +1388,7 @@ RETURNS TABLE(reason text, expires_at timestamptz) LANGUAGE sql STABLE AS $$
           AND (g.expires_at IS NULL OR g.expires_at > at_time)
           AND ((g.kind = 'team' AND m.id IS NOT NULL) OR (g.kind = 'identity' AND g.identity_id = i.id))
     ) permission
-    WHERE u.id = url_id AND u.lifecycle_state = 'enabled' AND u.purpose = 'app'
+    WHERE u.id = url_id AND u.lifecycle_state = 'enabled' AND u.purpose IN ('app', 'alias')
       AND u.service_protocol IN ('http', 'postgres', 'mysql', 'redis')
     ORDER BY permission.priority, permission.expires_at DESC NULLS FIRST LIMIT 1;
 $$;
