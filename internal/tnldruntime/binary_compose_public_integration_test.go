@@ -91,7 +91,7 @@ func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
 		if !t.Failed() {
 			return
 		}
-		diagnostic, stop := context.WithTimeout(context.Background(), 8*time.Second)
+		diagnostic, stop := context.WithTimeout(context.Background(), 15*time.Second)
 		defer stop()
 		path, err := privateprotocol.DescriptorPath(fixture.stateDirectory, root)
 		if err == nil {
@@ -115,34 +115,30 @@ func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
 		if output, err := command.CombinedOutput(); err == nil {
 			t.Logf("Compose publisher output:\n%s", output)
 		}
+		inspect := inspectStandaloneTestDatabase(t, fixture.databaseURL)
+		rows, err := inspect.QueryContext(diagnostic, `
+			SELECT u.service_protocol, r.state, r.certificate_installed_at IS NOT NULL,
+			       COALESCE(a.state, ''), COALESCE(a.attempts, 0)
+			FROM control.publish_runs r
+			JOIN control.public_urls u ON u.id = r.public_url_id
+			LEFT JOIN control.acme_orders a ON a.publish_run_id = r.id
+			ORDER BY u.service_protocol, r.publish_run_number, a.created_at`)
+		if err == nil {
+			for rows.Next() {
+				var protocol, runState, orderState string
+				var certificate bool
+				var attempts int
+				if err := rows.Scan(&protocol, &runState, &certificate, &orderState, &attempts); err != nil {
+					break
+				}
+				t.Logf("Compose public %s run=%s certificate=%t issuance=%s attempts=%d", protocol, runState, certificate, orderState, attempts)
+			}
+			_ = rows.Close()
+		}
+		t.Logf("disposable server output:\n%s", fixture.server.output.String())
 	})
 	compose("exec", "--no-TTY", "--env", "TNL_LOGIN_TOKEN="+testLoginToken, "publisher", "tnl", "auth", "login", "--login-token")
 	compose("up", "--detach", "--wait", "db")
-	databasePublish := startIntegrationBinaryPublish(t, root, fixture.environment, fixture.tnlPath, "publish", "db", "--output=ndjson")
-	databaseReady := waitForIntegrationBinaryPublishEvent(t, databasePublish, "ready", 90*time.Second)
-	if _, port, err := net.SplitHostPort(databaseReady.URL); err != nil || port != "15432" {
-		t.Fatalf("Compose database public address has no verified ingress port: %q, %v", databaseReady.URL, err)
-	}
-	queryDatabase := func() {
-		t.Helper()
-		waitForIntegrationCondition(t, 45*time.Second, func(ctx context.Context) (bool, error) {
-			settings, err := pgx.ParseConfig("postgres://postgres:postgres@" + databaseReady.URL + "/postgres?sslmode=verify-full&channel_binding=disable")
-			if err != nil {
-				return false, err
-			}
-			settings.TLSConfig.RootCAs = fixture.pebble.roots
-			settings.Fallbacks = nil
-			connection, err := pgx.ConnectConfig(ctx, settings)
-			if err != nil {
-				return false, err
-			}
-			defer connection.Close(ctx)
-			var value int
-			err = connection.QueryRow(ctx, "SELECT 42").Scan(&value)
-			return err == nil && value == 42, err
-		})
-	}
-	queryDatabase()
 	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "")
 	service := func() (clientruntime.Service, error) {
 		query := compose("exec", "--no-TTY", "web", "/fixture/app", "query", "--path", "/v1/status")
@@ -179,6 +175,31 @@ func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
 		return body
 	}
 	first := request("")
+	databasePublish := startIntegrationBinaryPublish(t, root, fixture.environment, fixture.tnlPath, "publish", "db", "--output=ndjson")
+	databaseReady := waitForIntegrationBinaryPublishEvent(t, databasePublish, "ready", 90*time.Second)
+	if _, port, err := net.SplitHostPort(databaseReady.URL); err != nil || port != "15432" {
+		t.Fatalf("Compose database public address has no verified ingress port: %q, %v", databaseReady.URL, err)
+	}
+	queryDatabase := func() {
+		t.Helper()
+		waitForIntegrationCondition(t, 45*time.Second, func(ctx context.Context) (bool, error) {
+			settings, err := pgx.ParseConfig("postgres://postgres:postgres@" + databaseReady.URL + "/postgres?sslmode=verify-full&channel_binding=disable")
+			if err != nil {
+				return false, err
+			}
+			settings.TLSConfig.RootCAs = fixture.pebble.roots
+			settings.Fallbacks = nil
+			connection, err := pgx.ConnectConfig(ctx, settings)
+			if err != nil {
+				return false, err
+			}
+			defer connection.Close(ctx)
+			var value int
+			err = connection.QueryRow(ctx, "SELECT 42").Scan(&value)
+			return err == nil && value == 42, err
+		})
+	}
+	queryDatabase()
 	compose("up", "--detach", "--no-deps", "--force-recreate", "web")
 	second := request(first)
 	if second == first {
