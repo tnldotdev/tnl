@@ -44,7 +44,7 @@ func TestComposeOverrideIsGeneratedForWorktreeWithoutAppCredentialInConfig(t *te
 	if err != nil || inside.Root != root || inside.Config.Publisher == nil || inside.Config.Publisher.Service != "publisher" || len(inside.Config.Services) != 2 {
 		t.Fatalf("native Compose owner did not consume host-resolved project config: %+v, %v", inside, err)
 	}
-	for _, expected := range []string{"tnl.worktree: project-checkout-abc123", "TNL_APP_ENDPOINT: /run/tnl/apps/web/private/endpoint.json", "tnl-owner-state:/run/tnl/state", "tnl-app-web:/run/tnl/apps/web:ro", "tnl-private:"} {
+	for _, expected := range []string{"tnl.worktree: project-checkout-abc123", "TNL_APP_ENDPOINT: /run/tnl/apps/web/private/endpoint.json", "TNL_APP_AUTHORITY: http://publisher:8123", "tnl-owner-state:/run/tnl/state", "tnl-project-metadata:/run/tnl/.tnl", "tnl-project-metadata:/workspace/.tnl:ro", "tnl-app-web:/run/tnl/apps/web:ro", "tnl-private:"} {
 		if !strings.Contains(string(data), expected) {
 			t.Fatalf("generated override missing %q:\n%s", expected, data)
 		}
@@ -134,25 +134,31 @@ func TestComposeOverrideDockerConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner, app := rendered.Services["publisher"], rendered.Services["web"]
-	if owner.Labels["tnl.worktree"] != "worktree-abc123" || app.Labels["tnl.worktree"] != "worktree-abc123" || app.Environment["TNL_APP_ENDPOINT"] != "/run/tnl/apps/web/private/endpoint.json" {
+	if owner.Labels["tnl.worktree"] != "worktree-abc123" || app.Labels["tnl.worktree"] != "worktree-abc123" || app.Environment["TNL_APP_ENDPOINT"] != "/run/tnl/apps/web/private/endpoint.json" || app.Environment["TNL_APP_AUTHORITY"] != "http://publisher:8123" {
 		t.Fatalf("compose lost worktree identity or app endpoint: owner=%+v app=%+v", owner, app)
 	}
-	var sharedVolume string
+	var sharedVolume, metadataVolume string
 	for _, mount := range owner.Volumes {
 		if mount.Target == "/run/tnl/apps/web" {
 			sharedVolume = mount.Source
 		}
+		if mount.Target == "/run/tnl/.tnl" && !mount.ReadOnly {
+			metadataVolume = mount.Source
+		}
 	}
-	var isolated bool
+	var isolated, browserMetadata bool
 	for _, mount := range app.Volumes {
 		if mount.Source == sharedVolume && sharedVolume != "" && mount.ReadOnly && mount.Target == "/run/tnl/apps/web" {
 			isolated = true
+		}
+		if mount.Source == metadataVolume && metadataVolume != "" && mount.ReadOnly && mount.Target == "/workspace/.tnl" {
+			browserMetadata = true
 		}
 		if mount.Target == "/run/tnl/state" {
 			t.Fatal("app received the publisher's state volume")
 		}
 	}
-	if !isolated {
-		t.Fatalf("app descriptor volume was not isolated: owner=%+v app=%+v", owner.Volumes, app.Volumes)
+	if !isolated || !browserMetadata {
+		t.Fatalf("app descriptor or browser-safe metadata volume was not isolated: owner=%+v app=%+v", owner.Volumes, app.Volumes)
 	}
 }

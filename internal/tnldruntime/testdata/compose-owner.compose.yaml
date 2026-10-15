@@ -17,6 +17,7 @@ services:
     command: [/fixture/owner, app]
     environment:
       TNL_APP_ENDPOINT: /caps/private/endpoint.json
+      TNL_APP_AUTHORITY: http://publisher:8123
     labels:
       tnl.worktree: ${TNL_COMPOSE_FIXTURE_WORKTREE:?}
     ports: ["127.0.0.1::3000"]
@@ -29,6 +30,7 @@ services:
     command: [/fixture/owner, app]
     environment:
       TNL_APP_ENDPOINT: /caps/private/endpoint.json
+      TNL_APP_AUTHORITY: http://publisher:8123
     labels:
       tnl.worktree: ${TNL_COMPOSE_FIXTURE_WORKTREE:?}
     ports: ["127.0.0.1::3000"]

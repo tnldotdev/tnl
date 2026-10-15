@@ -412,7 +412,13 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	if err != nil {
 		return privateprotocol.Assignment{}, err
 	}
-	if err := projectmeta.Write(ctx, a.project.Root, metadata); err != nil {
+	metadataRoot := a.project.Root
+	if a.placement != nil {
+		// compose keeps the project bind read-only. share browser-safe metadata
+		// through its own volume without granting apps access to owner state.
+		metadataRoot = "/run/tnl"
+	}
+	if err := projectmeta.Write(ctx, metadataRoot, metadata); err != nil {
 		return privateprotocol.Assignment{}, err
 	}
 	selected := metadata.Services[name]

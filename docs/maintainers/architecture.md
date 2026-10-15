@@ -235,10 +235,14 @@ ad-hoc readiness is the run's routability, not a public GET app probe.
 
 host placement is the default. `tnl compose login` and `tnl compose up` use a
 generated worktree-specific Compose override for a selected Compose publisher.
-it mounts one private state volume in the publisher and a separate read-only
-descriptor volume in each app, joins a labelled network, and leaves the owner
-capability out of app containers. targets are resolved for new requests and
-connections; a container replacement never replays an admitted visitor.
+it mounts private owner state only in the publisher, a separate read-only
+descriptor volume in each app, and browser-safe project metadata read-only in
+the apps from another shared volume. the publisher's project bind stays
+read-only. each app checks its mounted `TNL_APP_ENDPOINT` against the exact
+`TNL_APP_AUTHORITY` in the generated override. the labelled network connects
+apps to the publisher without giving them its owner capability. targets are
+resolved for new requests and connections; a container replacement never
+replays an admitted visitor.
 
 preparation reserves a live owner without claiming a listener. registration
 acknowledges the bound target, not provisioning. duplicate live owners fail;
@@ -565,12 +569,12 @@ implements handshakes, and `internal/streamcopy` copies bytes in both directions
 | `packages/ts`              | Browser-safe runtime and Node framework integrations                        |
 
 The npm public subpaths are the package root, `/config`, `/next`, and `/vite`.
-The private development socket is shipped implementation, not a public extension
-API.
+the private development HTTP endpoint is shipped implementation, not a public
+extension API.
 
-Framework integrations receive browser-safe metadata and a private local socket.
-They never receive control access tokens. They remain inactive during builds and
-previews.
+framework integrations receive browser-safe metadata and a service-scoped
+private HTTP endpoint. they never receive control access tokens. they remain
+inactive during builds and previews.
 
 Go validates project metadata before writing `.tnl/project.json`. The TypeScript
 package validates it again when reading it or receiving an app assignment.
