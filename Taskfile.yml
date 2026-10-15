@@ -254,6 +254,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestBinaryIntegration' -count=1 -timeout=15m -args -tnl-test-tier=binary
 
+  go:test:integration:compose:
+    desc: Check disposable host-side Compose HTTP and TCP targets
+    cmds:
+      - go test -race -v ./internal/publishertarget -run='^TestComposeIntegrationHostTargets$' -count=1 -timeout=8m -args -tnl-compose-integration
+
   go:test:integration:dns:
     desc: Run the authoritative DNS integration test in disposable Linux containers
     cmds:

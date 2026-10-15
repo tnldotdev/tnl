@@ -231,41 +231,6 @@
           "type": "object",
           "description": "Default public URL and tunnel settings."
         },
-        "publisher": {
-          "oneOf": [
-            {
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "const": "host"
-                }
-              },
-              "additionalProperties": false,
-              "type": "object",
-              "required": ["type"]
-            },
-            {
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "const": "compose"
-                },
-                "service": {
-                  "type": "string",
-                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
-                },
-                "file": {
-                  "type": "string",
-                  "minLength": 1,
-                  "pattern": "^(?!/)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[^\\\\\\u0000]+$"
-                }
-              },
-              "additionalProperties": false,
-              "type": "object",
-              "required": ["type", "service"]
-            }
-          ]
-        },
         "services": {
           "additionalProperties": {
             "oneOf": [

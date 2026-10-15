@@ -80,8 +80,6 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		return &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern}
 	case reflect.TypeOf(config.ByteSize(0)):
 		return &jsonschema.Schema{Type: "string", Pattern: `^(102[4-9]|10[3-9][0-9]|1[1-9][0-9]{2}|[2-9][0-9]{3}|[1-9][0-9]{4,5}|10[0-3][0-9]{4}|104[0-7][0-9]{3}|1048[0-4][0-9]{2}|10485[0-6][0-9]|104857[0-6])KiB$|^([1-9]|[1-9][0-9]|[1-9][0-9]{2}|10[01][0-9]|102[0-4])MiB$|^1GiB$`}
-	case reflect.TypeOf(config.AppPublisher{}):
-		return publisherSchema()
 	case reflect.TypeOf(config.Tunnel{}):
 		return tunnelSchema()
 	case reflect.TypeOf(config.Services{}):
@@ -274,19 +272,6 @@ func targetSchema() *jsonschema.Schema {
 		variants = append(variants, &jsonschema.Schema{Type: "object", Properties: properties, Required: required, AdditionalProperties: jsonschema.FalseSchema})
 	}
 	return &jsonschema.Schema{OneOf: variants}
-}
-
-func publisherSchema() *jsonschema.Schema {
-	host := jsonschema.NewProperties()
-	host.Set("type", &jsonschema.Schema{Type: "string", Const: "host"})
-	compose := jsonschema.NewProperties()
-	compose.Set("type", &jsonschema.Schema{Type: "string", Const: "compose"})
-	compose.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`})
-	compose.Set("file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), Pattern: `^(?!/)(?!.*(?:^|[/\\])\.\.(?:[/\\]|$))[^\\\u0000]+$`})
-	return &jsonschema.Schema{OneOf: []*jsonschema.Schema{
-		{Type: "object", Properties: host, Required: []string{"type"}, AdditionalProperties: jsonschema.FalseSchema},
-		{Type: "object", Properties: compose, Required: []string{"type", "service"}, AdditionalProperties: jsonschema.FalseSchema},
-	}}
 }
 
 func aliasSchema() *jsonschema.Schema {

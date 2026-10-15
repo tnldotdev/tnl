@@ -223,6 +223,14 @@ probe and cannot become a configured-service readiness observation.
 ad-hoc URLs can reach local services by hostname, such as
 `http://app.internal:3000`.
 
+host publishers can discover a selected Compose container through its published
+loopback port, checking the exact project, worktree label, service, and container
+identity before each new target capture. a publisher inside Docker instead uses
+a configured private address and runs ordinary `tnl publish` commands in its
+container. Compose manages its startup, state volume, and network; tnl does not
+generate an override or a cross-container app credential. replacing a target
+never replays an admitted visitor.
+
 preparation reserves a live owner without claiming a listener. registration
 acknowledges the bound target, not provisioning. duplicate live owners fail;
 listener replacement cancels and joins the previous publisher before starting

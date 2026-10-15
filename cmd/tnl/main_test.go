@@ -38,7 +38,7 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 		commands[command.Path()] = true
 	}
 	for _, command := range []string{
-		"init", "publish", "status", "wait", "watch", "ping", "compose prepare", "compose login", "compose up", "auth status", "auth login start", "auth login wait", "auth login inspect", "auth login cancel", "auth logout",
+		"init", "publish", "status", "wait", "watch", "ping", "auth status", "auth login start", "auth login wait", "auth login inspect", "auth login cancel", "auth logout",
 		"config path", "config check", "config generate", "telemetry on", "telemetry off", "telemetry status",
 		"team current", "team list", "team use", "team create", "team members", "team invite create",
 		"team invite list", "team invite revoke", "team join", "team member set-role", "team member remove",
@@ -65,6 +65,9 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	}
 	if _, err := parser.Parse([]string{"route", "list"}); err == nil {
 		t.Fatal("obsolete route command was accepted")
+	}
+	if _, err := parser.Parse([]string{"compose", "up"}); err == nil {
+		t.Fatal("compose lifecycle command was accepted")
 	}
 }
 

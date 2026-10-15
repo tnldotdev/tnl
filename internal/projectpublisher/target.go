@@ -6,7 +6,6 @@ import (
 	"errors"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
@@ -42,11 +41,4 @@ func ResolveTarget(ctx context.Context, project projectconfig.Project, name stri
 		}
 	}
 	return project.ResolvePublish(name, address)
-}
-
-// OwnerTransportResolver selects an authenticated owner endpoint for a project.
-// host uses its private state descriptor; compose placement supplies its own
-// verified transport and descriptor mapping through this boundary.
-type OwnerTransportResolver interface {
-	OwnerEndpoint(context.Context, projectconfig.Project, string) (privateprotocol.Endpoint, error)
 }
