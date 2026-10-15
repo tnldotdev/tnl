@@ -146,7 +146,7 @@ func (d *Database) IssuePublisherEnrollment(ctx context.Context, r CreatePublish
 	key := id + "." + base64.RawURLEncoding.EncodeToString(secret[:])
 	digest := sha256.Sum256([]byte(key))
 	until := r.Now.Add(PublisherEnrollmentLifetime)
-	_, err = q.InsertPublisherEnrollment(ctx, controlstatedb.InsertPublisherEnrollmentParams{ID: id, TokenDigest: digest[:], TeamID: s.TeamID, Name: r.Name, IdentityKind: r.Kind, GrantKind: s.Kind, PublicURLID: nullableText(s.PublicURLID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), PublicURLScope: nullableText(string(s.PublicURLScope)), CreatedByIdentityID: r.EditorID, CreatedAt: timestamptz(r.Now), ExpiresAt: timestamptz(until)})
+	_, err = q.InsertPublisherEnrollment(ctx, controlstatedb.InsertPublisherEnrollmentParams{ID: id, EnrollmentKeyDigest: digest[:], TeamID: s.TeamID, Name: r.Name, IdentityKind: r.Kind, GrantKind: s.Kind, PublicURLID: nullableText(s.PublicURLID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), PublicURLScope: nullableText(string(s.PublicURLScope)), CreatedByIdentityID: r.EditorID, CreatedAt: timestamptz(r.Now), ExpiresAt: timestamptz(until)})
 	if err != nil {
 		return result, err
 	}
@@ -211,7 +211,7 @@ func (d *Database) RedeemPublisherEnrollment(ctx context.Context, secret string,
 		return result, publisherLookupError(err, ErrPublisherEnrollment)
 	}
 	digest := sha256.Sum256([]byte(secret))
-	if subtle.ConstantTimeCompare(digest[:], e.TokenDigest) != 1 || !e.ExpiresAt.Time.After(now) {
+	if subtle.ConstantTimeCompare(digest[:], e.EnrollmentKeyDigest) != 1 || !e.ExpiresAt.Time.After(now) {
 		return result, ErrPublisherEnrollment
 	}
 	s := PublisherScope{TeamID: e.TeamID, Kind: e.GrantKind, PublicURLID: e.PublicURLID.String, DomainID: e.DomainID.String, Namespace: e.Namespace.String, MembershipID: e.MembershipID.String, PublicURLScope: PublicURLScope(e.PublicURLScope.String)}
@@ -380,7 +380,7 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, id, grant, au
 		until = g.ExpiresAt.Time
 	}
 	identity.KeyID = kid
-	if err := q.InsertPublisherAccess(ctx, controlstatedb.InsertPublisherAccessParams{Digest: digest[:], PublisherIdentityID: id, GrantID: grant, KeyID: kid, CreatedAt: timestamptz(now), ExpiresAt: timestamptz(until)}); err != nil {
+	if err := q.InsertPublisherAccess(ctx, controlstatedb.InsertPublisherAccessParams{AccessTokenDigest: digest[:], PublisherIdentityID: id, GrantID: grant, KeyID: kid, CreatedAt: timestamptz(now), ExpiresAt: timestamptz(until)}); err != nil {
 		return result, err
 	}
 	return PublisherAccess{identity, token, until}, tx.Commit(ctx)

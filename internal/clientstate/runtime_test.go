@@ -2,6 +2,7 @@ package clientstate
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,7 +41,11 @@ func TestRuntimeJournalUnifiesAppNamedAndDirectPublications(t *testing.T) {
 		if err := tunnel.SetPublicURL(t.Context(), testPublicURLID, "service.example"); err != nil {
 			t.Fatal(err)
 		}
-		if err := tunnel.SetReady(t.Context(), "service.example:12345", 1); err != nil {
+		publicURL := "https://service.example"
+		if options.ServiceProtocol != "" {
+			publicURL = "service.example:12345"
+		}
+		if err := tunnel.SetReady(t.Context(), publicURL, 1); err != nil {
 			t.Fatal(err)
 		}
 		defer tunnel.Finish(context.Background(), nil)
@@ -78,7 +83,7 @@ func TestRuntimeUpdateRollsBackSnapshotCursorAndEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.db.ExecContext(t.Context(), `CREATE TRIGGER reject_event BEFORE INSERT ON project_runtime_events WHEN NEW.event_type = 'reject' BEGIN SELECT RAISE(ABORT, 'rejected'); END;`); err != nil {
+	if _, err := database.db.ExecContext(t.Context(), `CREATE TRIGGER reject_event BEFORE INSERT ON project_events WHEN NEW.event_type = 'reject' BEGIN SELECT RAISE(ABORT, 'rejected'); END;`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.CommitRuntimeUpdate(t.Context(), project, RuntimeUpdate{ExpectedCursor: initial.Cursor, Services: []json.RawMessage{json.RawMessage(`{"service":"bad"}`)}, Type: "reject", Payload: json.RawMessage(`{}`)}); err == nil {
@@ -209,11 +214,12 @@ func TestRuntimeRetentionCountBytesAndAuthoredStaleCursor(t *testing.T) {
 			defer tx.Rollback()
 			queries := database.queries.WithTx(tx)
 			for range count - 1 {
-				row, err := queries.AdvanceRuntimeProject(t.Context(), clientstatedb.AdvanceRuntimeProjectParams{ProjectRoot: project, Now: database.now().UnixNano()})
+				row, err := queries.AdvanceRuntimeProject(t.Context(), clientstatedb.AdvanceRuntimeProjectParams{ProjectRoot: project,
+					Now: sql.NullInt64{Int64: database.now().UnixNano(), Valid: true}})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := queries.InsertRuntimeEvent(t.Context(), clientstatedb.InsertRuntimeEventParams{ProjectRoot: project, Sequence: row.Sequence, EventType: "retained", CreatedAt: row.ObservedAt, Payload: string(payload)}); err != nil {
+				if err := queries.InsertRuntimeEvent(t.Context(), clientstatedb.InsertRuntimeEventParams{ProjectRoot: project, Sequence: row.LastSequence, EventType: "retained", CreatedAt: row.LastObservedAt.Int64, Payload: string(payload)}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -225,7 +231,7 @@ func TestRuntimeRetentionCountBytesAndAuthoredStaleCursor(t *testing.T) {
 				t.Fatal(err)
 			}
 			var retained, used int64
-			if err := database.db.QueryRowContext(t.Context(), "SELECT count(*), sum(stored_bytes) FROM project_runtime_events WHERE project_root = ?", project).Scan(&retained, &used); err != nil {
+			if err := database.db.QueryRowContext(t.Context(), "SELECT count(*), sum(stored_bytes) FROM project_events WHERE project_root = ?", project).Scan(&retained, &used); err != nil {
 				t.Fatal(err)
 			}
 			if retained > RuntimeEventRetention || used > RuntimeEventBytes || retained >= int64(count) {
@@ -252,15 +258,15 @@ func TestRuntimeRetentionCountBytesAndAuthoredStaleCursor(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			firstSequence, err := cursorSequence(latest.Events[0].Cursor, row.Epoch)
+			firstSequence, err := cursorSequence(latest.Events[0].Cursor, row.CursorEpoch)
 			if err != nil {
 				t.Fatal(err)
 			}
-			events, err := database.RuntimeEventsAfter(t.Context(), project, runtimeCursor(row.Epoch, firstSequence-1))
+			events, err := database.RuntimeEventsAfter(t.Context(), project, runtimeCursor(row.CursorEpoch, firstSequence-1))
 			if err != nil || len(events) != len(latest.Events) {
 				t.Fatalf("retention boundary resume: %d, %v", len(events), err)
 			}
-			if _, err := database.RuntimeEventsAfter(t.Context(), project, runtimeCursor(row.Epoch, row.Sequence+1)); !errors.Is(err, ErrRuntimeCursorExpired) {
+			if _, err := database.RuntimeEventsAfter(t.Context(), project, runtimeCursor(row.CursorEpoch, row.LastSequence+1)); !errors.Is(err, ErrRuntimeCursorExpired) {
 				t.Fatalf("future cursor accepted: %v", err)
 			}
 		})

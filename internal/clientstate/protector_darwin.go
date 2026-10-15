@@ -10,7 +10,7 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-const keychainService = "dev.tnl.client-state.v3"
+const keychainService = "dev.tnl.client-state.v1"
 
 func defaultProtection() ProtectionMode { return ProtectionKeychain }
 

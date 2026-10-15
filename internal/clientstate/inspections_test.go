@@ -121,12 +121,12 @@ func TestInspectionRetentionAndByteBudgetArePerServiceAndWorktree(t *testing.T) 
 		}
 	}
 	var size int64
-	if err := state.db.QueryRowContext(context.Background(), `SELECT coalesce(sum(stored_bytes), 0) FROM local_inspections
+	if err := state.db.QueryRowContext(context.Background(), `SELECT coalesce(sum(stored_bytes), 0) FROM inspections
 		WHERE project_root = ? AND service = 'orders'`, project).Scan(&size); err != nil || size > long.MaxBytes {
 		t.Fatalf("service inspection budget = %d, %v", size, err)
 	}
 	var accounted int64
-	if err := state.db.QueryRowContext(t.Context(), `SELECT used_bytes FROM local_inspection_usage
+	if err := state.db.QueryRowContext(t.Context(), `SELECT used_bytes FROM inspection_storage_usage
 		WHERE project_root = ? AND service = 'orders'`, project).Scan(&accounted); err != nil || accounted != size {
 		t.Fatalf("stored inspection byte accounting = %d, actual %d, %v", accounted, size, err)
 	}

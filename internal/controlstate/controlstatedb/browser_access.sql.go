@@ -14,7 +14,7 @@ import (
 const browserSessionPublicURLIncluded = `-- name: BrowserSessionPublicURLIncluded :one
 SELECT included.public_url_id
 FROM control.browser_access_sessions AS session
-JOIN control.browser_session_hosts AS included ON included.session_digest = session.token_digest
+JOIN control.browser_session_run_bindings AS included ON included.session_digest = session.token_digest
 WHERE session.token_digest = $1 AND included.public_url_id = $2
 `
 
@@ -48,7 +48,7 @@ WHERE handoff.token_digest = $2 AND handoff.public_url_id = $3
   AND handoff.consumed_at IS NULL AND handoff.expires_at > $1
   AND session.token_digest = handoff.session_digest AND session.revoked_at IS NULL AND session.expires_at > $1
 RETURNING handoff.session_digest, handoff.cookie_ciphertext, handoff.storage_key_id, handoff.return_path,
-          handoff.next_url, handoff.bridge, session.expires_at, handoff.publish_run_id
+           handoff.redirect_url, handoff.bridge, session.expires_at, handoff.publish_run_id
 `
 
 type ConsumeBrowserAccessHandoffParams struct {
@@ -63,7 +63,7 @@ type ConsumeBrowserAccessHandoffRow struct {
 	CookieCiphertext []byte
 	StorageKeyID     string
 	ReturnPath       string
-	NextUrl          string
+	RedirectUrl      string
 	Bridge           bool
 	ExpiresAt        pgtype.Timestamptz
 	PublishRunID     string
@@ -82,7 +82,7 @@ func (q *Queries) ConsumeBrowserAccessHandoff(ctx context.Context, arg ConsumeBr
 		&i.CookieCiphertext,
 		&i.StorageKeyID,
 		&i.ReturnPath,
-		&i.NextUrl,
+		&i.RedirectUrl,
 		&i.Bridge,
 		&i.ExpiresAt,
 		&i.PublishRunID,
@@ -157,7 +157,7 @@ func (q *Queries) GetBrowserAccessSession(ctx context.Context, tokenDigest []byt
 
 const insertBrowserAccessHandoff = `-- name: InsertBrowserAccessHandoff :exec
 INSERT INTO control.browser_access_handoffs
-    (token_digest, session_digest, public_url_id, publish_run_id, cookie_ciphertext, storage_key_id, return_path, next_url, bridge, expires_at)
+    (token_digest, session_digest, public_url_id, publish_run_id, cookie_ciphertext, storage_key_id, return_path, redirect_url, bridge, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 `
 
@@ -169,7 +169,7 @@ type InsertBrowserAccessHandoffParams struct {
 	CookieCiphertext []byte
 	StorageKeyID     string
 	ReturnPath       string
-	NextUrl          string
+	RedirectUrl      string
 	Bridge           bool
 	ExpiresAt        pgtype.Timestamptz
 }
@@ -183,7 +183,7 @@ func (q *Queries) InsertBrowserAccessHandoff(ctx context.Context, arg InsertBrow
 		arg.CookieCiphertext,
 		arg.StorageKeyID,
 		arg.ReturnPath,
-		arg.NextUrl,
+		arg.RedirectUrl,
 		arg.Bridge,
 		arg.ExpiresAt,
 	)
@@ -333,7 +333,7 @@ func (q *Queries) LockBrowserAccessSession(ctx context.Context, tokenDigest []by
 const revokeBrowserAccessSession = `-- name: RevokeBrowserAccessSession :exec
 UPDATE control.browser_access_sessions SET revoked_at = $1
 WHERE token_digest = $2 AND revoked_at IS NULL
-   AND EXISTS (SELECT 1 FROM control.browser_session_hosts AS included
+   AND EXISTS (SELECT 1 FROM control.browser_session_run_bindings AS included
                WHERE included.session_digest = control.browser_access_sessions.token_digest
                 AND included.public_url_id = $3)
 `
