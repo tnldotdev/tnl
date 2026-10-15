@@ -1,7 +1,6 @@
 package controlapi
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -44,6 +42,20 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 	}
 	principal, ok := h.authorizeRouteReads(response, request)
 	if !ok {
+		return
+	}
+	var secretFingerprint [32]byte
+	copy(secretFingerprint[:], fingerprint)
+	label := ""
+	if body.Label != nil {
+		label = *body.Label
+	}
+	if previewID == "" && principal.guest != nil {
+		if h.guests == nil {
+			writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "guest demos are unavailable")
+			return
+		}
+		h.createGuestShare(response, request, *principal.guest, body.PublicUrlIds[0], key, label, secretFingerprint, body.ExpiresAt)
 		return
 	}
 	var preview controlstate.Preview
@@ -106,12 +118,6 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 			PublicURLID: id, ExpectedMutationRevision: route.MutationRevision,
 		})
 	}
-	var secretFingerprint [32]byte
-	copy(secretFingerprint[:], fingerprint)
-	label := ""
-	if body.Label != nil {
-		label = *body.Label
-	}
 	share, err := h.shares.CreateShare(request.Context(), controlstate.CreateShareRequest{
 		PreviewID: previewID, TeamID: preview.TeamID, Label: label,
 		ActingIdentityID: principal.identityID, IdempotencyKey: key,
@@ -125,21 +131,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 	writeJSON(response, http.StatusCreated, shareResponse(share))
 }
 
-func (h *handler) CreateGuestShare(response http.ResponseWriter, request *http.Request, publicURLID controlv1.PublicURLID, _ controlv1.CreateGuestShareParams) {
-	if !h.config.GuestDemoEnabled || h.shares == nil || h.guests == nil {
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-		return
-	}
-	access, ok := requestBearerToken(request)
-	if !ok {
-		writeBearerProblem(response)
-		return
-	}
-	guest, err := h.guests.GuestTrialByAccessToken(request.Context(), credentials.AccessToken(access))
-	if err != nil {
-		writeBearerProblem(response)
-		return
-	}
+func (h *handler) createGuestShare(response http.ResponseWriter, request *http.Request, guest controlstate.GuestTrial, publicURLID, key, label string, fingerprint [32]byte, expiresAt time.Time) {
 	address, err := guestRequestAddress(request)
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid client address")
@@ -154,21 +146,7 @@ func (h *handler) CreateGuestShare(response http.ResponseWriter, request *http.R
 		writeProblem(response, http.StatusForbidden, controlv1.GuestIpChanged, "guest trial IP changed")
 		return
 	}
-	var body controlv1.CreateGuestShareRequest
-	if decodeJSONLimited(response, request, &body, 4096) != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid guest share request")
-		return
-	}
-	fingerprint, err := hex.DecodeString(body.SecretFingerprint)
-	key := request.Header.Get("Idempotency-Key")
-	if err != nil || len(fingerprint) != sha256.Size || hex.EncodeToString(fingerprint) != body.SecretFingerprint ||
-		key == "" || len(key) > 128 || strings.TrimSpace(key) != key {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid guest share request")
-		return
-	}
-	var digest [32]byte
-	copy(digest[:], fingerprint)
-	share, err := h.shares.CreateGuestShare(request.Context(), guest.ID, string(publicURLID), key, digest, time.Now())
+	share, err := h.shares.CreateGuestShare(request.Context(), guest.ID, publicURLID, key, label, fingerprint, expiresAt, time.Now())
 	if err != nil {
 		writeControlStateProblem(response, "create guest share", err)
 		return

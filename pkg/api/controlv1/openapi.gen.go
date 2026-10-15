@@ -1147,11 +1147,6 @@ type CreateFeedbackReportRequest struct {
 	SourceAtReport SourceState `json:"source_at_report"`
 }
 
-// CreateGuestShareRequest defines model for CreateGuestShareRequest.
-type CreateGuestShareRequest struct {
-	SecretFingerprint string `json:"secret_fingerprint"`
-}
-
 // CreatePreviewRequest defines model for CreatePreviewRequest.
 type CreatePreviewRequest struct {
 	TeamId TeamID `json:"team_id"`
@@ -2073,11 +2068,6 @@ type CreatePublicURLParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
-// CreateGuestShareParams defines parameters for CreateGuestShare.
-type CreateGuestShareParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
 // CreatePublishRunParams defines parameters for CreatePublishRun.
 type CreatePublishRunParams struct {
 	IdempotencyKey    IdempotencyKey `json:"Idempotency-Key"`
@@ -2191,9 +2181,6 @@ type UpdatePublicURLJSONRequestBody = UpdatePublicURLRequest
 
 // ReplaceVisitorAccessJSONRequestBody defines body for ReplaceVisitorAccess for application/json ContentType.
 type ReplaceVisitorAccessJSONRequestBody = ReplaceVisitorAccessRequest
-
-// CreateGuestShareJSONRequestBody defines body for CreateGuestShare for application/json ContentType.
-type CreateGuestShareJSONRequestBody = CreateGuestShareRequest
 
 // CreatePublishRunJSONRequestBody defines body for CreatePublishRun for application/json ContentType.
 type CreatePublishRunJSONRequestBody = CreatePublishRunRequest
@@ -2670,20 +2657,6 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
 	ReplaceVisitorAccess(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateGuestShareWithBody Store one trial-bound share for a guest demo URL
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
-	CreateGuestShareWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateGuestShare Store one trial-bound share for a guest demo URL
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
-	CreateGuestShare(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, body CreateGuestShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// CreatePublishRunWithBody Create a publish run and allocate its publish run number
 	//
 	// Takes any type of body and a specified content type.
@@ -3050,12 +3023,16 @@ type ClientInterface interface {
 
 	// CreateURLShareWithBody Store one share for an exact authorized HTTP public URL
 	//
+	// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/shares (the `CreateURLShare` operationId).
 	CreateURLShareWithBody(ctx context.Context, params *CreateURLShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateURLShare Store one share for an exact authorized HTTP public URL
+	//
+	// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -3777,40 +3754,6 @@ func (c *Client) ReplaceVisitorAccessWithBody(ctx context.Context, publicUrlId P
 // Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
 func (c *Client) ReplaceVisitorAccess(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReplaceVisitorAccessRequest(c.Server, publicUrlId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateGuestShareWithBody Store one trial-bound share for a guest demo URL
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
-func (c *Client) CreateGuestShareWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateGuestShareRequestWithBody(c.Server, publicUrlId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateGuestShare Store one trial-bound share for a guest demo URL
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
-func (c *Client) CreateGuestShare(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, body CreateGuestShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateGuestShareRequest(c.Server, publicUrlId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4807,6 +4750,8 @@ func (c *Client) ListTeamShares(ctx context.Context, params *ListTeamSharesParam
 
 // CreateURLShareWithBody Store one share for an exact authorized HTTP public URL
 //
+// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/shares (the `CreateURLShare` operationId).
@@ -4823,6 +4768,8 @@ func (c *Client) CreateURLShareWithBody(ctx context.Context, params *CreateURLSh
 }
 
 // CreateURLShare Store one share for an exact authorized HTTP public URL
+//
+// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6410,66 +6357,6 @@ func NewReplaceVisitorAccessRequestWithBody(server string, publicUrlId PublicURL
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewCreateGuestShareRequest calls the generic CreateGuestShare builder with application/json body
-func NewCreateGuestShareRequest(server string, publicUrlId PublicURLID, params *CreateGuestShareParams, body CreateGuestShareJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateGuestShareRequestWithBody(server, publicUrlId, params, "application/json", bodyReader)
-}
-
-// NewCreateGuestShareRequestWithBody constructs an http.Request for the CreateGuestShare method, with any body, and a specified content type
-func NewCreateGuestShareRequestWithBody(server string, publicUrlId PublicURLID, params *CreateGuestShareParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/guest-share", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
 
 	return req, nil
 }
@@ -8869,20 +8756,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
 	ReplaceVisitorAccessWithResponse(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceVisitorAccessResponse, error)
 
-	// CreateGuestShareWithBodyWithResponse Store one trial-bound share for a guest demo URL
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
-	CreateGuestShareWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateGuestShareResponse, error)
-
-	// CreateGuestShareWithResponse Store one trial-bound share for a guest demo URL
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
-	CreateGuestShareWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, body CreateGuestShareJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateGuestShareResponse, error)
-
 	// CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -9285,12 +9158,16 @@ type ClientWithResponsesInterface interface {
 
 	// CreateURLShareWithBodyWithResponse Store one share for an exact authorized HTTP public URL
 	//
+	// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/shares (the `CreateURLShare` operationId).
 	CreateURLShareWithBodyWithResponse(ctx context.Context, params *CreateURLShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateURLShareResponse, error)
 
 	// CreateURLShareWithResponse Store one share for an exact authorized HTTP public URL
+	//
+	// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -10891,54 +10768,6 @@ func (r ReplaceVisitorAccessResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ReplaceVisitorAccessResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateGuestShareResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *Share
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateGuestShareResponse) GetJSON201() *Share {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateGuestShareResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateGuestShareResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateGuestShareResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateGuestShareResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateGuestShareResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -13542,32 +13371,6 @@ func (c *ClientWithResponses) ReplaceVisitorAccessWithResponse(ctx context.Conte
 	return ParseReplaceVisitorAccessResponse(rsp)
 }
 
-// CreateGuestShareWithBodyWithResponse Store one trial-bound share for a guest demo URL
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
-func (c *ClientWithResponses) CreateGuestShareWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateGuestShareResponse, error) {
-	rsp, err := c.CreateGuestShareWithBody(ctx, publicUrlId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateGuestShareResponse(rsp)
-}
-
-// CreateGuestShareWithResponse Store one trial-bound share for a guest demo URL
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
-func (c *ClientWithResponses) CreateGuestShareWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, body CreateGuestShareJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateGuestShareResponse, error) {
-	rsp, err := c.CreateGuestShare(ctx, publicUrlId, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateGuestShareResponse(rsp)
-}
-
 // CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -14342,6 +14145,8 @@ func (c *ClientWithResponses) ListTeamSharesWithResponse(ctx context.Context, pa
 
 // CreateURLShareWithBodyWithResponse Store one share for an exact authorized HTTP public URL
 //
+// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/shares (the `CreateURLShare` operationId).
@@ -14354,6 +14159,8 @@ func (c *ClientWithResponses) CreateURLShareWithBodyWithResponse(ctx context.Con
 }
 
 // CreateURLShareWithResponse Store one share for an exact authorized HTTP public URL
+//
+// A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -15502,39 +15309,6 @@ func ParseReplaceVisitorAccessResponse(rsp *http.Response) (*ReplaceVisitorAcces
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateGuestShareResponse parses an HTTP response from a CreateGuestShareWithResponse call
-func ParseCreateGuestShareResponse(rsp *http.Response) (*CreateGuestShareResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateGuestShareResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest Share
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -17069,9 +16843,6 @@ type ServerInterface interface {
 	// ReplaceVisitorAccess Replace the complete live visitor access policy
 	// (PUT /v1/public-urls/{public_url_id}/access)
 	ReplaceVisitorAccess(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
-	// CreateGuestShare Store one trial-bound share for a guest demo URL
-	// (POST /v1/public-urls/{public_url_id}/guest-share)
-	CreateGuestShare(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreateGuestShareParams)
 	// CreatePublishRun Create a publish run and allocate its publish run number
 	// (POST /v1/public-urls/{public_url_id}/publish-runs)
 	CreatePublishRun(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreatePublishRunParams)
@@ -18237,60 +18008,6 @@ func (siw *ServerInterfaceWrapper) ReplaceVisitorAccess(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ReplaceVisitorAccess(w, r, publicUrlId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateGuestShare operation middleware
-func (siw *ServerInterfaceWrapper) CreateGuestShare(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateGuestShareParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateGuestShare(w, r, publicUrlId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19868,7 +19585,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.CreateShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares", wrapper.ListTeamShares)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares", wrapper.CreateURLShare)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/guest-share", wrapper.CreateGuestShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/{share_id}", wrapper.GetShare)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/{share_id}/revoke", wrapper.RevokeShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback", wrapper.ListFeedbackThreads)

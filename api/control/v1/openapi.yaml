@@ -620,6 +620,7 @@ paths:
     post:
       operationId: createURLShare
       summary: Store one share for an exact authorized HTTP public URL
+      description: A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
       security:
         - bearerAuth: []
       parameters:
@@ -654,30 +655,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SharePage"
-        default:
-          $ref: "#/components/responses/Problem"
-  /v1/public-urls/{public_url_id}/guest-share:
-    post:
-      operationId: createGuestShare
-      summary: Store one trial-bound share for a guest demo URL
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/PublicURLID"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateGuestShareRequest"
-      responses:
-        "201":
-          description: Stored guest share without its secret
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Share"
         default:
           $ref: "#/components/responses/Problem"
   /v1/shares/{share_id}:
@@ -2390,14 +2367,6 @@ components:
         label:
           type: string
           maxLength: 128
-    CreateGuestShareRequest:
-      type: object
-      additionalProperties: false
-      required: [secret_fingerprint]
-      properties:
-        secret_fingerprint:
-          type: string
-          pattern: "^[0-9a-f]{64}$"
     Share:
       type: object
       additionalProperties: false

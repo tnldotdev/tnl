@@ -51,18 +51,29 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	share, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "first-share", sha256.Sum256([]byte("reviewer-secret")), now)
-	if err != nil || share.Scope != "guest" || share.PreviewID != "" || len(share.PublicURLIDs) != 1 || share.PublicURLIDs[0] != first.ID || !share.ExpiresAt.Equal(stored.ExpiresAt) {
+	share, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "first-share", "trial", sha256.Sum256([]byte("reviewer-secret")), stored.ExpiresAt, now)
+	if err != nil || share.Scope != "guest" || share.Label != "trial" || share.PreviewID != "" || len(share.PublicURLIDs) != 1 || share.PublicURLIDs[0] != first.ID || !share.ExpiresAt.Equal(stored.ExpiresAt) {
 		t.Fatalf("guest share = %+v, %v", share, err)
 	}
-	if _, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "first-share", sha256.Sum256([]byte("other-secret")), now); !errors.Is(err, ErrShareIdempotency) {
+	if _, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "first-share", "trial", sha256.Sum256([]byte("other-secret")), stored.ExpiresAt, now); !errors.Is(err, ErrShareIdempotency) {
 		t.Fatalf("reused guest share key with different secret: %v", err)
+	}
+	short, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "short-share", "", sha256.Sum256([]byte("short-lived")), now.Add(time.Hour), now)
+	if err != nil || !short.ExpiresAt.Equal(now.Add(time.Hour).UTC().Truncate(time.Microsecond)) {
+		t.Fatalf("guest share with shorter expiry = %+v, %v", short, err)
+	}
+	if _, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "short-share", "", sha256.Sum256([]byte("short-lived")), now.Add(2*time.Hour), now); !errors.Is(err, ErrShareIdempotency) {
+		t.Fatalf("reused guest share key with different expiry: %v", err)
+	}
+	capped, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "capped-share", "", sha256.Sum256([]byte("trial-bound")), now.Add(4*24*time.Hour), now)
+	if err != nil || !capped.ExpiresAt.Equal(stored.ExpiresAt) {
+		t.Fatalf("guest share beyond trial = %+v, %v", capped, err)
 	}
 	unrelated, err := opaqueid.New(opaqueid.PublicURLPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.CreateGuestShare(t.Context(), guest.ID, unrelated, "other-share", sha256.Sum256([]byte("reviewer-secret")), now); !errors.Is(err, ErrShareStale) {
+	if _, err := database.CreateGuestShare(t.Context(), guest.ID, unrelated, "other-share", "", sha256.Sum256([]byte("reviewer-secret")), stored.ExpiresAt, now); !errors.Is(err, ErrShareStale) {
 		t.Fatalf("guest share of unrelated public URL: %v", err)
 	}
 	if _, err := controlstatedb.New(database.pool).GetActiveShareForPublicURL(t.Context(), controlstatedb.GetActiveShareForPublicURLParams{ShareID: share.ID, PublicURLID: first.ID, Now: timestamptz(now)}); err != nil {

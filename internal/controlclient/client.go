@@ -11,7 +11,6 @@ package controlclient
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -139,13 +138,6 @@ func (c *Client) CreateShare(ctx context.Context, previewID, key string, body co
 func (c *Client) CreateURLShare(ctx context.Context, key string, body controlv1.CreateShareRequest) (controlv1.Share, error) {
 	return requestWithAccess[controlv1.Share](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreateURLShare(ctx, &controlv1.CreateURLShareParams{IdempotencyKey: key}, body, editors...)
-	})
-}
-
-func (c *Client) CreateGuestShare(ctx context.Context, id, key string, digest [32]byte) (controlv1.Share, error) {
-	return requestWithAccess[controlv1.Share](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateGuestShare(ctx, id, &controlv1.CreateGuestShareParams{IdempotencyKey: key},
-			controlv1.CreateGuestShareRequest{SecretFingerprint: hex.EncodeToString(digest[:])}, editors...)
 	})
 }
 

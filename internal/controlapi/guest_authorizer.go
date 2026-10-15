@@ -35,7 +35,7 @@ func (a guestAuthorizer) AuthorizePublicURLReads(ctx context.Context, token stri
 	if err != nil {
 		return publicURLReadPrincipal{}, authorization.ErrUnavailable
 	}
-	return publicURLReadPrincipal{identityID: guest.ID, teamIDs: map[string]struct{}{guest.TeamID: {}}}, nil
+	return publicURLReadPrincipal{identityID: guest.ID, teamIDs: map[string]struct{}{guest.TeamID: {}}, guest: &guest}, nil
 }
 
 func (a guestAuthorizer) Authorize(ctx context.Context, request authorization.Request) (authorization.Decision, error) {

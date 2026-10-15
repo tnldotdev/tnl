@@ -215,15 +215,17 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 
 // CreateGuestShare saves the same share capability used by regular URLs, but
 // ties it to the live guest trial and its single demo URL.
-func (d *Database) CreateGuestShare(ctx context.Context, guestID, publicURLID, key string, fingerprint [32]byte, now time.Time) (result Share, retErr error) {
-	if guestID == "" || !opaqueid.Valid(publicURLID, opaqueid.PublicURLPrefix) || key == "" || len(key) > 128 {
+func (d *Database) CreateGuestShare(ctx context.Context, guestID, publicURLID, key, label string, fingerprint [32]byte, expiresAt, now time.Time) (result Share, retErr error) {
+	now = now.UTC().Truncate(time.Microsecond)
+	expiresAt = expiresAt.UTC().Truncate(time.Microsecond)
+	if guestID == "" || !opaqueid.Valid(publicURLID, opaqueid.PublicURLPrefix) || key == "" || len(key) > 128 || len(label) > 128 ||
+		!expiresAt.After(now) || expiresAt.After(now.Add(maximumShareLifetime)) {
 		return Share{}, ErrShareInvalid
 	}
 	if err := d.requireOpen(); err != nil {
 		return Share{}, err
 	}
-	now = now.UTC().Truncate(time.Microsecond)
-	digest := sha256.Sum256([]byte(guestID + ":" + publicURLID + ":" + hex.EncodeToString(fingerprint[:])))
+	digest := sha256.Sum256([]byte(guestID + ":" + publicURLID + ":" + hex.EncodeToString(fingerprint[:]) + ":" + expiresAt.Format(time.RFC3339Nano) + ":" + label))
 	id, err := opaqueid.New(opaqueid.SharePrefix)
 	if err != nil {
 		return Share{}, err
@@ -249,8 +251,8 @@ func (d *Database) CreateGuestShare(ctx context.Context, guestID, publicURLID, k
 		return Share{}, ErrShareLimit
 	}
 	stored, err := q.CreateGuestShare(ctx, controlstatedb.CreateGuestShareParams{
-		ID: id, GuestID: guestID, PublicURLID: publicURLID, IdempotencyKey: key,
-		RequestDigest: digest[:], SecretDigest: fingerprint[:], Now: timestamptz(now),
+		ID: id, GuestID: guestID, PublicURLID: publicURLID, IdempotencyKey: key, Label: label,
+		RequestDigest: digest[:], SecretDigest: fingerprint[:], ExpiresAt: timestamptz(expiresAt), Now: timestamptz(now),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Share{}, ErrShareStale

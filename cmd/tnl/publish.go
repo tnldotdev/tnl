@@ -270,7 +270,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			if err != nil {
 				return err
 			}
-			share, err := authenticated.Control.CreateGuestShare(ctx, event.PublicURLID, key, fingerprint)
+			share, err := authenticated.Control.CreateURLShare(ctx, key, controlv1.CreateShareRequest{
+				PublicUrlIds: []string{event.PublicURLID}, SecretFingerprint: hex.EncodeToString(fingerprint[:]), ExpiresAt: guest.ExpiresAt,
+			})
 			if err != nil {
 				return fmt.Errorf("create guest share: %w", err)
 			}

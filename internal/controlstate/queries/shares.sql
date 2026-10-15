@@ -23,10 +23,11 @@ ON CONFLICT (share_id, public_url_id) DO UPDATE SET
 RETURNING public_url_id;
 
 -- name: CreateGuestShare :one
-INSERT INTO control.shares (id, team_id, guest_id, scope, created_by_identity_id,
+INSERT INTO control.shares (id, team_id, guest_id, scope, label, created_by_identity_id,
     idempotency_key, request_digest, secret_digest, created_at, expires_at)
-SELECT sqlc.arg(id), trial.team_id, trial.id, 'guest', trial.id,
-    sqlc.arg(idempotency_key), sqlc.arg(request_digest), sqlc.arg(secret_digest), sqlc.arg(now), trial.expires_at
+SELECT sqlc.arg(id), trial.team_id, trial.id, 'guest', sqlc.arg(label), trial.id,
+    sqlc.arg(idempotency_key), sqlc.arg(request_digest), sqlc.arg(secret_digest), sqlc.arg(now),
+    LEAST(sqlc.arg(expires_at)::timestamptz, trial.expires_at)
 FROM control.guest_trials trial
 JOIN control.guest_public_urls included ON included.guest_id = trial.id AND included.public_url_id = sqlc.arg(public_url_id)
 JOIN control.public_urls url ON url.id = included.public_url_id AND url.team_id = trial.team_id

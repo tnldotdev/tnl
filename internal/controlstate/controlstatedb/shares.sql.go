@@ -63,14 +63,15 @@ func (q *Queries) AddSharePublicURL(ctx context.Context, arg AddSharePublicURLPa
 }
 
 const createGuestShare = `-- name: CreateGuestShare :one
-INSERT INTO control.shares (id, team_id, guest_id, scope, created_by_identity_id,
+INSERT INTO control.shares (id, team_id, guest_id, scope, label, created_by_identity_id,
     idempotency_key, request_digest, secret_digest, created_at, expires_at)
-SELECT $1, trial.team_id, trial.id, 'guest', trial.id,
-    $2, $3, $4, $5, trial.expires_at
+SELECT $1, trial.team_id, trial.id, 'guest', $2, trial.id,
+    $3, $4, $5, $6,
+    LEAST($7::timestamptz, trial.expires_at)
 FROM control.guest_trials trial
-JOIN control.guest_public_urls included ON included.guest_id = trial.id AND included.public_url_id = $6
+JOIN control.guest_public_urls included ON included.guest_id = trial.id AND included.public_url_id = $8
 JOIN control.public_urls url ON url.id = included.public_url_id AND url.team_id = trial.team_id
-WHERE trial.id = $7 AND control.guest_share_live(trial.id, $5)
+WHERE trial.id = $9 AND control.guest_share_live(trial.id, $6)
   AND url.lifecycle_state = 'enabled' AND url.purpose = 'demo' AND url.service_protocol = 'http'
 ON CONFLICT (created_by_identity_id, idempotency_key)
 DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
@@ -79,10 +80,12 @@ RETURNING id, schema_version, preview_id, team_id, guest_id, scope, label, creat
 
 type CreateGuestShareParams struct {
 	ID             string
+	Label          string
 	IdempotencyKey string
 	RequestDigest  []byte
 	SecretDigest   []byte
 	Now            pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
 	PublicURLID    string
 	GuestID        string
 }
@@ -90,10 +93,12 @@ type CreateGuestShareParams struct {
 func (q *Queries) CreateGuestShare(ctx context.Context, arg CreateGuestShareParams) (ControlShare, error) {
 	row := q.db.QueryRow(ctx, createGuestShare,
 		arg.ID,
+		arg.Label,
 		arg.IdempotencyKey,
 		arg.RequestDigest,
 		arg.SecretDigest,
 		arg.Now,
+		arg.ExpiresAt,
 		arg.PublicURLID,
 		arg.GuestID,
 	)
