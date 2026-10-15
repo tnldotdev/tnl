@@ -29,7 +29,8 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		if t.Failed() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			rows, err := inspectStandaloneTestDatabase(t, fixture.databaseURL).QueryContext(ctx, `
+			inspect := inspectStandaloneTestDatabase(t, fixture.databaseURL)
+			rows, err := inspect.QueryContext(ctx, `
 				SELECT run.state, run.certificate_installed_at IS NOT NULL, slot.connection_slot, slot.state
 				FROM control.publish_runs AS run
 				JOIN control.public_urls AS public_url ON public_url.id = run.public_url_id
@@ -51,6 +52,12 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 				_ = rows.Close()
 			} else {
 				t.Logf("read publisher diagnostic: %v", err)
+			}
+			for _, table := range []string{"public_urls", "publisher_identities", "publisher_enrollments", "previews", "preview_public_urls"} {
+				var count int
+				if err := inspect.QueryRowContext(ctx, "SELECT count(*) FROM control."+table).Scan(&count); err == nil {
+					t.Logf("app-led %s=%d", table, count)
+				}
 			}
 			t.Logf("tnld output:\n%s", fixture.server.output.String())
 		}

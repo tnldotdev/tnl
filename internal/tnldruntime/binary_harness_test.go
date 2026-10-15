@@ -271,9 +271,14 @@ func waitForIntegrationBinaryPublishEvent(
 		event, err := publish.events.next(ctx, &publish.cursor)
 		if err != nil {
 			processErr, scanErr := publish.result()
+			previous, _ := publish.events.snapshot()
+			var observed []struct{ Type, Reason string }
+			for _, item := range previous {
+				observed = append(observed, struct{ Type, Reason string }{string(item.Type), item.Reason})
+			}
 			t.Fatalf(
-				"tnl publish did not emit %q: %v; process %v, NDJSON %v\nstderr:\n%s",
-				eventType, err, processErr, scanErr, publish.stderr.String(),
+				"tnl publish did not emit %q: %v; process %v, NDJSON %v, events %+v\nstderr:\n%s",
+				eventType, err, processErr, scanErr, observed, publish.stderr.String(),
 			)
 		}
 		if event.Type == eventType {
