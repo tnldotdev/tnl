@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/localpublisher"
+	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publishertarget"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -86,6 +87,35 @@ func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
 	}
 	runIntegrationBinaryCommand(t, root, fixture.environment, fixture.tnlPath, "compose", "up", "--detach")
 	runIntegrationBinaryCommand(t, root, fixture.environment, fixture.tnlPath, "runtime", "owner-endpoint", "--directory", root)
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		diagnostic, stop := context.WithTimeout(context.Background(), 8*time.Second)
+		defer stop()
+		path, err := privateprotocol.DescriptorPath(fixture.stateDirectory, root)
+		if err == nil {
+			var endpoint privateprotocol.Endpoint
+			endpoint, err = privateprotocol.ReadEndpoint(path)
+			if err == nil {
+				var snapshot clientruntime.Snapshot
+				err = privateprotocol.Call(diagnostic, endpoint, "GET", "/v1/status", nil, &snapshot)
+				if err == nil {
+					for _, service := range snapshot.Services {
+						t.Logf("Compose owner service=%s registered=%t routable=%t run=%d failure=%s", service.Name, service.Registered, service.Routable, service.PublishRunNumber, service.Failure)
+					}
+				}
+			}
+		}
+		if err != nil {
+			t.Logf("read Compose owner state: %v", err)
+		}
+		command := exec.CommandContext(diagnostic, "docker", append(append([]string{}, args...), "logs", "--no-color", "--tail", "25", "publisher")...)
+		command.Dir = root
+		if output, err := command.CombinedOutput(); err == nil {
+			t.Logf("Compose publisher output:\n%s", output)
+		}
+	})
 	compose("exec", "--no-TTY", "--env", "TNL_LOGIN_TOKEN="+testLoginToken, "publisher", "tnl", "auth", "login", "--login-token")
 	compose("up", "--detach", "--wait", "db")
 	databasePublish := startIntegrationBinaryPublish(t, root, fixture.environment, fixture.tnlPath, "publish", "db", "--output=ndjson")
