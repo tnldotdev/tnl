@@ -113,6 +113,7 @@ type TunnelInfo struct {
 	UpdatedAt        time.Time                          `json:"updated_at"`
 	HeartbeatAt      time.Time                          `json:"heartbeat_at"`
 	LeaseExpiresAt   time.Time                          `json:"lease_expires_at"`
+	Failure          string                             `json:"failure,omitempty"`
 }
 
 // BeginTunnel registers a local tunnel and maintains its liveness lease until
@@ -365,28 +366,8 @@ func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnap
 		Aliases:         aliases,
 	}
 	for _, row := range records {
-		state := TunnelState(row.State)
-		if !unixNanoTime(row.LeaseExpiresAt).After(observedAt) {
-			state = TunnelStateStale
-		}
-		info := TunnelInfo{
-			ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
-			Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service,
-			PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber), PublicPort: uint16(row.PublicPort),
-			Hostname: row.Hostname, Target: row.Target, Framework: row.Framework, IntegrationGroup: row.IntegrationGroup,
-			StartedAt: unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
-			HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
-		}
-		if row.ServiceProtocol != string(controlv1.Http) {
-			info.ServiceProtocol = controlv1.PublicURLServiceProtocol(row.ServiceProtocol)
-		}
-		if info.Hostname != "" && (info.PublicPort != 0 || info.ServiceProtocol == "") {
-			if info.PublicPort != 0 {
-				info.PublicURL = net.JoinHostPort(info.Hostname, strconv.Itoa(int(info.PublicPort)))
-			} else {
-				info.PublicURL = "https://" + info.Hostname
-			}
-		}
+		info := tunnelInfo(row, observedAt)
+		state := info.State
 		snapshot.Tunnels = append(snapshot.Tunnels, info)
 		snapshot.Summary.Total++
 		switch state {
@@ -424,6 +405,33 @@ func (t *Tunnel) heartbeat(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func tunnelInfo(row clientstatedb.LocalTunnel, observedAt time.Time) TunnelInfo {
+	state := TunnelState(row.State)
+	if !row.StoppedAt.Valid && !unixNanoTime(row.LeaseExpiresAt).After(observedAt) {
+		state = TunnelStateStale
+	}
+	info := TunnelInfo{
+		ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
+		Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service,
+		PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber), PublicPort: uint16(row.PublicPort),
+		Hostname: row.Hostname, Target: row.Target, Framework: row.Framework, IntegrationGroup: row.IntegrationGroup,
+		StartedAt: unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
+		HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
+		Failure: row.LastError,
+	}
+	if row.ServiceProtocol != string(controlv1.Http) {
+		info.ServiceProtocol = controlv1.PublicURLServiceProtocol(row.ServiceProtocol)
+	}
+	if info.Hostname != "" {
+		if info.PublicPort != 0 {
+			info.PublicURL = net.JoinHostPort(info.Hostname, strconv.Itoa(int(info.PublicPort)))
+		} else if info.ServiceProtocol == "" {
+			info.PublicURL = "https://" + info.Hostname
+		}
+	}
+	return info
 }
 
 func newTunnelID() (string, error) {

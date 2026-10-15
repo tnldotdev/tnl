@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -173,7 +174,10 @@ func (f *feedbackRuntime) evidenceForBrowser(request *http.Request) []failedRequ
 
 func (f *feedbackRuntime) reviewerAccess(request *http.Request, denied bool) (controlv1.FeedbackReviewerAccess, bool) {
 	result := controlv1.FeedbackReviewerAccess{AllowedIp: !denied}
-	if _, verified := request.Context().Value(browserIdentityKey{}).(controlv1.BrowserAccessResponse); verified {
+	if host, _, err := net.SplitHostPort(request.RemoteAddr); err == nil {
+		result.SourceIp = &host
+	}
+	{
 		if cookie, err := request.Cookie(browserAccessCookieName); err == nil {
 			secret := cookie.Value
 			result.BrowserCookieSecret = &secret
@@ -376,6 +380,8 @@ func (f *feedbackRuntime) writeResult(response http.ResponseWriter, value any, e
 		message, status := "feedback request failed; retry", http.StatusServiceUnavailable
 		var problem *controlclient.ProblemError
 		switch {
+		case errors.Is(err, controlclient.ErrUnauthenticated):
+			message, status = "feedback requires sign-in; sign in and retry", http.StatusUnauthorized
 		case errors.Is(err, controlclient.ErrNotFound):
 			message, status = "feedback thread not found", http.StatusNotFound
 		case errors.Is(err, controlclient.ErrStatusConflict):

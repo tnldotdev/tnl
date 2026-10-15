@@ -1,10 +1,10 @@
 export type TnlErrorCode =
-  | "sdk.credential_required"
-  | "sdk.credential_rejected"
   | "sdk.publication_failed"
   | "sdk.owner_conflict"
   | "sdk.registration_stale"
   | "sdk.authentication_required"
+  | "sdk.publisher_setup_required"
+  | "sdk.publisher_file_invalid"
   | "sdk.configuration_invalid"
   | "sdk.runtime_invalid"
   | "sdk.protocol_unsupported"
@@ -24,16 +24,6 @@ export type TnlErrorCode =
 type FailureClass = "invalid" | "internal" | "unavailable" | "conflict";
 type Retry = "never" | "later" | "after_change";
 const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; message: string }> = {
-  "sdk.credential_required": {
-    class: "invalid",
-    retry: "after_change",
-    message: "set TNL_CREDENTIAL or pass an ad-hoc credential to tnl.open",
-  },
-  "sdk.credential_rejected": {
-    class: "invalid",
-    retry: "after_change",
-    message: "ad-hoc credential is invalid or no longer authorized; issue a replacement",
-  },
   "sdk.publication_failed": {
     class: "unavailable",
     retry: "later",
@@ -54,6 +44,17 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     class: "unavailable",
     retry: "after_change",
     message: "tnl needs a saved login; run tnl auth login, then start the app again",
+  },
+  "sdk.publisher_setup_required": {
+    class: "invalid",
+    retry: "after_change",
+    message:
+      "no namespace publisher is set up; run tnl publisher setup --namespace, then try again",
+  },
+  "sdk.publisher_file_invalid": {
+    class: "invalid",
+    retry: "after_change",
+    message: "the selected publisher file is invalid; check the file and its permissions",
   },
   "sdk.configuration_invalid": {
     class: "invalid",

@@ -14,14 +14,14 @@ import (
 
 const testPublicURLID = "url_0123456789abcdefghijkl"
 
-func TestClientV1SchemaRejectsIncompleteState(t *testing.T) {
+func TestClientV3SchemaRejectsIncompleteState(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	database, err := Open(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if filepath.Base(DatabasePath(root)) != "client-v2.db" {
+	if filepath.Base(DatabasePath(root)) != "client-v3.db" {
 		t.Fatalf("client database path = %q", DatabasePath(root))
 	}
 	for _, table := range []string{"server_profiles", "client_setting", "control_sessions", "certificate_materials", "local_tunnels"} {

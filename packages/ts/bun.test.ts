@@ -19,6 +19,7 @@ test(
         dev: true,
         services: {
           web: {
+            protocol: "http",
             hostname: `web.${label}.example`,
             namespace: `${label}.example`,
             url: `https://web.${label}.example`,

@@ -3,15 +3,60 @@ package clientruntime
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/clientstate"
 )
+
+func newTestManager(t *testing.T, project, root string, services []Service, run Run) (*Manager, error) {
+	t.Helper()
+	project, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		return nil, err
+	}
+	database, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(root, "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		return nil, err
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	return New(t.Context(), project, database, services, run)
+}
+
+func TestPersistentComposeOwnerUsesLeasesInsteadOfForeignProcessIDs(t *testing.T) {
+	m, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web", Directory: "."}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	m.Persistent = true
+	id, err := m.Reserve("web", "owner", 99999999, "https://web.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Register(id, "owner", "http://127.0.0.1:3000", "node"); err != nil {
+		t.Fatal(err)
+	}
+	if m.Sweep(nil) || !m.Snapshot().Services[0].Registered {
+		t.Fatal("another container's pid caused publication to stop")
+	}
+	m.mu.Lock()
+	m.registrations["web"].expires = time.Now().Add(-time.Second)
+	m.mu.Unlock()
+	if m.Sweep(nil) || m.Snapshot().Services[0].Registered {
+		t.Fatal("expired app lease survived or stopped the persistent owner")
+	}
+}
 
 func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T) {
 	var runs atomic.Uint64
 	started := make(chan uint64, 4)
-	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "web", Directory: "."}, {Name: "api", Directory: "api"}}, func(ctx context.Context, service Service, observe func(uint64, bool) error) error {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web", Directory: "."}, {Name: "api", Directory: "api"}}, func(ctx context.Context, service Service, observe func(uint64, bool) error) error {
 		run := runs.Add(1)
 		if err := observe(run, true); err != nil {
 			return err
@@ -51,6 +96,12 @@ func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T
 	if !manager.Current("web", id, "http://127.0.0.1:1235", next) || manager.Current("web", id, "http://127.0.0.1:1234", run) {
 		t.Fatal("request admission crossed replacement")
 	}
+	if err := manager.RenewTarget(id, "owner", "http://127.0.0.1:1234"); !errors.Is(err, ErrRegistrationStale) {
+		t.Fatalf("old target renewed replacement: %v", err)
+	}
+	if err := manager.UnregisterTarget(id, "owner", "http://127.0.0.1:1234"); !errors.Is(err, ErrRegistrationStale) {
+		t.Fatalf("old target stopped replacement: %v", err)
+	}
 	if err := manager.Unregister(id, "owner"); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +132,7 @@ func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T
 
 func TestRegistrationAckDoesNotWaitForProvisioning(t *testing.T) {
 	blocked := make(chan struct{})
-	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
 		close(blocked)
 		<-ctx.Done()
 		return ctx.Err()
@@ -106,7 +157,7 @@ func TestRegistrationAckDoesNotWaitForProvisioning(t *testing.T) {
 
 func TestPublisherWarningsStayWithRunAndClearWhenRoutable(t *testing.T) {
 	started := make(chan struct{})
-	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web"}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
 		close(started)
 		<-ctx.Done()
 		return ctx.Err()
@@ -151,7 +202,7 @@ func TestPublisherWarningsStayWithRunAndClearWhenRoutable(t *testing.T) {
 
 func TestJournalResumeAndManagerRestartCursor(t *testing.T) {
 	project, state := t.TempDir(), t.TempDir()
-	manager, err := New(t.Context(), project, state, []Service{{Name: "web"}}, nil)
+	manager, err := newTestManager(t, project, state, []Service{{Name: "web"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,12 +211,12 @@ func TestJournalResumeAndManagerRestartCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.Close()
-	restarted, err := New(t.Context(), project, state, []Service{{Name: "web"}}, nil)
+	restarted, err := New(t.Context(), manager.snapshot.Project, manager.database, []Service{{Name: "web"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer restarted.Close()
-	snapshot, err := ReadSnapshot(project, state)
+	snapshot, err := ReadSnapshotFrom(t.Context(), manager.database, manager.snapshot.Project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,13 +224,12 @@ func TestJournalResumeAndManagerRestartCursor(t *testing.T) {
 	if err != nil || len(events) != 5 || snapshot.Services[0].Registered {
 		t.Fatalf("resume = %#v, %v", events, err)
 	}
-	previous, _ := ParseCursor(cursor)
+	previous := cursor
 	for _, event := range events {
-		value, _ := ParseCursor(event.Cursor)
-		if value != previous+1 {
+		if event.Cursor == previous || event.Cursor == "" {
 			t.Fatal("unordered journal")
 		}
-		previous = value
+		previous = event.Cursor
 	}
 	snapshot.Events = snapshot.Events[len(snapshot.Events)-1:]
 	if _, err := EventsAfter(snapshot, "0"); !errors.Is(err, ErrCursorExpired) {
@@ -192,7 +242,7 @@ func TestJournalResumeAndManagerRestartCursor(t *testing.T) {
 
 func TestConfigurationReconciliationPreservesLiveAppsAndJoinsRemovedPublishers(t *testing.T) {
 	started, stopped := make(chan struct{}), make(chan struct{})
-	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "api", Readiness: Readiness{Path: "/"}}}, func(ctx context.Context, _ Service, observe func(uint64, bool) error) error {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "api", Readiness: Readiness{Path: "/"}}}, func(ctx context.Context, _ Service, observe func(uint64, bool) error) error {
 		if err := observe(1, true); err != nil {
 			return err
 		}
@@ -235,7 +285,7 @@ func TestConfigurationReconciliationPreservesLiveAppsAndJoinsRemovedPublishers(t
 }
 
 func TestPreparationKeepsTheManagerAliveUntilCleanupGrace(t *testing.T) {
-	manager, err := New(t.Context(), t.TempDir(), t.TempDir(), []Service{{Name: "api"}}, nil)
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "api"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,5 +300,36 @@ func TestPreparationKeepsTheManagerAliveUntilCleanupGrace(t *testing.T) {
 	finish()
 	if manager.Sweep(func(int) bool { return true }) {
 		t.Fatal("manager skipped the cleanup grace after preparation")
+	}
+}
+
+func TestAbruptOwnerRestartInvalidatesPersistedRegistration(t *testing.T) {
+	manager, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web", ServiceProtocol: "http"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.Close()
+	crashed := manager.Snapshot()
+	crashed.Services[0].Registered, crashed.Services[0].Routable, crashed.Services[0].Ready = true, true, true
+	crashed.Services[0].RegistrationID = "reg_previous"
+	crashed.Services[0].PublishRunNumber = 7
+	if err := CommitSnapshot(t.Context(), manager.database, &crashed, "service.registered", nil); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := New(t.Context(), crashed.Project, manager.database, []Service{{Name: "web", ServiceProtocol: "http"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	service := restarted.Snapshot().Services[0]
+	if service.Registered || service.Routable || service.Ready || service.RegistrationID != "" || service.Failure != "runtime.manager_restarted" {
+		t.Fatalf("restart retained old ownership: %+v", service)
+	}
+	events, err := EventsAfterFrom(t.Context(), manager.database, crashed.Project, crashed.Cursor)
+	if err != nil || len(events) != 1 || events[0].Type != "runtime.restarted" {
+		t.Fatalf("restart events=%+v err=%v", events, err)
+	}
+	if err := restarted.Renew("reg_previous", "owner"); !errors.Is(err, ErrRegistrationStale) {
+		t.Fatal("previous registration renewed after process restart")
 	}
 }

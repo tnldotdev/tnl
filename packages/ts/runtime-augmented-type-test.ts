@@ -13,14 +13,23 @@ declare module "@tnldotdev/tnl" {
     readonly namespace: "member.example";
     readonly services: {
       readonly api: {
+        readonly protocol: "http";
         readonly hostname: "api.member.example";
         readonly namespace: "member.example";
         readonly url: "https://api.member.example";
       };
       readonly web: {
+        readonly protocol: "http";
         readonly hostname: "web.member.example";
         readonly namespace: "member.example";
         readonly url: "https://web.member.example";
+      };
+      readonly db: {
+        readonly protocol: "postgres";
+        readonly hostname: "db.member.example";
+        readonly namespace: "member.example";
+        readonly port: 15432;
+        readonly address: "db.member.example:15432";
       };
     };
   }
@@ -52,6 +61,11 @@ if (tnl.namespace && tnl.services) {
   tnl.services.api.hostname satisfies "api.member.example";
   tnl.services.api.namespace satisfies "member.example";
   tnl.services.api.url satisfies "https://api.member.example";
+  tnl.services.db.protocol satisfies "postgres";
+  tnl.services.db.port satisfies 15432;
+  tnl.services.db.address satisfies "db.member.example:15432";
+  // @ts-expect-error saved TCP metadata has no HTTP URL.
+  void tnl.services.db.url;
   tnl.dev satisfies boolean;
 
   // assign valid literal values so these errors specifically check readonly ownership.
