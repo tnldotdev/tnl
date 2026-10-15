@@ -440,6 +440,53 @@ components:
           maxItems: 2
           items:
             $ref: "#/components/schemas/IngressRoutingPublisherConnection"
+        traffic:
+          $ref: "#/components/schemas/IngressTrafficLimits"
+    IngressTrafficLimits:
+      type: object
+      additionalProperties: false
+      description: Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
+      required: [connections, rate, rate_per_ns, burst, upload_bytes, download_bytes]
+      properties:
+        connections:
+          type: integer
+          minimum: 1
+          maximum: 1048576
+        rate:
+          type: integer
+          minimum: 1
+          maximum: 2147483648
+        rate_per_ns:
+          type: integer
+          format: int64
+          minimum: 1000000
+          maximum: 86400000000000
+        burst:
+          type: integer
+          minimum: 1
+          maximum: 2147483648
+        upload_bytes:
+          type: integer
+          format: int64
+          minimum: 65536
+          maximum: 1099511627776
+        download_bytes:
+          type: integer
+          format: int64
+          minimum: 65536
+          maximum: 1099511627776
+        total_connections:
+          type: integer
+          format: int64
+          minimum: 1
+        total_upload_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+        total_download_bytes:
+          type: integer
+          format: int64
+          minimum: 1
     HashedIPPrefix:
       type: object
       additionalProperties: false

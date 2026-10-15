@@ -123,9 +123,11 @@ WHERE run.id = $1
   AND EXISTS (
       SELECT 1 FROM control.preview_public_urls AS membership
       JOIN control.previews AS preview ON preview.id = membership.preview_id
+      JOIN control.public_urls AS url ON url.id = membership.public_url_id
       WHERE membership.preview_id = $4
         AND membership.public_url_id = run.public_url_id
         AND preview.created_by_identity_id = run.acting_identity_id
+        AND preview.demo_publish_run_id IS NULL AND url.service_protocol = 'http' AND url.purpose = 'app'
   )
 RETURNING run.id
 `
@@ -181,6 +183,7 @@ func (q *Queries) GetActiveShareForPublicURL(ctx context.Context, arg GetActiveS
 const getShareCapablePublishRun = `-- name: GetShareCapablePublishRun :one
 SELECT run.id
 FROM control.publish_runs AS run
+JOIN control.public_urls AS url ON url.id = run.public_url_id AND url.service_protocol = 'http' AND url.purpose = 'app'
 WHERE run.id = $1
   AND run.public_url_id = $2
   AND run.publish_run_number = $3
@@ -367,7 +370,8 @@ FROM control.share_public_urls AS included
 JOIN control.public_urls AS url ON url.id = included.public_url_id
 JOIN control.publish_runs AS run ON run.public_url_id = url.id
 WHERE included.share_id = $1
-  AND url.lifecycle_state = 'enabled'
+   AND url.lifecycle_state = 'enabled'
+   AND url.service_protocol = 'http' AND url.purpose = 'app'
   AND run.state = 'ready'
   AND run.publisher_expires_at > $2
   AND run.share_capable = true

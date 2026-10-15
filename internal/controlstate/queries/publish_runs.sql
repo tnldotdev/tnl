@@ -45,6 +45,7 @@ FOR NO KEY UPDATE OF routes SKIP LOCKED;
 -- name: GetActivePublishRunMembership :one
 SELECT m.id, m.role, t.policy_revision
 FROM control.team_memberships AS m
+JOIN control.identities AS i ON i.id = m.identity_id AND i.disabled_at IS NULL
 JOIN control.teams AS t
   ON t.id = m.team_id
  AND t.deleted_at IS NULL
@@ -95,6 +96,7 @@ INSERT INTO control.publish_runs (
     certificate_scope,
     certificate_identifiers,
     certificate_challenge_method,
+    traffic_limits,
     state,
     created_at,
     last_heartbeat_at,
@@ -116,6 +118,7 @@ INSERT INTO control.publish_runs (
     sqlc.arg(certificate_scope),
     sqlc.arg(certificate_identifiers),
     sqlc.arg(certificate_challenge_method),
+    convert_from(sqlc.arg(traffic_limits)::bytea, 'UTF8')::jsonb,
     'starting',
     sqlc.arg(created_at),
     sqlc.arg(last_heartbeat_at),

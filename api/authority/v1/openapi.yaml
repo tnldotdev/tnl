@@ -9,6 +9,105 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example
 paths:
+  /v1/teams/{team_id}/feedback-policy:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getTeamFeedbackPolicy
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Live feedback author policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamFeedbackPolicy" }
+        default: { $ref: "#/components/responses/Problem" }
+    put:
+      operationId: setTeamFeedbackPolicy
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeamFeedbackPolicy" }
+      responses:
+        "200":
+          description: Policy applies to every subsequent feedback write
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamFeedbackPolicy" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/auth/browser-handoff:
+    post:
+      operationId: issueAdminBrowserHandoff
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [public_url_id, refresh_token]
+              properties:
+                public_url_id: { type: string }
+                refresh_token: { type: string }
+      responses:
+        "201":
+          description: One-use handoff for an independent browser session
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [url]
+                properties:
+                  url: { type: string, pattern: "^https://" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publisher-enrollments/redeem:
+    post:
+      operationId: redeemPublisherEnrollment
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RedeemPublisherEnrollmentRequest" }
+      responses:
+        "200":
+          description: Registered client key and initial grant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublisherEnrollmentResult" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publisher-token:
+    post:
+      operationId: exchangePublisherAssertion
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublisherTokenRequest" }
+      responses:
+        "200":
+          description: Short-lived token scoped to one current grant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublisherTokenResponse" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publisher-keys/rotate:
+    post:
+      operationId: rotatePublisherKey
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RotatePublisherKeyRequest" }
+      responses:
+        "204": { description: Current key retired and replacement registered }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/service/identity-context:
     post:
       operationId: resolveServiceIdentity
@@ -496,6 +595,72 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    TeamFeedbackPolicy:
+      type: object
+      additionalProperties: false
+      required: [authors]
+      properties:
+        authors: { type: string, enum: [anyone, signed_in, team_members], default: anyone }
+    RedeemPublisherEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [enrollment_key, public_key]
+      properties:
+        enrollment_key: { type: string, minLength: 1, maxLength: 256 }
+        public_key:
+          {
+            type: string,
+            minLength: 43,
+            maxLength: 43,
+            description: Base64url unpadded Ed25519 public key,
+          }
+    PublisherEnrollmentResult:
+      type: object
+      additionalProperties: false
+      required: [client_id, key_id, grant_id, team_id, kind]
+      properties:
+        client_id: { type: string }
+        key_id: { type: string }
+        grant_id: { type: string }
+        team_id: { type: string }
+        kind: { type: string, enum: [saved_url, namespace] }
+        public_url_id: { type: string }
+        domain_id: { type: string }
+        namespace: { type: string }
+    PublisherTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [grant_type, client_id, grant_id, client_assertion_type, client_assertion]
+      properties:
+        grant_type: { type: string, enum: [client_credentials] }
+        client_id: { type: string }
+        grant_id: { type: string }
+        client_assertion_type:
+          { type: string, enum: ["urn:ietf:params:oauth:client-assertion-type:jwt-bearer"] }
+        client_assertion: { type: string, maxLength: 8192 }
+    PublisherTokenResponse:
+      type: object
+      additionalProperties: false
+      required: [access_token, token_type, expires_in, grant_id]
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, enum: [Bearer] }
+        expires_in: { type: integer, minimum: 1, maximum: 300 }
+        grant_id: { type: string }
+    RotatePublisherKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [key_id, public_key, proof, current_proof]
+      properties:
+        key_id: { type: string }
+        public_key: { type: string, minLength: 43, maxLength: 43 }
+        proof: { type: string, maxLength: 8192 }
+        current_proof:
+          {
+            type: string,
+            maxLength: 8192,
+            description: Current-key assertion whose audience binds the replacement key ID and public key,
+          }
     EmailDeliveryRequest:
       description: Invitation email sent by control to POST /api/internal/tnl/emails on the configured mailer. HTTP 204 means the mailer sent it or already recorded that delivery_id.
       type: object

@@ -140,7 +140,7 @@ func (q *Queries) GetCertificateMaterial(ctx context.Context, arg GetCertificate
 }
 
 const getControlSession = `-- name: GetControlSession :one
-SELECT id, server_origin, session_id, stored_access_token, access_expires_at, stored_refresh_token, refresh_expires_at, updated_at, refresh_pending
+SELECT id, server_origin, session_id, stored_access_token, access_expires_at, stored_refresh_token, refresh_expires_at, refresh_pending, updated_at
 FROM control_sessions
 WHERE server_origin = ?1
 `
@@ -156,8 +156,8 @@ func (q *Queries) GetControlSession(ctx context.Context, serverOrigin string) (C
 		&i.AccessExpiresAt,
 		&i.StoredRefreshToken,
 		&i.RefreshExpiresAt,
-		&i.UpdatedAt,
 		&i.RefreshPending,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -322,19 +322,8 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 	return err
 }
 
-const latestTunnelEventCursor = `-- name: LatestTunnelEventCursor :one
-SELECT sequence FROM local_tunnel_event_cursors WHERE project_root = ?1
-`
-
-func (q *Queries) LatestTunnelEventCursor(ctx context.Context, projectRoot string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, latestTunnelEventCursor, projectRoot)
-	var sequence int64
-	err := row.Scan(&sequence)
-	return sequence, err
-}
-
 const listOpenTunnels = `-- name: ListOpenTunnels :many
-SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error, integration_group, public_port, service_protocol
+SELECT id, command, process_id, server_origin, project_root, service, service_protocol, public_port, integration_group, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error
 FROM local_tunnels
 WHERE stopped_at IS NULL
 ORDER BY started_at, id
@@ -356,6 +345,9 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 			&i.ServerOrigin,
 			&i.ProjectRoot,
 			&i.Service,
+			&i.ServiceProtocol,
+			&i.PublicPort,
+			&i.IntegrationGroup,
 			&i.Hostname,
 			&i.Target,
 			&i.Framework,
@@ -368,9 +360,6 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 			&i.LeaseExpiresAt,
 			&i.StoppedAt,
 			&i.LastError,
-			&i.IntegrationGroup,
-			&i.PublicPort,
-			&i.ServiceProtocol,
 		); err != nil {
 			return nil, err
 		}
@@ -386,7 +375,7 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 }
 
 const listOpenTunnelsForProject = `-- name: ListOpenTunnelsForProject :many
-SELECT id, command, process_id, server_origin, project_root, service, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error, integration_group, public_port, service_protocol
+SELECT id, command, process_id, server_origin, project_root, service, service_protocol, public_port, integration_group, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, last_error
 FROM local_tunnels
 WHERE stopped_at IS NULL AND project_root = ?1
 ORDER BY started_at, id
@@ -408,6 +397,9 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 			&i.ServerOrigin,
 			&i.ProjectRoot,
 			&i.Service,
+			&i.ServiceProtocol,
+			&i.PublicPort,
+			&i.IntegrationGroup,
 			&i.Hostname,
 			&i.Target,
 			&i.Framework,
@@ -420,9 +412,6 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 			&i.LeaseExpiresAt,
 			&i.StoppedAt,
 			&i.LastError,
-			&i.IntegrationGroup,
-			&i.PublicPort,
-			&i.ServiceProtocol,
 		); err != nil {
 			return nil, err
 		}
@@ -435,64 +424,6 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 		return nil, err
 	}
 	return items, nil
-}
-
-const listTunnelEventsAfter = `-- name: ListTunnelEventsAfter :many
-SELECT project_root, sequence, tunnel_id, service, service_protocol, state, target, hostname, public_port, publish_run_number, created_at FROM local_tunnel_events
-WHERE project_root = ?1 AND sequence > ?2 AND sequence <= ?3
-ORDER BY sequence
-`
-
-type ListTunnelEventsAfterParams struct {
-	ProjectRoot string
-	After       int64
-	Latest      int64
-}
-
-func (q *Queries) ListTunnelEventsAfter(ctx context.Context, arg ListTunnelEventsAfterParams) ([]LocalTunnelEvent, error) {
-	rows, err := q.db.QueryContext(ctx, listTunnelEventsAfter, arg.ProjectRoot, arg.After, arg.Latest)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []LocalTunnelEvent
-	for rows.Next() {
-		var i LocalTunnelEvent
-		if err := rows.Scan(
-			&i.ProjectRoot,
-			&i.Sequence,
-			&i.TunnelID,
-			&i.Service,
-			&i.ServiceProtocol,
-			&i.State,
-			&i.Target,
-			&i.Hostname,
-			&i.PublicPort,
-			&i.PublishRunNumber,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const oldestTunnelEventCursor = `-- name: OldestTunnelEventCursor :one
-SELECT sequence FROM local_tunnel_events WHERE project_root = ?1 ORDER BY sequence LIMIT 1
-`
-
-func (q *Queries) OldestTunnelEventCursor(ctx context.Context, projectRoot string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, oldestTunnelEventCursor, projectRoot)
-	var sequence int64
-	err := row.Scan(&sequence)
-	return sequence, err
 }
 
 const setControlSessionRefreshPending = `-- name: SetControlSessionRefreshPending :exec

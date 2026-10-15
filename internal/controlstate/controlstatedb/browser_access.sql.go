@@ -14,7 +14,7 @@ import (
 const browserSessionPublicURLIncluded = `-- name: BrowserSessionPublicURLIncluded :one
 SELECT included.public_url_id
 FROM control.browser_access_sessions AS session
-JOIN control.preview_public_urls AS included ON included.preview_id = session.preview_id
+JOIN control.browser_session_hosts AS included ON included.session_digest = session.token_digest
 WHERE session.token_digest = $1 AND included.public_url_id = $2
 `
 
@@ -44,16 +44,18 @@ UPDATE control.browser_access_handoffs AS handoff
 SET consumed_at = $1
 FROM control.browser_access_sessions AS session
 WHERE handoff.token_digest = $2 AND handoff.public_url_id = $3
+   AND handoff.publish_run_id = $4
   AND handoff.consumed_at IS NULL AND handoff.expires_at > $1
   AND session.token_digest = handoff.session_digest AND session.revoked_at IS NULL AND session.expires_at > $1
 RETURNING handoff.session_digest, handoff.cookie_ciphertext, handoff.storage_key_id, handoff.return_path,
-          handoff.next_url, handoff.bridge, session.expires_at
+          handoff.next_url, handoff.bridge, session.expires_at, handoff.publish_run_id
 `
 
 type ConsumeBrowserAccessHandoffParams struct {
-	Now         pgtype.Timestamptz
-	TokenDigest []byte
-	PublicURLID string
+	Now          pgtype.Timestamptz
+	TokenDigest  []byte
+	PublicURLID  string
+	PublishRunID string
 }
 
 type ConsumeBrowserAccessHandoffRow struct {
@@ -64,10 +66,16 @@ type ConsumeBrowserAccessHandoffRow struct {
 	NextUrl          string
 	Bridge           bool
 	ExpiresAt        pgtype.Timestamptz
+	PublishRunID     string
 }
 
 func (q *Queries) ConsumeBrowserAccessHandoff(ctx context.Context, arg ConsumeBrowserAccessHandoffParams) (ConsumeBrowserAccessHandoffRow, error) {
-	row := q.db.QueryRow(ctx, consumeBrowserAccessHandoff, arg.Now, arg.TokenDigest, arg.PublicURLID)
+	row := q.db.QueryRow(ctx, consumeBrowserAccessHandoff,
+		arg.Now,
+		arg.TokenDigest,
+		arg.PublicURLID,
+		arg.PublishRunID,
+	)
 	var i ConsumeBrowserAccessHandoffRow
 	err := row.Scan(
 		&i.SessionDigest,
@@ -77,6 +85,7 @@ func (q *Queries) ConsumeBrowserAccessHandoff(ctx context.Context, arg ConsumeBr
 		&i.NextUrl,
 		&i.Bridge,
 		&i.ExpiresAt,
+		&i.PublishRunID,
 	)
 	return i, err
 }
@@ -86,7 +95,7 @@ UPDATE control.browser_login_attempts
 SET consumed_at = $1
 WHERE state_digest = $2 AND binding_digest = $3
   AND consumed_at IS NULL AND expires_at > $1
-RETURNING preview_id, public_url_id, return_path, nonce, verifier_ciphertext, verifier_storage_key_id
+RETURNING preview_id, public_url_id, publish_run_id, return_path, nonce, verifier_ciphertext, verifier_storage_key_id
 `
 
 type ConsumeBrowserLoginAttemptParams struct {
@@ -96,8 +105,9 @@ type ConsumeBrowserLoginAttemptParams struct {
 }
 
 type ConsumeBrowserLoginAttemptRow struct {
-	PreviewID            string
+	PreviewID            pgtype.Text
 	PublicURLID          string
+	PublishRunID         string
 	ReturnPath           string
 	Nonce                string
 	VerifierCiphertext   []byte
@@ -110,6 +120,7 @@ func (q *Queries) ConsumeBrowserLoginAttempt(ctx context.Context, arg ConsumeBro
 	err := row.Scan(
 		&i.PreviewID,
 		&i.PublicURLID,
+		&i.PublishRunID,
 		&i.ReturnPath,
 		&i.Nonce,
 		&i.VerifierCiphertext,
@@ -120,7 +131,7 @@ func (q *Queries) ConsumeBrowserLoginAttempt(ctx context.Context, arg ConsumeBro
 
 const getBrowserAccessSession = `-- name: GetBrowserAccessSession :one
 SELECT token_digest, preview_id, public_url_id, identity_id, display_name,
-       access_ciphertext, refresh_ciphertext, storage_key_id, access_expires_at, expires_at, revoked_at
+       access_ciphertext, refresh_ciphertext, storage_key_id, access_expires_at, expires_at, revoked_at, parent_control_session_id
 FROM control.browser_access_sessions WHERE token_digest = $1
 `
 
@@ -139,20 +150,22 @@ func (q *Queries) GetBrowserAccessSession(ctx context.Context, tokenDigest []byt
 		&i.AccessExpiresAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.ParentControlSessionID,
 	)
 	return i, err
 }
 
 const insertBrowserAccessHandoff = `-- name: InsertBrowserAccessHandoff :exec
 INSERT INTO control.browser_access_handoffs
-    (token_digest, session_digest, public_url_id, cookie_ciphertext, storage_key_id, return_path, next_url, bridge, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    (token_digest, session_digest, public_url_id, publish_run_id, cookie_ciphertext, storage_key_id, return_path, next_url, bridge, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 `
 
 type InsertBrowserAccessHandoffParams struct {
 	TokenDigest      []byte
 	SessionDigest    []byte
 	PublicURLID      string
+	PublishRunID     string
 	CookieCiphertext []byte
 	StorageKeyID     string
 	ReturnPath       string
@@ -166,6 +179,7 @@ func (q *Queries) InsertBrowserAccessHandoff(ctx context.Context, arg InsertBrow
 		arg.TokenDigest,
 		arg.SessionDigest,
 		arg.PublicURLID,
+		arg.PublishRunID,
 		arg.CookieCiphertext,
 		arg.StorageKeyID,
 		arg.ReturnPath,
@@ -178,27 +192,27 @@ func (q *Queries) InsertBrowserAccessHandoff(ctx context.Context, arg InsertBrow
 
 const insertBrowserAccessSession = `-- name: InsertBrowserAccessSession :exec
 INSERT INTO control.browser_access_sessions
-    (token_digest, preview_id, public_url_id, identity_id, display_name, access_ciphertext, refresh_ciphertext, storage_key_id, access_expires_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    (token_digest, preview_id, public_url_id, identity_id, display_name, access_ciphertext, refresh_ciphertext, storage_key_id, access_expires_at, expires_at, parent_control_session_id)
+VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, $9, $11)
 `
 
 type InsertBrowserAccessSessionParams struct {
-	TokenDigest       []byte
-	PreviewID         string
-	PublicURLID       string
-	IdentityID        string
-	DisplayName       string
-	AccessCiphertext  []byte
-	RefreshCiphertext []byte
-	StorageKeyID      string
-	AccessExpiresAt   pgtype.Timestamptz
-	ExpiresAt         pgtype.Timestamptz
+	TokenDigest            []byte
+	PublicURLID            string
+	IdentityID             string
+	DisplayName            string
+	AccessCiphertext       []byte
+	RefreshCiphertext      []byte
+	StorageKeyID           string
+	AccessExpiresAt        pgtype.Timestamptz
+	ExpiresAt              pgtype.Timestamptz
+	PreviewID              pgtype.Text
+	ParentControlSessionID pgtype.Text
 }
 
 func (q *Queries) InsertBrowserAccessSession(ctx context.Context, arg InsertBrowserAccessSessionParams) error {
 	_, err := q.db.Exec(ctx, insertBrowserAccessSession,
 		arg.TokenDigest,
-		arg.PreviewID,
 		arg.PublicURLID,
 		arg.IdentityID,
 		arg.DisplayName,
@@ -207,39 +221,43 @@ func (q *Queries) InsertBrowserAccessSession(ctx context.Context, arg InsertBrow
 		arg.StorageKeyID,
 		arg.AccessExpiresAt,
 		arg.ExpiresAt,
+		arg.PreviewID,
+		arg.ParentControlSessionID,
 	)
 	return err
 }
 
 const insertBrowserLoginAttempt = `-- name: InsertBrowserLoginAttempt :exec
 INSERT INTO control.browser_login_attempts
-    (state_digest, binding_digest, preview_id, public_url_id, return_path, nonce, verifier_ciphertext, verifier_storage_key_id, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    (state_digest, binding_digest, preview_id, public_url_id, publish_run_id, return_path, nonce, verifier_ciphertext, verifier_storage_key_id, expires_at)
+VALUES ($1, $2, $10, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type InsertBrowserLoginAttemptParams struct {
 	StateDigest          []byte
 	BindingDigest        []byte
-	PreviewID            string
 	PublicURLID          string
+	PublishRunID         string
 	ReturnPath           string
 	Nonce                string
 	VerifierCiphertext   []byte
 	VerifierStorageKeyID string
 	ExpiresAt            pgtype.Timestamptz
+	PreviewID            pgtype.Text
 }
 
 func (q *Queries) InsertBrowserLoginAttempt(ctx context.Context, arg InsertBrowserLoginAttemptParams) error {
 	_, err := q.db.Exec(ctx, insertBrowserLoginAttempt,
 		arg.StateDigest,
 		arg.BindingDigest,
-		arg.PreviewID,
 		arg.PublicURLID,
+		arg.PublishRunID,
 		arg.ReturnPath,
 		arg.Nonce,
 		arg.VerifierCiphertext,
 		arg.VerifierStorageKeyID,
 		arg.ExpiresAt,
+		arg.PreviewID,
 	)
 	return err
 }
@@ -288,7 +306,7 @@ func (q *Queries) ListReadyPreviewBrowserHostnames(ctx context.Context, arg List
 
 const lockBrowserAccessSession = `-- name: LockBrowserAccessSession :one
 SELECT token_digest, preview_id, public_url_id, identity_id, display_name,
-       access_ciphertext, refresh_ciphertext, storage_key_id, access_expires_at, expires_at, revoked_at
+       access_ciphertext, refresh_ciphertext, storage_key_id, access_expires_at, expires_at, revoked_at, parent_control_session_id
 FROM control.browser_access_sessions WHERE token_digest = $1 FOR UPDATE
 `
 
@@ -307,6 +325,7 @@ func (q *Queries) LockBrowserAccessSession(ctx context.Context, tokenDigest []by
 		&i.AccessExpiresAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.ParentControlSessionID,
 	)
 	return i, err
 }
@@ -314,8 +333,8 @@ func (q *Queries) LockBrowserAccessSession(ctx context.Context, tokenDigest []by
 const revokeBrowserAccessSession = `-- name: RevokeBrowserAccessSession :exec
 UPDATE control.browser_access_sessions SET revoked_at = $1
 WHERE token_digest = $2 AND revoked_at IS NULL
-  AND EXISTS (SELECT 1 FROM control.preview_public_urls AS included
-              WHERE included.preview_id = control.browser_access_sessions.preview_id
+   AND EXISTS (SELECT 1 FROM control.browser_session_hosts AS included
+               WHERE included.session_digest = control.browser_access_sessions.token_digest
                 AND included.public_url_id = $3)
 `
 

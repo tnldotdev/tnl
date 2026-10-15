@@ -38,9 +38,10 @@ type TNL struct {
 	OAuth      bool               `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
 	Inspection *Inspection        `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP and supported TCP services."`
 	Tunnel     *Tunnel            `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
-	Publish    *Publish           `json:"publish,omitempty" yaml:"publish,omitempty"`
-	Readiness  *Readiness         `json:"readiness,omitempty" yaml:"readiness,omitempty"`
-	Services   Services           `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named local services with optional tunnel, publish, readiness overrides, and path mounts."`
+	Publisher  *AppPublisher      `json:"publisher,omitempty" yaml:"publisher,omitempty"`
+	Publish    *Publish           `json:"-" yaml:"-"`
+	Readiness  *Readiness         `json:"-" yaml:"-"`
+	Services   Services           `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named services, private targets, and public tunnel settings."`
 	Webhooks   map[string]Webhook `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
 	Aliases    map[string]Alias   `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
 }
@@ -49,12 +50,83 @@ type Services map[string]Service
 
 // Service contains project-local overrides for one named local service.
 type Service struct {
-	Inspection *Inspection          `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
-	Directory  *string              `json:"directory,omitempty" yaml:"directory,omitempty" jsonschema_description:"Service directory relative to the project configuration."`
-	Tunnel     *Tunnel              `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"PublicURL and tunnel overrides for this service."`
-	Publish    *Publish             `json:"publish,omitempty" yaml:"publish,omitempty"`
-	Readiness  *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty"`
-	Paths      map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Mount other configured local services at paths on this service's public URL."`
+	Inspection *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
+	Tunnel     *Tunnel        `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Public URL and tunnel overrides for this service."`
+	Protocol   *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh"`
+	Target     *ServiceTarget `json:"target,omitempty" yaml:"target,omitempty"`
+	HTTP       *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
+}
+
+// AppPublisher selects where app registrations are published. a compose file,
+// when supplied, is relative to the selected project root.
+type AppPublisher struct {
+	Type    string  `json:"type" yaml:"type" jsonschema:"required,enum=host,enum=compose"`
+	Service string  `json:"service,omitempty" yaml:"service,omitempty"`
+	File    *string `json:"file,omitempty" yaml:"file,omitempty"`
+}
+
+// ServiceTarget describes exactly one private discovery mechanism. an omitted
+// target means an app-reported HTTP listener.
+type ServiceTarget struct {
+	Type      string     `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=compose,enum=docker"`
+	Address   *Target    `json:"address,omitempty" yaml:"address,omitempty"`
+	Project   *string    `json:"project,omitempty" yaml:"project,omitempty"`
+	File      *string    `json:"file,omitempty" yaml:"file,omitempty"`
+	Service   *string    `json:"service,omitempty" yaml:"service,omitempty"`
+	Port      *int       `json:"port,omitempty" yaml:"port,omitempty"`
+	Container *string    `json:"container,omitempty" yaml:"container,omitempty"`
+	TLS       *TargetTLS `json:"tls,omitempty" yaml:"tls,omitempty"`
+}
+
+type TargetTLS struct {
+	ServerName *string `json:"server_name,omitempty" yaml:"server_name,omitempty"`
+	CAFile     *string `json:"ca_file,omitempty" yaml:"ca_file,omitempty"`
+}
+
+type HTTPService struct {
+	Readiness *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty"`
+	Paths     map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty"`
+	Open      *bool                `json:"open,omitempty" yaml:"open,omitempty"`
+}
+
+func ServicePaths(service Service) map[string]PathMount {
+	if service.HTTP == nil {
+		return nil
+	}
+	return service.HTTP.Paths
+}
+
+func TargetType(service Service) string {
+	if service.Target == nil {
+		return "app"
+	}
+	return service.Target.Type
+}
+
+func Protocol(service Service) string {
+	if service.Protocol == nil {
+		return "http"
+	}
+	return *service.Protocol
+}
+
+// ServicePublish resolves address targets into the native publication settings.
+// compose and docker addresses must first be discovered by the runtime.
+func ServicePublish(service Service) *Publish {
+	protocol := Protocol(service)
+	result := &Publish{Protocol: &protocol}
+	if service.Target == nil || service.Target.Type == "app" {
+		return result
+	}
+	result.Target = service.Target.Address
+	if tls := service.Target.TLS; tls != nil {
+		result.TargetTLSName, result.TargetCAFile = tls.ServerName, tls.CAFile
+		if protocol != "http" {
+			enabled := true
+			result.TargetTLS = &enabled
+		}
+	}
+	return result
 }
 
 // PathMount selects a local service reached at a path on another service's public URL.
@@ -106,7 +178,7 @@ type Tunnel struct {
 	Domain      *string  `json:"domain,omitempty" yaml:"domain,omitempty"`
 	Name        *string  `json:"name,omitempty" yaml:"name,omitempty"`
 	PublicURL   *string  `json:"public_url,omitempty" yaml:"public_url,omitempty"`
-	Open        *bool    `json:"open,omitempty" yaml:"open,omitempty"`
+	Open        *bool    `json:"-" yaml:"-"`
 	AllowIP     []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
 	AllowAllIPs *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
 	Ephemeral   *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
@@ -115,14 +187,34 @@ type Tunnel struct {
 
 // Limits apply to application requests after visitor access.
 type Limits struct {
-	Requests    *int  `json:"requests,omitempty" yaml:"requests,omitempty"`
+	HTTP    *WorkLimits    `json:"http,omitempty" yaml:"http,omitempty"`
+	TCP     *WorkLimits    `json:"tcp,omitempty" yaml:"tcp,omitempty"`
+	Traffic *TrafficLimits `json:"traffic,omitempty" yaml:"traffic,omitempty"`
+}
+
+type WorkLimits struct {
+	Total       *int  `json:"total,omitempty" yaml:"total,omitempty"`
 	Rate        *Rate `json:"rate,omitempty" yaml:"rate,omitempty"`
 	Concurrency *int  `json:"concurrency,omitempty" yaml:"concurrency,omitempty"`
 }
 
 type Rate struct {
-	Requests *int      `json:"requests,omitempty" yaml:"requests,omitempty"`
-	Per      *Duration `json:"per,omitempty" yaml:"per,omitempty"`
+	Count *int      `json:"count,omitempty" yaml:"count,omitempty"`
+	Per   *Duration `json:"per,omitempty" yaml:"per,omitempty"`
+	Burst *int      `json:"burst,omitempty" yaml:"burst,omitempty"`
+}
+
+// TrafficLimits selects independent ingress connection and directional byte budgets.
+type TrafficLimits struct {
+	Connections        *int      `json:"connections,omitempty" yaml:"connections,omitempty"`
+	Rate               *int      `json:"rate,omitempty" yaml:"rate,omitempty"`
+	RatePer            *Duration `json:"rate_per,omitempty" yaml:"rate_per,omitempty"`
+	Burst              *int      `json:"burst,omitempty" yaml:"burst,omitempty"`
+	UploadBytes        *int64    `json:"upload_bytes,omitempty" yaml:"upload_bytes,omitempty"`
+	DownloadBytes      *int64    `json:"download_bytes,omitempty" yaml:"download_bytes,omitempty"`
+	TotalConnections   *int64    `json:"total_connections,omitempty" yaml:"total_connections,omitempty"`
+	TotalUploadBytes   *int64    `json:"total_upload_bytes,omitempty" yaml:"total_upload_bytes,omitempty"`
+	TotalDownloadBytes *int64    `json:"total_download_bytes,omitempty" yaml:"total_download_bytes,omitempty"`
 }
 
 type Publish struct {
@@ -139,38 +231,6 @@ func ServiceProtocol(publish *Publish) string {
 		return *publish.Protocol
 	}
 	return "http"
-}
-
-// MergePublish applies one service's publish settings over the project defaults.
-func MergePublish(base, override *Publish) *Publish {
-	if base == nil && override == nil {
-		return nil
-	}
-	result := &Publish{}
-	if base != nil {
-		*result = *base
-	}
-	if override == nil {
-		return result
-	}
-	if override.Protocol != nil {
-		result.Protocol = override.Protocol
-	}
-	if override.Target != nil {
-		result.Target = override.Target
-		result.TargetTLSName, result.TargetCAFile = nil, nil
-		result.TargetTLS = nil
-	}
-	if override.TargetTLSName != nil {
-		result.TargetTLSName = override.TargetTLSName
-	}
-	if override.TargetTLS != nil {
-		result.TargetTLS = override.TargetTLS
-	}
-	if override.TargetCAFile != nil {
-		result.TargetCAFile = override.TargetCAFile
-	}
-	return result
 }
 
 // readiness selects the public GET used to check one app publication.

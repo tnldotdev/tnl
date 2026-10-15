@@ -261,6 +261,9 @@ type IngressRoutingTableEntry struct {
 	PublisherConnections []IngressRoutingPublisherConnection      `json:"publisher_connections"`
 	RecoveryEpisodeId    *int64                                   `json:"recovery_episode_id,omitempty"`
 	ServiceProtocol      *IngressRoutingTableEntryServiceProtocol `json:"service_protocol,omitempty"`
+
+	// Traffic Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
+	Traffic *IngressTrafficLimits `json:"traffic,omitempty"`
 }
 
 // IngressRoutingTableEntryIpPolicy defines model for IngressRoutingTableEntry.IpPolicy.
@@ -299,6 +302,19 @@ type IngressRoutingTableSnapshot struct {
 	Entries               []IngressRoutingTableEvent `json:"entries"`
 	RetainedAfterRevision int64                      `json:"retained_after_revision"`
 	ThroughRevision       int64                      `json:"through_revision"`
+}
+
+// IngressTrafficLimits Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
+type IngressTrafficLimits struct {
+	Burst              int    `json:"burst"`
+	Connections        int    `json:"connections"`
+	DownloadBytes      int64  `json:"download_bytes"`
+	Rate               int    `json:"rate"`
+	RatePerNs          int64  `json:"rate_per_ns"`
+	TotalConnections   *int64 `json:"total_connections,omitempty"`
+	TotalDownloadBytes *int64 `json:"total_download_bytes,omitempty"`
+	TotalUploadBytes   *int64 `json:"total_upload_bytes,omitempty"`
+	UploadBytes        int64  `json:"upload_bytes"`
 }
 
 // IngressUsageReport defines model for IngressUsageReport.

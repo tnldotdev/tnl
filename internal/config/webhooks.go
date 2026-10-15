@@ -71,6 +71,9 @@ func ValidateWebhooks(services Services, definitions map[string]Webhook) error {
 			if _, ok := services[endpoint.Service]; !ok {
 				return fmt.Errorf("webhooks.%s: service %q is not configured", name, endpoint.Service)
 			}
+			if Protocol(services[endpoint.Service]) != "http" {
+				return fmt.Errorf("webhooks.%s: service must use protocol http", name)
+			}
 		}
 		if !localproxy.ValidMountPrefix(endpoint.Path) {
 			return fmt.Errorf("webhooks.%s: path must be an exact clean absolute path", name)

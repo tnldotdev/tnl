@@ -215,7 +215,7 @@ func (q *Queries) ProjectAliasByScope(ctx context.Context, arg ProjectAliasBySco
 }
 
 const readyAliasReceiver = `-- name: ReadyAliasReceiver :one
-SELECT t.id, t.command, t.process_id, t.server_origin, t.project_root, t.service, t.hostname, t.target, t.framework, t.public_url_id, t.publish_run_number, t.state, t.started_at, t.updated_at, t.heartbeat_at, t.lease_expires_at, t.stopped_at, t.last_error, t.integration_group, t.public_port, t.service_protocol FROM alias_declarations declaration
+SELECT t.id, t.command, t.process_id, t.server_origin, t.project_root, t.service, t.service_protocol, t.public_port, t.integration_group, t.hostname, t.target, t.framework, t.public_url_id, t.publish_run_number, t.state, t.started_at, t.updated_at, t.heartbeat_at, t.lease_expires_at, t.stopped_at, t.last_error FROM alias_declarations declaration
 JOIN project_aliases alias ON alias.id = declaration.alias_id
 JOIN local_tunnels t ON t.id = declaration.tunnel_id
 WHERE alias.id = ?1 AND t.project_root = ?2
@@ -241,6 +241,9 @@ func (q *Queries) ReadyAliasReceiver(ctx context.Context, arg ReadyAliasReceiver
 		&i.ServerOrigin,
 		&i.ProjectRoot,
 		&i.Service,
+		&i.ServiceProtocol,
+		&i.PublicPort,
+		&i.IntegrationGroup,
 		&i.Hostname,
 		&i.Target,
 		&i.Framework,
@@ -253,9 +256,6 @@ func (q *Queries) ReadyAliasReceiver(ctx context.Context, arg ReadyAliasReceiver
 		&i.LeaseExpiresAt,
 		&i.StoppedAt,
 		&i.LastError,
-		&i.IntegrationGroup,
-		&i.PublicPort,
-		&i.ServiceProtocol,
 	)
 	return i, err
 }

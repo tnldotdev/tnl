@@ -98,6 +98,7 @@ type ControlBrowserAccessHandoff struct {
 	TokenDigest      []byte
 	SessionDigest    []byte
 	PublicURLID      string
+	PublishRunID     string
 	CookieCiphertext []byte
 	StorageKeyID     string
 	ReturnPath       string
@@ -108,30 +109,38 @@ type ControlBrowserAccessHandoff struct {
 }
 
 type ControlBrowserAccessSession struct {
-	TokenDigest       []byte
-	PreviewID         string
-	PublicURLID       string
-	IdentityID        string
-	DisplayName       string
-	AccessCiphertext  []byte
-	RefreshCiphertext []byte
-	StorageKeyID      string
-	AccessExpiresAt   pgtype.Timestamptz
-	ExpiresAt         pgtype.Timestamptz
-	RevokedAt         pgtype.Timestamptz
+	TokenDigest            []byte
+	PreviewID              pgtype.Text
+	PublicURLID            string
+	IdentityID             string
+	DisplayName            string
+	AccessCiphertext       []byte
+	RefreshCiphertext      []byte
+	StorageKeyID           string
+	AccessExpiresAt        pgtype.Timestamptz
+	ExpiresAt              pgtype.Timestamptz
+	RevokedAt              pgtype.Timestamptz
+	ParentControlSessionID pgtype.Text
 }
 
 type ControlBrowserLoginAttempt struct {
 	StateDigest          []byte
 	BindingDigest        []byte
-	PreviewID            string
+	PreviewID            pgtype.Text
 	PublicURLID          string
+	PublishRunID         string
 	ReturnPath           string
 	Nonce                string
 	VerifierCiphertext   []byte
 	VerifierStorageKeyID string
 	ExpiresAt            pgtype.Timestamptz
 	ConsumedAt           pgtype.Timestamptz
+}
+
+type ControlBrowserSessionHost struct {
+	SessionDigest []byte
+	PublicURLID   string
+	PublishRunID  string
 }
 
 type ControlControlSession struct {
@@ -228,12 +237,6 @@ type ControlEmailDelivery struct {
 	LastStatus        int32
 }
 
-type ControlEphemeralPublicUrlAllocation struct {
-	PublicURLID  string
-	CredentialID string
-	InvocationID string
-}
-
 type ControlFeedbackEvent struct {
 	Cursor            int64
 	SchemaVersion     int16
@@ -273,6 +276,8 @@ type ControlFeedbackThread struct {
 	LatestEventCursor int64
 	ReportText        string
 	AuthorDisplayName pgtype.Text
+	AuthorIdentityID  pgtype.Text
+	AuthorVerified    bool
 	Anchor            []byte
 	Evidence          []byte
 	SourceAtReport    []byte
@@ -281,8 +286,6 @@ type ControlFeedbackThread struct {
 	StateUpdatedAt    pgtype.Timestamptz
 	IdempotencyKey    string
 	RequestDigest     []byte
-	AuthorIdentityID  pgtype.Text
-	AuthorVerified    bool
 }
 
 type ControlGuestPublicUrl struct {
@@ -378,10 +381,10 @@ type ControlIngressRoutingTableEvent struct {
 	CanonicalHostname  string
 	EntryRevision      int64
 	Projection         []byte
-	PublicUrlExpiresAt pgtype.Timestamptz
-	CreatedAt          pgtype.Timestamptz
 	PolicyCiphertext   []byte
 	PolicyStorageKeyID pgtype.Text
+	PublicUrlExpiresAt pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
 }
 
 type ControlIngressUsageReport struct {
@@ -483,11 +486,21 @@ type ControlPublicUrl struct {
 	MembershipID                pgtype.Text
 	CreatedByIdentityID         string
 	IdempotencyKey              string
+	RequestDigestCiphertext     []byte
+	RequestDigestStorageKeyID   pgtype.Text
 	CanonicalHostname           string
 	Target                      string
+	Namespace                   string
+	Purpose                     string
+	ServiceProtocol             string
+	PublicPort                  pgtype.Int4
 	PublicURLScope              string
 	PolicyRevision              int64
 	IpPolicy                    string
+	AllowedIpPolicyCiphertext   []byte
+	AllowedIpPolicyStorageKeyID pgtype.Text
+	AllowedIpHashes             []byte
+	AllowedIpHashKeyID          pgtype.Text
 	LifecycleState              string
 	DnsAuthorityReference       pgtype.Text
 	DnsState                    string
@@ -508,40 +521,7 @@ type ControlPublicUrl struct {
 	UpdatedAt                   pgtype.Timestamptz
 	SuspendedAt                 pgtype.Timestamptz
 	DeletedAt                   pgtype.Timestamptz
-	AllowedIpPolicyCiphertext   []byte
-	AllowedIpPolicyStorageKeyID pgtype.Text
-	AllowedIpHashes             []byte
-	AllowedIpHashKeyID          pgtype.Text
-	RequestDigestCiphertext     []byte
-	RequestDigestStorageKeyID   pgtype.Text
-	Namespace                   string
-	Purpose                     string
 	IngressPoolID               string
-	ServiceProtocol             string
-	PublicPort                  pgtype.Int4
-}
-
-type ControlPublicUrlPublishCredential struct {
-	ID                         string
-	PublicURLID                pgtype.Text
-	TokenID                    string
-	TokenDigest                []byte
-	IssuedByIdentityID         string
-	MembershipID               string
-	PolicyRevision             int64
-	Target                     string
-	CertificateCacheKey        string
-	CertificateScope           string
-	CertificateIdentifiers     []string
-	CertificateChallengeMethod string
-	CreatedAt                  pgtype.Timestamptz
-	ExpiresAt                  pgtype.Timestamptz
-	RevokedAt                  pgtype.Timestamptz
-	Kind                       string
-	TeamID                     pgtype.Text
-	DomainID                   pgtype.Text
-	Namespace                  pgtype.Text
-	IssuedRole                 pgtype.Text
 }
 
 type ControlPublicUrlRecoveryEpisode struct {
@@ -600,9 +580,9 @@ type ControlPublicUrlUsageBucket struct {
 
 type ControlPublicUrlUsageConfiguration struct {
 	ID                                      int16
-	CreatedAt                               pgtype.Timestamptz
 	VisitorNetworkHashMasterKeyCiphertext   []byte
 	VisitorNetworkHashMasterKeyStorageKeyID string
+	CreatedAt                               pgtype.Timestamptz
 }
 
 type ControlPublicUrlUsageDelivery struct {
@@ -630,6 +610,9 @@ type ControlPublishRun struct {
 	ActingIdentityID           string
 	PublishRunNumber           int64
 	IdempotencyKey             string
+	RequestDigestCiphertext    []byte
+	RequestDigestStorageKeyID  pgtype.Text
+	ShareCapable               bool
 	PublishRunTokenID          string
 	PublishRunTokenDigest      []byte
 	PolicyRevision             int64
@@ -638,6 +621,7 @@ type ControlPublishRun struct {
 	CertificateScope           string
 	CertificateIdentifiers     []string
 	CertificateChallengeMethod string
+	TrafficLimits              []byte
 	State                      string
 	CreatedAt                  pgtype.Timestamptz
 	LastHeartbeatAt            pgtype.Timestamptz
@@ -649,9 +633,6 @@ type ControlPublishRun struct {
 	ClosedAt                   pgtype.Timestamptz
 	CloseReason                pgtype.Text
 	AssignmentsOpen            pgtype.Bool
-	RequestDigestCiphertext    []byte
-	RequestDigestStorageKeyID  pgtype.Text
-	ShareCapable               bool
 }
 
 type ControlPublishRunConnectionSlot struct {
@@ -680,10 +661,89 @@ type ControlPublishRunConnectionSlot struct {
 	SessionOpen                            bool
 }
 
-type ControlPublishRunPublishCredential struct {
-	PublishRunID string
-	PublicURLID  string
-	CredentialID string
+type ControlPublishRunPublisherIdentity struct {
+	PublishRunID        string
+	PublisherIdentityID string
+	PublisherGrantID    string
+}
+
+type ControlPublisherAccessToken struct {
+	Digest              []byte
+	PublisherIdentityID string
+	GrantID             string
+	KeyID               string
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+}
+
+type ControlPublisherAssertion struct {
+	PublisherIdentityID string
+	AssertionID         string
+	ExpiresAt           pgtype.Timestamptz
+}
+
+type ControlPublisherEnrollment struct {
+	ID                  string
+	TokenDigest         []byte
+	TeamID              string
+	Name                string
+	IdentityKind        string
+	GrantKind           string
+	PublicURLID         pgtype.Text
+	DomainID            pgtype.Text
+	Namespace           pgtype.Text
+	MembershipID        pgtype.Text
+	PublicURLScope      pgtype.Text
+	CreatedByIdentityID string
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	RedeemedIdentityID  pgtype.Text
+	RedeemedKeyID       pgtype.Text
+	RedeemedGrantID     pgtype.Text
+	RedeemedPublicKey   []byte
+	RedeemedAt          pgtype.Timestamptz
+}
+
+type ControlPublisherGrant struct {
+	ID                  string
+	PublisherIdentityID string
+	CreatedByIdentityID string
+	Kind                string
+	PublicURLID         pgtype.Text
+	DomainID            pgtype.Text
+	Namespace           pgtype.Text
+	MembershipID        pgtype.Text
+	PublicURLScope      pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+}
+
+type ControlPublisherIdentity struct {
+	ID                  string
+	TeamID              string
+	Name                string
+	Kind                string
+	CreatedByIdentityID string
+	GuestID             pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+}
+
+type ControlPublisherIdentityKey struct {
+	ID                  string
+	PublisherIdentityID string
+	PublicKey           []byte
+	Revision            int64
+	CreatedAt           pgtype.Timestamptz
+	RetiredAt           pgtype.Timestamptz
+}
+
+type ControlPublisherNamespaceAllocation struct {
+	PublicURLID         string
+	PublisherIdentityID string
+	PublisherGrantID    string
+	InvocationID        string
 }
 
 type ControlRelayCertificateOrder struct {
@@ -830,6 +890,7 @@ type ControlTeam struct {
 	ManagedLabel           string
 	DefaultDomainID        pgtype.Text
 	PolicyRevision         int64
+	FeedbackAuthors        string
 	CreatedByIdentityID    string
 	CreationIdempotencyKey pgtype.Text
 	CreationRequestDigest  []byte
@@ -871,4 +932,48 @@ type ControlTeamMembership struct {
 	UpdatedAt           pgtype.Timestamptz
 	RemovedAt           pgtype.Timestamptz
 	RemovedByIdentityID pgtype.Text
+}
+
+type ControlVisitorGrant struct {
+	ID                  string
+	PublicURLID         string
+	TeamID              string
+	Kind                string
+	IdentityID          pgtype.Text
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	RequestDigest       []byte
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+}
+
+type ControlVisitorInvitation struct {
+	ID                  string
+	PublicURLID         string
+	TeamID              string
+	NormalizedEmail     string
+	TokenDigest         []byte
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	RequestDigest       []byte
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	AcceptedAt          pgtype.Timestamptz
+	AcceptedIdentityID  pgtype.Text
+	RevokedAt           pgtype.Timestamptz
+}
+
+type ControlVisitorIpGrant struct {
+	ID               string
+	PublicURLID      string
+	PrefixCiphertext []byte
+	StorageKeyID     string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	RevokedAt        pgtype.Timestamptz
+}
+
+type ControlVisitorIpSet struct {
+	PublicURLID string
 }

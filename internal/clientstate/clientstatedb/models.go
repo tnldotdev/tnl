@@ -66,8 +66,8 @@ type ControlSession struct {
 	AccessExpiresAt    int64
 	StoredRefreshToken []byte
 	RefreshExpiresAt   int64
-	UpdatedAt          int64
 	RefreshPending     int64
+	UpdatedAt          int64
 }
 
 type GuestSession struct {
@@ -88,7 +88,6 @@ type IntegrationUrlHostname struct {
 	Namespace    string
 	Purpose      string
 	Hostname     string
-	LabelVersion int64
 }
 
 type IntegrationUrlPublisher struct {
@@ -135,6 +134,13 @@ type LocalInspectionUsage struct {
 	UsedBytes   int64
 }
 
+type LocalProjectUrlInventory struct {
+	ProjectRoot  string
+	ServerOrigin string
+	PublicURLID  string
+	LastSeenAt   int64
+}
+
 type LocalTunnel struct {
 	ID               string
 	Command          string
@@ -142,6 +148,9 @@ type LocalTunnel struct {
 	ServerOrigin     string
 	ProjectRoot      string
 	Service          string
+	ServiceProtocol  string
+	PublicPort       int64
+	IntegrationGroup string
 	Hostname         string
 	Target           string
 	Framework        string
@@ -154,28 +163,11 @@ type LocalTunnel struct {
 	LeaseExpiresAt   int64
 	StoppedAt        sql.NullInt64
 	LastError        string
-	IntegrationGroup string
-	PublicPort       int64
-	ServiceProtocol  string
 }
 
-type LocalTunnelEvent struct {
-	ProjectRoot      string
-	Sequence         int64
-	TunnelID         string
-	Service          string
-	ServiceProtocol  string
-	State            string
-	Target           string
-	Hostname         string
-	PublicPort       int64
-	PublishRunNumber int64
-	CreatedAt        int64
-}
-
-type LocalTunnelEventCursor struct {
-	ProjectRoot string
-	Sequence    int64
+type LocalTunnelPublicationObservation struct {
+	ID      string
+	Payload interface{}
 }
 
 type OauthAliasReturn struct {
@@ -228,12 +220,51 @@ type ProjectAlias struct {
 	FailureReason     string
 }
 
+type ProjectRuntime struct {
+	ProjectRoot  string
+	Epoch        string
+	Sequence     int64
+	AppSequence  int64
+	ObservedAt   int64
+	ServicesJson string
+}
+
+type ProjectRuntimeEvent struct {
+	ProjectRoot string
+	Sequence    int64
+	EventType   string
+	CreatedAt   int64
+	Payload     string
+	StoredBytes int64
+}
+
+type PublisherSigningIdentity struct {
+	ServerOrigin  string
+	Scope         string
+	IdentityID    string
+	PublicValue   []byte
+	StoredPrivate []byte
+	UpdatedAt     int64
+}
+
 type ServerProfile struct {
 	ID             int64
 	Origin         string
 	SelectedTeamID string
 	CreatedAt      int64
 	LastUsedAt     int64
+}
+
+type StateProtection struct {
+	ID        int64
+	Protector string
+	KeyCheck  []byte
+}
+
+type SystemState struct {
+	Name        string
+	StoredValue []byte
+	UpdatedAt   int64
 }
 
 type TelemetryOutbox struct {
