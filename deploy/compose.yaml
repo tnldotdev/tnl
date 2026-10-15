@@ -18,6 +18,9 @@ services:
   migrate:
     <<: *tnld
     command: migrate
+    env_file: []
+    environment:
+      TNLD_DATABASE_DIRECT_URL: ${TNLD_DATABASE_DIRECT_URL:?set a direct migration URL}
     restart: "no"
 
   tnld:
@@ -28,6 +31,7 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 45s
     environment:
+      TNLD_DATABASE_DIRECT_URL: ""
       TNLD_CLUSTER_SECRET: ""
       TNLD_CLUSTER_SECRET_PREVIOUS: ""
       TNLD_CONTROL_LISTEN: :8443

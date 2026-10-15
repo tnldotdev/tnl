@@ -63,9 +63,7 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
   services: {
-    app: {
-      directory: ".",
-    },
+    app: {},
   },
 });
 ```
@@ -76,6 +74,8 @@ Then run:
 npx tnl auth login
 pnpm dev
 npx tnl wait
+npx tnl status --scope=local
+npx tnl status --scope=server
 ```
 
 Sign in once with `tnl auth login`. The integration prepares public metadata before
@@ -97,8 +97,8 @@ allowed on the declared webhook path and method.
 
 ## give your services their own urls
 
-If your project has several services, give each its own directory in
-`tnl.config.ts`:
+If your project has several services, name them in `tnl.config.ts` and
+select the service when preparing each app:
 
 ```ts
 // tnl.config.ts
@@ -106,17 +106,15 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
   services: {
-    web: {
-      directory: "apps/web",
-    },
-    api: {
-      directory: "apps/api",
-    },
+    web: {},
+    api: {},
   },
 });
 ```
 
-Start each service with its normal development command:
+Pass `service: "web"` or `service: "api"` to your framework integration or
+`tnl.prepare()` in each app. Start each service with its normal development
+command:
 
 ```bash
 pnpm --dir apps/web dev
@@ -180,7 +178,7 @@ The same frontend is now running from two checkouts:
 | primary   | `https://web-example-k7n2p9.ecstatic-penguin.tnl.dev`      |
 | `../perf` | `https://web-example-perf-m4q8s2.ecstatic-penguin.tnl.dev` |
 
-`tnl` names each URL after the service and project, adding the directory name
+`tnl` names each URL after the service and project, adding the checkout name
 for a linked worktree. A short ID keeps names distinct, and switching branches
 leaves the URL unchanged.
 
@@ -191,7 +189,7 @@ listener it actually opens. Restarting the same worktree reuses its URL.
 See what is running across your local worktrees from any of them:
 
 ```bash
-npx tnl status --all
+npx tnl status --all --scope=local
 ```
 
 ## custom domain
@@ -218,6 +216,7 @@ with the built-in administrator's login token, publish directly beneath it:
 
 ```bash
 tnl auth login --server https://control.example.com --login-token
+tnl status --scope=server --server https://control.example.com
 tnl publish 3000 --server https://control.example.com --name app
 # https://app.routes.example.com
 ```

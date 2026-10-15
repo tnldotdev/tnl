@@ -254,6 +254,52 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestBinaryIntegration' -count=1 -timeout=15m -args -tnl-test-tier=binary
 
+  go:test:integration:compose:
+    desc: Check disposable Compose owner startup, scoped apps, and HTTP/TCP targets
+    cmds:
+      - go test -race -v ./cmd/tnl -run='^TestComposeGeneratedOwnerBootsAndScopesApp$' -count=1 -timeout=8m -args -tnl-compose-integration
+      - go test -v ./internal/tnldruntime -run='^TestComposeIntegrationOwnerTargets$' -count=1 -timeout=8m -args -tnl-compose-integration
+
+  deploy:manifests:
+    desc: Check the local Fly role manifests and PROXY v2 port inventory
+    cmds:
+      - node scripts/deploy-server.ts manifests
+
+  deploy:check:
+    desc: Check the selected image commit and local Fly role manifests without contacting a server
+    requires:
+      vars: [IMAGE, COMMIT]
+    cmds:
+      - node scripts/deploy-server.ts check --image '{{.IMAGE}}' --commit '{{.COMMIT}}'
+
+  deploy:staging:
+    desc: Deploy an explicitly selected image to the staging split-role apps
+    requires:
+      vars: [IMAGE, COMMIT]
+    cmds:
+      - node scripts/deploy-server.ts apply --environment staging --image '{{.IMAGE}}' --commit '{{.COMMIT}}'
+
+  deploy:production:
+    desc: Manually deploy an explicitly selected image to production split-role apps
+    requires:
+      vars: [IMAGE, COMMIT]
+    cmds:
+      - node scripts/deploy-server.ts apply --environment production --image '{{.IMAGE}}' --commit '{{.COMMIT}}'
+
+  deploy:production:provision:
+    desc: Stage private production role credentials without updating Machines
+    requires:
+      vars: [CREDENTIALS]
+    cmds:
+      - node scripts/deploy-server.ts provision-production --credentials '{{.CREDENTIALS}}'
+
+  deploy:staging:qualify:
+    desc: Check staging Fly Machines and their PROXY v2 ingress ports without changing them
+    requires:
+      vars: [IMAGE, COMMIT, HTTP_URL, EXPECT, REDIS_HOST, REDIS_PORT, REDIS_CERT, REDIS_KEY]
+    cmds:
+      - node scripts/deploy-server.ts qualify --image '{{.IMAGE}}' --commit '{{.COMMIT}}' --http-url '{{.HTTP_URL}}' --expect '{{.EXPECT}}' --redis-host '{{.REDIS_HOST}}' --redis-port '{{.REDIS_PORT}}' --redis-cert '{{.REDIS_CERT}}' --redis-key '{{.REDIS_KEY}}'
+
   go:test:integration:dns:
     desc: Run the authoritative DNS integration test in disposable Linux containers
     cmds:

@@ -16,8 +16,8 @@ services:
   migrate:
     <<: *tnld
     command: migrate
-    env_file:
-      - ${TNL_ENV_FILE:-.env}
+    environment:
+      TNLD_DATABASE_DIRECT_URL: ${TNLD_DATABASE_DIRECT_URL:?set a direct migration URL}
     restart: "no"
 
   control:
@@ -29,6 +29,7 @@ services:
     env_file:
       - ${TNL_ENV_FILE:-.env}
     environment:
+      TNLD_DATABASE_DIRECT_URL: ""
       TNLD_CONTROL_LISTEN: :8443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
       TNLD_ROLE: control

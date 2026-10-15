@@ -45,6 +45,7 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | Database and service boundaries  | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                |
 | Real TCP clients                 | `task go:test:integration:tcp-clients`                       | Docker; Task manages disposable PostgreSQL, MySQL, Redis, and SSH targets |
 | Binary behavior                  | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available  |
+| Compose publisher ownership      | `task go:test:integration:compose`                           | Docker; disposable worktree/Compose targets with HTTP and TCP services    |
 | Authoritative DNS                | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers               |
 | Public Route 53 and ACME staging | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in   |
 | Fuzz targets                     | `task go:test:fuzz`                                          | Go toolchain                                                              |
@@ -109,7 +110,7 @@ Run `mise exec -- task py:check` for Ruff, mypy, and pytest. The Python
 distribution source is under `packages/py/`; uv uses its committed `uv.lock`.
 After `task release:snapshot`, `task py:build` verifies four platform wheels
 against those artifacts. The ASGI tests cover
-lifespan startup, streamed responses, WebSockets, private Unix-socket bounds,
+lifespan startup, streamed responses, WebSockets, private HTTP bounds,
 and cleanup without a deployed server.
 
 ## edit generated sources
@@ -117,15 +118,14 @@ and cleanup without a deployed server.
 Edit the source, then run `mise exec -- task generate` and
 `mise exec -- task format`. Do not edit committed generated files by hand.
 
-The client uses `client-v2.db` in its state directory. A future incompatible
-SQLite schema can use a new filename such as `client-v3.db`; `tnl` starts that
-file without reading or importing the old one. Goose versions within one file
-still track compatible migrations. The server's current PostgreSQL baseline
-requires a fresh database rather than an upgrade from an older schema.
+The client starts fresh `client-v3.db` state without reading or importing an
+older database. The server's current PostgreSQL baseline requires a fresh
+database rather than an upgrade from an older schema. Stop all serving roles
+before initializing this baseline; each role checks the exact schema version.
 
 | Source                                                                                    | Generated output                                                                          |
 | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Six HTTP OpenAPI contracts under `api/*/v1`                                               | `pkg/api/*`; publisher browser validators under `internal/publisherapi`                   |
+| Seven HTTP OpenAPI contracts under `api/*/v1`                                             | `pkg/api/*`; publisher browser validators under `internal/publisherapi`                   |
 | PostgreSQL migrations and queries under `internal/controlstate`                           | `internal/controlstate/controlstatedb`                                                    |
 | SQLite migrations and queries under `internal/clientstate`                                | `internal/clientstate/clientstatedb`                                                      |
 | `internal/config`, project configuration mappings, and `scripts/generate-config-types.ts` | `schema/v1.json`, `internal/projectconfig/keys.gen.json`, `packages/ts/src/config.gen.ts` |
@@ -163,6 +163,14 @@ export TNL_STATE_DIR="$(pwd)/.local/client-state"
 Then start the app normally from that project's directory. `task local:down` preserves
 PostgreSQL state; `task local:reset` removes trust, containers, volumes, and
 `.local`. Run both through `mise exec --` from this repo.
+
+For hosted server changes, [the split deployment notes](deploy/server/readme.md)
+own the Fly role manifests and staging qualification. Run `task
+deploy:manifests` to check the port inventory locally, or `task deploy:check
+IMAGE=... COMMIT=...` to verify the operator-selected image and commit. Neither
+rolls out a server. The baseline
+PostgreSQL migration needs a new database, not an in-place upgrade of an older
+server. Releases publish immutable image digests but do not deploy production.
 
 ## find the right reference
 
