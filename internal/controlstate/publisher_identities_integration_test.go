@@ -33,7 +33,7 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 		}
 	}
 	files, err := migrationFiles.ReadDir("migrations")
-	if err != nil || len(files) != 1 || schemaVersion != 1 || minimumSchemaVersion != 1 {
+	if err != nil || len(files) != 1 || schemaVersion != 1 {
 		t.Fatalf("baseline = %v, %v", files, err)
 	}
 	// an older database's larger migration counter cannot pass this baseline's

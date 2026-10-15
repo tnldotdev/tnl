@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// the fresh baseline saves one encrypted visitor-network key. control replicas
+// must derive the same verifier without ever storing that key in plaintext.
 func TestIntegrationVisitorNetworkHashKeyEncryptedAndShared(t *testing.T) {
 	database, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "visitor_network_key")
 	first, err := database.RegisterIngress(t.Context(), IngressRegistration{

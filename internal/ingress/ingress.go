@@ -38,6 +38,9 @@ type PublicURL struct {
 	AllowAll          bool
 	Backends          []routebackend.Backend
 	PublicPort        *uint16
+	PublishRunID      string
+	ServiceProtocol   string
+	Traffic           *TrafficLimits
 }
 
 // LookupFunc returns an empty reason for a current public URL. failure reasons
@@ -79,7 +82,6 @@ type Config struct {
 	HandleRelayChallenge            func(net.Conn) bool
 	RequireProxyHeader              bool
 	MaxConnections                  int
-	MaxDeniedConnections            int
 	MaxClientHelloConnections       int
 	MaxChallengeConnections         int
 	MaxHostnameChallengeConnections int
@@ -92,6 +94,9 @@ type Config struct {
 	ObserveRecovery                 func(string, uint64, uint64, time.Time)
 	OnError                         func(error)
 	OnForwardingFailure             func(string, uint64, string, ForwardingFailureReason, int)
+	Traffic                         TrafficConfig
+	Pending                         PendingConfig
+	CurrentTrafficRuns              func() (map[TrafficRun]struct{}, bool)
 }
 
 type Server struct {
@@ -100,19 +105,21 @@ type Server struct {
 	openContext context.Context
 	cancelOpens context.CancelFunc
 
-	mu          sync.Mutex
-	connections map[net.Conn]struct{}
-	backends    map[net.Conn]struct{}
-	byPublicURL map[string]int
-	byDenied    map[string]int
-	byChallenge map[string]int
-	pending     int
-	admitted    [connectionKinds]int
-	serving     bool
-	closing     bool
-	done        chan struct{}
-	active      sync.WaitGroup
-	nextBackend atomic.Uint64
+	mu              sync.Mutex
+	connections     map[net.Conn]struct{}
+	backends        map[net.Conn]struct{}
+	byPublicURL     map[string]int
+	byDenied        map[string]int
+	byChallenge     map[string]int
+	pending         int
+	admitted        [connectionKinds]int
+	serving         bool
+	closing         bool
+	done            chan struct{}
+	active          sync.WaitGroup
+	nextBackend     atomic.Uint64
+	traffic         *trafficAdmission
+	pendingVisitors map[string]*visitorAdmission
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
@@ -123,6 +130,15 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		return nil, errors.New("ingress: connection limits must be positive")
 	}
 	if err := admissionDefaults(&config); err != nil {
+		return nil, err
+	}
+	var err error
+	config.Traffic, err = config.Traffic.Resolve()
+	if err != nil {
+		return nil, err
+	}
+	config.Pending, err = config.Pending.Resolve()
+	if err != nil {
 		return nil, err
 	}
 	if config.ServerHostname == "" != (config.HandleControl == nil) {
@@ -141,17 +157,21 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		config.OpenTimeout = defaultOpenTimeout
 	}
 	openContext, cancelOpens := context.WithCancel(context.Background())
+	traffic := newTrafficAdmission(config.Traffic, config.Pending)
+	traffic.currentRuns = config.CurrentTrafficRuns
 	return &Server{
-		listener:    listener,
-		config:      config,
-		openContext: openContext,
-		cancelOpens: cancelOpens,
-		connections: make(map[net.Conn]struct{}),
-		backends:    make(map[net.Conn]struct{}),
-		byPublicURL: make(map[string]int),
-		byDenied:    make(map[string]int),
-		byChallenge: make(map[string]int),
-		done:        make(chan struct{}),
+		listener:        listener,
+		config:          config,
+		openContext:     openContext,
+		cancelOpens:     cancelOpens,
+		connections:     make(map[net.Conn]struct{}),
+		backends:        make(map[net.Conn]struct{}),
+		byPublicURL:     make(map[string]int),
+		byDenied:        make(map[string]int),
+		byChallenge:     make(map[string]int),
+		done:            make(chan struct{}),
+		traffic:         traffic,
+		pendingVisitors: make(map[string]*visitorAdmission),
 	}, nil
 }
 
@@ -240,6 +260,16 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 			s.config.Metrics.IncInspectionFailure("metadata")
 		}
 		return nil
+	}
+	if s.traffic != nil {
+		release, reason := s.traffic.source(source.Addr())
+		if reason != "" {
+			s.rejectCapacity(reason)
+			s.observeTraffic("source", "capacity")
+			return nil
+		}
+		s.observeTraffic("source", "accepted")
+		defer release()
 	}
 	_ = public.SetReadDeadline(time.Time{})
 	// fly sends the visitor's original destination in the trusted outer header.
@@ -334,6 +364,11 @@ func (s *Server) connectionMetadata(public net.Conn) (netip.AddrPort, netip.Addr
 }
 
 func (s *Server) admit(connection net.Conn) bool {
+	if s.traffic != nil && !s.traffic.process() {
+		s.rejectCapacity("process_connection_rate")
+		s.observeTraffic("source", "capacity")
+		return false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing || s.pending >= s.config.MaxClientHelloConnections {

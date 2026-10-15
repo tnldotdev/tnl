@@ -13,7 +13,6 @@ const (
 	DefaultChallengeHostnameConnectionLimit = 8
 	DefaultControlConnectionLimit           = 1024
 	DefaultRelayConnectionLimit             = 4096
-	DefaultDeniedConnectionLimit            = 16
 	challengeConnectionTimeout              = 10 * time.Second
 )
 
@@ -38,7 +37,6 @@ func admissionDefaults(config *Config) error {
 		{&config.MaxHostnameChallengeConnections, DefaultChallengeHostnameConnectionLimit},
 		{&config.MaxControlConnections, DefaultControlConnectionLimit},
 		{&config.MaxRelayConnections, DefaultRelayConnectionLimit},
-		{&config.MaxDeniedConnections, DefaultDeniedConnectionLimit},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
@@ -63,12 +61,9 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 	switch kind {
 	case visitorConnection:
 		limit, resource = s.config.MaxConnections, "public_connections"
-		if s.byPublicURL[key] >= max(1, s.config.MaxConnections/2) {
-			return nil, "public_url_connections"
-		}
 	case deniedConnection:
-		limit, resource = s.config.MaxDeniedConnections, "denied_connections"
-		if s.byDenied[key] >= max(1, limit/2) {
+		limit, resource = s.config.Pending.Connections, "denied_connections"
+		if s.byDenied[key] >= s.config.Pending.PublicURLConnections {
 			return nil, "denied_public_url_connections"
 		}
 	case challengeConnection:

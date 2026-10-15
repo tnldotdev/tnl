@@ -116,7 +116,7 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 					return
 				}
 				group.Go(func() {
-					if err := a.forward(acceptCtx, incoming); err != nil && acceptCtx.Err() == nil {
+					if err := a.forward(acceptCtx, incoming, session); err != nil && acceptCtx.Err() == nil {
 						a.report(err)
 					}
 				})
@@ -134,7 +134,7 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 	}
 }
 
-func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream) (retErr error) {
+func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream, ingressSessions ...*tunnel.Session) (retErr error) {
 	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
 	opened := false
 	var rejected error
@@ -156,6 +156,20 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 	}
 	openVisitor := connection.OpenVisitor
 	if incoming.Header.IPPolicyDenied {
+		var session *tunnel.Session
+		if len(ingressSessions) > 0 {
+			session = ingressSessions[0]
+		}
+		remove, ok := connection.registerPending(incoming.Header, session, func() bool {
+			// ingress rechecks the current projection on promotion. a copied
+			// deadline from stream open may have been extended by a refresh.
+			current, ok := a.registry.candidate(incoming.Header, a.currentLease(), a.now(), false)
+			return ok && current == connection
+		})
+		if !ok {
+			return incoming.Reject(tunnelv1.StaleConnectionAssignment)
+		}
+		defer remove()
 		openVisitor = connection.OpenDeniedVisitor
 	}
 	publisher, err := openVisitor(ctx, incoming.Header.VisitorConnectionID)

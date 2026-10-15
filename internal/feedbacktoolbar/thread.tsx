@@ -5,6 +5,7 @@ import type { BrowserEvent } from "./model.ts";
 import { supportedAnchor } from "./anchors.ts";
 import { useConversation } from "./queries.ts";
 import { EvidenceView } from "./evidence-view.tsx";
+import { FeedbackSignIn } from "./sign-in.tsx";
 
 const eventLabels = {
   "thread.created": "reported",
@@ -35,6 +36,7 @@ export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
   return (
     <section aria-label="Feedback thread">
       {error && <p role="status">{safeFeedbackMessage(error)}</p>}
+      <FeedbackSignIn error={append.error} path={data?.thread.scope.page_path ?? "/"} />
       {!data ? (
         <p role="status">{query.isPending ? "Loading feedback…" : "Feedback is unavailable."}</p>
       ) : (

@@ -45,7 +45,7 @@ func TestInvalidHashedPolicyFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, invalid := range [][]Entry{nil, {{Family: "ipv4", Bits: 33, Digest: entry.Digest}},
+	for _, invalid := range [][]Entry{{{Family: "ipv4", Bits: 33, Digest: entry.Digest}},
 		{{Family: "ipv6", Bits: 24, Digest: "not a digest"}}} {
 		if _, err := New([32]byte{1}, invalid); err == nil {
 			t.Fatalf("invalid policy accepted: %+v", invalid)
@@ -54,5 +54,20 @@ func TestInvalidHashedPolicyFailsClosed(t *testing.T) {
 	policy, err := New([32]byte{1}, []Entry{entry})
 	if err != nil || !policy.Allows(netip.MustParseAddr("192.0.2.7")) || policy.Allows(netip.MustParseAddr("2001:db8::1")) {
 		t.Fatalf("IPv4 /0 policy = %+v, %v", policy, err)
+	}
+}
+
+func TestEmptyKeyedPolicyDeniesEverySource(t *testing.T) {
+	policy, err := New([32]byte{1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"192.0.2.7", "::ffff:192.0.2.7", "2001:db8::7"} {
+		if policy.Allows(netip.MustParseAddr(source)) {
+			t.Fatalf("empty policy allowed %s", source)
+		}
+	}
+	if _, err := New([32]byte{}, nil); err == nil {
+		t.Fatal("accepted empty policy without a verifier")
 	}
 }

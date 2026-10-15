@@ -39,8 +39,10 @@ type AuthenticateFunc func(context.Context, tunnelv1.Message) error
 
 // Session is an authenticated tunnelv1 session over an arbitrary transport.
 type Session struct {
-	transport muxsession.Session
-	control   muxsession.Stream
+	transport           muxsession.Session
+	control             muxsession.Stream
+	role                tunnelv1.PeerRole
+	publisherConnection *tunnelv1.PublisherConnectionRef
 
 	closeOnce sync.Once
 	closeErr  error
@@ -86,7 +88,7 @@ func Dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 	if response.Type != tunnelv1.HelloAccepted {
 		return nil, errors.New("tunnel: unexpected hello response")
 	}
-	return &Session{transport: transport, control: control}, nil
+	return authenticatedSession(transport, control, hello), nil
 }
 
 // Accept performs the server side of the shared tunnelv1 handshake.
@@ -137,7 +139,16 @@ func Accept(ctx context.Context, transport muxsession.Session, authenticate Auth
 	}); err != nil {
 		return nil, tunnelv1.Message{}, fmt.Errorf("tunnel: write hello response: %w", err)
 	}
-	return &Session{transport: transport, control: control}, hello, nil
+	return authenticatedSession(transport, control, hello), hello, nil
+}
+
+func authenticatedSession(transport muxsession.Session, control muxsession.Stream, hello tunnelv1.Message) *Session {
+	s := &Session{transport: transport, control: control, role: hello.Role}
+	if hello.PublisherConnection != nil {
+		ref := *hello.PublisherConnection
+		s.publisherConnection = &ref
+	}
+	return s
 }
 
 // OpenVisitorStream opens a visitor stream and waits for the publisher to

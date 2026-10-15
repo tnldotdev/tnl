@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -165,9 +166,11 @@ func TestIntegrationRedisClient(t *testing.T) {
 		t.Skip("requires the Redis integration target")
 	}
 	certificate := publicURLTestCertificate(t, "route.example")
+	observations := make(chan inspection.Summary, 16)
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Hostname: "route.example", ServiceProtocol: controlv1.Redis, PublicPort: 6379,
 		Target: *testRedisAddress, Certificate: certificate,
+		ObserveSummary: func(s inspection.Summary) { observations <- s },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -186,6 +189,16 @@ func TestIntegrationRedisClient(t *testing.T) {
 	response, err := reader.ReadString('\n')
 	if err != nil || response != "ok\r\n" {
 		t.Fatalf("Redis GET = %q, %v", response, err)
+	}
+	for _, command := range []string{"SET", "GET"} {
+		if s := awaitPublisherTest(t, observations); s.Command != command || s.Result != inspection.ResultOK {
+			t.Fatalf("real Redis summary = %+v", s)
+		}
+	}
+	select {
+	case s := <-observations:
+		t.Fatalf("authentication was inspected: %+v", s)
+	default:
 	}
 }
 

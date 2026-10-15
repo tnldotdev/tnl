@@ -1,0 +1,333 @@
+package controlapi
+
+import (
+	"context"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"net/http"
+	"net/netip"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/authorization"
+	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/visitorcert"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+)
+
+type VisitorStore interface {
+	HTTPVisitorPermission(context.Context, controlstate.PublishRunAuthentication, controlstate.HTTPVisitorRequest, time.Time) (controlstate.VisitorPermission, error)
+	CreateTeamVisitorGrant(context.Context, string, string, string, *time.Time, time.Time) (controlstate.VisitorGrant, error)
+	ListVisitorGrants(context.Context, string, string) ([]controlstate.VisitorGrant, error)
+	RevokeVisitorGrant(context.Context, string, string, string, time.Time) error
+	CreateVisitorInvitation(context.Context, string, string, string, string, [32]byte, time.Time, time.Time) (controlstate.VisitorInvitation, error)
+	ListVisitorInvitations(context.Context, string, string) ([]controlstate.VisitorInvitation, error)
+	RevokeVisitorInvitation(context.Context, string, string, string, time.Time) error
+	AcceptVisitorInvitation(context.Context, string, string, time.Time) (controlstate.VisitorGrant, error)
+	ListAvailablePublicURLs(context.Context, string, string, string, time.Time) (controlstate.AvailablePublicURLPage, error)
+	MutateVisitorIPs(context.Context, string, string, string, string, []controlstate.VisitorIPGrantInput, time.Time) ([]controlstate.VisitorIPGrant, error)
+	IssueVisitorCertificateScope(context.Context, credentials.AccessToken, string, time.Time, func(string, string, time.Time) ([]byte, error)) ([]byte, time.Time, error)
+	DatabaseVisitorPermission(context.Context, controlstate.PublishRunAuthentication, string, string, time.Time) (controlstate.VisitorPermission, error)
+}
+
+func (h *handler) AuthorizeHTTPVisitor(w http.ResponseWriter, r *http.Request, runID controlv1.PublishRunID) {
+	if h.visitorState == nil {
+		writeProblem(w, 503, controlv1.Unavailable, "visitor permissions are unavailable")
+		return
+	}
+	var body controlv1.HTTPVisitorRequest
+	if decodeJSON(w, r, &body) != nil || body.PublishRunNumber < 1 || !validVisitorSource(body.SourceIp) {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor decision")
+		return
+	}
+	auth, ok := h.authenticatePublishRunRequest(w, r, runID, uint64(body.PublishRunNumber))
+	if !ok {
+		return
+	}
+	input := controlstate.HTTPVisitorRequest{SourceIP: body.SourceIp, BrowserCookieSecret: optionalFeedbackString(body.BrowserCookieSecret), ShareID: optionalFeedbackString(body.ShareId)}
+	if body.ShareCookieSecret != nil {
+		raw, err := base64.RawURLEncoding.Strict().DecodeString(*body.ShareCookieSecret)
+		if err != nil || len(raw) != 32 {
+			writeProblem(w, 403, controlv1.Forbidden, "invalid share cookie")
+			return
+		}
+		input.ShareCookieSecret = raw
+	}
+	if input.BrowserCookieSecret != "" {
+		if h.browserAccess == nil {
+			writeProblem(w, 503, controlv1.Unavailable, "browser sign-in is unavailable")
+			return
+		}
+		if _, _, _, err := h.browserSessionAccess(r, auth, input.BrowserCookieSecret); err != nil {
+			writeVisitorDecisionProblem(w, "verify visitor identity", err)
+			return
+		}
+	}
+	decision, err := h.visitorState.HTTPVisitorPermission(r.Context(), auth, input, time.Now())
+	if err != nil {
+		writeVisitorDecisionProblem(w, "authorize HTTP visitor", err)
+		return
+	}
+	result := controlv1.HTTPVisitorResponse{VisitAllowed: decision.VisitAllowed, TeamMember: decision.TeamMember}
+	if decision.IdentityID != "" {
+		result.IdentityId = &decision.IdentityID
+		result.DisplayName = &decision.DisplayName
+	}
+	writeJSON(w, 200, result)
+}
+
+func (h *handler) visitorActor(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if h.visitorState == nil || h.authorizer == nil {
+		writeProblem(w, 503, controlv1.Unavailable, "visitor permissions are unavailable")
+		return "", false
+	}
+	actor, ok := h.authorizeRouteReads(w, r)
+	if !ok {
+		return "", false
+	}
+	return actor.identityID, true
+}
+func visitorResult(w http.ResponseWriter, operation string, value any, err error, status int) {
+	if err != nil {
+		if errors.Is(err, controlstate.ErrShareInvalid) || errors.Is(err, controlstate.ErrShareNotFound) || errors.Is(err, controlstate.ErrShareIdempotency) || errors.Is(err, controlstate.ErrPublicURLInvalid) || errors.Is(err, controlstate.ErrPublicURLMutationStale) {
+			writeControlStateProblem(w, operation, err)
+		} else {
+			writeVisitorDecisionProblem(w, operation, err)
+		}
+		return
+	}
+	if status == 204 {
+		w.WriteHeader(204)
+		return
+	}
+	writeJSON(w, status, value)
+}
+
+func validVisitorSource(value string) bool {
+	addr, err := netip.ParseAddr(value)
+	return err == nil && addr.Zone() == "" && addr.Unmap().String() == value
+}
+func writeVisitorDecisionProblem(w http.ResponseWriter, operation string, err error) {
+	switch {
+	case errors.Is(err, controlstate.ErrVisitorSignIn), errors.Is(err, controlstate.ErrControlAuthentication), errors.Is(err, controlstate.ErrPublishRunCredential), errors.Is(err, authorityclient.ErrUnauthenticated), errors.Is(err, authorization.ErrUnauthenticated):
+		writeBearerProblem(w)
+	case errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, controlstate.ErrFeedbackAccess), errors.Is(err, controlstate.ErrPublishRunStale), errors.Is(err, authorization.ErrForbidden):
+		writeProblem(w, 403, controlv1.Forbidden, "visitor permission denied")
+	default:
+		writeUnavailableProblem(w, failure.Operation(operation), "visitor authorization is unavailable; retry", failure.ServerAuthorityUnavailable, err)
+	}
+}
+func (h *handler) ListAvailablePublicURLs(w http.ResponseWriter, r *http.Request, p controlv1.ListAvailablePublicURLsParams) {
+	actor, ok := h.visitorActor(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.visitorState.ListAvailablePublicURLs(r.Context(), actor, optionalFeedbackString(p.TeamId), optionalFeedbackString(p.Cursor), time.Now())
+	visitorResult(w, "list visitor inventory", result, err, 200)
+}
+func (h *handler) CreateTeamVisitorGrant(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, p controlv1.CreateTeamVisitorGrantParams) {
+	actor, ok := h.visitorActor(w, r)
+	if !ok {
+		return
+	}
+	var body controlv1.CreateTeamVisitorGrantRequest
+	if decodeJSON(w, r, &body) != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor grant")
+		return
+	}
+	result, err := h.visitorState.CreateTeamVisitorGrant(r.Context(), id, actor, p.IdempotencyKey, body.ExpiresAt, time.Now())
+	visitorResult(w, "create team visitor grant", result, err, 201)
+}
+func (h *handler) ListVisitorGrants(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
+	actor, ok := h.visitorActor(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.visitorState.ListVisitorGrants(r.Context(), id, actor)
+	visitorResult(w, "list visitor grants", result, err, 200)
+}
+func (h *handler) RevokeVisitorGrant(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, grantID string) {
+	actor, ok := h.visitorActor(w, r)
+	if !ok {
+		return
+	}
+	err := h.visitorState.RevokeVisitorGrant(r.Context(), id, actor, grantID, time.Now())
+	visitorResult(w, "revoke visitor grant", nil, err, 204)
+}
+func (h *handler) CreateVisitorInvitation(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, p controlv1.CreateVisitorInvitationParams) {
+	actor, ok := h.visitorActor(w, r)
+	if !ok {
+		return
+	}
+	var body controlv1.CreateVisitorInvitationRequest
+	if decodeJSON(w, r, &body) != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor invitation")
+		return
+	}
+	raw, err := hex.DecodeString(body.TokenDigest)
+	if err != nil || len(raw) != 32 {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid invitation digest")
+		return
+	}
+	var digest [32]byte
+	copy(digest[:], raw)
+	result, err := h.visitorState.CreateVisitorInvitation(r.Context(), id, actor, p.IdempotencyKey, body.Email, digest, body.ExpiresAt, time.Now())
+	visitorResult(w, "create visitor invitation", result, err, 201)
+}
+func (h *handler) ListVisitorInvitations(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
+	actor, ok := h.visitorActor(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.visitorState.ListVisitorInvitations(r.Context(), id, actor)
+	visitorResult(w, "list visitor invitations", result, err, 200)
+}
+func (h *handler) RevokeVisitorInvitation(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, inviteID string) {
+	actor, ok := h.visitorActor(w, r)
+	if !ok {
+		return
+	}
+	err := h.visitorState.RevokeVisitorInvitation(r.Context(), id, actor, inviteID, time.Now())
+	visitorResult(w, "revoke visitor invitation", nil, err, 204)
+}
+func (h *handler) AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.visitorActor(w, r)
+	if !ok {
+		return
+	}
+	var body controlv1.AcceptVisitorInvitationJSONRequestBody
+	if decodeJSON(w, r, &body) != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor invitation")
+		return
+	}
+	result, err := h.visitorState.AcceptVisitorInvitation(r.Context(), actor, body.Secret, time.Now())
+	visitorResult(w, "accept visitor invitation", result, err, 200)
+}
+
+func (h *handler) mutateVisitorIP(w http.ResponseWriter, r *http.Request, id, operation, removeID string) {
+	actor, ok := h.visitorActor(w, r)
+	if !ok {
+		return
+	}
+	var input []controlstate.VisitorIPGrantInput
+	if operation == "set" {
+		if decodeJSON(w, r, &input) != nil {
+			writeProblem(w, 400, controlv1.InvalidRequest, "invalid IP set")
+			return
+		}
+	}
+	if operation == "add" {
+		var one controlstate.VisitorIPGrantInput
+		if decodeJSON(w, r, &one) != nil {
+			writeProblem(w, 400, controlv1.InvalidRequest, "invalid IP grant")
+			return
+		}
+		input = []controlstate.VisitorIPGrantInput{one}
+	}
+	result, err := h.visitorState.MutateVisitorIPs(r.Context(), id, actor, operation, removeID, input, time.Now())
+	status := 200
+	if operation == "add" {
+		status = 201
+	}
+	if operation == "remove" {
+		status = 204
+	}
+	visitorResult(w, "update visitor IP set", result, err, status)
+}
+func (h *handler) ListVisitorIPGrants(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
+	h.mutateVisitorIP(w, r, id, "list", "")
+}
+func (h *handler) SetVisitorIPGrants(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
+	h.mutateVisitorIP(w, r, id, "set", "")
+}
+func (h *handler) AddVisitorIPGrant(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
+	h.mutateVisitorIP(w, r, id, "add", "")
+}
+func (h *handler) RemoveVisitorIPGrant(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, grantID string) {
+	h.mutateVisitorIP(w, r, id, "remove", grantID)
+}
+
+func (h *handler) IssueVisitorCertificate(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
+	if _, ok := h.visitorActor(w, r); !ok {
+		return
+	}
+	if h.visitorIssuer == nil {
+		writeProblem(w, 503, controlv1.Unavailable, "visitor certificate issuer is unavailable")
+		return
+	}
+	var body controlv1.IssueVisitorCertificateJSONRequestBody
+	if decodeJSON(w, r, &body) != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid certificate request")
+		return
+	}
+	der, err := base64.StdEncoding.Strict().DecodeString(body.Csr)
+	if err != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid certificate request")
+		return
+	}
+	if _, err = visitorcert.ValidateCSR(der); err != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid CSR proof")
+		return
+	}
+	access, _ := credentials.Bearer(r.Header)
+	now := time.Now()
+	certificate, expires, err := h.visitorState.IssueVisitorCertificateScope(r.Context(), credentials.AccessToken(access), id, now, func(urlID, identityID string, expires time.Time) ([]byte, error) {
+		return h.visitorIssuer.Issue(der, urlID, identityID, expires, now)
+	})
+	visitorResult(w, "issue visitor certificate", controlv1.VisitorCertificate{PublicUrlId: id, CertificatePem: string(certificate), IssuerPem: string(h.visitorIssuer.CertificatePEM()), ExpiresAt: expires}, err, 201)
+}
+func (h *handler) AuthorizeVisitorCertificate(w http.ResponseWriter, r *http.Request, runID controlv1.PublishRunID) {
+	if h.visitorState == nil {
+		writeProblem(w, 503, controlv1.Unavailable, "visitor authorization is unavailable")
+		return
+	}
+	var body controlv1.AuthorizeVisitorCertificateJSONRequestBody
+	if decodeJSON(w, r, &body) != nil || body.PublishRunNumber < 1 || !validVisitorSource(body.SourceIp) {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor certificate decision")
+		return
+	}
+	auth, ok := h.authenticatePublishRunRequest(w, r, runID, uint64(body.PublishRunNumber))
+	if !ok {
+		return
+	}
+	now := time.Now()
+	identity := ""
+	if body.Certificate != nil {
+		if h.visitorIssuer == nil {
+			writeProblem(w, 503, controlv1.Unavailable, "visitor certificate issuer is unavailable")
+			return
+		}
+		der, err := base64.StdEncoding.Strict().DecodeString(*body.Certificate)
+		if err != nil {
+			writeProblem(w, 403, controlv1.Forbidden, "invalid visitor certificate")
+			return
+		}
+		leaf, err := x509.ParseCertificate(der)
+		if err != nil {
+			writeProblem(w, 403, controlv1.Forbidden, "invalid visitor certificate")
+			return
+		}
+		identity, err = h.visitorIssuer.Identity(leaf, auth.PublicURLID, now)
+		if err != nil {
+			writeProblem(w, 403, controlv1.Forbidden, "invalid visitor certificate scope")
+			return
+		}
+	}
+	permission, err := h.visitorState.DatabaseVisitorPermission(r.Context(), auth, identity, body.SourceIp, now)
+	if err != nil {
+		visitorResult(w, "authorize database visitor", nil, err, 200)
+		return
+	}
+	if !permission.VisitAllowed {
+		writeProblem(w, 403, controlv1.Forbidden, "visitor access denied")
+		return
+	}
+	writeJSON(w, 200, struct {
+		IdentityID  string `json:"identity_id,omitempty"`
+		PublicURLID string `json:"public_url_id"`
+	}{identity, auth.PublicURLID})
+}

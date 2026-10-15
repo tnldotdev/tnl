@@ -87,7 +87,7 @@ func TestInlinePublisherAdmissionFollowsVisitorAccess(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	server, err := NewPublicURLServer(PublicURLServerConfig{
-		Hostname: "route.example", RequestLimit: 1,
+		Hostname: "route.example", Limits: ApplicationLimits{Concurrency: 1},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			close(started)
 			<-release
@@ -352,7 +352,7 @@ func TestRouteServerCompletedBodiesAllowLongResponses(t *testing.T) {
 func startLimitedTestPublicURL(t *testing.T, target string, limit int, timeout time.Duration) (*PublicURLServer, chan struct{}) {
 	t.Helper()
 	route, err := NewPublicURLServer(PublicURLServerConfig{
-		Hostname: "route.example", Target: target, RequestLimit: limit,
+		Hostname: "route.example", Target: target, Limits: ApplicationLimits{Concurrency: limit},
 		Certificate: publicURLTestCertificate(t, "route.example"),
 	})
 	if err != nil {

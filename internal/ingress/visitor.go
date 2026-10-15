@@ -116,9 +116,9 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 		if usage != nil {
 			usage.PolicyDenied(time.Now().UTC())
 		}
-		// database visitors have no HTTPS denial response. do not send their
-		// startup bytes to the publisher when ingress has denied the source.
-		if byPort {
+		// SSH has no end-to-end TLS authorization path. database publishers
+		// consume only bounded TLS startup locally, before target authentication.
+		if byPort && route.ServiceProtocol != "postgres" && route.ServiceProtocol != "mysql" && route.ServiceProtocol != "redis" {
 			return nil
 		}
 	}
@@ -128,7 +128,17 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 	} else if denied {
 		kind = deniedConnection
 	}
-	release, rejected := s.admitClass(kind, key)
+	var admission *visitorAdmission
+	var release func()
+	var rejected string
+	if challenge {
+		release, rejected = s.admitClass(kind, key)
+	} else {
+		admission, rejected = s.admitVisitor(route, source.Addr(), denied)
+		if admission != nil {
+			release = admission.close
+		}
+	}
 	if release == nil {
 		s.rejectCapacity(rejected)
 		if !challenge && !denied {
@@ -170,11 +180,23 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 	if err != nil {
 		return fmt.Errorf("ingress: create visitor connection ID: %w", err)
 	}
+	if admission != nil && denied {
+		admission.hostname = hello.ServerName
+		admission.byPort = byPort
+		admission.port = destination.Port()
+		remove := s.registerPendingVisitor(visitorID, admission, public)
+		defer remove()
+	}
+	if admission != nil {
+		if err := admission.beforeWrite(s.openContext, true, len(hello.Prefix)); err != nil {
+			return err
+		}
+	}
 	openTimeout := s.config.OpenTimeout
 	if challenge {
 		openTimeout = min(openTimeout, time.Until(challengeDeadline))
 	} else if denied {
-		openTimeout = min(openTimeout, 2*time.Second)
+		openTimeout = min(openTimeout, 2*time.Second, time.Until(admission.deadline))
 	}
 	openCtx, cancel := context.WithTimeout(s.openContext, openTimeout)
 	opened, openErr := s.openVisitorStream(openCtx, backends, visitorID, kind, header, hello.Prefix, usage)
@@ -193,6 +215,11 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 		return openErr
 	}
 	defer s.releaseBackend(opened.connection)
+	if admission != nil {
+		admission.mu.Lock()
+		admission.upstream = opened.connection
+		admission.mu.Unlock()
+	}
 	if usage != nil {
 		usage.StreamOpened(time.Now().UTC())
 		usage.AddIngress(opened.bytes, time.Now().UTC())
@@ -213,7 +240,14 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 			return err
 		}
 	}
-	err = s.copyVisitor(public, opened.connection, hello.Remainder, route, denied, usage)
+	upstream := opened.connection
+	if admission != nil {
+		ctx, cancel := context.WithCancel(s.openContext)
+		defer cancel()
+		public = &budgetConn{Conn: public, beforeWrite: func(n int) error { return admission.beforeWrite(ctx, false, n) }}
+		upstream = &budgetConn{Conn: upstream, beforeWrite: func(n int) error { return admission.beforeWrite(ctx, true, n) }}
+	}
+	err = s.copyVisitor(public, upstream, hello.Remainder, route, denied, usage)
 	if !denied {
 		visitorOutcome = observability.VisitorForwarded
 		if err != nil {

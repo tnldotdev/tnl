@@ -115,8 +115,8 @@ func TestChallengeCapacityIsBoundedAndIndependent(t *testing.T) {
 	}
 }
 
-func TestPublicURLConnectionLimitTracksHalfOfIngressCapacity(t *testing.T) {
-	for _, test := range []struct{ ingressLimit, perURL int }{{1, 1}, {4, 2}, {5, 2}} {
+func TestPublicURLConnectionClassUsesProcessCapacity(t *testing.T) {
+	for _, test := range []struct{ ingressLimit, perURL int }{{1, 1}, {4, 4}, {5, 5}} {
 		server, _ := startIngress(t, Config{MaxConnections: test.ingressLimit})
 		var releases []func()
 		for range test.perURL {
@@ -126,7 +126,7 @@ func TestPublicURLConnectionLimitTracksHalfOfIngressCapacity(t *testing.T) {
 			}
 			releases = append(releases, release)
 		}
-		if release, rejected := server.admitClass(visitorConnection, "url_one"); release != nil || rejected != "public_url_connections" {
+		if release, rejected := server.admitClass(visitorConnection, "url_one"); release != nil || rejected != "public_connections" {
 			t.Fatalf("ingress %d: exceeded public URL limit: %s", test.ingressLimit, rejected)
 		}
 		if test.ingressLimit > test.perURL {
