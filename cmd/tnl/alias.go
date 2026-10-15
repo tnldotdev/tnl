@@ -208,7 +208,7 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 			}
 			continue
 		}
-		policy := resolvedIPPolicy{access: controlv1.Restricted}
+		policy := resolvedVisitorAccess{access: controlv1.Restricted}
 		if definition.Access != nil {
 			policy, err = resolveVisitorAccess(ctx, services.authenticated.Control, definition.Access, false, nil)
 			if err != nil {

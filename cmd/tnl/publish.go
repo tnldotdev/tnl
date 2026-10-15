@@ -171,11 +171,11 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if guest != nil {
 		// guest publication remains bound to its issuing IP. control discards
 		// that prefix after checking it, so browser visits use the guest link.
-		guestSource, sourceErr := resolveIPPolicy(ctx, authenticated.Control, nil, false)
+		guestPrefixes, sourceErr := accessIPPrefixes(ctx, authenticated.Control, []string{"current"})
 		if sourceErr != nil {
 			return sourceErr
 		}
-		policy.prefixes = guestSource.prefixes
+		policy.prefixes = guestPrefixes
 	}
 	if guest != nil {
 		allocated, err := authenticated.Control.AllocateGuestDemoNumber(ctx)

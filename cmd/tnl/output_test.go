@@ -26,9 +26,6 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	if err := output.starting("tunnel_0123456789abcdef0123456789abcdef", "http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}
-	if err := output.currentIP("192.0.2.1"); err != nil {
-		t.Fatal(err)
-	}
 	if err := output.provisioning("demo.example", 1); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +51,7 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	decoder := json.NewDecoder(&stdout)
-	wantTypes := []publishEventType{publishEventStarting, publishEventCurrentIP, publishEventReady, publishEventReady, publishEventError, publishEventStopped}
+	wantTypes := []publishEventType{publishEventStarting, publishEventReady, publishEventReady, publishEventError, publishEventStopped}
 	for index, wantType := range wantTypes {
 		var event publishEvent
 		if err := decoder.Decode(&event); err != nil {
@@ -64,10 +61,7 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 			event.TunnelID != "tunnel_0123456789abcdef0123456789abcdef" {
 			t.Fatalf("event %d = %#v", index, event)
 		}
-		if wantType == "current_ip" && event.IP != "192.0.2.1" {
-			t.Fatalf("current IP event = %#v", event)
-		}
-		if wantType == "ready" && event.PublishRunNumber != uint64(index-1) {
+		if wantType == "ready" && event.PublishRunNumber != uint64(index) {
 			t.Fatalf("ready event = %#v", event)
 		}
 		if wantType == "error" && (event.Retryable == nil || !*event.Retryable || event.RetryAt == nil) {
@@ -93,9 +87,6 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	if err := output.starting("tunnel_0123456789abcdef0123456789abcdef", "http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}
-	if err := output.currentIP("2001:db8::1"); err != nil {
-		t.Fatal(err)
-	}
 	if err := output.ready("https://demo.example", 1); err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +101,6 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 		strings.Count(stderr.String(), "https://demo.example") != 1 ||
 		!strings.Contains(stderr.String(), "|    tnl ") ||
 		strings.Contains(stderr.String(), "|  publisher ") ||
-		!strings.Contains(stderr.String(), "automatically allowed IP") || !strings.Contains(stderr.String(), "2001:db8::1") ||
 		strings.Contains(stderr.String(), "publish run number") ||
 		!strings.Contains(stderr.String(), "+-- opened in browser; ctrl+c to stop ") {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
@@ -189,6 +179,31 @@ func TestGuestDemoReadyExplainsTrialAndSignIn(t *testing.T) {
 		!strings.Contains(stderr.String(), "tnl auth login to publish your app") ||
 		!strings.Contains(stderr.String(), "demo-1.guest-01234567") {
 		t.Fatalf("guest ready output = %q", stderr.String())
+	}
+}
+
+func TestGuestVisitorLinkStaysOutOfFrames(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	var opened string
+	output, err := newPublishOutput("human", "tnl publish", &stdout, &stderr, func(link string) error {
+		opened = link
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.setGuestDemo()
+	output.setGuestVisitorToken("gst_trial.visitor-secret")
+	if err := output.starting("tun_0123456789abcdefghijkl", "http://127.0.0.1:3000"); err != nil {
+		t.Fatal(err)
+	}
+	url := "https://demo.guest.example"
+	if err := output.ready(url, 1); err != nil {
+		t.Fatal(err)
+	}
+	link := url + "/__tnl/access/gst_trial.visitor-secret"
+	if stdout.String() != link+"\n" || opened != link || strings.Contains(stderr.String(), "visitor-secret") {
+		t.Fatalf("guest link leaked or lost: stdout=%q, opened=%q, frame=%q", stdout.String(), opened, stderr.String())
 	}
 }
 

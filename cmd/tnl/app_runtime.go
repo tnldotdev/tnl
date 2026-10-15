@@ -157,7 +157,7 @@ func runRuntimeAddress(ctx context.Context, options runtimeOptions, output io.Wr
 type appPreparation struct {
 	assignment privateprotocol.Assignment
 	services   publisherServices
-	policy     resolvedIPPolicy
+	policy     resolvedVisitorAccess
 	flags      tunnelFlags
 	framework  privateprotocol.Framework
 	project    projectConfiguration
