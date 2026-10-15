@@ -144,7 +144,7 @@ func runSession(
 		config.PreviewID = preview.Id
 	}
 	var shareRuntime *shareAccess
-	if config.PreviewID != "" && !config.Demo {
+	if config.PreviewID != "" && !config.Demo && config.ServiceProtocol == controlv1.Http {
 		if err := progress("share_access"); err != nil {
 			return err
 		}

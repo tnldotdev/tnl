@@ -25,12 +25,26 @@ func protocolForService(service config.Service) controlv1.PublicURLServiceProtoc
 // reserveConfiguredURL uses team authority only to create or edit saved state.
 // targets stay private to the native owner for both HTTP and TCP publications.
 func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg publisher.Config) (controlv1.PublicURL, error) {
+	// an unchanged saved URL can be read while its publisher holds the
+	// hostname lock. only creation and edits need exclusive access.
+	route, err := services.routes.GetPublicURLByHostname(ctx, services.teamID, cfg.Hostname)
+	if err == nil {
+		prefixes, checkErr := checkedConfiguredURL(route, services, cfg)
+		if checkErr != nil {
+			return controlv1.PublicURL{}, checkErr
+		}
+		if route.Target == "" && slices.Equal(prefixes, cfg.AllowedIPPrefixes) {
+			return route, nil
+		}
+	} else if !errors.Is(err, controlclient.ErrNotFound) {
+		return route, err
+	}
 	lock, err := clientstate.LockHostnameContext(ctx, services.state, cfg.Hostname)
 	if err != nil {
 		return controlv1.PublicURL{}, err
 	}
 	defer lock.Close()
-	route, err := services.routes.GetPublicURLByHostname(ctx, services.teamID, cfg.Hostname)
+	route, err = services.routes.GetPublicURLByHostname(ctx, services.teamID, cfg.Hostname)
 	if errors.Is(err, controlclient.ErrNotFound) {
 		key, keyErr := opaqueid.New(opaqueid.IdempotencyPrefix)
 		if keyErr != nil {
@@ -49,18 +63,26 @@ func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg p
 	if err != nil {
 		return route, err
 	}
+	prefixes, err := checkedConfiguredURL(route, services, cfg)
+	if err != nil {
+		return controlv1.PublicURL{}, err
+	}
+	if route.Target != "" || !slices.Equal(prefixes, cfg.AllowedIPPrefixes) {
+		return services.routes.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{Target: "", AllowedIpPrefixes: slices.Clone(cfg.AllowedIPPrefixes)})
+	}
+	return route, nil
+}
+
+func checkedConfiguredURL(route controlv1.PublicURL, services publisherServices, cfg publisher.Config) ([]string, error) {
 	if route.TeamId != services.teamID || route.DomainId != services.domainID || route.CanonicalHostname != cfg.Hostname || route.Purpose != controlv1.App || route.ServiceProtocol != cfg.ServiceProtocol || route.Ephemeral || route.LifecycleState != controlv1.Enabled || route.PublicUrlScope != services.publicURLScope ||
 		services.publicURLScope == controlv1.Member && (route.MembershipId == nil || *route.MembershipId != services.membershipID) || services.publicURLScope == controlv1.Shared && route.MembershipId != nil {
-		return controlv1.PublicURL{}, failure.Wrap("reserve project public URL", failure.ServerResponseInvalid, errors.New("saved public URL differs from the selected service"))
+		return nil, failure.Wrap("reserve project public URL", failure.ServerResponseInvalid, errors.New("saved public URL differs from the selected service"))
 	}
 	prefixes := []string{}
 	if route.AllowedIpPrefixes != nil {
 		prefixes = *route.AllowedIpPrefixes
 	}
-	if route.Target != "" || !slices.Equal(prefixes, cfg.AllowedIPPrefixes) {
-		route, err = services.routes.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{Target: "", AllowedIpPrefixes: slices.Clone(cfg.AllowedIPPrefixes)})
-	}
-	return route, err
+	return prefixes, nil
 }
 
 func selectNativeProjectPublisher(ctx context.Context, database *clientstate.Database, services publisherServices, cfg publisher.Config) (*nativeauth.Native, error) {
