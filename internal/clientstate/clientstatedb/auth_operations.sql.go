@@ -10,7 +10,7 @@ import (
 )
 
 const cancelAuthOperations = `-- name: CancelAuthOperations :exec
-UPDATE auth_operations SET phase = 'cancelled', revision = revision + 1,
+UPDATE login_operations SET phase = 'cancelled', revision = revision + 1,
     stored_private = CASE WHEN phase = 'issued' THEN stored_private ELSE X'' END, updated_at = ?
 WHERE server_origin = ? AND phase NOT IN ('cancelled', 'denied', 'expired', 'recovery_required')
 `
@@ -26,14 +26,14 @@ func (q *Queries) CancelAuthOperations(ctx context.Context, arg CancelAuthOperat
 }
 
 const getActiveAuthOperation = `-- name: GetActiveAuthOperation :one
-SELECT server_origin, operation_id, phase, revision, public_json, stored_private, updated_at FROM auth_operations
+SELECT server_origin, operation_id, phase, revision, public_json, stored_private, updated_at FROM login_operations
 WHERE server_origin = ? AND phase IN ('pending', 'redeeming', 'credential_received', 'exchanging', 'issued')
 ORDER BY updated_at DESC LIMIT 1
 `
 
-func (q *Queries) GetActiveAuthOperation(ctx context.Context, serverOrigin string) (AuthOperation, error) {
+func (q *Queries) GetActiveAuthOperation(ctx context.Context, serverOrigin string) (LoginOperation, error) {
 	row := q.db.QueryRowContext(ctx, getActiveAuthOperation, serverOrigin)
-	var i AuthOperation
+	var i LoginOperation
 	err := row.Scan(
 		&i.ServerOrigin,
 		&i.OperationID,
@@ -47,7 +47,7 @@ func (q *Queries) GetActiveAuthOperation(ctx context.Context, serverOrigin strin
 }
 
 const getAuthOperation = `-- name: GetAuthOperation :one
-SELECT server_origin, operation_id, phase, revision, public_json, stored_private, updated_at FROM auth_operations WHERE server_origin = ? AND operation_id = ?
+SELECT server_origin, operation_id, phase, revision, public_json, stored_private, updated_at FROM login_operations WHERE server_origin = ? AND operation_id = ?
 `
 
 type GetAuthOperationParams struct {
@@ -55,9 +55,9 @@ type GetAuthOperationParams struct {
 	OperationID  string
 }
 
-func (q *Queries) GetAuthOperation(ctx context.Context, arg GetAuthOperationParams) (AuthOperation, error) {
+func (q *Queries) GetAuthOperation(ctx context.Context, arg GetAuthOperationParams) (LoginOperation, error) {
 	row := q.db.QueryRowContext(ctx, getAuthOperation, arg.ServerOrigin, arg.OperationID)
-	var i AuthOperation
+	var i LoginOperation
 	err := row.Scan(
 		&i.ServerOrigin,
 		&i.OperationID,
@@ -71,7 +71,7 @@ func (q *Queries) GetAuthOperation(ctx context.Context, arg GetAuthOperationPara
 }
 
 const insertAuthOperation = `-- name: InsertAuthOperation :exec
-INSERT INTO auth_operations (server_origin, operation_id, phase, revision, public_json, stored_private, updated_at)
+INSERT INTO login_operations (server_origin, operation_id, phase, revision, public_json, stored_private, updated_at)
 VALUES (?, ?, ?, 1, ?, ?, ?)
 `
 
@@ -97,18 +97,18 @@ func (q *Queries) InsertAuthOperation(ctx context.Context, arg InsertAuthOperati
 }
 
 const listCancelledAuthCredentials = `-- name: ListCancelledAuthCredentials :many
-SELECT server_origin, operation_id, phase, revision, public_json, stored_private, updated_at FROM auth_operations WHERE server_origin = ? AND phase = 'cancelled' AND length(stored_private) > 0
+SELECT server_origin, operation_id, phase, revision, public_json, stored_private, updated_at FROM login_operations WHERE server_origin = ? AND phase = 'cancelled' AND length(stored_private) > 0
 `
 
-func (q *Queries) ListCancelledAuthCredentials(ctx context.Context, serverOrigin string) ([]AuthOperation, error) {
+func (q *Queries) ListCancelledAuthCredentials(ctx context.Context, serverOrigin string) ([]LoginOperation, error) {
 	rows, err := q.db.QueryContext(ctx, listCancelledAuthCredentials, serverOrigin)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AuthOperation
+	var items []LoginOperation
 	for rows.Next() {
-		var i AuthOperation
+		var i LoginOperation
 		if err := rows.Scan(
 			&i.ServerOrigin,
 			&i.OperationID,
@@ -132,7 +132,7 @@ func (q *Queries) ListCancelledAuthCredentials(ctx context.Context, serverOrigin
 }
 
 const updateAuthOperation = `-- name: UpdateAuthOperation :execrows
-UPDATE auth_operations SET phase = ?1, revision = revision + 1,
+UPDATE login_operations SET phase = ?1, revision = revision + 1,
     public_json = ?2, stored_private = ?3, updated_at = ?4
 WHERE server_origin = ?5 AND operation_id = ?6 AND revision = ?7
 `

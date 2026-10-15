@@ -117,15 +117,15 @@ and cleanup without a deployed server.
 Edit the source, then run `mise exec -- task generate` and
 `mise exec -- task format`. Do not edit committed generated files by hand.
 
-The client uses `client-v2.db` in its state directory. A future incompatible
-SQLite schema can use a new filename such as `client-v3.db`; `tnl` starts that
-file without reading or importing the old one. Goose versions within one file
-still track compatible migrations. The server's current PostgreSQL baseline
-requires a fresh database rather than an upgrade from an older schema.
+The client uses `v1.db` in its state directory, without reading or importing
+older client databases. Its one Goose migration creates the fresh baseline;
+future compatible migrations may advance that version. The server's PostgreSQL
+baseline requires a fresh database, and control checks both its exact migration
+version and baseline identity before serving.
 
 | Source                                                                                    | Generated output                                                                          |
 | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Six HTTP OpenAPI contracts under `api/*/v1`                                               | `pkg/api/*`; publisher browser validators under `internal/publisherapi`                   |
+| Seven HTTP OpenAPI contracts under `api/*/v1`                                             | `pkg/api/*`; publisher browser validators under `internal/publisherapi`                   |
 | PostgreSQL migrations and queries under `internal/controlstate`                           | `internal/controlstate/controlstatedb`                                                    |
 | SQLite migrations and queries under `internal/clientstate`                                | `internal/clientstate/clientstatedb`                                                      |
 | `internal/config`, project configuration mappings, and `scripts/generate-config-types.ts` | `schema/v1.json`, `internal/projectconfig/keys.gen.json`, `packages/ts/src/config.gen.ts` |

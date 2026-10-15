@@ -7,35 +7,36 @@ package clientstatedb
 
 import (
 	"context"
+	"database/sql"
 )
 
 const advanceRuntimeProject = `-- name: AdvanceRuntimeProject :one
-UPDATE project_runtime SET sequence = sequence + 1, observed_at = ?1
+UPDATE project_journals SET last_sequence = last_sequence + 1, last_observed_at = ?1
 WHERE project_root = ?2
-RETURNING project_root, epoch, sequence, app_sequence, observed_at, services_json
+RETURNING project_root, cursor_epoch, last_sequence, last_app_sequence, last_observed_at, app_services_json
 `
 
 type AdvanceRuntimeProjectParams struct {
-	Now         int64
+	Now         sql.NullInt64
 	ProjectRoot string
 }
 
-func (q *Queries) AdvanceRuntimeProject(ctx context.Context, arg AdvanceRuntimeProjectParams) (ProjectRuntime, error) {
+func (q *Queries) AdvanceRuntimeProject(ctx context.Context, arg AdvanceRuntimeProjectParams) (ProjectJournal, error) {
 	row := q.db.QueryRowContext(ctx, advanceRuntimeProject, arg.Now, arg.ProjectRoot)
-	var i ProjectRuntime
+	var i ProjectJournal
 	err := row.Scan(
 		&i.ProjectRoot,
-		&i.Epoch,
-		&i.Sequence,
-		&i.AppSequence,
-		&i.ObservedAt,
-		&i.ServicesJson,
+		&i.CursorEpoch,
+		&i.LastSequence,
+		&i.LastAppSequence,
+		&i.LastObservedAt,
+		&i.AppServicesJson,
 	)
 	return i, err
 }
 
 const ensureRuntimeProject = `-- name: EnsureRuntimeProject :exec
-INSERT INTO project_runtime (project_root) VALUES (?1) ON CONFLICT DO NOTHING
+INSERT INTO project_journals (project_root) VALUES (?1) ON CONFLICT DO NOTHING
 `
 
 func (q *Queries) EnsureRuntimeProject(ctx context.Context, projectRoot string) error {
@@ -44,25 +45,25 @@ func (q *Queries) EnsureRuntimeProject(ctx context.Context, projectRoot string) 
 }
 
 const getRuntimeProject = `-- name: GetRuntimeProject :one
-SELECT project_root, epoch, sequence, app_sequence, observed_at, services_json FROM project_runtime WHERE project_root = ?1
+SELECT project_root, cursor_epoch, last_sequence, last_app_sequence, last_observed_at, app_services_json FROM project_journals WHERE project_root = ?1
 `
 
-func (q *Queries) GetRuntimeProject(ctx context.Context, projectRoot string) (ProjectRuntime, error) {
+func (q *Queries) GetRuntimeProject(ctx context.Context, projectRoot string) (ProjectJournal, error) {
 	row := q.db.QueryRowContext(ctx, getRuntimeProject, projectRoot)
-	var i ProjectRuntime
+	var i ProjectJournal
 	err := row.Scan(
 		&i.ProjectRoot,
-		&i.Epoch,
-		&i.Sequence,
-		&i.AppSequence,
-		&i.ObservedAt,
-		&i.ServicesJson,
+		&i.CursorEpoch,
+		&i.LastSequence,
+		&i.LastAppSequence,
+		&i.LastObservedAt,
+		&i.AppServicesJson,
 	)
 	return i, err
 }
 
 const insertRuntimeEvent = `-- name: InsertRuntimeEvent :exec
-INSERT INTO project_runtime_events (project_root, sequence, event_type, created_at, payload, stored_bytes)
+INSERT INTO project_events (project_root, sequence, event_type, occurred_at, payload_json, stored_bytes)
 VALUES (?1, ?2, ?3, ?4, ?5, 1)
 `
 
@@ -86,7 +87,7 @@ func (q *Queries) InsertRuntimeEvent(ctx context.Context, arg InsertRuntimeEvent
 }
 
 const listKnownProjectURLs = `-- name: ListKnownProjectURLs :many
-SELECT public_url_id FROM local_project_url_inventory
+SELECT public_url_id FROM project_url_inventory
 WHERE project_root = ?1 AND server_origin = ?2
 ORDER BY last_seen_at DESC, public_url_id LIMIT 256
 `
@@ -120,7 +121,7 @@ func (q *Queries) ListKnownProjectURLs(ctx context.Context, arg ListKnownProject
 }
 
 const listRuntimeEvents = `-- name: ListRuntimeEvents :many
-SELECT project_root, sequence, event_type, created_at, payload, stored_bytes FROM project_runtime_events
+SELECT project_root, sequence, event_type, occurred_at, payload_json, stored_bytes FROM project_events
 WHERE project_root = ?1 AND sequence > ?2
 ORDER BY sequence
 `
@@ -130,21 +131,21 @@ type ListRuntimeEventsParams struct {
 	After       int64
 }
 
-func (q *Queries) ListRuntimeEvents(ctx context.Context, arg ListRuntimeEventsParams) ([]ProjectRuntimeEvent, error) {
+func (q *Queries) ListRuntimeEvents(ctx context.Context, arg ListRuntimeEventsParams) ([]ProjectEvent, error) {
 	rows, err := q.db.QueryContext(ctx, listRuntimeEvents, arg.ProjectRoot, arg.After)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ProjectRuntimeEvent
+	var items []ProjectEvent
 	for rows.Next() {
-		var i ProjectRuntimeEvent
+		var i ProjectEvent
 		if err := rows.Scan(
 			&i.ProjectRoot,
 			&i.Sequence,
 			&i.EventType,
-			&i.CreatedAt,
-			&i.Payload,
+			&i.OccurredAt,
+			&i.PayloadJson,
 			&i.StoredBytes,
 		); err != nil {
 			return nil, err
@@ -161,7 +162,7 @@ func (q *Queries) ListRuntimeEvents(ctx context.Context, arg ListRuntimeEventsPa
 }
 
 const listRuntimeProjects = `-- name: ListRuntimeProjects :many
-SELECT project_root FROM project_runtime ORDER BY project_root
+SELECT project_root FROM project_journals ORDER BY project_root
 `
 
 func (q *Queries) ListRuntimeProjects(ctx context.Context) ([]string, error) {
@@ -188,7 +189,7 @@ func (q *Queries) ListRuntimeProjects(ctx context.Context) ([]string, error) {
 }
 
 const oldestRuntimeEvent = `-- name: OldestRuntimeEvent :one
-SELECT sequence FROM project_runtime_events WHERE project_root = ?1 ORDER BY sequence LIMIT 1
+SELECT sequence FROM project_events WHERE project_root = ?1 ORDER BY sequence LIMIT 1
 `
 
 func (q *Queries) OldestRuntimeEvent(ctx context.Context, projectRoot string) (int64, error) {
@@ -199,7 +200,7 @@ func (q *Queries) OldestRuntimeEvent(ctx context.Context, projectRoot string) (i
 }
 
 const setRuntimeServices = `-- name: SetRuntimeServices :exec
-UPDATE project_runtime SET services_json = ?1, app_sequence = sequence
+UPDATE project_journals SET app_services_json = ?1, last_app_sequence = last_sequence
 WHERE project_root = ?2
 `
 

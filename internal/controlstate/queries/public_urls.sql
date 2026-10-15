@@ -21,7 +21,7 @@ WHERE r.created_by_identity_id = sqlc.arg(identity_id)
 -- name: LockPublicURLCreationControl :one
 SELECT allowed
 FROM control.maintenance_controls
-WHERE control_name = 'public_url_creation'
+WHERE operation = 'public_url_creation'
 FOR SHARE;
 
 -- name: GetPublicURLCreationContext :one

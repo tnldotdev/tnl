@@ -204,7 +204,7 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 			TokenDigest: digest, SessionDigest: cookieDigest, PublicURLID: publicURLID,
 			PublishRunID:     runID,
 			CookieCiphertext: ciphertext, StorageKeyID: d.storageKey.CurrentID(),
-			ReturnPath: attempt.ReturnPath, NextUrl: nextURL, Bridge: bridge, ExpiresAt: timestamptz(now.Add(time.Minute)),
+			ReturnPath: attempt.ReturnPath, RedirectUrl: nextURL, Bridge: bridge, ExpiresAt: timestamptz(now.Add(time.Minute)),
 		}); err != nil {
 			return "", err
 		}
@@ -278,7 +278,7 @@ func (d *Database) RedeemBrowserHandoff(ctx context.Context, auth PublishRunAuth
 	if err := tx.Commit(ctx); err != nil {
 		return "", "", "", false, time.Time{}, err
 	}
-	return string(cookie), row.ReturnPath, row.NextUrl, row.Bridge, row.ExpiresAt.Time, nil
+	return string(cookie), row.ReturnPath, row.RedirectUrl, row.Bridge, row.ExpiresAt.Time, nil
 }
 
 func (d *Database) BrowserSession(ctx context.Context, publicURLID, token string, now time.Time) (BrowserAccessSession, error) {

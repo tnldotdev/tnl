@@ -68,7 +68,7 @@ func openClientSQLite(ctx context.Context, path string, fresh bool) (_ *sql.DB, 
 		return nil, err
 	}
 	if version != 1 || target != 1 {
-		return nil, errors.New("clientstate: unsupported v3 database baseline")
+		return nil, errors.New("clientstate: unsupported v1 database baseline")
 	}
 	rows, err := db.QueryContext(ctx, "PRAGMA foreign_key_check")
 	if err != nil {
@@ -89,7 +89,7 @@ func openClientSQLite(ctx context.Context, path string, fresh bool) (_ *sql.DB, 
 // canonical database for a later process to mistake for initialized state.
 // the caller holds the initialization lock from key creation through this call.
 func initializeClientSQLite(ctx context.Context, path string, mode ProtectionMode, protector secretProtector) (*sql.DB, error) {
-	file, err := os.CreateTemp(filepath.Dir(path), ".client-v3-initializing-*.db")
+	file, err := os.CreateTemp(filepath.Dir(path), ".v1-initializing-*.db")
 	if err != nil {
 		return nil, err
 	}
@@ -105,11 +105,11 @@ func initializeClientSQLite(ctx context.Context, path string, mode ProtectionMod
 		return nil, err
 	}
 	defer db.Close()
-	check, err := protector.Seal(ctx, "wrapping-key-check", []byte("tnl client state v3"))
+	check, err := protector.Seal(ctx, "wrapping-key-check", []byte("tnl client state v1"))
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.ExecContext(ctx, "INSERT INTO state_protection (id, protector, key_check) VALUES (1, ?, ?)", string(mode), check); err != nil {
+	if _, err := db.ExecContext(ctx, "INSERT INTO state_protection (id, protection_mode, key_check_ciphertext) VALUES (1, ?, ?)", string(mode), check); err != nil {
 		return nil, err
 	}
 	if _, err := db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {

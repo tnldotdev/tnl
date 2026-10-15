@@ -63,7 +63,7 @@ func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg p
 	return route, err
 }
 
-func selectNativeProjectPublisher(ctx context.Context, database *clientstate.Database, services publisherServices, cfg publisher.Config) (*nativeauth.Native, error) {
+func selectNativeProjectPublisher(ctx context.Context, services publisherServices, cfg publisher.Config) (*nativeauth.Native, error) {
 	route, err := reserveConfiguredURL(ctx, services, cfg)
 	if err != nil {
 		return nil, err
@@ -85,10 +85,10 @@ func selectNativeProjectPublisher(ctx context.Context, database *clientstate.Dat
 		return nil, err
 	}
 	var native *nativeauth.Native
-	if reference, found, err := database.SystemState(ctx, scope); err != nil {
+	if selected, found, err := services.state.SelectedPublisherIdentity(ctx, "project", scope); err != nil {
 		return nil, err
 	} else if found {
-		native, _, err = nativeauth.LoadNative(ctx, services.state, control, authority, string(reference))
+		native, _, err = nativeauth.LoadNative(ctx, services.state, control, authority, selected.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -97,13 +97,11 @@ func selectNativeProjectPublisher(ctx context.Context, database *clientstate.Dat
 		if err != nil {
 			return nil, err
 		}
-		var identityID string
 		native, identity, err := nativeauth.EnrollNative(ctx, services.state, control, authority, enrollment.EnrollmentKey)
 		if err != nil {
 			return nil, err
 		}
-		identityID = identity.ClientId
-		if err := database.SaveSystemState(ctx, scope, []byte(identityID)); err != nil {
+		if err := services.state.SelectPublisherIdentity(ctx, "project", scope, identity.ClientId); err != nil {
 			return nil, err
 		}
 		if err := native.SelectRoute(route); err != nil {

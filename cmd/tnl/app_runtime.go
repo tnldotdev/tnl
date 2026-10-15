@@ -546,7 +546,7 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 			return projectpublisher.Configuration{}, err
 		}
 	}
-	native, err := selectNativeProjectPublisher(ctx, a.state, services, cfg)
+	native, err := selectNativeProjectPublisher(ctx, services, cfg)
 	if err != nil {
 		return projectpublisher.Configuration{}, err
 	}

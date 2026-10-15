@@ -81,8 +81,9 @@ func (d *Database) ExclusiveWebhookReceiver(ctx context.Context, server, group, 
 	if err != nil {
 		return TunnelInfo{}, err
 	}
-	return TunnelInfo{ID: row.ID, Server: row.ServerOrigin, IntegrationGroup: row.IntegrationGroup, Hostname: row.Hostname,
-		PublicURL: "https://" + row.Hostname, Target: row.Target, PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber)}, nil
+	return TunnelInfo{ID: row.ID, Server: row.ServerOrigin, IntegrationGroup: row.IntegrationGroup, Hostname: row.Hostname.String,
+		PublicURL: "https://" + row.Hostname.String, Target: row.Target.String,
+		PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64)}, nil
 }
 
 func (d *Database) WebhookHostname(ctx context.Context, server, group string) (string, error) {

@@ -26,10 +26,10 @@ func assertAssignmentTotals(t *testing.T, db controlstatedb.DBTX, want int64) {
 			  AND connections.state IN ('assigned', 'connected', 'ready', 'draining')
 			GROUP BY connections.relay_service_id
 		)
-		SELECT count(*) FILTER (WHERE totals.assignment_count IS DISTINCT FROM COALESCE(actual.assignment_count, 0)),
-		       COALESCE(sum(totals.assignment_count), 0)::bigint
+		SELECT count(*) FILTER (WHERE totals.reserved_slot_count IS DISTINCT FROM COALESCE(actual.assignment_count, 0)),
+		       COALESCE(sum(totals.reserved_slot_count), 0)::bigint
 		FROM control.relay_services AS services
-		LEFT JOIN control.relay_service_assignment_totals AS totals USING (relay_service_id)
+		LEFT JOIN control.relay_service_reservations AS totals USING (relay_service_id)
 		LEFT JOIN actual USING (relay_service_id)
 	`).Scan(&mismatches, &total)
 	if err != nil || mismatches != 0 || total != want {
@@ -285,7 +285,7 @@ func TestIntegrationAssignmentTotalsExpiryPlacementLockOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT control_name FROM control.maintenance_controls WHERE control_name = 'publish_run_creation' FOR UPDATE`); err != nil {
+	if _, err := gate.Exec(ctx, `SELECT operation FROM control.maintenance_controls WHERE operation = 'publish_run_creation' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)

@@ -25,79 +25,31 @@ type AliasPublishRun struct {
 	TargetPublishRunNumber int64
 }
 
-type AuthOperation struct {
-	ServerOrigin  string
-	OperationID   string
-	Phase         string
-	Revision      int64
-	PublicJson    string
-	StoredPrivate []byte
-	UpdatedAt     int64
-}
-
-type CertificateMaterial struct {
-	ID             int64
-	ServerOrigin   string
-	TeamID         string
-	CacheKey       string
-	Plan           string
-	Phase          string
-	StoredKey      []byte
-	CsrDer         []byte
-	CertificatePem []byte
-	RenewAt        sql.NullInt64
-	IssuanceID     string
-	UpdatedAt      int64
-}
-
-type ClientSetting struct {
-	ID                   int64
-	SelectedServerOrigin sql.NullString
-	InstallationID       string
-	WorktreeHashSalt     []byte
-	TelemetryEnabled     int64
-}
-
 type ControlSession struct {
-	ID                 int64
-	ServerOrigin       string
-	SessionID          string
-	StoredAccessToken  []byte
-	AccessExpiresAt    int64
-	StoredRefreshToken []byte
-	RefreshExpiresAt   int64
-	RefreshPending     int64
-	UpdatedAt          int64
+	ID                     int64
+	ServerOrigin           string
+	SessionID              string
+	AccessTokenCiphertext  []byte
+	AccessExpiresAt        int64
+	RefreshTokenCiphertext []byte
+	RefreshExpiresAt       int64
+	RefreshPending         int64
+	UpdatedAt              int64
 }
 
-type GuestSession struct {
-	ServerOrigin      string
-	GuestID           string
-	StoredAccessToken []byte
-	TeamID            string
-	MembershipID      string
-	DomainID          string
-	Namespace         string
-	ExpiresAt         int64
-	CreatedAt         int64
+type GuestDemoSession struct {
+	ServerOrigin          string
+	GuestID               string
+	AccessTokenCiphertext []byte
+	TeamID                string
+	MembershipID          string
+	DomainID              string
+	Namespace             string
+	ExpiresAt             int64
+	CreatedAt             int64
 }
 
-type IntegrationUrlHostname struct {
-	ServerOrigin string
-	ProjectKey   string
-	Namespace    string
-	Purpose      string
-	Hostname     string
-}
-
-type IntegrationUrlPublisher struct {
-	ServerOrigin        string
-	Hostname            string
-	PublisherInstanceID string
-	ExpiresAt           int64
-}
-
-type LocalInspection struct {
+type Inspection struct {
 	RowID               int64
 	Number              int64
 	PrimaryCheckoutRoot string
@@ -123,46 +75,64 @@ type LocalInspection struct {
 	MysqlErrorCode      int64
 }
 
-type LocalInspectionCounter struct {
+type InspectionNumberCounter struct {
 	PrimaryCheckoutRoot string
 	LastNumber          int64
 }
 
-type LocalInspectionUsage struct {
+type InspectionStorageUsage struct {
 	ProjectRoot string
 	Service     string
 	UsedBytes   int64
 }
 
-type LocalProjectUrlInventory struct {
-	ProjectRoot  string
-	ServerOrigin string
-	PublicURLID  string
-	LastSeenAt   int64
+type InstallationSetting struct {
+	ID                   int64
+	SelectedServerOrigin sql.NullString
+	InstallationID       sql.NullString
+	WorktreeHashSalt     []byte
+	TelemetryEnabled     int64
+}
+
+type IntegrationUrlHostname struct {
+	ServerOrigin       string
+	PrimaryProjectRoot string
+	Namespace          string
+	Purpose            string
+	Hostname           string
+}
+
+type IntegrationUrlLease struct {
+	ServerOrigin        string
+	Hostname            string
+	PublisherInstanceID string
+	ExpiresAt           int64
 }
 
 type LocalTunnel struct {
-	ID               string
-	Command          string
-	ProcessID        int64
-	ServerOrigin     string
-	ProjectRoot      string
-	Service          string
-	ServiceProtocol  string
-	PublicPort       int64
-	IntegrationGroup string
-	Hostname         string
-	Target           string
-	Framework        string
-	PublicURLID      string
-	PublishRunNumber int64
-	State            string
-	StartedAt        int64
-	UpdatedAt        int64
-	HeartbeatAt      int64
-	LeaseExpiresAt   int64
-	StoppedAt        sql.NullInt64
-	LastError        string
+	ID                   string
+	Command              string
+	ProcessID            int64
+	ServerOrigin         string
+	ProjectRoot          string
+	Service              sql.NullString
+	ServiceProtocol      string
+	PublicPort           sql.NullInt64
+	PrimaryProjectRoot   sql.NullString
+	IntegrationNamespace sql.NullString
+	IntegrationGroup     string
+	Hostname             sql.NullString
+	Target               sql.NullString
+	Framework            sql.NullString
+	PublicURLID          sql.NullString
+	PublishRunNumber     sql.NullInt64
+	State                string
+	StartedAt            int64
+	UpdatedAt            int64
+	HeartbeatAt          int64
+	LeaseExpiresAt       int64
+	StoppedAt            sql.NullInt64
+	FailureCode          sql.NullString
 }
 
 type LocalTunnelPublicationObservation struct {
@@ -170,18 +140,29 @@ type LocalTunnelPublicationObservation struct {
 	Payload interface{}
 }
 
-type OauthAliasReturn struct {
+type LoginOperation struct {
+	ServerOrigin  string
+	OperationID   string
+	Phase         string
+	Revision      int64
+	PublicJson    string
+	StoredPrivate []byte
+	UpdatedAt     int64
+}
+
+type OauthAliasHandoff struct {
 	ServerOrigin     string
 	Hostname         string
 	StateDigest      []byte
 	CallbackPath     string
 	PublicURLID      string
 	PublishRunNumber int64
+	CreatedAt        int64
 	ExpiresAt        int64
-	Consumed         int64
+	ConsumedAt       sql.NullInt64
 }
 
-type OauthCallback struct {
+type OauthPendingCallback struct {
 	ServerOrigin           string
 	Hostname               string
 	StateDigest            []byte
@@ -196,7 +177,54 @@ type OauthCallback struct {
 	OriginPublishRunNumber int64
 }
 
-type Preview struct {
+type PendingPublisherEnrollment struct {
+	ServerOrigin               string
+	EnrollmentID               string
+	SelectionKind              string
+	SelectionKey               string
+	PublicKey                  []byte
+	SigningKeyCiphertext       []byte
+	EnrollmentSecretCiphertext []byte
+	ResultJson                 sql.NullString
+	ExpiresAt                  int64
+	UpdatedAt                  int64
+}
+
+type ProjectAlias struct {
+	ID                  string
+	ServerOrigin        string
+	PrimaryProjectRoot  string
+	TeamID              string
+	MembershipID        string
+	Namespace           string
+	Name                string
+	Hostname            string
+	Service             string
+	Fingerprint         []byte
+	SelectedProjectRoot string
+	SelectionRevision   int64
+	FailureReason       string
+}
+
+type ProjectEvent struct {
+	ProjectRoot string
+	Sequence    int64
+	EventType   string
+	OccurredAt  int64
+	PayloadJson string
+	StoredBytes int64
+}
+
+type ProjectJournal struct {
+	ProjectRoot     string
+	CursorEpoch     string
+	LastSequence    int64
+	LastAppSequence int64
+	LastObservedAt  sql.NullInt64
+	AppServicesJson string
+}
+
+type ProjectPreview struct {
 	ServerOrigin string
 	TeamID       string
 	ProjectRoot  string
@@ -204,67 +232,68 @@ type Preview struct {
 	UpdatedAt    int64
 }
 
-type ProjectAlias struct {
-	ID                string
-	ServerOrigin      string
-	ProjectKey        string
-	TeamID            string
-	MembershipID      string
-	Namespace         string
-	Name              string
-	Hostname          string
-	Service           string
-	Fingerprint       []byte
-	SelectedProject   string
-	SelectionRevision int64
-	FailureReason     string
-}
-
-type ProjectRuntime struct {
+type ProjectUrlInventory struct {
 	ProjectRoot  string
-	Epoch        string
-	Sequence     int64
-	AppSequence  int64
-	ObservedAt   int64
-	ServicesJson string
+	ServerOrigin string
+	PublicURLID  string
+	LastSeenAt   int64
 }
 
-type ProjectRuntimeEvent struct {
-	ProjectRoot string
-	Sequence    int64
-	EventType   string
-	CreatedAt   int64
-	Payload     string
-	StoredBytes int64
+type PublicUrlCertificateCache struct {
+	ID                   int64
+	ServerOrigin         string
+	TeamID               string
+	CacheKey             string
+	Plan                 string
+	Phase                string
+	PrivateKeyCiphertext []byte
+	CsrDer               []byte
+	CertificatePem       []byte
+	RenewAt              sql.NullInt64
+	IssuanceID           string
+	UpdatedAt            int64
 }
 
-type PublisherSigningIdentity struct {
+type PublisherIdentity struct {
+	ServerOrigin         string
+	IdentityID           string
+	PublicDocumentJson   string
+	SigningKeyCiphertext []byte
+	UpdatedAt            int64
+}
+
+type PublisherJobFileManifest struct {
+	ID                 int64
+	ManifestCiphertext []byte
+	UpdatedAt          int64
+}
+
+type PublisherJobRegistry struct {
+	ID             int64
+	JobsCiphertext []byte
+	UpdatedAt      int64
+}
+
+type PublisherSelection struct {
 	ServerOrigin  string
-	Scope         string
+	SelectionKind string
+	SelectionKey  string
 	IdentityID    string
-	PublicValue   []byte
-	StoredPrivate []byte
 	UpdatedAt     int64
 }
 
 type ServerProfile struct {
 	ID             int64
 	Origin         string
-	SelectedTeamID string
+	SelectedTeamID sql.NullString
 	CreatedAt      int64
 	LastUsedAt     int64
 }
 
 type StateProtection struct {
-	ID        int64
-	Protector string
-	KeyCheck  []byte
-}
-
-type SystemState struct {
-	Name        string
-	StoredValue []byte
-	UpdatedAt   int64
+	ID                 int64
+	ProtectionMode     string
+	KeyCheckCiphertext []byte
 }
 
 type TelemetryOutbox struct {
@@ -273,16 +302,7 @@ type TelemetryOutbox struct {
 	EventJson string
 }
 
-type WebhookCatalog struct {
-	ServerOrigin string
-	Provider     string
-	SourceJson   string
-	Etag         string
-	CheckedAt    int64
-	ExpiresAt    int64
-}
-
-type WebhookEndpoint struct {
+type WebhookDeclaration struct {
 	TunnelID    string
 	Name        string
 	Service     string
@@ -292,8 +312,19 @@ type WebhookEndpoint struct {
 }
 
 type WebhookOwner struct {
-	ServerOrigin     string
-	IntegrationGroup string
-	Name             string
-	TunnelID         string
+	ServerOrigin         string
+	PrimaryProjectRoot   string
+	IntegrationNamespace string
+	IntegrationGroup     string
+	Name                 string
+	TunnelID             string
+}
+
+type WebhookSourceCache struct {
+	ServerOrigin string
+	Provider     string
+	SourceJson   string
+	Etag         string
+	CheckedAt    int64
+	ExpiresAt    int64
 }

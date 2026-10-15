@@ -18,7 +18,7 @@ SET state = 'canceled',
 WHERE public_url_id = $2
   AND publish_run_number = $3
   AND state = 'open'
-RETURNING id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, observed_seconds
+RETURNING id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, recovery_seconds
 `
 
 type CancelOpenPublicURLRecoveryEpisodeParams struct {
@@ -38,7 +38,7 @@ func (q *Queries) CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg Ca
 		&i.OpenedAt,
 		&i.ObservedAt,
 		&i.CanceledAt,
-		&i.ObservedSeconds,
+		&i.RecoverySeconds,
 	)
 	return i, err
 }
@@ -99,7 +99,7 @@ func (q *Queries) ExpirePublisherConnection(ctx context.Context, arg ExpirePubli
 }
 
 const getOpenPublicURLRecoveryEpisode = `-- name: GetOpenPublicURLRecoveryEpisode :one
-SELECT id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, observed_seconds
+SELECT id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, recovery_seconds
 FROM control.public_url_recovery_episodes
 WHERE public_url_id = $1
   AND publish_run_number = $2
@@ -122,7 +122,7 @@ func (q *Queries) GetOpenPublicURLRecoveryEpisode(ctx context.Context, arg GetOp
 		&i.OpenedAt,
 		&i.ObservedAt,
 		&i.CanceledAt,
-		&i.ObservedSeconds,
+		&i.RecoverySeconds,
 	)
 	return i, err
 }
@@ -389,7 +389,7 @@ func (q *Queries) LockInvalidReadyPublisherConnections(ctx context.Context, now 
 }
 
 const lockPublicURLRecoveryEpisode = `-- name: LockPublicURLRecoveryEpisode :one
-SELECT id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, observed_seconds
+SELECT id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, recovery_seconds
 FROM control.public_url_recovery_episodes
 WHERE id = $1
 FOR UPDATE
@@ -406,7 +406,7 @@ func (q *Queries) LockPublicURLRecoveryEpisode(ctx context.Context, recoveryEpis
 		&i.OpenedAt,
 		&i.ObservedAt,
 		&i.CanceledAt,
-		&i.ObservedSeconds,
+		&i.RecoverySeconds,
 	)
 	return i, err
 }
@@ -597,12 +597,12 @@ const observePublicURLRecoveryEpisode = `-- name: ObservePublicURLRecoveryEpisod
 UPDATE control.public_url_recovery_episodes
 SET state = 'observed',
     observed_at = $1,
-    observed_seconds = $2
+    recovery_seconds = $2
 WHERE id = $3
   AND public_url_id = $4
   AND publish_run_number = $5
   AND state = 'open'
-RETURNING id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, observed_seconds
+RETURNING id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, recovery_seconds
 `
 
 type ObservePublicURLRecoveryEpisodeParams struct {
@@ -630,7 +630,7 @@ func (q *Queries) ObservePublicURLRecoveryEpisode(ctx context.Context, arg Obser
 		&i.OpenedAt,
 		&i.ObservedAt,
 		&i.CanceledAt,
-		&i.ObservedSeconds,
+		&i.RecoverySeconds,
 	)
 	return i, err
 }

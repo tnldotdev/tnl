@@ -199,14 +199,14 @@ func assertFreshInitializationRecovers(t *testing.T, root string, expectedKey []
 	if err != nil || len(key) != wrappingKeySize || expectedKey != nil && !bytes.Equal(key, expectedKey) {
 		t.Fatalf("fresh initialization did not recover with a complete, stable key: %v", err)
 	}
-	if err := database.SaveSystemState(t.Context(), "recovery-check", []byte("private recovery value")); err != nil {
+	if err := database.SavePublisherJobRegistry(t.Context(), []byte("private recovery value")); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
 	reopened := openFileDatabase(t, root)
-	value, found, err := reopened.SystemState(t.Context(), "recovery-check")
+	value, found, err := reopened.PublisherJobRegistry(t.Context())
 	if err != nil || !found || string(value) != "private recovery value" {
 		t.Fatalf("recovered database could not reopen its encrypted state: %v, %v", found, err)
 	}
