@@ -6,7 +6,7 @@ import type { AdHocTunnel, OpenOptions } from "./internal/open.js";
 import type { LocalHTTPServer } from "./internal/register.js";
 import type { FetchHandler } from "./internal/fetch_types.js";
 export type { PrepareOptions, PreparedService } from "./internal/app.js";
-export type { AdHocTunnel, OpenOptions } from "./internal/open.js";
+export type { AdHocTunnel, OpenOptions, PublisherFile, PublisherID } from "./internal/open.js";
 export type { FetchHandler } from "./internal/fetch_types.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 

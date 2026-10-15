@@ -24,6 +24,7 @@ type PendingPublisherEnrollment struct {
 	PublicKey        []byte
 	SigningKey       []byte
 	EnrollmentSecret []byte
+	ResultJSON       []byte
 	ExpiresAt        time.Time
 }
 
@@ -121,8 +122,25 @@ func (s *Store) PendingPublisherEnrollment(ctx context.Context, id string) (Pend
 	return PendingPublisherEnrollment{
 		EnrollmentID: id, SelectionKind: row.SelectionKind, SelectionKey: row.SelectionKey,
 		PublicKey: row.PublicKey, SigningKey: key, EnrollmentSecret: secret,
-		ExpiresAt: time.Unix(0, row.ExpiresAt).UTC(),
+		ResultJSON: []byte(row.ResultJson.String),
+		ExpiresAt:  time.Unix(0, row.ExpiresAt).UTC(),
 	}, true, nil
+}
+
+func (s *Store) PendingPublisherEnrollmentForSelection(ctx context.Context, kind, key string) (PendingPublisherEnrollment, bool, error) {
+	if !validPublisherSelection(kind, key) || kind == "default_namespace" {
+		return PendingPublisherEnrollment{}, false, errors.New("clientstate: invalid pending publisher selection")
+	}
+	row, err := s.database.queries.GetPendingPublisherEnrollmentForSelection(ctx, clientstatedb.GetPendingPublisherEnrollmentForSelectionParams{
+		ServerOrigin: s.controlEndpoint, SelectionKind: kind, SelectionKey: key,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return PendingPublisherEnrollment{}, false, nil
+	}
+	if err != nil {
+		return PendingPublisherEnrollment{}, false, err
+	}
+	return s.PendingPublisherEnrollment(ctx, row.EnrollmentID)
 }
 
 // RecordPublisherEnrollmentResult keeps a successful redemption recoverable
@@ -263,4 +281,51 @@ func (s *Store) RemovePublisherIdentity(ctx context.Context, id string) error {
 		return errors.New("clientstate: invalid publisher identity ID")
 	}
 	return s.database.queries.DeletePublisherIdentity(ctx, clientstatedb.DeletePublisherIdentityParams{ServerOrigin: s.controlEndpoint, IdentityID: id})
+}
+
+func (s *Store) RemovePendingPublisherEnrollment(ctx context.Context, id string) error {
+	if !validOpaqueValue(id, 256) {
+		return errors.New("clientstate: invalid publisher enrollment ID")
+	}
+	return s.database.queries.DeletePendingPublisherEnrollment(ctx, clientstatedb.DeletePendingPublisherEnrollmentParams{
+		ServerOrigin: s.controlEndpoint, EnrollmentID: id,
+	})
+}
+
+func (s *Store) RemovePublisherSelection(ctx context.Context, kind, key string) error {
+	if !validPublisherSelection(kind, key) || kind == "explicit" {
+		return errors.New("clientstate: invalid publisher selection")
+	}
+	return s.database.queries.DeletePublisherSelection(ctx, clientstatedb.DeletePublisherSelectionParams{
+		ServerOrigin: s.controlEndpoint, SelectionKind: kind, SelectionKey: key,
+	})
+}
+
+// ImportPublisherIdentity installs the exact public document and key once.
+// retries may select it again but cannot silently replace its signing key.
+func (s *Store) ImportPublisherIdentity(ctx context.Context, identity PublisherIdentity) error {
+	if !validOpaqueValue(identity.ID, 256) || !json.Valid(identity.PublicDocument) ||
+		len(identity.PublicDocument) > 65536 || len(identity.SigningKey) == 0 || len(identity.SigningKey) > 65536 {
+		return errors.New("clientstate: invalid publisher identity")
+	}
+	sealed, err := s.secrets.Seal(ctx, publisherKeyContext(identity.ID, identity.PublicDocument), identity.SigningKey)
+	if err != nil {
+		return err
+	}
+	if err := s.database.queries.SavePublisherIdentity(ctx, clientstatedb.SavePublisherIdentityParams{
+		ServerOrigin: s.controlEndpoint, IdentityID: identity.ID,
+		PublicDocumentJson: string(identity.PublicDocument), SigningKeyCiphertext: sealed,
+		UpdatedAt: s.database.now().UTC().UnixNano(),
+	}); err != nil {
+		return err
+	}
+	stored, found, err := s.PublisherIdentity(ctx, identity.ID)
+	if err != nil {
+		return err
+	}
+	if !found || !bytes.Equal(stored.PublicDocument, identity.PublicDocument) ||
+		subtle.ConstantTimeCompare(stored.SigningKey, identity.SigningKey) != 1 {
+		return ErrPublisherStateConflict
+	}
+	return nil
 }

@@ -32,11 +32,15 @@ type cli struct {
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
 	Watch       watchCommand     `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
-	Status      statusCommand    `cmd:"" help:"Show configured services and local publications; --all includes other projects." group:"start"`
+	Publisher   publisherCommand `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
+	Service     serviceCommand   `cmd:"" help:"Manage installed system publications." group:"operate"`
+	Status      statusCommand    `cmd:"" help:"Show local snapshots and fresh signed-in server facts; --all includes other projects." group:"start"`
+	Ping        pingCommand      `cmd:"" help:"Check a public URL from this machine as an unauthenticated visitor." group:"start"`
 	Inspect     inspectCommand   `cmd:"" help:"Inspect recent local HTTP and supported TCP activity." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
 	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
+	Compose     composeCommand   `cmd:"" help:"Prepare and start a selected Compose publisher." group:"start"`
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
@@ -60,11 +64,12 @@ type tunnelFlags struct {
 	PublicURL          string                `name:"public-url" env:"TNL_PUBLIC_URL" help:"Exact public URL hostname or HTTPS origin to publish."`
 	AllowIP            []string              `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
 	AllowAllIPs        bool                  `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
-	Ephemeral          bool                  `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
-	Requests           *int                  `name:"requests" env:"TNL_REQUESTS" help:"Total application requests admitted before the tunnel drains."`
-	RateRequests       *int                  `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"Number of requests admitted per rate period. Requires --rate-per."`
+	Ephemeral          bool                  `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Create a temporary HTTP URL and remove it when this tunnel stops."`
+	Requests           *int                  `name:"requests" env:"TNL_REQUESTS" help:"Total HTTP requests or TCP connections admitted before the tunnel drains."`
+	RateRequests       *int                  `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"HTTP requests or TCP connections admitted per rate period. Requires --rate-per."`
 	RatePer            string                `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
-	Concurrency        *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous application requests, streams, and upgrades. Defaults to 500."`
+	RateBurst          *int                  `name:"rate-burst" help:"Maximum burst of application work admitted by the rate limit."`
+	Concurrency        *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous HTTP work or TCP connections. Defaults to 64 for HTTP and 24 for TCP."`
 	TargetCAFile       string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or TCP target."`
 	InspectionMode     config.InspectionMode `name:"inspection-mode" enum:"none,summary" default:"summary" help:"Local HTTP and TCP inspection: summary (default) or none."`
 
@@ -73,6 +78,8 @@ type tunnelFlags struct {
 	domainFromCLI            bool
 	inspectionModeFromCLI    bool
 	inspectionModeFromConfig bool
+	workLimits               *config.Limits
+	inspection               *config.Inspection
 }
 
 type remoteFlags struct {
@@ -337,6 +344,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		}
 	}
 	telemetryCommand, telemetryAction, collectTelemetry := selectedTelemetryCommand(parsed)
+	if flags.Publish.BG {
+		collectTelemetry = false
+	}
 	var telemetry *telemetryInvocation
 	if !flags.NoTelemetry && collectTelemetry &&
 		len(reporterFactories) != 0 && reporterFactories[0] != nil {
@@ -372,14 +382,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	var project projectConfiguration
 	projectStateRoot := ""
 	switch parsedCommand {
-	case "runtime address":
-		return runRuntimeAddress(ctx, flags.Runtime.Address, stdout)
+	case "runtime endpoint":
+		return runRuntimeEndpoint(ctx, flags.Runtime.Endpoint, stdout)
+	case "runtime owner-endpoint":
+		return runRuntimeOwnerEndpoint(ctx, flags.Runtime.OwnerEndpoint, stdout)
 	case "runtime serve":
 		return runRuntimeServe(ctx, flags.Runtime.Serve)
 	case "wait", "watch":
 		return runAppObservation(ctx, flags, parsedCommand, stdout)
 	case "publish <service-or-target>", "config check", "config generate":
-		if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
+		if parsedCommand == "publish <service-or-target>" && (flags.Publish.Demo || flags.Publish.BG || flags.Publish.PublisherFile != "") {
 			break
 		}
 		projectStateRoot, err = commandStateRoot(parsed)
@@ -430,6 +442,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runConfigCheck(project, stdout)
 	case "config generate":
 		return runConfigGenerate(ctx, projectStateRoot, project, stdout, stderr)
+	case "compose prepare":
+		return runComposePrepare(ctx, flags, stdout)
+	case "compose login":
+		return runComposeLogin(ctx, flags, stdout, stderr)
+	case "compose up":
+		return runComposeUp(ctx, flags, stdout, stderr)
 	case "telemetry on":
 		return runTelemetryPreference(ctx, flags.Telemetry.On, "on", stdout)
 	case "telemetry off":
@@ -450,11 +468,39 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runAuthLoginOperation(ctx, flags.Auth.Login.loginCommand, flags.Auth.Login.Cancel.ID, "cancel", stdout, stderr)
 	case "auth logout":
 		return runLogout(ctx, flags.Auth.Logout, stdout, stderr)
+	case "auth browser <url>":
+		return runAuthBrowser(ctx, flags.Auth.Browser, stdout, stderr)
 	case "version":
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
 		return err
 	case "publish <service-or-target>":
 		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
+	case "publisher enroll <public-url-id>", "publisher enroll":
+		return runPublisherEnroll(ctx, flags.Publisher.Enroll, stdout, stderr)
+	case "publisher current":
+		return runPublisherCurrent(ctx, flags.Publisher.Current, stdout)
+	case "publisher setup":
+		return runPublisherSetup(ctx, flags.Publisher.Setup, stdout, stderr)
+	case "publisher provision":
+		return runPublisherProvision(ctx, flags.Publisher.Provision, stdout, stderr)
+	case "publisher list":
+		return runPublisherList(ctx, flags.Publisher.List, stdout, stderr)
+	case "publisher revoke <publisher-id>":
+		return runPublisherRevoke(ctx, flags.Publisher.Revoke, stdout, stderr)
+	case "publisher grant add <publisher-id>":
+		return runPublisherGrantAdd(ctx, flags.Publisher.Grant.Add, stdout, stderr)
+	case "publisher grant revoke <publisher-id> <grant-id>":
+		return runPublisherGrantRevoke(ctx, flags.Publisher.Grant.Revoke, stdout, stderr)
+	case "service install":
+		return runServiceInstall(ctx, flags.Service.Install, stdout, nil)
+	case "service start <job>":
+		return runServiceStart(ctx, flags.Service.Start, stdout, nil)
+	case "service stop <job>":
+		return runServiceStop(ctx, flags.Service.Stop, stdout)
+	case "service list":
+		return runServiceList(ctx, flags.Service.List, stdout)
+	case "service serve":
+		return runServiceServe(ctx, flags.Service.Serve)
 	case "status":
 		if !flags.Status.All {
 			flags.Status.Project, err = projectRoot(ctx, flags)
@@ -471,6 +517,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 		return runStatus(ctx, flags.Status, stdout)
+	case "ping <url>":
+		return runPing(ctx, flags.Ping, stdout)
 	case "inspect list", "inspect show <inspection-number>":
 		root, err := projectRoot(ctx, flags)
 		if err != nil {
@@ -510,6 +558,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runTeamMemberSetRole(ctx, flags.Team.Member.SetRole, stdout, stderr)
 	case "team member remove <membership-id>":
 		return runTeamMemberRemove(ctx, flags.Team.Member.Remove, stdout, stderr)
+	case "team feedback get":
+		return runTeamFeedbackGet(ctx, flags.Team.Feedback.Get, stdout, stderr)
+	case "team feedback set <authors>":
+		return runTeamFeedbackSet(ctx, flags.Team.Feedback.Set, stdout, stderr)
 	case "domain claim <domain>":
 		return runDomainClaim(ctx, flags.Domain.Claim, stdout, stderr)
 	case "domain default <domain>":
@@ -522,16 +574,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runDomainRelease(ctx, flags.Domain.Release, stdout, stderr)
 	case "url list":
 		return runURLList(ctx, flags.URL.List, stdout, stderr)
+	case "url inventory":
+		return runURLInventory(ctx, flags.URL.Inventory, stdout, stderr)
+	case "url available":
+		return runURLAvailable(ctx, flags.URL.Available, stdout, stderr)
+	case "url certificate <url>":
+		return runVisitorCertificate(ctx, flags.URL.Certificate, stdout, stderr)
+	case "url ip set <url> <prefixes>", "url ip set <url>":
+		return runURLIPSet(ctx, flags.URL.IP.Set, stdout, stderr)
+	case "url ip add <url> <prefix>":
+		return runURLIPAdd(ctx, flags.URL.IP.Add, stdout, stderr)
+	case "url ip list <url>":
+		return runURLIPList(ctx, flags.URL.IP.List, stdout, stderr)
+	case "url ip remove <url> <grant-id>":
+		return runURLIPRemove(ctx, flags.URL.IP.Remove, stdout, stderr)
 	case "url update <public-url-id>":
 		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
 	case "url delete <public-url-id>":
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
-	case "url credential create <service-or-public-url-id>":
-		return runURLCredentialCreate(ctx, flags.URL.Credential.Create, project, stdout, stderr)
-	case "url credential list <public-url-id>":
-		return runURLCredentialList(ctx, flags.URL.Credential.List, stdout, stderr)
-	case "url credential revoke <credential-id>":
-		return runURLCredentialRevoke(ctx, flags.URL.Credential.Revoke, stdout, stderr)
 	case "share link create <url>":
 		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
 	case "share list <url>":
@@ -540,8 +600,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runShareRevoke(ctx, flags.Share.Link.Revoke, stdout, stderr)
 	case "share team create <url>":
 		return runShareTeamCreate(ctx, flags.Share.Team.Create, project, stdout, stderr)
-	case "share team revoke":
+	case "share team revoke", "share team revoke <url>":
 		return runShareTeamRevoke(ctx, flags.Share.Team.Revoke, project, stdout, stderr)
+	case "share invite create <url>":
+		return runShareInviteCreate(ctx, flags.Share.Invite.Create, stdout, stderr)
+	case "share invite accept <secret>":
+		return runShareInviteAccept(ctx, flags.Share.Invite.Accept, stdout, stderr)
+	case "share invite list <url>":
+		return runShareInviteList(ctx, flags.Share.Invite.List, stdout, stderr)
+	case "share invite revoke <url> <invitation-id>":
+		return runShareInviteRevoke(ctx, flags.Share.Invite.Revoke, stdout, stderr)
 	case "feedback list":
 		return runFeedbackList(ctx, flags.Feedback.List, project, stdout, stderr)
 	case "feedback inspect <feedback-id>":
@@ -617,10 +685,10 @@ func canonicalParsedCommand(command string) string {
 		return "auth login"
 	case "publish":
 		return "publish <service-or-target>"
-	case "url credential create":
-		return "url credential create <service-or-public-url-id>"
-	case "url credential list":
-		return "url credential list <public-url-id>"
+	case "publisher enroll":
+		return "publisher enroll <public-url-id>"
+	case "url ip set <url>":
+		return "url ip set <url> <prefixes>"
 	case "share link create":
 		return "share link create <url>"
 	case "share team create":

@@ -3,8 +3,8 @@
 The native client opens `v1.db` inside its selected state directory. This is a
 fresh SQLite baseline: it does not open or import earlier client databases.
 The macOS Keychain service for locally protected values has its own v1 name;
-other platforms use a private `v1.wrapping-key` file. The file-backed database
-checks its `state_protection` row against that key on every open.
+other platforms use a private `v1.wrapping-key` file. Every database checks
+its `state_protection` row against the selected key on open.
 The Go application code reads and writes through `internal/clientstate`; edit
 the migration and query sources before regenerating `clientstatedb`.
 
@@ -23,8 +23,7 @@ local_tunnels → project_journals → project_events
 inspections → inspection_number_counters / inspection_storage_usage
 ```
 
-`installation_settings` has one row; file-backed protection also records one
-`state_protection` row. The
+`installation_settings` and `state_protection` each have one row. The
 root-owned system publisher stores its encrypted registry and file manifest in
 separate tables. Project journal rows hold the latest app-service snapshot and
 one cursor epoch; local tunnel triggers add publication events in the same

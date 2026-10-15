@@ -25,14 +25,15 @@ export function testProjectDocument() {
   return {
     namespace: "member.example",
     dev: false,
-    serviceDirectories: { api: "apps/api", web: "apps/web" },
     services: {
       api: {
+        protocol: "http",
         hostname: "api.member.example",
         namespace: "member.example",
         url: "https://api.member.example",
       },
       web: {
+        protocol: "http",
         hostname: "web.member.example",
         namespace: "member.example",
         url: "https://web.member.example",
@@ -64,6 +65,7 @@ export function testAliasAssignment() {
           },
         },
         worker: {
+          protocol: "http",
           namespace: "member.example",
           hostname: "worker.member.example",
           url: "https://worker.member.example",

@@ -271,12 +271,12 @@ func TestPersistedTunnelSnapshotExpiresWithoutHeartbeat(t *testing.T) {
 	}
 }
 
-func TestTunnelProjectStateIsPartOfInitialV1Migration(t *testing.T) {
+func TestTunnelProjectStateIsPartOfFreshV1Baseline(t *testing.T) {
 	entries, err := fs.ReadDir(migrationFiles, "migrations")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) == 0 || entries[0].Name() != "00001_schema.sql" {
+	if len(entries) != 1 || entries[0].Name() != "00001_schema.sql" {
 		t.Fatalf("client-state migrations = %#v", entries)
 	}
 	data, err := migrationFiles.ReadFile("migrations/00001_schema.sql")

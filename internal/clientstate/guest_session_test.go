@@ -3,7 +3,6 @@ package clientstate
 import (
 	"bytes"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -55,8 +54,8 @@ func TestGuestSessionIsSavedForTheServerAndProtected(t *testing.T) {
 	if err := database.db.QueryRowContext(t.Context(), `SELECT count(*) FROM pragma_table_info('guest_demo_sessions') WHERE name = 'source_ip'`).Scan(&sourceColumns); err != nil || sourceColumns != 0 {
 		t.Fatalf("guest client state retained a source IP column: %d, %v", sourceColumns, err)
 	}
-	if runtime.GOOS == "darwin" && bytes.Contains(stored.AccessTokenCiphertext, []byte(token)) {
-		t.Fatal("guest credential stored in plaintext on macOS")
+	if bytes.Contains(stored.AccessTokenCiphertext, []byte(token)) || !bytes.HasPrefix(stored.AccessTokenCiphertext, sealedValuePrefix) {
+		t.Fatal("guest credential stored in plaintext")
 	}
 	read, found, err := store.GuestSession(t.Context())
 	if err != nil || !found || read != guest {

@@ -1,25 +1,30 @@
 import { randomBytes, randomInt } from "node:crypto";
 import * as path from "node:path";
-import type { TnlRatePeriod } from "../config.gen.js";
+import { isIP } from "node:net";
 import type { FetchHandler } from "./fetch_types.js";
 import { TnlCleanupError, TnlError } from "../errors.js";
-import { startRuntime, runtimeRequest } from "./app.js";
-import { closeServer, listeningTarget, type LocalHTTPServer } from "./register.js";
-import { record, requiredHostname } from "./runtime.js";
+import {
+  startRuntime,
+  runtimeRequest,
+  type RuntimeEndpoint,
+  type EndpointSelection,
+} from "./local.js";
+import { closeServer, listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
+import { record, exactKeys } from "./runtime.js";
+import { parseStatus } from "./status.js";
 
-export interface OpenOptions {
-  readonly credential?: string;
+export type PublisherFile = { readonly publisherFile: string; readonly publisherID?: never };
+export type PublisherID = { readonly publisherID: string; readonly publisherFile?: never };
+export type OpenOptions = OpenSettings &
+  (PublisherFile | PublisherID | { readonly publisherFile?: never; readonly publisherID?: never });
+interface OpenSettings {
   readonly server?: string;
   readonly directory?: string;
+  readonly stateDir?: string;
   /** hostname the publisher uses to reach this listener. */
   readonly targetHostname?: string;
   readonly allowIP?: readonly string[];
   readonly allowAllIPs?: boolean;
-  readonly limits?: {
-    readonly requests?: number;
-    readonly rate?: { readonly requests: number; readonly per: TnlRatePeriod };
-    readonly concurrency?: number;
-  };
   readonly signal?: AbortSignal;
 }
 
@@ -31,8 +36,12 @@ export interface AdHocTunnel {
 }
 
 interface Dependencies {
-  start(directory: string): Promise<string>;
-  request(socket: string, operation: string, body: unknown): Promise<unknown>;
+  start(
+    directory: string,
+    binary?: string,
+    selection?: EndpointSelection,
+  ): Promise<RuntimeEndpoint>;
+  request(endpoint: RuntimeEndpoint, operation: string, body?: unknown): Promise<unknown>;
   pause(milliseconds: number): Promise<void>;
 }
 
@@ -46,72 +55,57 @@ const dependencies: Dependencies = {
     }),
 };
 
-const adHocStates = [
-  "starting",
-  "publishing",
-  "routable",
-  "draining",
-  "stopped",
-  "failed",
-] as const;
-
-type Status = {
-  state: (typeof adHocStates)[number];
-  registrationID: string;
-  publicURL?: `https://${string}`;
-  publicURLID?: string;
-  publishRunNumber?: number;
-  failureCode?: string;
-};
-
-// all local bindings share the same native socket and the same wire contract.
+// registration acknowledges a listener; filtered status identifies its exact run.
 export async function openServer(
   server: LocalHTTPServer,
   options: OpenOptions = {},
   runtime: Dependencies = dependencies,
 ): Promise<AdHocTunnel> {
   validateOptions(options);
-  const credential = options.credential ?? process.env.TNL_CREDENTIAL;
-  if (credential === undefined || credential === "") throw new TnlError("sdk.credential_required");
-  if (!/^tnl_eph_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/.test(credential))
-    throw new TnlError("sdk.credential_rejected");
   const target = await listeningTarget(server, options);
   const directory = path.resolve(options.directory ?? process.cwd());
   const owner = randomBytes(16).toString("hex");
-  const registrationID = `ivk_${Array.from(
+  const invocationID = `ivk_${Array.from(
     { length: 22 },
     () => "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"[randomInt(62)],
   ).join("")}`;
-  const registration = { version: 1, registration_id: registrationID, owner };
+  // the SDK process may receive this environment variable after the native
+  // owner starts. pass the path, never the credential contents, to that owner.
+  const publisherFile =
+    options.publisherID === undefined
+      ? (options.publisherFile ?? process.env.TNL_PUBLISHER_FILE)
+      : undefined;
+  if (publisherFile !== undefined && !validPublisherFile(publisherFile))
+    throw new TnlError("sdk.configuration_invalid");
   const request = {
-    ...registration,
+    version: 1,
+    invocation_id: invocationID,
+    owner,
     pid: process.pid,
     target,
     ...(options.server === undefined ? {} : { server_url: options.server }),
-    credential,
+    ...(options.publisherID === undefined ? {} : { publisher_id: options.publisherID }),
+    ...(publisherFile === undefined ? {} : { publisher_file: publisherFile }),
     ...(options.allowIP === undefined ? {} : { allow_ip: [...options.allowIP] }),
     ...(options.allowAllIPs === undefined ? {} : { allow_all_ips: options.allowAllIPs }),
-    ...(options.limits === undefined ? {} : { limits: options.limits }),
   };
-  let socket = await runtime.start(directory);
+  const selection = {
+    invocationID,
+    ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+  };
+  let endpoint = await runtime.start(directory, undefined, selection);
   if (options.signal?.aborted) throw aborted();
-  let initial: Status;
-  try {
-    initial = parseAdHocStatus(
-      await runtime.request(socket, "ad-hoc/register", request),
-      registrationID,
-    );
-  } catch (cause) {
-    try {
-      await runtime.request(socket, "ad-hoc/unregister", registration);
-    } catch {
-      // owner loss and the native lease invalidate an uncertain registration.
-    }
-    throw cause;
-  }
+  let registration = parseRegistration(
+    await runtime.request(endpoint, "ad-hoc/register", request),
+    owner,
+    target,
+  );
   let currentURL: `https://${string}` | undefined;
-  let currentURLID: string | undefined;
   let closed = false;
+  let resolveClosing!: () => void;
+  const closingSignal = new Promise<void>((resolve) => {
+    resolveClosing = resolve;
+  });
   let terminal = false;
   let readyReached = false;
   let closePromise: Promise<void> | undefined;
@@ -121,6 +115,9 @@ export async function openServer(
     resolveReady = resolve;
     rejectReady = reject;
   });
+  const onListenerClose = () => {
+    if (!closed) fail(new TnlError("sdk.listener_failed"));
+  };
   let resolveDone!: () => void;
   let rejectDone!: (cause: unknown) => void;
   const done = new Promise<void>((resolve, reject) => {
@@ -132,10 +129,15 @@ export async function openServer(
   const close = (): Promise<void> => {
     if (closePromise !== undefined) return closePromise;
     closed = true;
+    resolveClosing();
     options.signal?.removeEventListener("abort", onAbort);
     process.off("beforeExit", beforeExit);
+    if (!isBunServer(server)) server.off("close", onListenerClose);
     if (!terminal && !readyReached) rejectReady(aborted());
-    closePromise = runtime.request(socket, "ad-hoc/unregister", registration).then(
+    closePromise = (async () => {
+      await monitoring;
+      await runtime.request(endpoint, "unregister", registration);
+    })().then(
       () => {
         if (!terminal) {
           terminal = true;
@@ -143,15 +145,15 @@ export async function openServer(
         }
       },
       (cause: unknown) => {
+        const stale =
+          cause instanceof TnlError &&
+          (cause.code === "sdk.registration_stale" || cause.code === "sdk.dev_unavailable");
         if (!terminal) {
           terminal = true;
-          rejectDone(cause);
+          if (stale) resolveDone();
+          else rejectDone(cause);
         }
-        if (
-          cause instanceof TnlError &&
-          (cause.code === "sdk.registration_stale" || cause.code === "sdk.dev_unavailable")
-        )
-          return;
+        if (stale) return;
         throw cause;
       },
     );
@@ -181,94 +183,88 @@ export async function openServer(
   };
   options.signal?.addEventListener("abort", onAbort, { once: true });
   process.once("beforeExit", beforeExit);
-  if (options.signal?.aborted) onAbort();
-  const strictBudget = options.limits?.requests !== undefined || options.limits?.rate !== undefined;
   let lastRenew = Date.now();
-
-  const observe = (status: Status) => {
-    if (status.publicURLID !== undefined) {
-      if (currentURLID !== undefined && currentURLID !== status.publicURLID)
-        throw new TnlError("sdk.response_invalid");
-      currentURLID = status.publicURLID;
-    }
+  let lastRun = 0;
+  const observe = (status: NonNullable<ReturnType<typeof parseStatus>>) => {
     if (status.publicURL !== undefined) {
       if (currentURL !== undefined && currentURL !== status.publicURL)
         throw new TnlError("sdk.response_invalid");
       currentURL = status.publicURL;
     }
-    if (status.state === "routable") {
-      if (
-        status.publicURL === undefined ||
-        status.publicURLID === undefined ||
-        status.publishRunNumber === undefined
-      )
-        throw new TnlError("sdk.response_invalid");
+    if (status.publishRunNumber !== undefined) {
+      if (status.publishRunNumber < lastRun) throw new TnlError("sdk.response_invalid");
+      lastRun = status.publishRunNumber;
+    }
+    if (status.routable) {
       if (!readyReached) {
         readyReached = true;
         resolveReady(handle);
       }
-    } else if (status.state === "failed") {
-      fail(
-        new TnlError(
-          status.failureCode === "runtime.credential_rejected"
-            ? "sdk.credential_rejected"
-            : "sdk.publication_failed",
-        ),
-      );
-    } else if (status.state === "stopped") {
-      if (!terminal) {
-        terminal = true;
-        if (!readyReached) rejectReady(new TnlError("sdk.publication_failed"));
-        resolveDone();
-      }
-      void close().catch(() => {});
-    }
+    } else if (status.failure) fail(new TnlError("sdk.publication_failed"));
   };
   // registering acknowledges the listener, not routability.
-  void (async () => {
-    let status = initial;
+  const monitoring = (async () => {
     while (!closed && !terminal) {
       try {
-        observe(status);
+        if (!isBunServer(server) && !server.listening) throw new TnlError("sdk.listener_failed");
+        const status = parseStatus(
+          await runtime.request(endpoint, "status"),
+          invocationID,
+          registration.registration_id,
+          target,
+        );
+        if (status !== undefined) observe(status);
         if (closed || terminal) break;
-        await runtime.pause(250);
+        await Promise.race([runtime.pause(250), closingSignal]);
         if (closed || terminal) break;
         if (Date.now() - lastRenew >= 5_000) {
-          await runtime.request(socket, "ad-hoc/renew", registration);
+          await runtime.request(endpoint, "renew", registration);
           lastRenew = Date.now();
         }
-        status = parseAdHocStatus(
-          await runtime.request(socket, "ad-hoc/status", registration),
-          registrationID,
-        );
       } catch (cause) {
         if (closed || terminal) break;
         if (
-          !strictBudget &&
           cause instanceof TnlError &&
           (cause.code === "sdk.dev_unavailable" || cause.code === "sdk.registration_stale")
         ) {
           try {
-            socket = await runtime.start(directory);
-            status = parseAdHocStatus(
-              await runtime.request(socket, "ad-hoc/register", request),
-              registrationID,
+            endpoint = await runtime.start(directory, undefined, selection);
+            registration = parseRegistration(
+              await runtime.request(endpoint, "ad-hoc/register", request),
+              owner,
+              target,
             );
             continue;
           } catch (restartError) {
+            if (
+              restartError instanceof TnlError &&
+              (restartError.code === "sdk.dev_unavailable" ||
+                restartError.code === "sdk.registration_stale")
+            ) {
+              await Promise.race([runtime.pause(1_000), closingSignal]);
+              continue;
+            }
             fail(restartError);
             break;
           }
         }
-        fail(
-          strictBudget && cause instanceof TnlError && cause.code === "sdk.dev_unavailable"
-            ? new TnlError("sdk.registration_stale")
-            : cause,
-        );
+        fail(cause);
         break;
       }
     }
   })();
+  if (isBunServer(server)) {
+    const original = server.stop.bind(server);
+    server.stop = async (force) => {
+      try {
+        await original(force);
+      } finally {
+        onListenerClose();
+        await close();
+      }
+    };
+  } else server.once("close", onListenerClose);
+  if (options.signal?.aborted) onAbort();
   try {
     return await ready;
   } catch (cause) {
@@ -281,67 +277,25 @@ export async function openServer(
   }
 }
 
-function isAdHocState(value: unknown): value is Status["state"] {
-  return typeof value === "string" && adHocStates.some((state) => state === value);
-}
-
-export function parseAdHocStatus(value: unknown, id: string): Status {
+function parseRegistration(
+  value: unknown,
+  owner: string,
+  target: string,
+): { version: 1; registration_id: string; owner: string; target: string } {
   try {
-    const object = record(value, "ad-hoc status");
-    const allowed = [
-      "version",
-      "registration_id",
-      "state",
-      "public_url_id",
-      "public_url",
-      "publish_run_number",
-      "failure_code",
-    ];
+    const object = record(value, "invocation registration");
+    exactKeys(object, ["version", "registration_id", "owner", "target"], "invocation registration");
     if (
-      Object.keys(object).some((key) => !allowed.includes(key)) ||
       object.version !== 1 ||
-      object.registration_id !== id ||
-      !isAdHocState(object.state)
+      typeof object.registration_id !== "string" ||
+      !/^reg_[a-f0-9]{32}$/.test(object.registration_id) ||
+      object.owner !== owner ||
+      object.target !== target
     )
       throw new TnlError("sdk.response_invalid");
-    const state = object.state;
-    const publicURLID = object.public_url_id;
-    if (
-      publicURLID !== undefined &&
-      (typeof publicURLID !== "string" || !/^url_[A-Za-z0-9_-]{1,128}$/.test(publicURLID))
-    )
-      throw new TnlError("sdk.response_invalid");
-    const number = object.publish_run_number;
-    if (
-      number !== undefined &&
-      (typeof number !== "number" || !Number.isSafeInteger(number) || number < 1)
-    )
-      throw new TnlError("sdk.response_invalid");
-    const failureCode = object.failure_code;
-    if (
-      failureCode !== undefined &&
-      (typeof failureCode !== "string" || !/^[A-Za-z0-9_.-]{1,128}$/.test(failureCode))
-    )
-      throw new TnlError("sdk.response_invalid");
-    let publicURL: `https://${string}` | undefined;
-    if (object.public_url !== undefined) {
-      const origin = object.public_url;
-      if (typeof origin !== "string") throw new TnlError("sdk.response_invalid");
-      const url = new URL(origin);
-      const hostname = requiredHostname(url.hostname, "ad-hoc public URL");
-      if (origin !== `https://${hostname}`) throw new TnlError("sdk.response_invalid");
-      publicURL = origin as `https://${string}`;
-    }
-    return {
-      state,
-      registrationID: id,
-      ...(publicURLID === undefined ? {} : { publicURLID }),
-      ...(publicURL === undefined ? {} : { publicURL }),
-      ...(number === undefined ? {} : { publishRunNumber: number }),
-      ...(failureCode === undefined ? {} : { failureCode }),
-    } as Status;
-  } catch (cause) {
-    throw new TnlError("sdk.response_invalid", { cause });
+    return { version: 1, registration_id: object.registration_id, owner, target };
+  } catch {
+    throw new TnlError("sdk.response_invalid");
   }
 }
 
@@ -353,52 +307,80 @@ function validateOptions(options: OpenOptions): void {
     Object.keys(options).some(
       (key) =>
         ![
-          "credential",
+          "publisherFile",
+          "publisherID",
           "server",
           "directory",
+          "stateDir",
           "targetHostname",
           "allowIP",
           "allowAllIPs",
-          "limits",
           "signal",
         ].includes(key),
     ) ||
-    (options.credential !== undefined && typeof options.credential !== "string") ||
+    (options.publisherFile !== undefined && !validPublisherFile(options.publisherFile)) ||
+    (options.publisherFile !== undefined && options.publisherID !== undefined) ||
+    (options.publisherID !== undefined &&
+      (typeof options.publisherID !== "string" ||
+        !/^pub_[A-Za-z0-9]{22}$/.test(options.publisherID))) ||
     (options.server !== undefined &&
-      (typeof options.server !== "string" || !/^https:\/\/[^/]+$/.test(options.server))) ||
+      (typeof options.server !== "string" || !validServer(options.server))) ||
     (options.directory !== undefined &&
-      (typeof options.directory !== "string" || options.directory === "")) ||
+      (typeof options.directory !== "string" ||
+        options.directory === "" ||
+        options.directory.length > 4096 ||
+        options.directory.includes("\0"))) ||
+    (options.stateDir !== undefined &&
+      (typeof options.stateDir !== "string" ||
+        options.stateDir === "" ||
+        options.stateDir.length > 4096 ||
+        options.stateDir.includes("\0"))) ||
     (options.targetHostname !== undefined &&
       (typeof options.targetHostname !== "string" || options.targetHostname === "")) ||
     (options.allowAllIPs !== undefined && typeof options.allowAllIPs !== "boolean") ||
     (options.allowIP !== undefined &&
       (!Array.isArray(options.allowIP) ||
-        options.allowIP.some((value) => typeof value !== "string"))) ||
+        options.allowIP.length > 64 ||
+        options.allowIP.some((value) => !validNetwork(value)))) ||
     (options.allowAllIPs === true && options.allowIP !== undefined) ||
     (options.signal !== undefined && !(options.signal instanceof AbortSignal))
   )
     throw new TnlError("sdk.configuration_invalid");
-  const limits = options.limits;
-  if (
-    limits !== undefined &&
-    (limits === null ||
-      typeof limits !== "object" ||
-      Array.isArray(limits) ||
-      Object.keys(limits).some((key) => !["requests", "rate", "concurrency"].includes(key)) ||
-      (limits.requests !== undefined &&
-        (!Number.isSafeInteger(limits.requests) || limits.requests < 1)) ||
-      (limits.concurrency !== undefined &&
-        (!Number.isSafeInteger(limits.concurrency) || limits.concurrency < 1)) ||
-      (limits.rate !== undefined &&
-        (limits.rate === null ||
-          !Number.isSafeInteger(limits.rate.requests) ||
-          limits.rate.requests < 1 ||
-          typeof limits.rate.per !== "string" ||
-          !/^([0-9]+(\.[0-9]+)?|\.[0-9]+)(ns|us|µs|ms|s|m|h)([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))*$/.test(
-            limits.rate.per,
-          ))))
-  )
-    throw new TnlError("sdk.configuration_invalid");
+}
+
+function validPublisherFile(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    path.isAbsolute(value) &&
+    value.length <= 4096 &&
+    !value.includes("\0")
+  );
+}
+
+function validServer(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      value.length <= 4096 &&
+      url.protocol === "https:" &&
+      url.username === "" &&
+      url.password === "" &&
+      value === url.origin
+    );
+  } catch {
+    return false;
+  }
+}
+function validNetwork(value: unknown): boolean {
+  if (typeof value !== "string" || value.length > 64) return false;
+  const parts = value.split("/");
+  const ip = isIP(parts[0] ?? "");
+  return (
+    ip !== 0 &&
+    parts.length <= 2 &&
+    (parts.length === 1 ||
+      (/^(0|[1-9][0-9]*)$/.test(parts[1] ?? "") && Number(parts[1]) <= (ip === 4 ? 32 : 128)))
+  );
 }
 
 function aborted(): DOMException {

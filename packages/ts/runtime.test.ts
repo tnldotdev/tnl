@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import * as z from "zod";
-import { parseRuntimePayload } from "./dist/internal/runtime.js";
+import { parseRuntimePayload, serializeRuntimePayload } from "./dist/internal/runtime.js";
 import { startTestProcess } from "./test-helper/process.js";
 
 const project = {
   namespace: "member.example",
   services: {
     api: {
+      protocol: "http",
       hostname: "api.member.example",
       namespace: "member.example",
       url: "https://api.member.example",
@@ -62,6 +63,7 @@ describe("root runtime", () => {
 
   test("validates mounted service URLs and freezes their paths", () => {
     const web = {
+      protocol: "http",
       hostname: "web.member.example",
       namespace: "member.example",
       url: "https://web.member.example",
@@ -126,6 +128,7 @@ describe("root runtime", () => {
           Array.from({ length: 33 }, (_, index) => [
             `s${index}`,
             {
+              protocol: "http",
               hostname: `s${index}.member.example`,
               namespace: "member.example",
               url: `https://s${index}.member.example`,
@@ -143,6 +146,92 @@ describe("root runtime", () => {
       /project metadata is invalid/,
     );
   });
+
+  test("serialization validates nested metadata before exposing it to a browser", () => {
+    const valid = parseRuntimePayload(JSON.stringify({ ...project, dev: false }));
+    const api = valid?.services.api;
+    if (!valid || !api) throw new Error("missing runtime");
+    expect(JSON.parse(serializeRuntimePayload(valid, true)) as unknown).toEqual({
+      ...project,
+      dev: true,
+    });
+    const unsafe = { ...valid, services: { api: { ...api, target: "private.internal:3000" } } };
+    expect(() => serializeRuntimePayload(unsafe, true)).toThrow();
+  });
+
+  test("uses the shared HTTP and saved TCP metadata contract", async () => {
+    const fixture = z
+      .object({
+        cases: z.array(
+          z.object({
+            name: z.string(),
+            valid: z.boolean(),
+            runtimeValid: z.boolean().optional(),
+            metadata: z.object({ namespace: z.string(), services: z.unknown() }).passthrough(),
+          }),
+        ),
+      })
+      .parse(
+        JSON.parse(
+          await readFile(
+            new URL("../../api/fixtures/project-metadata-v2.json", import.meta.url),
+            "utf8",
+          ),
+        ) as unknown,
+      );
+    for (const entry of fixture.cases) {
+      const { version: _version, serviceDirectories: _directories, ...payload } = entry.metadata;
+      if (entry.runtimeValid ?? entry.valid) {
+        expect(() => parseRuntimePayload(JSON.stringify(payload)), entry.name).not.toThrow();
+      } else {
+        expect(() => parseRuntimePayload(JSON.stringify(payload)), entry.name).toThrow();
+      }
+    }
+  });
+
+  test.each(["postgres", "mysql", "redis", "ssh"])(
+    "exposes only saved public %s addresses",
+    (protocol) => {
+      const db = {
+        protocol,
+        namespace: "member.example",
+        hostname: "db.member.example",
+        port: 15432,
+        address: "db.member.example:15432",
+      };
+      const payload = { ...project, services: { ...project.services, db }, dev: true };
+      const parsed = parseRuntimePayload(JSON.stringify(payload));
+      expect(parsed?.services.db).toEqual(db);
+      expect(Object.isFrozen(parsed?.services.db)).toBe(true);
+      for (const extra of [
+        { target: "db.internal:5432" },
+        { accessToken: "secret" },
+        { paths: {} },
+        { port: 15432.5 },
+        { port: 65536 },
+      ]) {
+        expect(() =>
+          parseRuntimePayload(
+            JSON.stringify({ ...payload, services: { db: { ...db, ...extra } } }),
+          ),
+        ).toThrow();
+      }
+      expect(() =>
+        parseRuntimePayload(
+          JSON.stringify({
+            ...payload,
+            aliases: {
+              review: {
+                service: "db",
+                hostname: "review.member.example",
+                url: "https://review.member.example",
+              },
+            },
+          }),
+        ),
+      ).toThrow();
+    },
+  );
 
   test("uses the canonical Go hostname cases for project metadata", async () => {
     const fixture = z
