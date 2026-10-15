@@ -26,7 +26,7 @@ import (
 // app and a database. it verifies replacement through visitor connections.
 func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierBinary)
-	fixture := startIntegrationBinaryStandaloneWithBind(t, true)
+	fixture := startIntegrationBinaryStandaloneWithBind(t, true, "simple")
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

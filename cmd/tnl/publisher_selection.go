@@ -41,7 +41,7 @@ func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg p
 			protocol = "http"
 		}
 		body := controlv1.CreatePublicURLRequest{TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: cfg.Hostname, PublicUrlScope: services.publicURLScope, Purpose: controlv1.App, ServiceProtocol: &protocol, AllowedIpPrefixes: &cfg.AllowedIPPrefixes}
-		if services.membershipID != "" {
+		if services.publicURLScope == controlv1.Member && services.membershipID != "" {
 			body.MembershipId = &services.membershipID
 		}
 		route, err = services.routes.CreatePublicURL(ctx, body, key)
@@ -50,7 +50,7 @@ func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg p
 		return route, err
 	}
 	if route.TeamId != services.teamID || route.DomainId != services.domainID || route.CanonicalHostname != cfg.Hostname || route.Purpose != controlv1.App || route.ServiceProtocol != cfg.ServiceProtocol || route.Ephemeral || route.LifecycleState != controlv1.Enabled || route.PublicUrlScope != services.publicURLScope ||
-		services.membershipID != "" && (route.MembershipId == nil || *route.MembershipId != services.membershipID) || services.membershipID == "" && route.MembershipId != nil {
+		services.publicURLScope == controlv1.Member && (route.MembershipId == nil || *route.MembershipId != services.membershipID) || services.publicURLScope == controlv1.Shared && route.MembershipId != nil {
 		return controlv1.PublicURL{}, failure.Wrap("reserve project public URL", failure.ServerResponseInvalid, errors.New("saved public URL differs from the selected service"))
 	}
 	prefixes := []string{}
