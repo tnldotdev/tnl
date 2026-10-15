@@ -233,16 +233,14 @@ only its bound target and invocation identity. the worker allocates the exact
 temporary public URL, starts a signed run, and deletes the URL after drain.
 ad-hoc readiness is the run's routability, not a public GET app probe.
 
-host placement is the default. `tnl compose login` and `tnl compose up` use a
-generated worktree-specific Compose override for a selected Compose publisher.
-it mounts private owner state only in the publisher, a separate read-only
-descriptor volume in each app, and browser-safe project metadata read-only in
-the apps from another shared volume. the publisher's project bind stays
-read-only. each app checks its mounted `TNL_APP_ENDPOINT` against the exact
-`TNL_APP_AUTHORITY` in the generated override. the labelled network connects
-apps to the publisher without giving them its owner capability. targets are
-resolved for new requests and connections; a container replacement never
-replays an admitted visitor.
+the native owner runs with the project's app or `tnl publish` invocation. a
+host-side owner can discover a selected Compose container through its published
+loopback port, checking the exact project, worktree label, service, and container
+identity before each new target capture. a publisher inside Docker instead
+uses a configured private address and runs ordinary `tnl publish` commands in
+its container. Compose manages that container's startup, authentication state
+volume, and network; tnl does not generate an override or a cross-container app
+credential. replacing a target never replays an admitted visitor.
 
 preparation reserves a live owner without claiming a listener. registration
 acknowledges the bound target, not provisioning. duplicate live owners fail;

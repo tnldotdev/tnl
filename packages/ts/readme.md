@@ -46,8 +46,7 @@ The native publisher selects the locally provisioned namespace identity, or
 `{ publisherID: "pub_..." }`. An invalid selected file is an error; tnl does
 not silently use another identity. Enrollment keys belong to setup, not the
 SDK. The native publisher keeps its signing key private; project metadata and
-status contain no credentials. With a Compose publisher, the runtime mounts a
-scoped endpoint descriptor for the app; start the app normally.
+status contain no credentials.
 
 Read the [quickstart](https://tnl.dev/docs),
 [Next.js and Vite setup](https://tnl.dev/docs/frameworks),

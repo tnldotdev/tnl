@@ -3,9 +3,6 @@ package publishertarget
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net/netip"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,19 +12,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
-// Placement is host-validated metadata carried into an owner container. its
-// worktree identity must not be recomputed from that container's client state.
-type Placement struct {
-	ProjectRoot string                 `json:"project_root"`
-	Worktree    projectconfig.Worktree `json:"worktree"`
-	PrimaryRoot string                 `json:"primary_root"`
-	OwnerID     string                 `json:"owner_container_id"`
-	NetworkID   string                 `json:"network_id"`
-}
-
 type Resolver struct {
-	Docker    Runner
-	Placement *Placement
+	Docker Runner
 }
 
 func (r Resolver) DockerCLI() Runner {
@@ -48,7 +34,7 @@ func (r Resolver) ResolveTargetIdentity(ctx context.Context, project projectconf
 	if err != nil {
 		return "", "", err
 	}
-	address, err := r.address(ctx, c, port)
+	address, err := published(c, port)
 	if err != nil {
 		return "", "", err
 	}
@@ -75,18 +61,11 @@ func (r Resolver) targetContainer(ctx context.Context, project projectconfig.Pro
 		if target.Project == nil || target.File == nil || target.Service == nil {
 			return Container{}, 0, errors.New("compose target requires project, file, and service")
 		}
-		root := project.Root
-		if r.Placement != nil {
-			root = r.Placement.ProjectRoot
+		file, fileErr := project.ComposeFile(name)
+		if fileErr != nil {
+			return Container{}, 0, fileErr
 		}
-		file := filepath.Join(root, *target.File)
-		if r.Placement == nil {
-			file, err = project.ComposeFile(name)
-			if err != nil {
-				return Container{}, 0, err
-			}
-		}
-		c, err = ComposeContainer(ctx, docker, root, file, *target.Project, *target.Service, r.worktree(project))
+		c, err = ComposeContainer(ctx, docker, project.Root, file, *target.Project, *target.Service, project.Worktree.Label.FullLabel)
 	case "docker":
 		if target.Container == nil || !config.ValidDockerIdentifier(*target.Container) {
 			return Container{}, 0, errors.New("docker target requires an exact container identifier")
@@ -98,56 +77,10 @@ func (r Resolver) targetContainer(ctx context.Context, project projectconfig.Pro
 	if err != nil {
 		return Container{}, 0, err
 	}
-	if c.Config.Labels[WorktreeLabel] == "" || c.Config.Labels[WorktreeLabel] != r.worktree(project) {
+	if c.Config.Labels[WorktreeLabel] == "" || c.Config.Labels[WorktreeLabel] != project.Worktree.Label.FullLabel {
 		return Container{}, 0, errors.New("container does not belong to the current worktree")
 	}
 	return c, *target.Port, nil
-}
-
-func (r Resolver) worktree(project projectconfig.Project) string {
-	if r.Placement != nil {
-		return r.Placement.Worktree.Label.FullLabel
-	}
-	return project.Worktree.Label.FullLabel
-}
-
-func (r Resolver) address(ctx context.Context, c Container, port int) (string, error) {
-	if r.Placement == nil {
-		return published(c, port)
-	}
-	owner, err := Inspect(ctx, r.DockerCLI(), r.Placement.OwnerID)
-	if err != nil {
-		return "", err
-	}
-	if owner.Config.Labels[WorktreeLabel] != r.Placement.Worktree.Label.FullLabel {
-		return "", errors.New("publisher container worktree changed")
-	}
-	addresses := map[netip.Addr]bool{}
-	for _, network := range c.NetworkSettings.Networks {
-		if network.NetworkID != r.Placement.NetworkID || network.NetworkID == "" {
-			continue
-		}
-		shared := false
-		for _, candidate := range owner.NetworkSettings.Networks {
-			shared = shared || candidate.NetworkID == network.NetworkID
-		}
-		if !shared {
-			return "", errors.New("target is outside the publisher's private network")
-		}
-		// one deterministic family avoids silently selecting between addresses.
-		address, err := netip.ParseAddr(network.IPAddress)
-		if err != nil || address.IsLoopback() || address.IsUnspecified() || address.IsMulticast() {
-			return "", errors.New("target has no private network IPv4 address")
-		}
-		addresses[address] = true
-	}
-	if len(addresses) != 1 {
-		return "", errors.New("target must have one address on the selected private network")
-	}
-	for address := range addresses {
-		return netip.AddrPortFrom(address, uint16(port)).String(), nil
-	}
-	panic("unreachable")
 }
 
 // ComposeContainer verifies ps output against immutable inspect identity and
@@ -171,26 +104,19 @@ func ComposeContainer(ctx context.Context, docker Runner, root, file, project, s
 		return Container{}, err
 	}
 	labels := c.Config.Labels
-	if !ComposeFilesMatch(root, file, labels["com.docker.compose.project.config_files"]) || labels[WorktreeLabel] != worktree || labels["com.docker.compose.project"] != project || labels["com.docker.compose.service"] != service || strings.ToLower(labels["com.docker.compose.oneoff"]) != "false" || labels["com.docker.compose.project.working_dir"] != root {
+	if !ComposeFilesMatch(file, labels["com.docker.compose.project.config_files"]) || labels[WorktreeLabel] != worktree || labels["com.docker.compose.project"] != project || labels["com.docker.compose.service"] != service || strings.ToLower(labels["com.docker.compose.oneoff"]) != "false" || labels["com.docker.compose.project.working_dir"] != root {
 		return Container{}, errors.New("compose container placement labels do not match this project")
 	}
 	return c, nil
 }
 
-// ComposeFilesMatch accepts only the selected file and its generated override.
-func ComposeFilesMatch(root, file, configFiles string) bool {
-	generated := filepath.Join(root, ".tnl", "compose.generated.yaml")
-	return configFiles == file || configFiles == file+","+generated
+// ComposeFilesMatch accepts only the selected Compose file.
+func ComposeFilesMatch(file, configFiles string) bool {
+	return configFiles == file
 }
 
 func ComposeArgs(root, file, project string) []string {
-	args := []string{"compose", "--project-directory", root, "--file", file}
-	if extra := filepath.Join(root, ".tnl", "compose.generated.yaml"); extra != file {
-		if info, err := os.Lstat(extra); err == nil && info.Mode().IsRegular() {
-			args = append(args, "--file", extra)
-		}
-	}
-	return append(args, "--project-name", project)
+	return []string{"compose", "--project-directory", root, "--file", file, "--project-name", project}
 }
 
 // ComposeFile validates host-owned paths, including symlinks, before an exec.
@@ -215,39 +141,4 @@ func ComposeFile(root, relative string) (string, error) {
 		return "", errors.New("compose file must be a regular file")
 	}
 	return file, nil
-}
-
-// ResolveApp maps only the reported port, never an app-supplied address, onto
-// its configured Compose service. owner and pid are lease identifiers only.
-func (r Resolver) ResolveApp(ctx context.Context, project projectconfig.Project, composeProject, file, composeService, reported string) (string, error) {
-	address, _, err := r.ResolveAppIdentity(ctx, project, composeProject, file, composeService, reported)
-	return address, err
-}
-
-func (r Resolver) ResolveAppIdentity(ctx context.Context, project projectconfig.Project, composeProject, file, composeService, reported string) (string, string, error) {
-	u, err := url.Parse(reported)
-	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" && u.Path != "/" {
-		return "", "", errors.New("app listener must be an HTTP origin")
-	}
-	address, err := netip.ParseAddr(u.Hostname())
-	port, portErr := strconv.ParseUint(u.Port(), 10, 16)
-	if err != nil || portErr != nil || port == 0 || address.Zone() != "" || !address.IsLoopback() && !address.IsUnspecified() {
-		return "", "", errors.New("app listener must report a loopback or wildcard address and explicit port")
-	}
-	root := project.Root
-	if r.Placement != nil {
-		root = r.Placement.ProjectRoot
-	}
-	if err := Local(ctx, r.DockerCLI()); err != nil {
-		return "", "", err
-	}
-	c, err := ComposeContainer(ctx, r.DockerCLI(), root, file, composeProject, composeService, r.worktree(project))
-	if err != nil {
-		return "", "", err
-	}
-	private, err := r.address(ctx, c, int(port))
-	if err != nil {
-		return "", "", err
-	}
-	return fmt.Sprintf("%s://%s", u.Scheme, private), c.ID + "/" + strconv.FormatUint(port, 10) + "/" + private, nil
 }

@@ -197,24 +197,6 @@ def test_endpoint_validation_has_no_owner_or_unix_compatibility() -> None:
             parse_endpoint({**base, **change}, service="web")
 
 
-def test_compose_app_requires_its_configured_publisher_authority() -> None:
-    authority = "http://publisher:8123"
-    endpoint = {
-        "version": 1,
-        "url": authority,
-        "capability": "b" * 64,
-        "owner_id": "a" * 32,
-        "scope": "app",
-        "service": "web",
-    }
-    assert parse_endpoint(endpoint, service="web", compose_authority=authority).url == authority
-    for selected in (None, "http://other:8123", "http://publisher:8124", "http://127.0.0.1:8123"):
-        with pytest.raises(InvalidResponse):
-            parse_endpoint(endpoint, service="web", compose_authority=selected)
-    with pytest.raises(InvalidResponse):
-        parse_endpoint({**endpoint, "scope": "invocation"}, compose_authority=authority)
-
-
 def test_native_discovery_selects_scope_and_reads_fragmented_stdout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

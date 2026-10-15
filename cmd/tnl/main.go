@@ -40,7 +40,6 @@ type cli struct {
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
 	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
-	Compose     composeCommand   `cmd:"" help:"Prepare and start a selected Compose publisher." group:"start"`
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
@@ -442,12 +441,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runConfigCheck(project, stdout)
 	case "config generate":
 		return runConfigGenerate(ctx, projectStateRoot, project, stdout, stderr)
-	case "compose prepare":
-		return runComposePrepare(ctx, flags, stdout)
-	case "compose login":
-		return runComposeLogin(ctx, flags, stdout, stderr)
-	case "compose up":
-		return runComposeUp(ctx, flags, stdout, stderr)
 	case "telemetry on":
 		return runTelemetryPreference(ctx, flags.Telemetry.On, "on", stdout)
 	case "telemetry off":

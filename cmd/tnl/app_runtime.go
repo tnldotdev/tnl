@@ -39,12 +39,8 @@ type runtimeCommand struct {
 	Serve         runtimeOptions         `cmd:"" hidden:""`
 }
 type runtimeOptions struct {
-	Directory        string `name:"directory" required:"" type:"path"`
-	StateDir         string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
-	ComposeProxy     bool   `name:"compose-proxy" hidden:""`
-	ComposeOwner     bool   `name:"compose-owner" hidden:""`
-	ComposeConfigure bool   `name:"compose-configure" hidden:""`
-	ComposeRequest   bool   `name:"compose-request" hidden:""`
+	Directory string `name:"directory" required:"" type:"path"`
+	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
 }
 type runtimeEndpointOptions struct {
 	runtimeOptions `embed:""`
@@ -52,10 +48,8 @@ type runtimeEndpointOptions struct {
 	InvocationID   string `name:"invocation-id"`
 }
 
-// placement hooks are set by the container integration. host discovery and host
-// owner startup have complete defaults; container placement must be explicit.
+// target discovery is supplied by the host container integration.
 var runtimeTargetResolver projectpublisher.TargetResolver
-var runtimeOwnerTransport projectpublisher.OwnerTransportResolver
 
 var runtimeConfigurePublication func(context.Context, *clientstate.Database, projectconfig.Project, clientruntime.Service, *publisher.Config) error
 var runtimeVisitorTLS func(context.Context, *clientstate.Database, projectconfig.Project, clientruntime.Service) (*tls.Config, error)
@@ -83,23 +77,6 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 	if err != nil {
 		return projectConfiguration{}, "", err
 	}
-	if options.ComposeOwner {
-		// the host evaluated project configuration before creating the Compose
-		// override. the native publisher image does not need Node or a host Git
-		// worktree path just to parse tnl.config.ts again inside the container.
-		snapshot := filepath.Join(directory, ".tnl", "compose.project.json")
-		if info, err := os.Lstat(snapshot); err != nil || !info.Mode().IsRegular() {
-			return projectConfiguration{}, "", errors.New("run tnl compose up from the host to prepare publisher configuration")
-		}
-		document, err := config.LoadDocument(snapshot)
-		if err != nil || document.TNL == nil || document.TNL.Publisher == nil || document.TNL.Publisher.Type != "compose" {
-			return projectConfiguration{}, "", errors.New("host Compose publisher configuration is unavailable or invalid")
-		}
-		return projectConfiguration{Project: projectconfig.Project{
-			Root: directory, Selection: projectconfig.Selection{Path: snapshot},
-			Config: *document.TNL, Worktree: projectconfig.Worktree{Root: directory},
-		}}, state.Root(), nil
-	}
 	selection, err := projectconfig.SelectProjectConfig(ctx, directory, "", os.Getenv("TNL_CONFIG"), false)
 	if err != nil {
 		return projectConfiguration{}, "", err
@@ -123,12 +100,6 @@ func runtimeAvailable(ctx context.Context, endpoint privateprotocol.Endpoint) bo
 }
 
 func ensureRuntimeOwner(ctx context.Context, project projectConfiguration, root string) (privateprotocol.Endpoint, error) {
-	if runtimeOwnerTransport != nil {
-		return runtimeOwnerTransport.OwnerEndpoint(ctx, project.Project, root)
-	}
-	if p := project.Config.Publisher; p != nil && p.Type != "host" {
-		return privateprotocol.Endpoint{}, errors.New("compose publisher requires an owner transport resolver")
-	}
 	path, err := privateprotocol.DescriptorPath(root, project.Root)
 	if err != nil {
 		return privateprotocol.Endpoint{}, err
@@ -216,7 +187,6 @@ type appRuntime struct {
 	manager      *clientruntime.Manager
 	workers      *projectpublisher.Workers
 	capabilities *privateprotocol.Capabilities
-	placement    *runtimeComposePlacement
 	project      projectConfiguration
 	state        *clientstate.Database
 	mu           sync.Mutex
@@ -248,27 +218,9 @@ func configuredRuntimeServices(project projectConfiguration) []clientruntime.Ser
 }
 
 func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
-	if options.ComposeConfigure {
-		return runRuntimeComposeConfigure(ctx, options, os.Stdin)
-	}
-	if options.ComposeRequest {
-		return runRuntimeComposeRequest(ctx, options, os.Stdin, os.Stdout)
-	}
-	if options.ComposeProxy {
-		return runRuntimeComposeProxy(ctx, options)
-	}
 	project, root, err := runtimeProject(ctx, options)
 	if err != nil {
 		return err
-	}
-	var placement *runtimeComposePlacement
-	if options.ComposeOwner {
-		project, placement, err = runtimePrepareComposePlacement(ctx, project, root)
-		if err != nil {
-			return err
-		}
-	} else if project.Config.Publisher != nil && project.Config.Publisher.Type == "compose" {
-		return errors.New("start the configured compose publisher service with tnl runtime serve --compose-owner")
 	}
 	path, err := privateprotocol.DescriptorPath(root, project.Root)
 	if err != nil {
@@ -282,16 +234,11 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		return err
 	}
 	defer lock.Close()
-	var listener net.Listener
-	var capabilities *privateprotocol.Capabilities
-	if placement != nil {
-		listener, capabilities, err = placement.Listen()
-	} else {
-		listener, err = net.Listen("tcp4", "127.0.0.1:0")
-		if err == nil {
-			capabilities, err = privateprotocol.NewCapabilities("http://" + listener.Addr().String())
-		}
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return err
 	}
+	capabilities, err := privateprotocol.NewCapabilities("http://" + listener.Addr().String())
 	if err != nil {
 		return err
 	}
@@ -301,7 +248,7 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		return err
 	}
 	defer state.Close()
-	a := &appRuntime{project: project, state: state, capabilities: capabilities, placement: placement, prepared: map[string]appPreparation{}}
+	a := &appRuntime{project: project, state: state, capabilities: capabilities, prepared: map[string]appPreparation{}}
 	if runtimeConfigurePublication != nil {
 		a.AttachPublication = func(ctx context.Context, service clientruntime.Service, cfg *publisher.Config) error {
 			return runtimeConfigurePublication(ctx, state, project.Project, service, cfg)
@@ -318,20 +265,10 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		return err
 	}
 	a.workers.Manager = a.manager
-	if placement == nil {
-		a.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
-	} else {
-		// app pids belong to other containers. leases, not this process's pid
-		// namespace, decide their liveness; the Compose owner stays up while idle.
-		a.manager.Persistent = true
-	}
+	a.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
 	defer a.manager.Close()
-	handler := a.handler()
-	if placement != nil {
-		handler = placement.Handler(capabilities, handler)
-	}
 	// unregister joins the publication after draining its visitor streams.
-	server := &http.Server{Handler: handler, BaseContext: func(net.Listener) context.Context { return ctx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: privateprotocol.MaxBytes}
+	server := &http.Server{Handler: a.handler(), BaseContext: func(net.Listener) context.Context { return ctx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: privateprotocol.MaxBytes}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	defer func() {
@@ -344,11 +281,6 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		return err
 	}
 	defer privateprotocol.RemoveEndpoint(path, capabilities.Owner().OwnerId)
-	if placement != nil {
-		if err := placement.PublishApps(ctx, root, capabilities); err != nil {
-			return err
-		}
-	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -412,13 +344,7 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	if err != nil {
 		return privateprotocol.Assignment{}, err
 	}
-	metadataRoot := a.project.Root
-	if a.placement != nil {
-		// compose keeps the project bind read-only. share browser-safe metadata
-		// through its own volume without granting apps access to owner state.
-		metadataRoot = "/run/tnl"
-	}
-	if err := projectmeta.Write(ctx, metadataRoot, metadata); err != nil {
+	if err := projectmeta.Write(ctx, a.project.Root, metadata); err != nil {
 		return privateprotocol.Assignment{}, err
 	}
 	selected := metadata.Services[name]
@@ -522,7 +448,7 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 	cfg := services.config(service.Target, policy.prefixes, limits)
 	var binding *projectpublisher.TargetBinding
 	{
-		binding = runtimeTargetBinding(project.Project, service.Name, a.placement, service.Target, nil)
+		binding = runtimeTargetBinding(project.Project, service.Name, service.Target, nil)
 		binding.Changed = func() {
 			a.manager.Observe(clientruntime.Observation{Target: service.Target, RegistrationID: service.RegistrationID,
 				PublishRunNumber: service.PublishRunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"})

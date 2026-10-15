@@ -71,11 +71,7 @@ def hostname(value: object) -> str:
 
 
 def parse_endpoint(
-    value: object,
-    *,
-    service: str | None = None,
-    invocation_id: str | None = None,
-    compose_authority: str | None = None,
+    value: object, *, service: str | None = None, invocation_id: str | None = None
 ) -> Endpoint:
     obj = object_value(
         value, {"version", "url", "capability", "owner_id", "scope", "service", "invocation_id"}
@@ -83,28 +79,14 @@ def parse_endpoint(
     url = text(obj.get("url"), 128)
     try:
         parts = urlsplit(url)
-        try:
-            address = ipaddress.ip_address(parts.hostname or "")
-        except ValueError:
-            address = None
+        address = ipaddress.ip_address(parts.hostname or "")
         port = parts.port
-        host = (
-            f"[{address}]"
-            if address is not None and address.version == 6
-            else str(address or parts.hostname or "")
-        )
-        loopback = address is not None and address.is_loopback
-        compose = (
-            address is None
-            and obj.get("scope") == "app"
-            and compose_authority == url
-            and re.fullmatch(r"http://[A-Za-z0-9][A-Za-z0-9._-]{0,127}:8123", url) is not None
-        )
+        authority = f"[{address}]:{port}" if address.version == 6 else f"{address}:{port}"
         if (
-            not (loopback or compose)
+            not address.is_loopback
             or port is None
             or not 1 <= port <= 65535
-            or url != f"http://{host}:{port}"
+            or url != f"http://{authority}"
         ):
             raise InvalidResponse()
     except ValueError:

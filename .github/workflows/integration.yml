@@ -92,7 +92,7 @@ jobs:
         run: task go:test:integration:binary
 
   compose:
-    name: Compose publisher integration
+    name: Compose target integration
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -117,7 +117,7 @@ jobs:
           repo-token: ""
           checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
 
-      - name: Check Compose publisher ownership
+      - name: Check Compose target discovery
         run: task go:test:integration:compose
 
   dns:

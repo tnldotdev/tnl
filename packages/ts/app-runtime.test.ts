@@ -308,23 +308,6 @@ test("endpoint validation rejects owner scope, DNS, cross-service grants, and ex
     expect(() => parseEndpoint(endpoint, { service: "api" })).toThrow(TnlError);
 });
 
-test("a Compose app accepts only its configured publisher authority", () => {
-  const authority = "http://publisher:8123";
-  const endpoint = { ...testEndpoint, url: authority };
-  expect(parseEndpoint(endpoint, { service: "api" }, authority)).toEqual(endpoint);
-  for (const selected of [
-    undefined,
-    "http://another-publisher:8123",
-    "http://publisher:8124",
-    "http://127.0.0.1:8123",
-  ]) {
-    expect(() => parseEndpoint(endpoint, { service: "api" }, selected)).toThrow(TnlError);
-  }
-  expect(() => parseEndpoint({ ...endpoint, scope: "invocation" }, {}, authority)).toThrow(
-    TnlError,
-  );
-});
-
 test(
   "live scoped HTTP reconnect replaces both owner capability and registration",
   { timeout: 15_000 },
