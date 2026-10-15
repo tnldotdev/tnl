@@ -286,7 +286,10 @@ export function runtimeRequest(
         });
       },
     );
-    const deadline = setTimeout(() => request.destroy(new TnlError("sdk.dev_unavailable")), 30_000);
+    const deadline = setTimeout(
+      () => request.destroy(new TnlError("sdk.dev_unavailable")),
+      operation === "unregister" ? 75_000 : 30_000,
+    );
     deadline.unref();
     request.once("close", () => clearTimeout(deadline));
     request.on("error", () => reject(new TnlError("sdk.dev_unavailable")));

@@ -87,14 +87,14 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 	if err := json.Unmarshal([]byte(started.output.String()), &endpoint); err != nil || endpoint.Scope != "app" || endpoint.Service == nil || *endpoint.Service != "api" || endpoint.Capability == "" {
 		t.Fatalf("runtime did not return the scoped api app endpoint: %v", err)
 	}
-	client := &http.Client{Timeout: 35 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
+	client := &http.Client{Timeout: 75 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
 	request := func(operation string, value any, target any) int {
 		t.Helper()
 		body, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
 		}
-		operationCtx, cancel := context.WithTimeout(t.Context(), 35*time.Second)
+		operationCtx, cancel := context.WithTimeout(t.Context(), 75*time.Second)
 		defer cancel()
 		call, err := http.NewRequestWithContext(operationCtx, http.MethodPost, endpoint.Url+"/v1/"+operation, bytes.NewReader(body))
 		if err != nil {

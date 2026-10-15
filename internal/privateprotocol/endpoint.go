@@ -343,7 +343,11 @@ func callEndpoint(ctx context.Context, e Endpoint, method, path string, input, o
 	}
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	timeout := 30 * time.Second
+	if path == "/v1/unregister" {
+		timeout = 75 * time.Second
+	}
+	client := &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	if err != nil {
 		return err

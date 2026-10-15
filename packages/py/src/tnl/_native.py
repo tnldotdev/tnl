@@ -152,7 +152,9 @@ class NativeRuntime:
             headers["Content-Type"] = "application/json"
         try:
             async with httpx.AsyncClient(
-                timeout=30, follow_redirects=False, trust_env=False
+                timeout=75 if operation == "unregister" else 30,
+                follow_redirects=False,
+                trust_env=False,
             ) as client:
                 async with client.stream(
                     "GET" if get else "POST",

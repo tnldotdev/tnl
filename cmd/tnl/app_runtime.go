@@ -330,7 +330,8 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	if placement != nil {
 		handler = placement.Handler(capabilities, handler)
 	}
-	server := &http.Server{Handler: handler, BaseContext: func(net.Listener) context.Context { return ctx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: privateprotocol.MaxBytes}
+	// unregister joins the publication after draining its visitor streams.
+	server := &http.Server{Handler: handler, BaseContext: func(net.Listener) context.Context { return ctx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: privateprotocol.MaxBytes}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	defer func() {
