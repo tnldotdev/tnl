@@ -158,7 +158,7 @@ try {
         "Metadata-Version: 2.4",
         "Name: tnldotdev-tnl",
         `Version: ${version}`,
-        "Summary: public URLs for Python ASGI applications",
+        "Summary: take a shortcut through the internet.",
         "License-Expression: MIT",
         "Description-Content-Type: text/markdown",
         ...legalFiles.map((name) => `License-File: ${name}`),

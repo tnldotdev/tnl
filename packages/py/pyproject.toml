@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "tnldotdev-tnl"
 version = "0.0.0.dev0"
-description = "public urls for collaborative dev."
+description = "take a shortcut through the internet."
 readme = "readme.md"
 requires-python = ">=3.12"
 license = "MIT"
