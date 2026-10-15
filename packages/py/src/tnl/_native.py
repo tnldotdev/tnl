@@ -65,8 +65,8 @@ class NativeRuntime:
         try:
             mounted = os.environ.get("TNL_APP_ENDPOINT")
             if mounted is not None:
-                # a Compose app can start before its publisher writes its
-                # scoped descriptor. only absence is retried; an unsafe or
+                # an app can start before its publisher writes the scoped
+                # descriptor. only absence is retried; an unsafe or
                 # malformed descriptor and an unreachable owner fail closed.
                 deadline = asyncio.get_running_loop().time() + 30
                 while True:

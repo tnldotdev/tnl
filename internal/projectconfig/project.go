@@ -138,7 +138,7 @@ func (p Project) AppService(cwd, selected string) (string, error) {
 func (p Project) EffectiveService(name string) (config.TNL, error) {
 	base := p.Config
 	result := config.TNL{
-		Server: base.Server, Team: base.Team, Feedback: base.Feedback, OAuth: base.OAuth, Publisher: base.Publisher,
+		Server: base.Server, Team: base.Team, Feedback: base.Feedback, OAuth: base.OAuth,
 		Inspection: config.MergeInspection(base.Inspection, nil),
 		Webhooks:   base.Webhooks, Tunnel: cloneTunnel(base.Tunnel), Publish: config.ServicePublish(config.Service{}),
 	}
@@ -243,14 +243,6 @@ func (p Project) ComposeProject(name string) (string, error) {
 		return *service.Target.Project, nil
 	}
 	return p.Worktree.Label.FullLabel, nil
-}
-
-// PublisherComposeFile resolves the selected project's Compose file.
-func (p Project) PublisherComposeFile() (string, error) {
-	if p.Config.Publisher == nil || p.Config.Publisher.Type != "compose" {
-		return "", errors.New("publisher has no compose placement")
-	}
-	return p.resolveComposeFile(p.Config.Publisher.File)
 }
 
 // ComposeFile resolves a configured Compose file and rejects symlink escapes.

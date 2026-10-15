@@ -47,7 +47,6 @@ type TargetReferences<Config> = {
 type Service = NonNullable<NonNullable<TnlConfig["services"]>[string]>;
 export type TnlServiceConfig = Service;
 export type TnlServiceTarget = NonNullable<Service["target"]>;
-export type TnlPublisher = NonNullable<TnlConfig["publisher"]>;
 export type TnlProtocol = NonNullable<Service["protocol"]>;
 type Alias = NonNullable<NonNullable<TnlConfig["aliases"]>[string]>;
 type Webhook = NonNullable<NonNullable<TnlConfig["webhooks"]>[string]>;
