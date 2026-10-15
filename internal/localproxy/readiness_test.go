@@ -14,6 +14,9 @@ func TestReadinessHeadersDoNotWaitForHTMLBodyModification(t *testing.T) {
 	backendDone := make(chan struct{})
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(backendDone)
+		if r.Header.Get(ReadinessProbeHeader) != "" {
+			t.Error("readiness proof reached target")
+		}
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(200)
 		_, _ = w.Write([]byte("<html>"))
@@ -32,7 +35,7 @@ func TestReadinessHeadersDoNotWaitForHTMLBodyModification(t *testing.T) {
 	}
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.TLS = &tls.ConnectionState{ServerName: "app.example"}
-		handler.ServeHTTP(w, r)
+		handler.ServeHTTP(w, WithReadinessProbe(r))
 	}))
 	defer proxy.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
