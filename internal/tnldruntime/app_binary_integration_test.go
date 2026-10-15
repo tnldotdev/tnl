@@ -24,7 +24,7 @@ import (
 // an ordinary app keeps its own listener. the local tnl runtime publishes it
 // after confirming the current registration and stops publishing when it ends.
 func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
-	fixture := startIntegrationBinaryStandalone(t)
+	fixture := startIntegrationBinaryStandalone(t, "simple")
 	t.Cleanup(func() {
 		if t.Failed() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
