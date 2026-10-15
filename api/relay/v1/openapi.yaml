@@ -3,8 +3,8 @@ info:
   title: tnl relay API
   version: 1.0.0
   license:
-    name: MIT
-    identifier: MIT
+    name: BSD-3-Clause
+    identifier: BSD-3-Clause
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://relay-control.internal
