@@ -1,5 +1,7 @@
 # tnldotdev-tnl
 
+take a shortcut through the internet.
+
 Use a Python ASGI app to publish a temporary public URL through tnl. Install
 the wheel for your macOS or Linux arm64 or x64 machine:
 
