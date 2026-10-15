@@ -1,5 +1,5 @@
 -- name: EnsurePublicURLUsageConfiguration :one
-INSERT INTO control.public_url_usage_configuration (
+INSERT INTO control.visitor_network_hash_keys (
     id,
     visitor_network_hash_master_key_ciphertext,
     visitor_network_hash_master_key_storage_key_id,
@@ -168,7 +168,7 @@ INSERT INTO control.public_url_usage_buckets (
     egress_bytes,
     histogram_data,
     finalized,
-    complete,
+    coverage_complete,
     finalized_at,
     updated_at
 )
@@ -288,7 +288,7 @@ WITH finalizable AS (
 )
 UPDATE control.public_url_usage_buckets AS buckets
 SET finalized = true,
-    complete = finalizable.complete,
+    coverage_complete = finalizable.complete,
     observed_through = CASE
         WHEN finalizable.complete THEN buckets.bucket_end
         ELSE buckets.observed_through

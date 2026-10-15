@@ -48,14 +48,14 @@ func TestGuestSessionIsSavedForTheServerAndProtected(t *testing.T) {
 		t.Fatalf("missing guest state store = %q, typed %t", reason, typed)
 	}
 	stored, err := database.queries.GetGuestSession(t.Context(), "https://control.example")
-	if err != nil || len(stored.StoredAccessToken) == 0 {
+	if err != nil || len(stored.AccessTokenCiphertext) == 0 {
 		t.Fatalf("guest credential missing from client state: %v", err)
 	}
 	var sourceColumns int
-	if err := database.db.QueryRowContext(t.Context(), `SELECT count(*) FROM pragma_table_info('guest_sessions') WHERE name = 'source_ip'`).Scan(&sourceColumns); err != nil || sourceColumns != 0 {
+	if err := database.db.QueryRowContext(t.Context(), `SELECT count(*) FROM pragma_table_info('guest_demo_sessions') WHERE name = 'source_ip'`).Scan(&sourceColumns); err != nil || sourceColumns != 0 {
 		t.Fatalf("guest client state retained a source IP column: %d, %v", sourceColumns, err)
 	}
-	if runtime.GOOS == "darwin" && bytes.Contains(stored.StoredAccessToken, []byte(token)) {
+	if runtime.GOOS == "darwin" && bytes.Contains(stored.AccessTokenCiphertext, []byte(token)) {
 		t.Fatal("guest credential stored in plaintext on macOS")
 	}
 	read, found, err := store.GuestSession(t.Context())

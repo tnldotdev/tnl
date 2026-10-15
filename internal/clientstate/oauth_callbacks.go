@@ -84,10 +84,11 @@ func (d *Database) ConsumeOAuthCallback(ctx context.Context, server, hostname, s
 	if count != 1 {
 		return OAuthCallback{}, TunnelInfo{}, sql.ErrNoRows
 	}
-	if row.OriginHostname != "" && row.OriginHostname != row.Hostname {
+	if row.OriginHostname != "" && row.OriginHostname != row.Hostname.String {
 		count, err := queries.SaveOAuthAliasReturn(ctx, clientstatedb.SaveOAuthAliasReturnParams{
 			ServerOrigin: server, Hostname: row.OriginHostname, StateDigest: digest[:], CallbackPath: row.CallbackPath,
 			PublicURLID: row.PublicURLID, PublishRunNumber: row.PublishRunNumber, ExpiresAt: row.ExpiresAt,
+			Now: d.now().UTC().UnixNano(),
 		})
 		if err != nil {
 			return OAuthCallback{}, TunnelInfo{}, err
@@ -101,7 +102,7 @@ func (d *Database) ConsumeOAuthCallback(ctx context.Context, server, hostname, s
 	}
 	origin := row.OriginHostname
 	if origin == "" {
-		origin = row.Hostname
+		origin = row.Hostname.String
 	}
 	return OAuthCallback{TunnelID: row.TunnelID, Path: row.CallbackPath}, TunnelInfo{
 		ID: row.TunnelID, Hostname: origin, PublicURL: "https://" + origin,
@@ -129,7 +130,7 @@ func (d *Database) AdmitAliasOAuthReturn(ctx context.Context, server, hostname, 
 	}
 	count, err := d.queries.ConsumeOAuthAliasReturn(ctx, clientstatedb.ConsumeOAuthAliasReturnParams{
 		ServerOrigin: server, Hostname: hostname, StateDigest: digest[:], CallbackPath: path,
-		PublicURLID: publicURLID, PublishRunNumber: int64(number), Now: d.now().UTC().UnixNano(),
+		PublicURLID: publicURLID, PublishRunNumber: int64(number), Now: sql.NullInt64{Int64: d.now().UTC().UnixNano(), Valid: true},
 	})
 	if err != nil {
 		return err

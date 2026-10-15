@@ -253,7 +253,7 @@ func publicURLUsageDeliveryWork(
 		CapacityDenials: uint64(bucket.CapacityDenials), VisitorStreamOpenFailures: uint64(bucket.VisitorStreamOpenFailures),
 		SuccessfulStreams: uint64(bucket.SuccessfulStreams), ConnectionNanoseconds: uint64(bucket.ConnectionNanoseconds),
 		IngressBytes: uint64(bucket.IngressBytes), EgressBytes: uint64(bucket.EgressBytes),
-		Checkpoint: checkpoint, Complete: bucket.Complete, Attempts: uint64(delivery.Attempts),
+		Checkpoint: checkpoint, Complete: bucket.CoverageComplete, Attempts: uint64(delivery.Attempts),
 		WorkerID: delivery.WorkOwner.String, WorkEpoch: uint64(delivery.WorkEpoch), WorkExpiresAt: delivery.WorkExpiresAt.Time,
 	}, nil
 }

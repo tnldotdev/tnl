@@ -45,7 +45,7 @@ func (q *Queries) EnsureGuestPrincipal(ctx context.Context, arg EnsureGuestPrinc
 }
 
 const ensureGuestRetryMasterKey = `-- name: EnsureGuestRetryMasterKey :one
-INSERT INTO control.runtime_secret(id, guest_retry_master_key_ciphertext, guest_retry_master_key_storage_key_id, created_at)
+INSERT INTO control.guest_retry_keys(id, guest_retry_master_key_ciphertext, guest_retry_master_key_storage_key_id, created_at)
 VALUES (1, $1, $2, $3)
 ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
 RETURNING guest_retry_master_key_ciphertext, guest_retry_master_key_storage_key_id

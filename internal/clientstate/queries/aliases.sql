@@ -1,7 +1,7 @@
 -- name: InitializeProjectAlias :exec
 INSERT INTO project_aliases (
-    id, server_origin, project_key, team_id, membership_id, namespace, name,
-    hostname, service, fingerprint, selected_project, selection_revision
+    id, server_origin, primary_project_root, team_id, membership_id, namespace, name,
+    hostname, service, fingerprint, selected_project_root, selection_revision
 )
 SELECT sqlc.arg(alias_id), t.server_origin, sqlc.arg(project_key), sqlc.arg(team_id),
     sqlc.arg(membership_id), sqlc.arg(namespace), sqlc.arg(name), sqlc.arg(hostname),
@@ -14,7 +14,7 @@ ON CONFLICT DO NOTHING;
 
 -- name: ProjectAliasByScope :one
 SELECT * FROM project_aliases
-WHERE server_origin = sqlc.arg(server_origin) AND project_key = sqlc.arg(project_key)
+WHERE server_origin = sqlc.arg(server_origin) AND primary_project_root = sqlc.arg(project_key)
     AND team_id = sqlc.arg(team_id) AND membership_id = sqlc.arg(membership_id)
     AND namespace = sqlc.arg(namespace) AND name = sqlc.arg(name);
 
@@ -41,7 +41,7 @@ ON CONFLICT(alias_id, tunnel_id) DO UPDATE SET fingerprint = excluded.fingerprin
 
 -- name: LockAliasSelection :one
 UPDATE project_aliases SET selection_revision = selection_revision
-WHERE server_origin = sqlc.arg(server_origin) AND project_key = sqlc.arg(project_key)
+WHERE server_origin = sqlc.arg(server_origin) AND primary_project_root = sqlc.arg(project_key)
     AND team_id = sqlc.arg(team_id) AND membership_id = sqlc.arg(membership_id)
     AND namespace = sqlc.arg(namespace) AND name = sqlc.arg(name)
 RETURNING *;
@@ -60,12 +60,12 @@ ORDER BY t.started_at DESC, t.id DESC LIMIT 1;
 SELECT count(*) FROM alias_declarations declaration
 JOIN project_aliases alias ON alias.id = declaration.alias_id
 JOIN local_tunnels t ON t.id = declaration.tunnel_id
-WHERE alias.id = sqlc.arg(alias_id) AND t.project_root = alias.selected_project
+WHERE alias.id = sqlc.arg(alias_id) AND t.project_root = alias.selected_project_root
     AND declaration.fingerprint = alias.fingerprint AND t.service = alias.service
     AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now);
 
 -- name: SetAliasSelectedProject :execrows
-UPDATE project_aliases SET selected_project = sqlc.arg(project_root), selection_revision = selection_revision + 1, failure_reason = ''
+UPDATE project_aliases SET selected_project_root = sqlc.arg(project_root), selection_revision = selection_revision + 1, failure_reason = ''
 WHERE id = sqlc.arg(alias_id) AND selection_revision = sqlc.arg(expected_revision)
     AND selection_revision < 9223372036854775807;
 

@@ -20,8 +20,9 @@ import (
 	tnlsqlite "github.com/tnldotdev/tnl/internal/sqlite"
 )
 
-// bump this only when the local SQLite schema intentionally starts fresh.
-const databaseFormatVersion = 2
+// databaseFilename identifies the fresh client state baseline. it is independent
+// of the local event schema and the SQLite migration number.
+const databaseFilename = "v1.db"
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -34,6 +35,7 @@ type Database struct {
 	queries           *clientstatedb.Queries
 	now               func() time.Time
 	heartbeatInterval time.Duration
+	secrets           secretProtector
 }
 
 // Root returns the canonical, validated directory used by this client state.
@@ -62,7 +64,7 @@ func (s *Store) SaveSelectedTeam(ctx context.Context, teamID string) error {
 		return errors.New("clientstate: invalid selected team")
 	}
 	if err := s.database.queries.SetSelectedTeam(ctx, clientstatedb.SetSelectedTeamParams{
-		TeamID: teamID, Now: s.database.now().UTC().UnixNano(), Origin: s.controlEndpoint,
+		TeamID: sql.NullString{String: teamID, Valid: true}, Now: s.database.now().UTC().UnixNano(), Origin: s.controlEndpoint,
 	}); err != nil {
 		return fmt.Errorf("clientstate: save selected team: %w", err)
 	}
@@ -71,7 +73,7 @@ func (s *Store) SaveSelectedTeam(ctx context.Context, teamID string) error {
 
 // DatabasePath returns the shared client database path within root.
 func DatabasePath(root string) string {
-	return filepath.Join(root, fmt.Sprintf("client-v%d.db", databaseFormatVersion))
+	return filepath.Join(root, databaseFilename)
 }
 
 func DefaultDir() (string, error) {
@@ -105,12 +107,17 @@ func Open(ctx context.Context, root string) (result *Database, retErr error) {
 		return nil, err
 	}
 	defer migrationLock.Close()
+	exists := false
 	if info, statErr := os.Lstat(path); statErr == nil {
+		exists = true
 		if err := validatePrivateFile(info, false); err != nil {
 			return nil, fmt.Errorf("clientstate: database: %w", err)
 		}
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("clientstate: inspect database: %w", statErr)
+	}
+	if err := preparePlatformProtection(ctx, root, exists); err != nil {
+		return nil, err
 	}
 	migrations, err := fs.Sub(migrationFiles, "migrations")
 	if err != nil {
@@ -120,9 +127,15 @@ func Open(ctx context.Context, root string) (result *Database, retErr error) {
 	if err != nil {
 		return nil, fmt.Errorf("clientstate: %w", err)
 	}
+	if err := verifyPlatformProtection(ctx, root, db, exists); err != nil {
+		db.Close()
+		return nil, err
+	}
+	rootDigest := sha256.Sum256([]byte(root))
 	return &Database{
 		root: root, locksDir: locksDir, db: db, queries: clientstatedb.New(db), now: time.Now,
 		heartbeatInterval: tunnelHeartbeatInterval,
+		secrets:           newSecretProtector(hex.EncodeToString(rootDigest[:]), filepath.Join(locksDir, "system-keychain-initialization.lock"), root),
 	}, nil
 }
 
@@ -155,6 +168,7 @@ func (d *Database) Server(ctx context.Context, serverOrigin string) (*Store, err
 		database: d, controlEndpoint: serverOrigin, locksDir: locksDir,
 		secrets: newSecretProtector(
 			hex.EncodeToString(profileDigest[:]), filepath.Join(locksDir, "keychain-initialization.lock"),
+			d.root,
 		),
 	}, nil
 }

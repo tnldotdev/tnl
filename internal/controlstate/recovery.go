@@ -67,7 +67,7 @@ func (d *Database) ObservePublicURLRecovery(
 	if episode.PublicURLID != publicURLID || !matchesPositiveInt64(episode.PublishRunNumber, publishRunNumber) || !episode.OpenedAt.Valid {
 		return PublicURLRecoveryObservation{}, ErrPublicURLRecoveryEpisodeStale
 	}
-	if episode.State == "observed" && episode.ObservedAt.Valid && episode.ObservedSeconds.Valid {
+	if episode.State == "observed" && episode.ObservedAt.Valid && episode.RecoverySeconds.Valid {
 		if err := tx.Commit(ctx); err != nil {
 			return PublicURLRecoveryObservation{}, fmt.Errorf("controlstate: observe route recovery: commit retry: %w", err)
 		}
@@ -105,7 +105,7 @@ func recoveryObservation(episode controlstatedb.ControlPublicUrlRecoveryEpisode)
 	return PublicURLRecoveryObservation{
 		RecoveryEpisodeID: uint64(episode.ID), PublicURLID: episode.PublicURLID,
 		PublishRunNumber: uint64(episode.PublishRunNumber), OpenedAt: episode.OpenedAt.Time,
-		ObservedAt: episode.ObservedAt.Time, ObservedSeconds: episode.ObservedSeconds.Float64,
+		ObservedAt: episode.ObservedAt.Time, ObservedSeconds: episode.RecoverySeconds.Float64,
 	}
 }
 

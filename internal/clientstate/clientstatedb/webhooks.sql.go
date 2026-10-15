@@ -7,10 +7,11 @@ package clientstatedb
 
 import (
 	"context"
+	"database/sql"
 )
 
 const activeWebhookEndpoints = `-- name: ActiveWebhookEndpoints :many
-SELECT e.tunnel_id, e.name, e.service, e.path, e.definition, e.fingerprint FROM webhook_endpoints e JOIN local_tunnels t ON t.id = e.tunnel_id
+SELECT e.tunnel_id, e.name, e.service, e.path, e.definition, e.fingerprint FROM webhook_declarations e JOIN local_tunnels t ON t.id = e.tunnel_id
 WHERE t.server_origin = ?1 AND t.integration_group = ?2
   AND t.stopped_at IS NULL AND t.lease_expires_at > ?3
   AND t.state IN ('starting', 'provisioning', 'ready')
@@ -23,15 +24,15 @@ type ActiveWebhookEndpointsParams struct {
 	Now              int64
 }
 
-func (q *Queries) ActiveWebhookEndpoints(ctx context.Context, arg ActiveWebhookEndpointsParams) ([]WebhookEndpoint, error) {
+func (q *Queries) ActiveWebhookEndpoints(ctx context.Context, arg ActiveWebhookEndpointsParams) ([]WebhookDeclaration, error) {
 	rows, err := q.db.QueryContext(ctx, activeWebhookEndpoints, arg.ServerOrigin, arg.IntegrationGroup, arg.Now)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []WebhookEndpoint
+	var items []WebhookDeclaration
 	for rows.Next() {
-		var i WebhookEndpoint
+		var i WebhookDeclaration
 		if err := rows.Scan(
 			&i.TunnelID,
 			&i.Name,
@@ -55,7 +56,7 @@ func (q *Queries) ActiveWebhookEndpoints(ctx context.Context, arg ActiveWebhookE
 
 const readyWebhookReceivers = `-- name: ReadyWebhookReceivers :many
 SELECT t.id, t.server_origin, t.integration_group, t.hostname, t.target, t.public_url_id, t.publish_run_number, e.fingerprint
-FROM webhook_endpoints e JOIN local_tunnels t ON t.id = e.tunnel_id
+FROM webhook_declarations e JOIN local_tunnels t ON t.id = e.tunnel_id
 WHERE e.name = ?1 AND t.server_origin = ?2
   AND t.integration_group = ?3 AND e.service = t.service
   AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > ?4
@@ -74,10 +75,10 @@ type ReadyWebhookReceiversRow struct {
 	ID               string
 	ServerOrigin     string
 	IntegrationGroup string
-	Hostname         string
-	Target           string
-	PublicURLID      string
-	PublishRunNumber int64
+	Hostname         sql.NullString
+	Target           sql.NullString
+	PublicURLID      sql.NullString
+	PublishRunNumber sql.NullInt64
 	Fingerprint      []byte
 }
 
@@ -119,19 +120,19 @@ func (q *Queries) ReadyWebhookReceivers(ctx context.Context, arg ReadyWebhookRec
 }
 
 const registerWebhookEndpoint = `-- name: RegisterWebhookEndpoint :execrows
-INSERT INTO webhook_endpoints (tunnel_id, name, service, path, definition, fingerprint)
+INSERT INTO webhook_declarations (tunnel_id, name, service, path, definition, fingerprint)
 SELECT t.id, ?1, ?2, ?3, ?4, ?5
 FROM local_tunnels t
 WHERE t.id = ?6 AND t.integration_group <> '' AND t.stopped_at IS NULL AND t.lease_expires_at > ?7
   AND NOT EXISTS (
-    SELECT 1 FROM webhook_endpoints e JOIN local_tunnels other ON other.id = e.tunnel_id
+    SELECT 1 FROM webhook_declarations e JOIN local_tunnels other ON other.id = e.tunnel_id
     WHERE other.server_origin = t.server_origin AND other.integration_group = t.integration_group
       AND other.stopped_at IS NULL AND other.lease_expires_at > ?7
       AND ((e.name = ?1 AND e.fingerprint <> ?5)
            OR (e.path = ?3 AND e.name <> ?1))
   )
 ON CONFLICT(tunnel_id, name) DO UPDATE SET fingerprint = excluded.fingerprint
-WHERE webhook_endpoints.fingerprint = excluded.fingerprint
+WHERE webhook_declarations.fingerprint = excluded.fingerprint
 `
 
 type RegisterWebhookEndpointParams struct {
@@ -170,9 +171,9 @@ WHERE id = ?1 AND server_origin = ?2 AND target = ?3
 type WebhookReceiverCurrentParams struct {
 	TunnelID         string
 	ServerOrigin     string
-	Target           string
-	PublicURLID      string
-	PublishRunNumber int64
+	Target           sql.NullString
+	PublicURLID      sql.NullString
+	PublishRunNumber sql.NullInt64
 	Now              int64
 }
 

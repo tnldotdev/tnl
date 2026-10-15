@@ -12,7 +12,7 @@ import (
 )
 
 const attachPublisherRun = `-- name: AttachPublisherRun :exec
-INSERT INTO control.publish_run_publisher_identities(publish_run_id, publisher_identity_id, publisher_grant_id)
+INSERT INTO control.publish_run_publisher_grants(publish_run_id, publisher_identity_id, publisher_grant_id)
 VALUES ($1, $2, $3)
 `
 
@@ -49,14 +49,14 @@ func (q *Queries) ClaimPublisherAssertion(ctx context.Context, arg ClaimPublishe
 }
 
 const getPublisherAccess = `-- name: GetPublisherAccess :one
-SELECT digest, publisher_identity_id, grant_id, key_id, created_at, expires_at FROM control.publisher_access_tokens WHERE digest = $1
+SELECT access_token_digest, publisher_identity_id, grant_id, key_id, created_at, expires_at FROM control.publisher_access_tokens WHERE access_token_digest = $1
 `
 
-func (q *Queries) GetPublisherAccess(ctx context.Context, digest []byte) (ControlPublisherAccessToken, error) {
-	row := q.db.QueryRow(ctx, getPublisherAccess, digest)
+func (q *Queries) GetPublisherAccess(ctx context.Context, accessTokenDigest []byte) (ControlPublisherAccessToken, error) {
+	row := q.db.QueryRow(ctx, getPublisherAccess, accessTokenDigest)
 	var i ControlPublisherAccessToken
 	err := row.Scan(
-		&i.Digest,
+		&i.AccessTokenDigest,
 		&i.PublisherIdentityID,
 		&i.GrantID,
 		&i.KeyID,
@@ -172,23 +172,23 @@ func (q *Queries) GetPublisherKey(ctx context.Context, arg GetPublisherKeyParams
 }
 
 const getPublisherRun = `-- name: GetPublisherRun :one
-SELECT publish_run_id, publisher_identity_id, publisher_grant_id FROM control.publish_run_publisher_identities WHERE publish_run_id = $1
+SELECT publish_run_id, publisher_identity_id, publisher_grant_id FROM control.publish_run_publisher_grants WHERE publish_run_id = $1
 `
 
-func (q *Queries) GetPublisherRun(ctx context.Context, publishRunID string) (ControlPublishRunPublisherIdentity, error) {
+func (q *Queries) GetPublisherRun(ctx context.Context, publishRunID string) (ControlPublishRunPublisherGrant, error) {
 	row := q.db.QueryRow(ctx, getPublisherRun, publishRunID)
-	var i ControlPublishRunPublisherIdentity
+	var i ControlPublishRunPublisherGrant
 	err := row.Scan(&i.PublishRunID, &i.PublisherIdentityID, &i.PublisherGrantID)
 	return i, err
 }
 
 const insertPublisherAccess = `-- name: InsertPublisherAccess :exec
-INSERT INTO control.publisher_access_tokens(digest, publisher_identity_id, grant_id, key_id, created_at, expires_at)
+INSERT INTO control.publisher_access_tokens(access_token_digest, publisher_identity_id, grant_id, key_id, created_at, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertPublisherAccessParams struct {
-	Digest              []byte
+	AccessTokenDigest   []byte
 	PublisherIdentityID string
 	GrantID             string
 	KeyID               string
@@ -198,7 +198,7 @@ type InsertPublisherAccessParams struct {
 
 func (q *Queries) InsertPublisherAccess(ctx context.Context, arg InsertPublisherAccessParams) error {
 	_, err := q.db.Exec(ctx, insertPublisherAccess,
-		arg.Digest,
+		arg.AccessTokenDigest,
 		arg.PublisherIdentityID,
 		arg.GrantID,
 		arg.KeyID,
@@ -231,13 +231,13 @@ func (q *Queries) InsertPublisherAllocation(ctx context.Context, arg InsertPubli
 }
 
 const insertPublisherEnrollment = `-- name: InsertPublisherEnrollment :one
-INSERT INTO control.publisher_enrollments(id, token_digest, team_id, name, identity_kind, grant_kind, public_url_id, domain_id, namespace, membership_id, public_url_scope, created_by_identity_id, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id, token_digest, team_id, name, identity_kind, grant_kind, public_url_id, domain_id, namespace, membership_id, public_url_scope, created_by_identity_id, created_at, expires_at, redeemed_identity_id, redeemed_key_id, redeemed_grant_id, redeemed_public_key, redeemed_at
+INSERT INTO control.publisher_enrollments(id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, public_url_id, domain_id, namespace, membership_id, public_url_scope, created_by_identity_id, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, public_url_id, domain_id, namespace, membership_id, public_url_scope, created_by_identity_id, created_at, expires_at, redeemed_identity_id, redeemed_key_id, redeemed_grant_id, redeemed_public_key, redeemed_at
 `
 
 type InsertPublisherEnrollmentParams struct {
 	ID                  string
-	TokenDigest         []byte
+	EnrollmentKeyDigest []byte
 	TeamID              string
 	Name                string
 	IdentityKind        string
@@ -255,7 +255,7 @@ type InsertPublisherEnrollmentParams struct {
 func (q *Queries) InsertPublisherEnrollment(ctx context.Context, arg InsertPublisherEnrollmentParams) (ControlPublisherEnrollment, error) {
 	row := q.db.QueryRow(ctx, insertPublisherEnrollment,
 		arg.ID,
-		arg.TokenDigest,
+		arg.EnrollmentKeyDigest,
 		arg.TeamID,
 		arg.Name,
 		arg.IdentityKind,
@@ -272,7 +272,7 @@ func (q *Queries) InsertPublisherEnrollment(ctx context.Context, arg InsertPubli
 	var i ControlPublisherEnrollment
 	err := row.Scan(
 		&i.ID,
-		&i.TokenDigest,
+		&i.EnrollmentKeyDigest,
 		&i.TeamID,
 		&i.Name,
 		&i.IdentityKind,
@@ -484,7 +484,7 @@ func (q *Queries) ListPublisherIdentities(ctx context.Context, arg ListPublisher
 }
 
 const lockPublisherEnrollment = `-- name: LockPublisherEnrollment :one
-SELECT id, token_digest, team_id, name, identity_kind, grant_kind, public_url_id, domain_id, namespace, membership_id, public_url_scope, created_by_identity_id, created_at, expires_at, redeemed_identity_id, redeemed_key_id, redeemed_grant_id, redeemed_public_key, redeemed_at FROM control.publisher_enrollments WHERE id = $1 FOR UPDATE
+SELECT id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, public_url_id, domain_id, namespace, membership_id, public_url_scope, created_by_identity_id, created_at, expires_at, redeemed_identity_id, redeemed_key_id, redeemed_grant_id, redeemed_public_key, redeemed_at FROM control.publisher_enrollments WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockPublisherEnrollment(ctx context.Context, id string) (ControlPublisherEnrollment, error) {
@@ -492,7 +492,7 @@ func (q *Queries) LockPublisherEnrollment(ctx context.Context, id string) (Contr
 	var i ControlPublisherEnrollment
 	err := row.Scan(
 		&i.ID,
-		&i.TokenDigest,
+		&i.EnrollmentKeyDigest,
 		&i.TeamID,
 		&i.Name,
 		&i.IdentityKind,

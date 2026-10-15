@@ -99,11 +99,11 @@ func (d *Database) PublishRunShareState(ctx context.Context, authentication Publ
 	}
 	result := make([]PublisherShare, 0, len(rows))
 	for _, row := range rows {
-		if len(row.SecretFingerprint) != 32 {
+		if len(row.SecretDigest) != 32 {
 			return nil, errors.New("controlstate: share secret fingerprint is invalid")
 		}
 		entry := PublisherShare{ID: row.ID, ExpiresAt: row.ExpiresAt.Time}
-		copy(entry.SecretFingerprint[:], row.SecretFingerprint)
+		copy(entry.SecretFingerprint[:], row.SecretDigest)
 		for _, cookie := range cookies {
 			if cookie.ShareID == row.ID && len(cookie.TokenDigest) == 32 && cookie.ExpiresAt.Time.After(now) {
 				var digest [32]byte
@@ -165,7 +165,7 @@ func (d *Database) RedeemShare(ctx context.Context, authentication PublishRunAut
 		if err != nil {
 			return ShareRedemption{}, fmt.Errorf("controlstate: consume share handoff: %w", err)
 		}
-		shareID, nextURL, bridge = consumed.ShareID, consumed.NextUrl, consumed.Bridge
+		shareID, nextURL, bridge = consumed.ShareID, consumed.RedirectUrl, consumed.Bridge
 	}
 	share, err := queries.GetActiveShareForPublicURL(ctx, controlstatedb.GetActiveShareForPublicURLParams{
 		ShareID: shareID, PublicURLID: authentication.PublicURLID, Now: timestamptz(now),
@@ -178,7 +178,7 @@ func (d *Database) RedeemShare(ctx context.Context, authentication PublishRunAut
 	}
 	if len(secret) == 32 {
 		digest := sha256.Sum256(secret)
-		if subtle.ConstantTimeCompare(digest[:], share.SecretFingerprint) != 1 {
+		if subtle.ConstantTimeCompare(digest[:], share.SecretDigest) != 1 {
 			return ShareRedemption{}, ErrShareNotFound
 		}
 		nextURL = "https://" + route.CanonicalHostname + "/"

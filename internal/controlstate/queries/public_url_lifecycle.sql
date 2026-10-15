@@ -154,7 +154,7 @@ FOR UPDATE;
 UPDATE control.public_url_recovery_episodes
 SET state = 'observed',
     observed_at = sqlc.arg(observed_at),
-    observed_seconds = sqlc.arg(observed_seconds)
+    recovery_seconds = sqlc.arg(observed_seconds)
 WHERE id = sqlc.arg(recovery_episode_id)
   AND public_url_id = sqlc.arg(public_url_id)
   AND publish_run_number = sqlc.arg(publish_run_number)
