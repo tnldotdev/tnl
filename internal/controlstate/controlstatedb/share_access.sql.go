@@ -22,7 +22,7 @@ WHERE handoff.token_digest = $2
   AND share.id = handoff.share_id
   AND share.revoked_at IS NULL
   AND share.expires_at > $1
-RETURNING handoff.share_id, handoff.next_url, handoff.bridge
+RETURNING handoff.share_id, handoff.redirect_url, handoff.bridge
 `
 
 type ConsumeShareHandoffParams struct {
@@ -32,15 +32,15 @@ type ConsumeShareHandoffParams struct {
 }
 
 type ConsumeShareHandoffRow struct {
-	ShareID string
-	NextUrl string
-	Bridge  bool
+	ShareID     string
+	RedirectUrl string
+	Bridge      bool
 }
 
 func (q *Queries) ConsumeShareHandoff(ctx context.Context, arg ConsumeShareHandoffParams) (ConsumeShareHandoffRow, error) {
 	row := q.db.QueryRow(ctx, consumeShareHandoff, arg.Now, arg.TokenDigest, arg.PublicURLID)
 	var i ConsumeShareHandoffRow
-	err := row.Scan(&i.ShareID, &i.NextUrl, &i.Bridge)
+	err := row.Scan(&i.ShareID, &i.RedirectUrl, &i.Bridge)
 	return i, err
 }
 
@@ -152,7 +152,7 @@ func (q *Queries) EnablePublishRunShareAccess(ctx context.Context, arg EnablePub
 }
 
 const getActiveShareForPublicURL = `-- name: GetActiveShareForPublicURL :one
-SELECT share.id, share.secret_fingerprint, share.expires_at
+SELECT share.id, share.secret_digest, share.expires_at
 FROM control.shares AS share
 JOIN control.share_public_urls AS included ON included.share_id = share.id
 WHERE share.id = $1
@@ -168,15 +168,15 @@ type GetActiveShareForPublicURLParams struct {
 }
 
 type GetActiveShareForPublicURLRow struct {
-	ID                string
-	SecretFingerprint []byte
-	ExpiresAt         pgtype.Timestamptz
+	ID           string
+	SecretDigest []byte
+	ExpiresAt    pgtype.Timestamptz
 }
 
 func (q *Queries) GetActiveShareForPublicURL(ctx context.Context, arg GetActiveShareForPublicURLParams) (GetActiveShareForPublicURLRow, error) {
 	row := q.db.QueryRow(ctx, getActiveShareForPublicURL, arg.ShareID, arg.PublicURLID, arg.Now)
 	var i GetActiveShareForPublicURLRow
-	err := row.Scan(&i.ID, &i.SecretFingerprint, &i.ExpiresAt)
+	err := row.Scan(&i.ID, &i.SecretDigest, &i.ExpiresAt)
 	return i, err
 }
 
@@ -244,7 +244,7 @@ func (q *Queries) InsertShareCookie(ctx context.Context, arg InsertShareCookiePa
 }
 
 const insertShareHandoff = `-- name: InsertShareHandoff :one
-INSERT INTO control.share_handoffs (token_digest, share_id, public_url_id, team_id, next_url, bridge, created_at, expires_at)
+INSERT INTO control.share_handoffs (token_digest, share_id, public_url_id, team_id, redirect_url, bridge, created_at, expires_at)
 SELECT $1, share.id, $2, share.team_id,
        $3, $4, $5, $6
 FROM control.shares AS share
@@ -324,7 +324,7 @@ func (q *Queries) ListActiveShareCookiesForPublicURL(ctx context.Context, arg Li
 }
 
 const listActiveSharesForPublicURL = `-- name: ListActiveSharesForPublicURL :many
-SELECT share.id, share.secret_fingerprint, share.expires_at
+SELECT share.id, share.secret_digest, share.expires_at
 FROM control.shares AS share
 JOIN control.share_public_urls AS included ON included.share_id = share.id
 WHERE included.public_url_id = $1
@@ -339,9 +339,9 @@ type ListActiveSharesForPublicURLParams struct {
 }
 
 type ListActiveSharesForPublicURLRow struct {
-	ID                string
-	SecretFingerprint []byte
-	ExpiresAt         pgtype.Timestamptz
+	ID           string
+	SecretDigest []byte
+	ExpiresAt    pgtype.Timestamptz
 }
 
 func (q *Queries) ListActiveSharesForPublicURL(ctx context.Context, arg ListActiveSharesForPublicURLParams) ([]ListActiveSharesForPublicURLRow, error) {
@@ -353,7 +353,7 @@ func (q *Queries) ListActiveSharesForPublicURL(ctx context.Context, arg ListActi
 	var items []ListActiveSharesForPublicURLRow
 	for rows.Next() {
 		var i ListActiveSharesForPublicURLRow
-		if err := rows.Scan(&i.ID, &i.SecretFingerprint, &i.ExpiresAt); err != nil {
+		if err := rows.Scan(&i.ID, &i.SecretDigest, &i.ExpiresAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

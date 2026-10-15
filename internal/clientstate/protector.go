@@ -16,7 +16,7 @@ import (
 
 const wrappingKeySize = 32
 
-var sealedValuePrefix = []byte("tnl-sealed-v3\x00")
+var sealedValuePrefix = []byte("tnl-sealed-v1\x00")
 
 type secretProtector interface {
 	Seal(context.Context, string, []byte) ([]byte, error)
@@ -66,7 +66,7 @@ func (p *encryptedProtector) Open(ctx context.Context, secretContext string, sea
 }
 
 func (p *encryptedProtector) additionalData(secretContext string) []byte {
-	value, _ := json.Marshal([]string{"tnl client state v3", p.account, secretContext})
+	value, _ := json.Marshal([]string{"tnl client state v1", p.account, secretContext})
 	return value
 }
 
@@ -96,7 +96,7 @@ func (p scopedProtector) Open(ctx context.Context, name string, value []byte) ([
 
 // WrappingKeyPath is separate from the database and its backups. file protection
 // is the default outside macOS and can be explicitly selected for system state.
-func WrappingKeyPath(root string) string { return filepath.Join(root, "client-v3.wrapping-key") }
+func WrappingKeyPath(root string) string { return filepath.Join(root, "v1.wrapping-key") }
 
 func fileWrappingKey(root string, create bool) ([]byte, error) {
 	path := WrappingKeyPath(root)
@@ -143,7 +143,7 @@ func publishWrappingKey(root string, key []byte, checkpoint func(wrappingKeyPubl
 	if len(key) != wrappingKeySize {
 		return errors.New("clientstate: invalid wrapping key")
 	}
-	file, err := os.CreateTemp(root, ".client-v3-wrapping-key-*")
+	file, err := os.CreateTemp(root, ".v1-wrapping-key-*")
 	if err != nil {
 		return err
 	}

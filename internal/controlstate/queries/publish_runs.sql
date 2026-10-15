@@ -63,7 +63,7 @@ ORDER BY connection_slot;
 -- name: LockPublishRunCreationControl :one
 SELECT allowed
 FROM control.maintenance_controls
-WHERE control_name = 'publish_run_creation'
+WHERE operation = 'publish_run_creation'
 FOR SHARE;
 
 -- name: InsertPublishRun :one
@@ -207,15 +207,15 @@ WHERE publish_run_id = sqlc.arg(publish_run_id)
           AND EXISTS (
               SELECT services.relay_service_id
               FROM control.relay_services AS services
-              JOIN control.relay_service_assignment_totals AS totals USING (relay_service_id)
+               JOIN control.relay_service_reservations AS totals USING (relay_service_id)
               JOIN control.relay_leases AS leases USING (relay_service_id)
               WHERE services.relay_service_id = connections.relay_service_id
                 AND services.enabled
                 AND leases.lease_expires_at > sqlc.arg(assigned_at)
                 AND NOT leases.draining AND leases.protocol_version = 1
                 AND leases.connection_capacity > 0 AND leases.stream_capacity > 0
-              GROUP BY services.relay_service_id, totals.assignment_count
-              HAVING sum(leases.connection_capacity) >= totals.assignment_count
+               GROUP BY services.relay_service_id, totals.reserved_slot_count
+               HAVING sum(leases.connection_capacity) >= totals.reserved_slot_count
           )
       )
   )

@@ -10,7 +10,7 @@ import (
 )
 
 const getWebhookCatalog = `-- name: GetWebhookCatalog :one
-SELECT source_json, etag, checked_at, expires_at FROM webhook_catalog
+SELECT source_json, etag, checked_at, expires_at FROM webhook_source_cache
 WHERE server_origin = ?1 AND provider = ?2
 `
 
@@ -39,7 +39,7 @@ func (q *Queries) GetWebhookCatalog(ctx context.Context, arg GetWebhookCatalogPa
 }
 
 const putWebhookCatalog = `-- name: PutWebhookCatalog :exec
-INSERT INTO webhook_catalog (server_origin, provider, source_json, etag, checked_at, expires_at)
+INSERT INTO webhook_source_cache (server_origin, provider, source_json, etag, checked_at, expires_at)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
 ON CONFLICT(server_origin, provider) DO UPDATE SET source_json = excluded.source_json, etag = excluded.etag,
   checked_at = excluded.checked_at, expires_at = excluded.expires_at

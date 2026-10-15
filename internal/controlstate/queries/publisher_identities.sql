@@ -29,8 +29,8 @@ UPDATE control.publisher_grants SET revoked_at = COALESCE(revoked_at, sqlc.arg(n
 UPDATE control.publisher_identities SET revoked_at = COALESCE(revoked_at, sqlc.arg(now)) WHERE id = sqlc.arg(id) AND team_id = sqlc.arg(team_id);
 
 -- name: InsertPublisherEnrollment :one
-INSERT INTO control.publisher_enrollments(id, token_digest, team_id, name, identity_kind, grant_kind, public_url_id, domain_id, namespace, membership_id, public_url_scope, created_by_identity_id, created_at, expires_at)
-VALUES (sqlc.arg(id), sqlc.arg(token_digest), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(identity_kind), sqlc.arg(grant_kind), sqlc.narg(public_url_id), sqlc.narg(domain_id), sqlc.narg(namespace), sqlc.narg(membership_id), sqlc.narg(public_url_scope), sqlc.arg(created_by_identity_id), sqlc.arg(created_at), sqlc.arg(expires_at)) RETURNING *;
+INSERT INTO control.publisher_enrollments(id, enrollment_key_digest, team_id, name, identity_kind, grant_kind, public_url_id, domain_id, namespace, membership_id, public_url_scope, created_by_identity_id, created_at, expires_at)
+VALUES (sqlc.arg(id), sqlc.arg(enrollment_key_digest), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(identity_kind), sqlc.arg(grant_kind), sqlc.narg(public_url_id), sqlc.narg(domain_id), sqlc.narg(namespace), sqlc.narg(membership_id), sqlc.narg(public_url_scope), sqlc.arg(created_by_identity_id), sqlc.arg(created_at), sqlc.arg(expires_at)) RETURNING *;
 
 -- name: LockPublisherEnrollment :one
 SELECT * FROM control.publisher_enrollments WHERE id = sqlc.arg(id) FOR UPDATE;
@@ -51,11 +51,11 @@ ON CONFLICT DO NOTHING;
 DELETE FROM control.publisher_access_tokens WHERE publisher_identity_id = sqlc.arg(publisher_identity_id) AND expires_at <= sqlc.arg(now);
 
 -- name: InsertPublisherAccess :exec
-INSERT INTO control.publisher_access_tokens(digest, publisher_identity_id, grant_id, key_id, created_at, expires_at)
-VALUES (sqlc.arg(digest), sqlc.arg(publisher_identity_id), sqlc.arg(grant_id), sqlc.arg(key_id), sqlc.arg(created_at), sqlc.arg(expires_at));
+INSERT INTO control.publisher_access_tokens(access_token_digest, publisher_identity_id, grant_id, key_id, created_at, expires_at)
+VALUES (sqlc.arg(access_token_digest), sqlc.arg(publisher_identity_id), sqlc.arg(grant_id), sqlc.arg(key_id), sqlc.arg(created_at), sqlc.arg(expires_at));
 
 -- name: GetPublisherAccess :one
-SELECT * FROM control.publisher_access_tokens WHERE digest = sqlc.arg(digest);
+SELECT * FROM control.publisher_access_tokens WHERE access_token_digest = sqlc.arg(access_token_digest);
 
 -- name: GetPublisherDomain :one
 -- publisher checks may already hold a URL lock. never acquire a domain lock
@@ -64,11 +64,11 @@ SELECT * FROM control.publisher_access_tokens WHERE digest = sqlc.arg(digest);
 SELECT * FROM control.domains WHERE id = sqlc.arg(id) AND state = 'ready' AND released_at IS NULL AND (kind = 'managed' OR team_id = sqlc.arg(team_id));
 
 -- name: AttachPublisherRun :exec
-INSERT INTO control.publish_run_publisher_identities(publish_run_id, publisher_identity_id, publisher_grant_id)
+INSERT INTO control.publish_run_publisher_grants(publish_run_id, publisher_identity_id, publisher_grant_id)
 VALUES (sqlc.arg(publish_run_id), sqlc.arg(publisher_identity_id), sqlc.arg(publisher_grant_id));
 
 -- name: GetPublisherRun :one
-SELECT * FROM control.publish_run_publisher_identities WHERE publish_run_id = sqlc.arg(publish_run_id);
+SELECT * FROM control.publish_run_publisher_grants WHERE publish_run_id = sqlc.arg(publish_run_id);
 
 -- name: InsertPublisherAllocation :exec
 INSERT INTO control.publisher_namespace_allocations(public_url_id, publisher_identity_id, publisher_grant_id, invocation_id)

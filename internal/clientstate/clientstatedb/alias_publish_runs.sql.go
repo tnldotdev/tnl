@@ -7,6 +7,7 @@ package clientstatedb
 
 import (
 	"context"
+	"database/sql"
 )
 
 const clearAliasRun = `-- name: ClearAliasRun :exec
@@ -31,7 +32,7 @@ SELECT a.id, ?1, t.id, a.selection_revision, ?2,
 FROM project_aliases a JOIN alias_declarations d ON d.alias_id = a.id
 JOIN local_tunnels t ON t.id = d.tunnel_id
 WHERE a.id = ?4 AND a.selection_revision = ?5
-    AND t.id = ?6 AND t.project_root = a.selected_project
+    AND t.id = ?6 AND t.project_root = a.selected_project_root
     AND d.fingerprint = a.fingerprint AND t.service = a.service
     AND t.public_url_id = ?7 AND t.publish_run_number = ?8
     AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > ?9
@@ -48,8 +49,8 @@ type MarkAliasRunReadyParams struct {
 	AliasID                string
 	SelectionRevision      int64
 	TunnelID               string
-	TargetPublicURLID      string
-	TargetPublishRunNumber int64
+	TargetPublicURLID      sql.NullString
+	TargetPublishRunNumber sql.NullInt64
 	Now                    int64
 }
 
@@ -74,7 +75,7 @@ func (q *Queries) MarkAliasRunReady(ctx context.Context, arg MarkAliasRunReadyPa
 const recordAliasFailure = `-- name: RecordAliasFailure :exec
 UPDATE project_aliases SET failure_reason = ?1
 WHERE id = ?2 AND selection_revision = ?3
-    AND selected_project = ?4
+    AND selected_project_root = ?4
 `
 
 type RecordAliasFailureParams struct {
@@ -95,7 +96,7 @@ func (q *Queries) RecordAliasFailure(ctx context.Context, arg RecordAliasFailure
 }
 
 const statusAliases = `-- name: StatusAliases :many
-SELECT a.id, a.server_origin, a.project_key, a.team_id, a.membership_id, a.namespace, a.name, a.hostname, a.service, a.fingerprint, a.selected_project, a.selection_revision, a.failure_reason, COALESCE(p.expires_at, 0) AS publisher_expires_at,
+SELECT a.id, a.server_origin, a.primary_project_root, a.team_id, a.membership_id, a.namespace, a.name, a.hostname, a.service, a.fingerprint, a.selected_project_root, a.selection_revision, a.failure_reason, COALESCE(p.expires_at, 0) AS publisher_expires_at,
     COALESCE(r.tunnel_id, '') AS run_tunnel_id,
     COALESCE(r.public_url_id, '') AS public_url_id, COALESCE(r.publish_run_number, 0) AS publish_run_number,
     COALESCE(r.selection_revision, 0) AS run_revision, COALESCE(t.state, '') AS target_state,
@@ -107,17 +108,17 @@ SELECT a.id, a.server_origin, a.project_key, a.team_id, a.membership_id, a.names
 FROM project_aliases a
 LEFT JOIN alias_publish_runs r ON r.alias_id = a.id
 LEFT JOIN local_tunnels t ON t.id = r.tunnel_id
-LEFT JOIN integration_url_publishers p ON p.server_origin = a.server_origin AND p.hostname = a.hostname
-WHERE ?1 = '' OR a.project_key = ?1 OR a.selected_project = ?1
+LEFT JOIN integration_url_leases p ON p.server_origin = a.server_origin AND p.hostname = a.hostname
+WHERE ?1 = '' OR a.primary_project_root = ?1 OR a.selected_project_root = ?1
     OR EXISTS (SELECT 1 FROM alias_declarations declaration JOIN local_tunnels tunnel ON tunnel.id = declaration.tunnel_id
       WHERE declaration.alias_id = a.id AND tunnel.project_root = ?1)
-ORDER BY a.server_origin, a.project_key, a.namespace, a.name
+ORDER BY a.server_origin, a.primary_project_root, a.namespace, a.name
 `
 
 type StatusAliasesRow struct {
 	ID                        string
 	ServerOrigin              string
-	ProjectKey                string
+	PrimaryProjectRoot        string
 	TeamID                    string
 	MembershipID              string
 	Namespace                 string
@@ -125,7 +126,7 @@ type StatusAliasesRow struct {
 	Hostname                  string
 	Service                   string
 	Fingerprint               []byte
-	SelectedProject           string
+	SelectedProjectRoot       string
 	SelectionRevision         int64
 	FailureReason             string
 	PublisherExpiresAt        int64
@@ -155,7 +156,7 @@ func (q *Queries) StatusAliases(ctx context.Context, projectRoot interface{}) ([
 		if err := rows.Scan(
 			&i.ID,
 			&i.ServerOrigin,
-			&i.ProjectKey,
+			&i.PrimaryProjectRoot,
 			&i.TeamID,
 			&i.MembershipID,
 			&i.Namespace,
@@ -163,7 +164,7 @@ func (q *Queries) StatusAliases(ctx context.Context, projectRoot interface{}) ([
 			&i.Hostname,
 			&i.Service,
 			&i.Fingerprint,
-			&i.SelectedProject,
+			&i.SelectedProjectRoot,
 			&i.SelectionRevision,
 			&i.FailureReason,
 			&i.PublisherExpiresAt,

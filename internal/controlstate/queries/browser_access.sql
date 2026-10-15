@@ -23,7 +23,7 @@ FROM control.browser_access_sessions WHERE token_digest = $1;
 -- name: BrowserSessionPublicURLIncluded :one
 SELECT included.public_url_id
 FROM control.browser_access_sessions AS session
-JOIN control.browser_session_hosts AS included ON included.session_digest = session.token_digest
+JOIN control.browser_session_run_bindings AS included ON included.session_digest = session.token_digest
 WHERE session.token_digest = sqlc.arg(token_digest) AND included.public_url_id = sqlc.arg(public_url_id);
 
 -- name: ListReadyPreviewBrowserHostnames :many
@@ -51,13 +51,13 @@ WHERE token_digest = sqlc.arg(token_digest) AND revoked_at IS NULL;
 -- name: RevokeBrowserAccessSession :exec
 UPDATE control.browser_access_sessions SET revoked_at = sqlc.arg(now)
 WHERE token_digest = sqlc.arg(token_digest) AND revoked_at IS NULL
-   AND EXISTS (SELECT 1 FROM control.browser_session_hosts AS included
+   AND EXISTS (SELECT 1 FROM control.browser_session_run_bindings AS included
                WHERE included.session_digest = control.browser_access_sessions.token_digest
                 AND included.public_url_id = sqlc.arg(public_url_id));
 
 -- name: InsertBrowserAccessHandoff :exec
 INSERT INTO control.browser_access_handoffs
-    (token_digest, session_digest, public_url_id, publish_run_id, cookie_ciphertext, storage_key_id, return_path, next_url, bridge, expires_at)
+    (token_digest, session_digest, public_url_id, publish_run_id, cookie_ciphertext, storage_key_id, return_path, redirect_url, bridge, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
 
 -- name: ConsumeBrowserAccessHandoff :one
@@ -69,7 +69,7 @@ WHERE handoff.token_digest = sqlc.arg(token_digest) AND handoff.public_url_id = 
   AND handoff.consumed_at IS NULL AND handoff.expires_at > sqlc.arg(now)
   AND session.token_digest = handoff.session_digest AND session.revoked_at IS NULL AND session.expires_at > sqlc.arg(now)
 RETURNING handoff.session_digest, handoff.cookie_ciphertext, handoff.storage_key_id, handoff.return_path,
-          handoff.next_url, handoff.bridge, session.expires_at, handoff.publish_run_id;
+           handoff.redirect_url, handoff.bridge, session.expires_at, handoff.publish_run_id;
 
 -- name: CleanupBrowserAccess :exec
 DELETE FROM control.browser_login_attempts WHERE expires_at < sqlc.arg(now);

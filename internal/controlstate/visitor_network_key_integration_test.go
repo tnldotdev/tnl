@@ -18,7 +18,7 @@ func TestIntegrationVisitorNetworkHashKeyEncryptedAndShared(t *testing.T) {
 	var ciphertext []byte
 	var keyID string
 	if err := database.pool.QueryRow(t.Context(), `SELECT visitor_network_hash_master_key_ciphertext,
-		visitor_network_hash_master_key_storage_key_id FROM control.public_url_usage_configuration`).Scan(&ciphertext, &keyID); err != nil {
+		visitor_network_hash_master_key_storage_key_id FROM control.visitor_network_hash_keys`).Scan(&ciphertext, &keyID); err != nil {
 		t.Fatal(err)
 	}
 	if len(ciphertext) <= 32 || keyID != database.storageKey.CurrentID() {

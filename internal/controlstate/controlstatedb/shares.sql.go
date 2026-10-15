@@ -39,11 +39,11 @@ func (q *Queries) AddSharePublicURL(ctx context.Context, arg AddSharePublicURLPa
 const createShare = `-- name: CreateShare :one
 INSERT INTO control.shares (
     id, preview_id, team_id, created_by_identity_id,
-    idempotency_key, request_digest, secret_fingerprint, created_at, expires_at
+    idempotency_key, request_digest, secret_digest, created_at, expires_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (created_by_identity_id, idempotency_key)
 DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, schema_version, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_fingerprint, created_at, expires_at, revoked_at, revoked_by_identity_id
+RETURNING id, schema_version, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id
 `
 
 type CreateShareParams struct {
@@ -53,7 +53,7 @@ type CreateShareParams struct {
 	CreatedByIdentityID string
 	IdempotencyKey      string
 	RequestDigest       []byte
-	SecretFingerprint   []byte
+	SecretDigest        []byte
 	CreatedAt           pgtype.Timestamptz
 	ExpiresAt           pgtype.Timestamptz
 }
@@ -66,7 +66,7 @@ func (q *Queries) CreateShare(ctx context.Context, arg CreateShareParams) (Contr
 		arg.CreatedByIdentityID,
 		arg.IdempotencyKey,
 		arg.RequestDigest,
-		arg.SecretFingerprint,
+		arg.SecretDigest,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 	)
@@ -79,7 +79,7 @@ func (q *Queries) CreateShare(ctx context.Context, arg CreateShareParams) (Contr
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
-		&i.SecretFingerprint,
+		&i.SecretDigest,
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
@@ -89,7 +89,7 @@ func (q *Queries) CreateShare(ctx context.Context, arg CreateShareParams) (Contr
 }
 
 const getShare = `-- name: GetShare :one
-SELECT id, schema_version, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_fingerprint, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares WHERE id = $1
+SELECT id, schema_version, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares WHERE id = $1
 `
 
 func (q *Queries) GetShare(ctx context.Context, id string) (ControlShare, error) {
@@ -103,7 +103,7 @@ func (q *Queries) GetShare(ctx context.Context, id string) (ControlShare, error)
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
-		&i.SecretFingerprint,
+		&i.SecretDigest,
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
@@ -138,7 +138,7 @@ func (q *Queries) ListSharePublicURLs(ctx context.Context, shareID string) ([]st
 }
 
 const listShares = `-- name: ListShares :many
-SELECT id, schema_version, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_fingerprint, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares
+SELECT id, schema_version, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares
 WHERE preview_id = $1
   AND id > $2
 ORDER BY id LIMIT 101
@@ -166,7 +166,7 @@ func (q *Queries) ListShares(ctx context.Context, arg ListSharesParams) ([]Contr
 			&i.CreatedByIdentityID,
 			&i.IdempotencyKey,
 			&i.RequestDigest,
-			&i.SecretFingerprint,
+			&i.SecretDigest,
 			&i.CreatedAt,
 			&i.ExpiresAt,
 			&i.RevokedAt,
@@ -183,7 +183,7 @@ func (q *Queries) ListShares(ctx context.Context, arg ListSharesParams) ([]Contr
 }
 
 const listTeamShares = `-- name: ListTeamShares :many
-SELECT id, schema_version, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_fingerprint, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares
+SELECT id, schema_version, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id FROM control.shares
 WHERE team_id = $1
   AND created_by_identity_id = $2
   AND id > $3
@@ -213,7 +213,7 @@ func (q *Queries) ListTeamShares(ctx context.Context, arg ListTeamSharesParams) 
 			&i.CreatedByIdentityID,
 			&i.IdempotencyKey,
 			&i.RequestDigest,
-			&i.SecretFingerprint,
+			&i.SecretDigest,
 			&i.CreatedAt,
 			&i.ExpiresAt,
 			&i.RevokedAt,
@@ -235,7 +235,7 @@ SET revoked_at = COALESCE(revoked_at, $1::timestamptz),
     revoked_by_identity_id = COALESCE(revoked_by_identity_id, $2::text)
 WHERE id = $3
   AND created_by_identity_id = $4
-RETURNING id, schema_version, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_fingerprint, created_at, expires_at, revoked_at, revoked_by_identity_id
+RETURNING id, schema_version, preview_id, team_id, created_by_identity_id, idempotency_key, request_digest, secret_digest, created_at, expires_at, revoked_at, revoked_by_identity_id
 `
 
 type RevokeShareParams struct {
@@ -261,7 +261,7 @@ func (q *Queries) RevokeShare(ctx context.Context, arg RevokeShareParams) (Contr
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
-		&i.SecretFingerprint,
+		&i.SecretDigest,
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,

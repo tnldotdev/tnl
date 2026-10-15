@@ -36,7 +36,7 @@ func TestIntegrationRouteCreationDoesNotDeadlockSessionCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT control_name FROM control.maintenance_controls WHERE control_name = 'publish_run_creation' FOR UPDATE`); err != nil {
+	if _, err := gate.Exec(ctx, `SELECT operation FROM control.maintenance_controls WHERE operation = 'publish_run_creation' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)
