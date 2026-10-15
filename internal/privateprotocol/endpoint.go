@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -94,43 +93,6 @@ func DescriptorPath(root, project string) (string, error) {
 
 func ReadEndpoint(path string) (Endpoint, error) {
 	return readEndpoint(path, ValidateEndpoint)
-}
-
-// ReadComposeAppEndpoint accepts the named private-network address only when
-// the caller supplies the expected service authority from verified placement.
-// host descriptors continue to require numeric loopback addresses.
-func ReadComposeAppEndpoint(path, authority string) (Endpoint, error) {
-	return readEndpoint(path, func(e Endpoint) error { return ValidateComposeAppEndpoint(e, authority) })
-}
-
-func ValidateComposeAppEndpoint(e Endpoint, authority string) error {
-	uri, err := url.Parse(authority)
-	if err != nil || uri.Scheme != "http" || uri.User != nil || uri.Path != "" || uri.RawQuery != "" || uri.Fragment != "" || uri.Opaque != "" {
-		return ErrUnauthorized
-	}
-	host, port, err := net.SplitHostPort(uri.Host)
-	number, portErr := strconv.ParseUint(port, 10, 16)
-	if err != nil || portErr != nil || number == 0 || !validComposeHost(host) || e.Url != authority || e.Scope != "app" {
-		return ErrUnauthorized
-	}
-	local := e
-	local.Url = "http://127.0.0.1:1"
-	return ValidateEndpoint(local)
-}
-
-func validComposeHost(host string) bool {
-	if _, err := netip.ParseAddr(host); err == nil {
-		return false
-	}
-	if host == "" || len(host) > 128 || host[0] == '-' || host[0] == '.' || host[0] == '_' {
-		return false
-	}
-	for _, r := range host {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
-			return false
-		}
-	}
-	return true
 }
 
 func readEndpoint(path string, validate func(Endpoint) error) (Endpoint, error) {
@@ -306,15 +268,6 @@ func (c *Capabilities) Handler(next http.Handler) http.Handler {
 // Call never uses environment proxies or follows redirects carrying a capability.
 func Call(ctx context.Context, e Endpoint, method, path string, input, output any) error {
 	if err := ValidateEndpoint(e); err != nil {
-		return err
-	}
-	return callEndpoint(ctx, e, method, path, input, output)
-}
-
-// CallComposeApp requires the expected owner authority from verified Compose
-// placement. a mounted app capability cannot be used against an arbitrary URL.
-func CallComposeApp(ctx context.Context, e Endpoint, authority, method, path string, input, output any) error {
-	if err := ValidateComposeAppEndpoint(e, authority); err != nil {
 		return err
 	}
 	return callEndpoint(ctx, e, method, path, input, output)

@@ -185,13 +185,4 @@ func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
 			}
 		}
 	}
-	compose := publisherSchema().OneOf[1]
-	if !reflect.DeepEqual(compose.Required, []string{"type", "service"}) {
-		t.Fatalf("Compose publisher required fields = %v", compose.Required)
-	}
-	for _, field := range []string{"port", "project_root", "app_endpoints"} {
-		if _, found := compose.Properties.Get(field); found {
-			t.Fatalf("removed publisher field %s is exposed", field)
-		}
-	}
 }

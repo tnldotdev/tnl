@@ -2,7 +2,6 @@ package privateprotocol
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -121,48 +120,5 @@ func TestDescriptorsArePrivateAndAtomic(t *testing.T) {
 	encoded, _ := json.Marshal(next.Owner())
 	if strings.Contains(string(encoded), "socket") {
 		t.Fatal("descriptor contains retired transport")
-	}
-}
-
-func TestComposeAppDescriptorRequiresExpectedAuthorityAndScope(t *testing.T) {
-	caps, err := NewCapabilities("http://127.0.0.1:12345")
-	if err != nil {
-		t.Fatal(err)
-	}
-	service := "web"
-	endpoint, err := caps.Issue(CapabilityRequest{Scope: "app", Service: &service})
-	if err != nil {
-		t.Fatal(err)
-	}
-	endpoint.Url = "http://publisher:8123"
-	directory := filepath.Join(t.TempDir(), "private")
-	if err := os.Mkdir(directory, 0700); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(directory, "endpoint.json")
-	data, err := json.Marshal(endpoint)
-	if err != nil || os.WriteFile(path, data, 0600) != nil {
-		t.Fatal("write private descriptor", err)
-	}
-	if _, err := ReadEndpoint(path); err == nil {
-		t.Fatal("host reader accepted a compose URL")
-	}
-	if err := Call(t.Context(), endpoint, "GET", "/v1/health", nil, nil); !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("host call accepted a compose URL: %v", err)
-	}
-	if _, err := ReadComposeAppEndpoint(path, "http://publisher:8123"); err != nil {
-		t.Fatal(err)
-	}
-	for _, authority := range []string{"http://other:8123", "http://publisher:8124", "http://127.0.0.1:8123", "http://publisher:8123/path"} {
-		if _, err := ReadComposeAppEndpoint(path, authority); err == nil {
-			t.Fatalf("accepted wrong compose authority %s", authority)
-		}
-	}
-	endpoint.Scope, endpoint.Service = "owner", nil
-	if err := ValidateComposeAppEndpoint(endpoint, "http://publisher:8123"); err == nil {
-		t.Fatal("compose reader accepted owner credentials")
-	}
-	if err := CallComposeApp(t.Context(), endpoint, "http://publisher:8123", "GET", "/v1/health", nil, nil); !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("compose call accepted owner credentials: %v", err)
 	}
 }

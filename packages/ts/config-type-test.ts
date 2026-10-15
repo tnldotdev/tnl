@@ -24,10 +24,6 @@ export const config = defineConfig({
       },
     },
   },
-  publisher: {
-    type: "compose",
-    service: "publisher",
-  },
   services: {
     web: {
       target: { type: "app" },
@@ -129,22 +125,6 @@ asyncAddressFactoryResult.services.cache.target.type satisfies "docker";
 asyncAddressFactoryResult.services.db.protocol satisfies "postgres";
 asyncAddressFactoryResult.aliases.review.service satisfies "web";
 
-export const databasePublisher = {
-  publisher: { type: "compose", service: "publisher" },
-  services: { db: { protocol: "postgres", target: { type: "address", address: 5432 } } },
-} satisfies TnlConfig;
-defineConfig(databasePublisher);
-defineConfig(() => databasePublisher);
-defineConfig(async () => databasePublisher);
-export const mixedPublisherFactory = defineConfig(() => ({
-  ...databasePublisher,
-  services: { ...databasePublisher.services, web: { target: { type: "app" } } },
-}));
-export const mixedAsyncPublisherFactory = defineConfig(async () => ({
-  ...databasePublisher,
-  services: { ...databasePublisher.services, web: { target: { type: "app" } } },
-}));
-
 "1h30m" satisfies TnlRatePeriod;
 "1h2m3s4ms" satisfies TnlRatePeriod;
 "1024KiB" satisfies TnlByteSize;
@@ -180,7 +160,7 @@ if (services.arbitrary) services.arbitrary.target satisfies unknown;
 }) satisfies TnlConfig;
 // @ts-expect-error Docker discovery requires the private port.
 ({ services: { db: { target: { type: "docker", container: "db" } } } }) satisfies TnlConfig;
-// @ts-expect-error host placement has no container fields.
+// @ts-expect-error publisher placement is not project configuration.
 ({ publisher: { type: "host", port: 8765 } }) satisfies TnlConfig;
 ({
   // @ts-expect-error private target TLS never accepts visitor passthrough.
@@ -393,7 +373,7 @@ defineConfig(async () => ({
   webhooks: { hook: { service: "", path: "/hook", provider: "custom" } },
 }));
 
-// @ts-expect-error Compose publisher ports are derived by the runtime.
+// @ts-expect-error publisher placement is not project configuration.
 ({ publisher: { type: "compose", service: "publisher", port: 8765 } }) satisfies TnlConfig;
 // @ts-expect-error combined byte totals are removed.
 ({ tunnel: { limits: { traffic: { totalBytes: 1024 } } } }) satisfies TnlConfig;

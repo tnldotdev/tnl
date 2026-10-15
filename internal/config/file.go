@@ -170,9 +170,6 @@ func ValidateTNL(config TNL) error {
 	if err := validateLimits(tunnelLimits(config.Tunnel), nil, ""); err != nil {
 		return err
 	}
-	if err := validatePublisher(config); err != nil {
-		return err
-	}
 	if len(config.Services) != 0 && config.Tunnel != nil {
 		if config.Tunnel.Name != nil || config.Tunnel.PublicURL != nil {
 			return errors.New("tunnel.name and tunnel.public_url belong under services.NAME.tunnel when services are configured")

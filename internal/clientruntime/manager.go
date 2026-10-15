@@ -39,7 +39,6 @@ type Manager struct {
 	registrations map[string]*registration
 	run           Run
 	Alive         func(int) bool
-	Persistent    bool
 	idleSince     time.Time
 	preparing     int
 	closed        bool
@@ -602,7 +601,7 @@ func (m *Manager) Sweep(alive func(int) bool) bool {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.writeErr != nil || !m.Persistent && m.preparing == 0 && !m.idleSince.IsZero() && time.Since(m.idleSince) >= CleanupGrace
+	return m.writeErr != nil || m.preparing == 0 && !m.idleSince.IsZero() && time.Since(m.idleSince) >= CleanupGrace
 }
 
 func (m *Manager) Close() {
