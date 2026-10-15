@@ -39,7 +39,7 @@ JOIN control.relay_services AS services USING (relay_service_id);
 -- name: ListMaintenanceControls :many
 SELECT *
 FROM control.maintenance_controls
-ORDER BY control_name;
+ORDER BY operation;
 
 -- name: SetMaintenanceControl :one
 UPDATE control.maintenance_controls
@@ -47,7 +47,7 @@ SET allowed = sqlc.arg(allowed),
     revision = revision + 1,
     updated_at = sqlc.arg(updated_at),
     updated_by = sqlc.arg(updated_by)
-WHERE control_name = sqlc.arg(control_name)
+WHERE operation = sqlc.arg(control_name)
 RETURNING *;
 
 -- name: InsertAdminAuditEvent :exec

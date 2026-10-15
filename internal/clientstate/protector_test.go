@@ -70,7 +70,7 @@ func TestFileProtectorNeverReplacesMissingInvalidOrWrongKey(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "state")
 			database := openFileDatabase(t, root)
 			root = database.Root()
-			if err := database.SaveSystemState(t.Context(), "credential", []byte("secret")); err != nil {
+			if err := database.SavePublisherJobRegistry(t.Context(), []byte("secret")); err != nil {
 				t.Fatal(err)
 			}
 			if err := database.Close(); err != nil {
@@ -143,16 +143,16 @@ func TestEncryptedSessionCertificateIdentityAndSystemStateReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := PublisherSigningIdentity{ID: "publisher-1", PublicValue: []byte("public"), PrivateValue: []byte("opaque-signing-private-value")}
-	if err := store.SavePublisherSigningIdentity(t.Context(), "project-a", identity); err != nil {
+	identity := PublisherSigningIdentity{ID: "publisher-1", PublicValue: []byte(`{"client_id":"publisher-1"}`), PrivateValue: []byte("opaque-signing-private-value")}
+	if err := store.SavePublisherSigningIdentity(t.Context(), "owner-url:project-a", identity); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.SaveSystemState(t.Context(), "system-credential", []byte("opaque-system-credential")); err != nil {
+	if err := database.SavePublisherJobRegistry(t.Context(), []byte("opaque-system-credential")); err != nil {
 		t.Fatal(err)
 	}
 	for _, query := range []string{
-		"SELECT stored_access_token FROM control_sessions", "SELECT stored_refresh_token FROM control_sessions",
-		"SELECT stored_key FROM certificate_materials", "SELECT stored_private FROM publisher_signing_identities", "SELECT stored_value FROM system_state",
+		"SELECT access_token_ciphertext FROM control_sessions", "SELECT refresh_token_ciphertext FROM control_sessions",
+		"SELECT private_key_ciphertext FROM public_url_certificate_cache", "SELECT signing_key_ciphertext FROM publisher_identities", "SELECT jobs_ciphertext FROM publisher_job_registry",
 	} {
 		var value []byte
 		if err := database.db.QueryRowContext(t.Context(), query).Scan(&value); err != nil {
@@ -183,34 +183,28 @@ func TestEncryptedSessionCertificateIdentityAndSystemStateReopen(t *testing.T) {
 	if err != nil || !gotPending.Key.Equal(pending.Key) {
 		t.Fatalf("certificate reopen: %v", err)
 	}
-	gotIdentity, found, err := store.PublisherSigningIdentity(t.Context(), "project-a")
+	gotIdentity, found, err := store.PublisherSigningIdentity(t.Context(), "owner-url:project-a")
 	if err != nil || !found || !bytes.Equal(gotIdentity.PrivateValue, identity.PrivateValue) {
 		t.Fatalf("identity reopen: %v, %v", found, err)
 	}
-	value, found, err := reopened.SystemState(t.Context(), "system-credential")
+	value, found, err := reopened.PublisherJobRegistry(t.Context())
 	if err != nil || !found || string(value) != "opaque-system-credential" {
 		t.Fatalf("system state reopen: %v, %v", found, err)
 	}
-	if _, err := reopened.db.ExecContext(t.Context(), "UPDATE publisher_signing_identities SET scope = 'project-b'"); err != nil {
+	if err := reopened.RemoveSystemState(t.Context(), "publisher-jobs-v1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.PublisherSigningIdentity(t.Context(), "project-b"); err == nil {
-		t.Fatal("identity moved to another scope accepted")
-	}
-	if err := reopened.RemoveSystemState(t.Context(), "system-credential"); err != nil {
-		t.Fatal(err)
-	}
-	if _, found, err := reopened.SystemState(t.Context(), "system-credential"); err != nil || found {
+	if _, found, err := reopened.PublisherJobRegistry(t.Context()); err != nil || found {
 		t.Fatalf("removed system state: %v, %v", found, err)
 	}
 }
 
-func TestFreshV3DoesNotReadOldDatabaseOrJournal(t *testing.T) {
+func TestFreshV1DoesNotReadOldDatabaseOrJournal(t *testing.T) {
 	root, err := PrepareRoot(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"client.db", "client-v2.db", "journal.json"} {
+	for _, name := range []string{"client.db", "client-v2.db", "client-v3.db", "journal.json"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("unreadable old plaintext"), 0o600); err != nil {
 			t.Fatal(err)
 		}

@@ -165,12 +165,13 @@ func (d *Database) CommitRuntimeUpdate(ctx context.Context, project string, upda
 		return RuntimeSnapshot{}, err
 	}
 	if update.ExpectedCursor != "" {
-		after, err := cursorSequence(update.ExpectedCursor, row.Epoch)
-		if err != nil || after > row.Sequence || after < row.AppSequence {
+		after, err := cursorSequence(update.ExpectedCursor, row.CursorEpoch)
+		if err != nil || after > row.LastSequence || after < row.LastAppSequence {
 			return RuntimeSnapshot{}, ErrRuntimeConflict
 		}
 	}
-	row, err = queries.AdvanceRuntimeProject(ctx, clientstatedb.AdvanceRuntimeProjectParams{ProjectRoot: project, Now: d.now().UTC().UnixNano()})
+	row, err = queries.AdvanceRuntimeProject(ctx, clientstatedb.AdvanceRuntimeProjectParams{ProjectRoot: project,
+		Now: sql.NullInt64{Int64: d.now().UTC().UnixNano(), Valid: true}})
 	if err != nil {
 		return RuntimeSnapshot{}, err
 	}
@@ -198,7 +199,7 @@ func (d *Database) CommitRuntimeUpdate(ctx context.Context, project string, upda
 			return RuntimeSnapshot{}, errors.New("clientstate: runtime snapshot event exceeds limit")
 		}
 	}
-	if err := queries.InsertRuntimeEvent(ctx, clientstatedb.InsertRuntimeEventParams{ProjectRoot: project, Sequence: row.Sequence, EventType: update.Type, CreatedAt: row.ObservedAt, Payload: string(payload)}); err != nil {
+	if err := queries.InsertRuntimeEvent(ctx, clientstatedb.InsertRuntimeEventParams{ProjectRoot: project, Sequence: row.LastSequence, EventType: update.Type, CreatedAt: row.LastObservedAt.Int64, Payload: string(payload)}); err != nil {
 		return RuntimeSnapshot{}, err
 	}
 	snapshot, err := d.readRuntimeSnapshot(ctx, queries, project)
@@ -222,8 +223,8 @@ func (d *Database) runtimeView(ctx context.Context, queries *clientstatedb.Queri
 	if err != nil {
 		return RuntimeSnapshot{}, err
 	}
-	result := RuntimeSnapshot{SchemaVersion: 1, Project: project, Cursor: runtimeCursor(row.Epoch, row.Sequence), ObservedAt: unixNanoTime(row.ObservedAt), Publications: []TunnelInfo{}}
-	if err := json.Unmarshal([]byte(row.ServicesJson), &result.Services); err != nil {
+	result := RuntimeSnapshot{SchemaVersion: 1, Project: project, Cursor: runtimeCursor(row.CursorEpoch, row.LastSequence), ObservedAt: unixNanoTime(row.LastObservedAt.Int64), Publications: []TunnelInfo{}}
+	if err := json.Unmarshal([]byte(row.AppServicesJson), &result.Services); err != nil {
 		return RuntimeSnapshot{}, err
 	}
 	publications, err := queries.ListOpenTunnelsForProject(ctx, project)
@@ -243,7 +244,7 @@ func (d *Database) runtimeView(ctx context.Context, queries *clientstatedb.Queri
 	}
 	result.Events = make([]RuntimeEvent, 0, len(events))
 	for _, event := range events {
-		result.Events = append(result.Events, RuntimeEvent{Cursor: runtimeCursor(row.Epoch, event.Sequence), Type: event.EventType, At: unixNanoTime(event.CreatedAt), Payload: json.RawMessage(event.Payload)})
+		result.Events = append(result.Events, RuntimeEvent{Cursor: runtimeCursor(row.CursorEpoch, event.Sequence), Type: event.EventType, At: unixNanoTime(event.OccurredAt), Payload: json.RawMessage(event.PayloadJson)})
 	}
 	return result, nil
 }
@@ -266,15 +267,15 @@ func (d *Database) RuntimeEventsAfter(ctx context.Context, project, cursor strin
 	if err != nil {
 		return nil, err
 	}
-	after, err := cursorSequence(cursor, row.Epoch)
-	if err != nil || after > row.Sequence {
+	after, err := cursorSequence(cursor, row.CursorEpoch)
+	if err != nil || after > row.LastSequence {
 		return nil, expiredRuntimeCursor()
 	}
 	oldest, err := queries.OldestRuntimeEvent(ctx, project)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if err == nil && after < oldest-1 || errors.Is(err, sql.ErrNoRows) && after != row.Sequence {
+	if err == nil && after < oldest-1 || errors.Is(err, sql.ErrNoRows) && after != row.LastSequence {
 		return nil, expiredRuntimeCursor()
 	}
 	rows, err := queries.ListRuntimeEvents(ctx, clientstatedb.ListRuntimeEventsParams{ProjectRoot: project, After: after})
@@ -283,7 +284,7 @@ func (d *Database) RuntimeEventsAfter(ctx context.Context, project, cursor strin
 	}
 	result := make([]RuntimeEvent, 0, len(rows))
 	for _, event := range rows {
-		result = append(result, RuntimeEvent{Cursor: runtimeCursor(row.Epoch, event.Sequence), Type: event.EventType, At: unixNanoTime(event.CreatedAt), Payload: json.RawMessage(event.Payload)})
+		result = append(result, RuntimeEvent{Cursor: runtimeCursor(row.CursorEpoch, event.Sequence), Type: event.EventType, At: unixNanoTime(event.OccurredAt), Payload: json.RawMessage(event.PayloadJson)})
 	}
 	return result, tx.Commit()
 }

@@ -121,7 +121,7 @@ func (s *Store) ActiveAuthOperation(ctx context.Context) (AuthOperation, bool, e
 	return op, err == nil, err
 }
 
-func (s *Store) decodeAuthOperation(ctx context.Context, row clientstatedb.AuthOperation) (AuthOperation, error) {
+func (s *Store) decodeAuthOperation(ctx context.Context, row clientstatedb.LoginOperation) (AuthOperation, error) {
 	id := row.OperationID
 	var op AuthOperation
 	if err := json.Unmarshal([]byte(row.PublicJson), &op); err != nil {
@@ -245,8 +245,8 @@ func (s *Store) InstallAuthSession(ctx context.Context, op *AuthOperation, sessi
 		return ErrAuthOperationChanged
 	}
 	if err := q.UpsertControlSession(ctx, clientstatedb.UpsertControlSessionParams{
-		ServerOrigin: s.controlEndpoint, SessionID: session.SessionID, StoredAccessToken: access,
-		StoredRefreshToken: refresh, AccessExpiresAt: timeUnixNano(session.AccessExpiresAt),
+		ServerOrigin: s.controlEndpoint, SessionID: session.SessionID, AccessTokenCiphertext: access,
+		RefreshTokenCiphertext: refresh, AccessExpiresAt: timeUnixNano(session.AccessExpiresAt),
 		RefreshExpiresAt: timeUnixNano(session.RefreshExpiresAt), UpdatedAt: s.database.now().UnixNano(),
 	}); err != nil {
 		return err
