@@ -1,5 +1,7 @@
 # `@tnldotdev/tnl`
 
+take a shortcut through the internet.
+
 The tnl client, plus official Next.js and Vite integrations for project-local
 development. Available for macOS and Linux on arm64 and x64 with Node.js 22.18
 or newer. The package selects a native binary through optional dependencies;
