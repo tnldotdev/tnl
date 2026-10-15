@@ -70,7 +70,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	var visitorCiphertext []byte
 	var visitorKeyID string
 	if err := database.pool.QueryRow(ctx, `SELECT visitor_network_hash_master_key_ciphertext,
-		visitor_network_hash_master_key_storage_key_id FROM control.public_url_usage_configuration`).Scan(&visitorCiphertext, &visitorKeyID); err != nil {
+		visitor_network_hash_master_key_storage_key_id FROM control.visitor_network_hash_keys`).Scan(&visitorCiphertext, &visitorKeyID); err != nil {
 		t.Fatal(err)
 	}
 	visitorKey, _, err := database.openSecret(visitorKeyID, visitorNetworkHashMasterKeyContext(), visitorCiphertext)

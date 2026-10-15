@@ -14,6 +14,7 @@ import (
 const getActivePublishRunMembership = `-- name: GetActivePublishRunMembership :one
 SELECT m.id, m.role, t.policy_revision
 FROM control.team_memberships AS m
+JOIN control.identities AS i ON i.id = m.identity_id AND i.disabled_at IS NULL
 JOIN control.teams AS t
   ON t.id = m.team_id
  AND t.deleted_at IS NULL
@@ -42,7 +43,7 @@ func (q *Queries) GetActivePublishRunMembership(ctx context.Context, arg GetActi
 }
 
 const getOpenPublishRun = `-- name: GetOpenPublishRun :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, request_digest_ciphertext, request_digest_storage_key_id, share_capable
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE public_url_id = $1
   AND closed_at IS NULL
@@ -59,6 +60,9 @@ func (q *Queries) GetOpenPublishRun(ctx context.Context, publicUrlID string) (Co
 		&i.ActingIdentityID,
 		&i.PublishRunNumber,
 		&i.IdempotencyKey,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
+		&i.ShareCapable,
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
@@ -67,6 +71,7 @@ func (q *Queries) GetOpenPublishRun(ctx context.Context, publicUrlID string) (Co
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
 		&i.CertificateChallengeMethod,
+		&i.TrafficLimits,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -78,15 +83,12 @@ func (q *Queries) GetOpenPublishRun(ctx context.Context, publicUrlID string) (Co
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
-		&i.RequestDigestCiphertext,
-		&i.RequestDigestStorageKeyID,
-		&i.ShareCapable,
 	)
 	return i, err
 }
 
 const getPublishRunByIdempotency = `-- name: GetPublishRunByIdempotency :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, request_digest_ciphertext, request_digest_storage_key_id, share_capable
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE public_url_id = $1
   AND idempotency_key = $2
@@ -108,6 +110,9 @@ func (q *Queries) GetPublishRunByIdempotency(ctx context.Context, arg GetPublish
 		&i.ActingIdentityID,
 		&i.PublishRunNumber,
 		&i.IdempotencyKey,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
+		&i.ShareCapable,
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
@@ -116,6 +121,7 @@ func (q *Queries) GetPublishRunByIdempotency(ctx context.Context, arg GetPublish
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
 		&i.CertificateChallengeMethod,
+		&i.TrafficLimits,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -127,9 +133,6 @@ func (q *Queries) GetPublishRunByIdempotency(ctx context.Context, arg GetPublish
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
-		&i.RequestDigestCiphertext,
-		&i.RequestDigestStorageKeyID,
-		&i.ShareCapable,
 	)
 	return i, err
 }
@@ -139,10 +142,10 @@ WITH version AS (
 UPDATE control.public_urls
 SET next_publish_run_number = next_publish_run_number + 1,
     mutation_revision = mutation_revision + 1,
-    updated_at = $16
+    updated_at = $17
 WHERE id = $2
   AND next_publish_run_number < 9223372036854775807
-  AND mutation_revision = $19
+  AND mutation_revision = $20
   AND mutation_revision < 9223372036854775807
   AND lifecycle_state = 'enabled'
 RETURNING (next_publish_run_number - 1)::bigint AS publish_run_number
@@ -164,6 +167,7 @@ INSERT INTO control.publish_runs (
     certificate_scope,
     certificate_identifiers,
     certificate_challenge_method,
+    traffic_limits,
     state,
     created_at,
     last_heartbeat_at,
@@ -185,12 +189,13 @@ INSERT INTO control.publish_runs (
     $13,
     $14,
     $15,
+    convert_from($16::bytea, 'UTF8')::jsonb,
     'starting',
-    $16,
     $17,
-    $18
+    $18,
+    $19
 FROM version
-RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, request_digest_ciphertext, request_digest_storage_key_id, share_capable
+RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 `
 
 type InsertPublishRunParams struct {
@@ -209,6 +214,7 @@ type InsertPublishRunParams struct {
 	CertificateScope           string
 	CertificateIdentifiers     []string
 	CertificateChallengeMethod string
+	TrafficLimits              []byte
 	CreatedAt                  pgtype.Timestamptz
 	LastHeartbeatAt            pgtype.Timestamptz
 	PublisherExpiresAt         pgtype.Timestamptz
@@ -232,6 +238,7 @@ func (q *Queries) InsertPublishRun(ctx context.Context, arg InsertPublishRunPara
 		arg.CertificateScope,
 		arg.CertificateIdentifiers,
 		arg.CertificateChallengeMethod,
+		arg.TrafficLimits,
 		arg.CreatedAt,
 		arg.LastHeartbeatAt,
 		arg.PublisherExpiresAt,
@@ -246,6 +253,9 @@ func (q *Queries) InsertPublishRun(ctx context.Context, arg InsertPublishRunPara
 		&i.ActingIdentityID,
 		&i.PublishRunNumber,
 		&i.IdempotencyKey,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
+		&i.ShareCapable,
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
@@ -254,6 +264,7 @@ func (q *Queries) InsertPublishRun(ctx context.Context, arg InsertPublishRunPara
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
 		&i.CertificateChallengeMethod,
+		&i.TrafficLimits,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -265,9 +276,6 @@ func (q *Queries) InsertPublishRun(ctx context.Context, arg InsertPublishRunPara
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
-		&i.RequestDigestCiphertext,
-		&i.RequestDigestStorageKeyID,
-		&i.ShareCapable,
 	)
 	return i, err
 }
@@ -464,7 +472,7 @@ func (q *Queries) ListPublishRunConnections(ctx context.Context, publishRunID st
 }
 
 const lockExpiredPublishRunPublicURLs = `-- name: LockExpiredPublishRunPublicURLs :many
-SELECT routes.id, routes.team_id, routes.domain_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.canonical_hostname, routes.target, routes.public_url_scope, routes.policy_revision, routes.ip_policy, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at, routes.allowed_ip_policy_ciphertext, routes.allowed_ip_policy_storage_key_id, routes.allowed_ip_hashes, routes.allowed_ip_hash_key_id, routes.request_digest_ciphertext, routes.request_digest_storage_key_id, routes.namespace, routes.purpose, routes.ingress_pool_id, routes.service_protocol, routes.public_port
+SELECT routes.id, routes.team_id, routes.domain_id, routes.ingress_pool_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest_ciphertext, routes.request_digest_storage_key_id, routes.canonical_hostname, routes.target, routes.namespace, routes.purpose, routes.service_protocol, routes.public_port, routes.public_url_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_policy_ciphertext, routes.allowed_ip_policy_storage_key_id, routes.allowed_ip_hashes, routes.allowed_ip_hash_key_id, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
 FROM control.publish_runs AS sessions
 JOIN control.public_urls AS routes ON routes.id = sessions.public_url_id
 WHERE sessions.closed_at IS NULL
@@ -505,14 +513,25 @@ func (q *Queries) LockExpiredPublishRunPublicURLs(ctx context.Context, arg LockE
 			&i.ID,
 			&i.TeamID,
 			&i.DomainID,
+			&i.IngressPoolID,
 			&i.MembershipID,
 			&i.CreatedByIdentityID,
 			&i.IdempotencyKey,
+			&i.RequestDigestCiphertext,
+			&i.RequestDigestStorageKeyID,
 			&i.CanonicalHostname,
 			&i.Target,
+			&i.Namespace,
+			&i.Purpose,
+			&i.ServiceProtocol,
+			&i.PublicPort,
 			&i.PublicURLScope,
 			&i.PolicyRevision,
 			&i.IpPolicy,
+			&i.AllowedIpPolicyCiphertext,
+			&i.AllowedIpPolicyStorageKeyID,
+			&i.AllowedIpHashes,
+			&i.AllowedIpHashKeyID,
 			&i.LifecycleState,
 			&i.DnsAuthorityReference,
 			&i.DnsState,
@@ -533,17 +552,6 @@ func (q *Queries) LockExpiredPublishRunPublicURLs(ctx context.Context, arg LockE
 			&i.UpdatedAt,
 			&i.SuspendedAt,
 			&i.DeletedAt,
-			&i.AllowedIpPolicyCiphertext,
-			&i.AllowedIpPolicyStorageKeyID,
-			&i.AllowedIpHashes,
-			&i.AllowedIpHashKeyID,
-			&i.RequestDigestCiphertext,
-			&i.RequestDigestStorageKeyID,
-			&i.Namespace,
-			&i.Purpose,
-			&i.IngressPoolID,
-			&i.ServiceProtocol,
-			&i.PublicPort,
 		); err != nil {
 			return nil, err
 		}
@@ -556,7 +564,7 @@ func (q *Queries) LockExpiredPublishRunPublicURLs(ctx context.Context, arg LockE
 }
 
 const lockPublicURLForRun = `-- name: LockPublicURLForRun :one
-SELECT id, team_id, domain_id, membership_id, created_by_identity_id, idempotency_key, canonical_hostname, target, public_url_scope, policy_revision, ip_policy, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, request_digest_ciphertext, request_digest_storage_key_id, namespace, purpose, ingress_pool_id, service_protocol, public_port
+SELECT id, team_id, domain_id, ingress_pool_id, membership_id, created_by_identity_id, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target, namespace, purpose, service_protocol, public_port, public_url_scope, policy_revision, ip_policy, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
 FROM control.public_urls
 WHERE id = $1
 FOR NO KEY UPDATE
@@ -572,14 +580,25 @@ func (q *Queries) LockPublicURLForRun(ctx context.Context, publicUrlID string) (
 		&i.ID,
 		&i.TeamID,
 		&i.DomainID,
+		&i.IngressPoolID,
 		&i.MembershipID,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
 		&i.CanonicalHostname,
 		&i.Target,
+		&i.Namespace,
+		&i.Purpose,
+		&i.ServiceProtocol,
+		&i.PublicPort,
 		&i.PublicURLScope,
 		&i.PolicyRevision,
 		&i.IpPolicy,
+		&i.AllowedIpPolicyCiphertext,
+		&i.AllowedIpPolicyStorageKeyID,
+		&i.AllowedIpHashes,
+		&i.AllowedIpHashKeyID,
 		&i.LifecycleState,
 		&i.DnsAuthorityReference,
 		&i.DnsState,
@@ -600,17 +619,6 @@ func (q *Queries) LockPublicURLForRun(ctx context.Context, publicUrlID string) (
 		&i.UpdatedAt,
 		&i.SuspendedAt,
 		&i.DeletedAt,
-		&i.AllowedIpPolicyCiphertext,
-		&i.AllowedIpPolicyStorageKeyID,
-		&i.AllowedIpHashes,
-		&i.AllowedIpHashKeyID,
-		&i.RequestDigestCiphertext,
-		&i.RequestDigestStorageKeyID,
-		&i.Namespace,
-		&i.Purpose,
-		&i.IngressPoolID,
-		&i.ServiceProtocol,
-		&i.PublicPort,
 	)
 	return i, err
 }
@@ -618,7 +626,7 @@ func (q *Queries) LockPublicURLForRun(ctx context.Context, publicUrlID string) (
 const lockPublishRunCreationControl = `-- name: LockPublishRunCreationControl :one
 SELECT allowed
 FROM control.maintenance_controls
-WHERE control_name = 'publish_run_creation'
+WHERE operation = 'publish_run_creation'
 FOR SHARE
 `
 
@@ -670,15 +678,15 @@ WHERE publish_run_id = $9
           AND EXISTS (
               SELECT services.relay_service_id
               FROM control.relay_services AS services
-              JOIN control.relay_service_assignment_totals AS totals USING (relay_service_id)
+               JOIN control.relay_service_reservations AS totals USING (relay_service_id)
               JOIN control.relay_leases AS leases USING (relay_service_id)
               WHERE services.relay_service_id = connections.relay_service_id
                 AND services.enabled
                 AND leases.lease_expires_at > $8
                 AND NOT leases.draining AND leases.protocol_version = 1
                 AND leases.connection_capacity > 0 AND leases.stream_capacity > 0
-              GROUP BY services.relay_service_id, totals.assignment_count
-              HAVING sum(leases.connection_capacity) >= totals.assignment_count
+               GROUP BY services.relay_service_id, totals.reserved_slot_count
+               HAVING sum(leases.connection_capacity) >= totals.reserved_slot_count
           )
       )
   )

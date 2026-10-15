@@ -14,11 +14,13 @@ declare module "@tnldotdev/tnl" {
       readonly api: {
         readonly namespace: "ecstatic-penguin.tnl.dev";
         readonly hostname: "api-tnl-bb4eff.ecstatic-penguin.tnl.dev";
+        readonly protocol: "http";
         readonly url: "https://api-tnl-bb4eff.ecstatic-penguin.tnl.dev";
       };
       readonly web: {
         readonly namespace: "ecstatic-penguin.tnl.dev";
         readonly hostname: "web-tnl-bb4eff.ecstatic-penguin.tnl.dev";
+        readonly protocol: "http";
         readonly url: "https://web-tnl-bb4eff.ecstatic-penguin.tnl.dev";
       };
     };

@@ -81,9 +81,9 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 	}
 	indices := map[integrationGroupKey]int{}
 	for _, row := range hostnames {
-		group := row.ProjectKey + "\x00" + row.Namespace
+		group := row.PrimaryProjectRoot + "\x00" + row.Namespace
 		key := integrationGroupKey{row.ServerOrigin, group}
-		if row.Purpose == "hooks" && !groups[key] || row.Purpose == "oauth" && !projects[integrationProjectKey{row.ServerOrigin, row.ProjectKey}] {
+		if row.Purpose == "hooks" && !groups[key] || row.Purpose == "oauth" && !projects[integrationProjectKey{row.ServerOrigin, row.PrimaryProjectRoot}] {
 			continue
 		}
 		kind := "webhooks"
@@ -138,10 +138,10 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 		if invalid {
 			conflicts[key] = true
 		}
-		if row.Service == row.TunnelService && row.State == string(TunnelStateReady) && row.AppHostname != "" && row.PublicURLID != "" && row.PublishRunNumber > 0 {
+		if row.Service == row.TunnelService.String && row.State == string(TunnelStateReady) && row.AppHostname.Valid && row.PublicURLID.Valid && row.PublishRunNumber.Valid {
 			url.Endpoints[endpointIndex].ReadyReceivers = append(url.Endpoints[endpointIndex].ReadyReceivers, WebhookReceiverInfo{
-				TunnelID: row.TunnelID, Project: row.ProjectRoot, Service: row.TunnelService,
-				PublicURL: "https://" + row.AppHostname, State: row.State,
+				TunnelID: row.TunnelID, Project: row.ProjectRoot, Service: row.TunnelService.String,
+				PublicURL: "https://" + row.AppHostname.String, State: row.State,
 			})
 		}
 	}
@@ -159,9 +159,9 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 		if !found {
 			continue
 		}
-		owner := &WebhookReceiverInfo{TunnelID: row.TunnelID, Project: row.ProjectRoot, Service: row.Service, State: row.State}
-		if row.AppHostname != "" {
-			owner.PublicURL = "https://" + row.AppHostname
+		owner := &WebhookReceiverInfo{TunnelID: row.TunnelID, Project: row.ProjectRoot, Service: row.Service.String, State: row.State}
+		if row.AppHostname.Valid {
+			owner.PublicURL = "https://" + row.AppHostname.String
 		}
 		result[index].Endpoints[endpointIndex].Owner = owner
 	}

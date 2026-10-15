@@ -45,6 +45,7 @@ FOR NO KEY UPDATE OF routes SKIP LOCKED;
 -- name: GetActivePublishRunMembership :one
 SELECT m.id, m.role, t.policy_revision
 FROM control.team_memberships AS m
+JOIN control.identities AS i ON i.id = m.identity_id AND i.disabled_at IS NULL
 JOIN control.teams AS t
   ON t.id = m.team_id
  AND t.deleted_at IS NULL
@@ -62,7 +63,7 @@ ORDER BY connection_slot;
 -- name: LockPublishRunCreationControl :one
 SELECT allowed
 FROM control.maintenance_controls
-WHERE control_name = 'publish_run_creation'
+WHERE operation = 'publish_run_creation'
 FOR SHARE;
 
 -- name: InsertPublishRun :one
@@ -95,6 +96,7 @@ INSERT INTO control.publish_runs (
     certificate_scope,
     certificate_identifiers,
     certificate_challenge_method,
+    traffic_limits,
     state,
     created_at,
     last_heartbeat_at,
@@ -116,6 +118,7 @@ INSERT INTO control.publish_runs (
     sqlc.arg(certificate_scope),
     sqlc.arg(certificate_identifiers),
     sqlc.arg(certificate_challenge_method),
+    convert_from(sqlc.arg(traffic_limits)::bytea, 'UTF8')::jsonb,
     'starting',
     sqlc.arg(created_at),
     sqlc.arg(last_heartbeat_at),
@@ -204,15 +207,15 @@ WHERE publish_run_id = sqlc.arg(publish_run_id)
           AND EXISTS (
               SELECT services.relay_service_id
               FROM control.relay_services AS services
-              JOIN control.relay_service_assignment_totals AS totals USING (relay_service_id)
+               JOIN control.relay_service_reservations AS totals USING (relay_service_id)
               JOIN control.relay_leases AS leases USING (relay_service_id)
               WHERE services.relay_service_id = connections.relay_service_id
                 AND services.enabled
                 AND leases.lease_expires_at > sqlc.arg(assigned_at)
                 AND NOT leases.draining AND leases.protocol_version = 1
                 AND leases.connection_capacity > 0 AND leases.stream_capacity > 0
-              GROUP BY services.relay_service_id, totals.assignment_count
-              HAVING sum(leases.connection_capacity) >= totals.assignment_count
+               GROUP BY services.relay_service_id, totals.reserved_slot_count
+               HAVING sum(leases.connection_capacity) >= totals.reserved_slot_count
           )
       )
   )

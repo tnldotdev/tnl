@@ -259,9 +259,9 @@ func (q *Queries) ListAdminRelayLeases(ctx context.Context, arg ListAdminRelayLe
 }
 
 const listMaintenanceControls = `-- name: ListMaintenanceControls :many
-SELECT id, control_name, allowed, revision, updated_at, updated_by
+SELECT id, operation, allowed, revision, updated_at, updated_by
 FROM control.maintenance_controls
-ORDER BY control_name
+ORDER BY operation
 `
 
 func (q *Queries) ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error) {
@@ -275,7 +275,7 @@ func (q *Queries) ListMaintenanceControls(ctx context.Context) ([]ControlMainten
 		var i ControlMaintenanceControl
 		if err := rows.Scan(
 			&i.ID,
-			&i.ControlName,
+			&i.Operation,
 			&i.Allowed,
 			&i.Revision,
 			&i.UpdatedAt,
@@ -297,8 +297,8 @@ SET allowed = $1,
     revision = revision + 1,
     updated_at = $2,
     updated_by = $3
-WHERE control_name = $4
-RETURNING id, control_name, allowed, revision, updated_at, updated_by
+WHERE operation = $4
+RETURNING id, operation, allowed, revision, updated_at, updated_by
 `
 
 type SetMaintenanceControlParams struct {
@@ -318,7 +318,7 @@ func (q *Queries) SetMaintenanceControl(ctx context.Context, arg SetMaintenanceC
 	var i ControlMaintenanceControl
 	err := row.Scan(
 		&i.ID,
-		&i.ControlName,
+		&i.Operation,
 		&i.Allowed,
 		&i.Revision,
 		&i.UpdatedAt,

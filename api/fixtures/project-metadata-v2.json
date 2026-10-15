@@ -2,13 +2,174 @@
   "version": 2,
   "cases": [
     {
+      "name": "saved postgres address",
+      "valid": true,
+      "metadata": {
+        "version": 2,
+        "namespace": "member.example",
+        "dev": false,
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 15432,
+            "address": "db.member.example:15432"
+          }
+        }
+      }
+    },
+    {
+      "name": "saved TCP minimum port",
+      "valid": true,
+      "metadata": {
+        "version": 2,
+        "namespace": "member.example",
+        "dev": false,
+        "services": {
+          "cache": {
+            "protocol": "redis",
+            "namespace": "member.example",
+            "hostname": "cache.member.example",
+            "port": 1024,
+            "address": "cache.member.example:1024"
+          }
+        }
+      }
+    },
+    {
+      "name": "saved TCP maximum port",
+      "valid": true,
+      "metadata": {
+        "version": 2,
+        "namespace": "member.example",
+        "dev": false,
+        "services": {
+          "ssh": {
+            "protocol": "ssh",
+            "namespace": "member.example",
+            "hostname": "ssh.member.example",
+            "port": 65535,
+            "address": "ssh.member.example:65535"
+          }
+        }
+      }
+    },
+    {
+      "name": "TCP port below public range",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "namespace": "member.example",
+        "dev": false,
+        "services": {
+          "db": {
+            "protocol": "mysql",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 1023,
+            "address": "db.member.example:1023"
+          }
+        }
+      }
+    },
+    {
+      "name": "TCP port above public range",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "namespace": "member.example",
+        "dev": false,
+        "services": {
+          "db": {
+            "protocol": "mysql",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 65536,
+            "address": "db.member.example:65536"
+          }
+        }
+      }
+    },
+    {
+      "name": "TCP address does not match reservation",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "namespace": "member.example",
+        "dev": false,
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 15432,
+            "address": "db.member.example:5432"
+          }
+        }
+      }
+    },
+    {
+      "name": "TCP cannot have HTTP fields",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "namespace": "member.example",
+        "dev": false,
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 15432,
+            "address": "db.member.example:15432",
+            "url": "https://db.member.example"
+          }
+        }
+      }
+    },
+    {
+      "name": "private targets are not metadata",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "namespace": "member.example",
+        "dev": false,
+        "services": {
+          "db": {
+            "protocol": "postgres",
+            "namespace": "member.example",
+            "hostname": "db.member.example",
+            "port": 15432,
+            "address": "db.member.example:15432",
+            "target": "db.internal:5432"
+          }
+        }
+      }
+    },
+    {
+      "name": "protocol is required",
+      "valid": false,
+      "metadata": {
+        "version": 2,
+        "namespace": "member.example",
+        "dev": false,
+        "services": {
+          "api": {
+            "namespace": "member.example",
+            "hostname": "api.member.example",
+            "url": "https://api.member.example"
+          }
+        }
+      }
+    },
+    {
       "name": "primary worktree label",
       "valid": true,
       "metadata": {
         "namespace": "member.example",
         "dev": false,
         "version": 2,
-        "serviceDirectories": {},
         "services": {},
         "worktree": { "label": { "project": "shop", "id": "k7n2p9", "fullLabel": "shop-k7n2p9" } }
       }
@@ -20,7 +181,6 @@
         "namespace": "member.example",
         "dev": false,
         "version": 2,
-        "serviceDirectories": {},
         "services": {},
         "worktree": {
           "label": {
@@ -39,7 +199,6 @@
         "namespace": "member.example",
         "dev": false,
         "version": 2,
-        "serviceDirectories": {},
         "services": {},
         "worktree": { "label": { "project": "shop", "id": "k7n2p9", "fullLabel": "other-k7n2p9" } }
       }
@@ -51,9 +210,9 @@
         "namespace": "member.example",
         "dev": false,
         "version": 2,
-        "serviceDirectories": { "api": "." },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://api.member.example"
@@ -77,9 +236,9 @@
         "namespace": "member.example",
         "dev": false,
         "version": 2,
-        "serviceDirectories": { "api": "." },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://api.member.example"
@@ -103,9 +262,9 @@
         "namespace": "member.example",
         "dev": false,
         "version": 2,
-        "serviceDirectories": { "api": "." },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://api.member.example"
@@ -132,9 +291,9 @@
           "hostname": "oauth-shop-ab1234.member.example",
           "url": "https://oauth-shop-ab1234.member.example"
         },
-        "serviceDirectories": { "api": "." },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "other.example",
             "hostname": "api.other.example",
             "url": "https://api.other.example"
@@ -153,9 +312,9 @@
           "hostname": "oauth-shop-ab1234.member.example",
           "url": "https://different.example"
         },
-        "serviceDirectories": { "api": "." },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://api.member.example"
@@ -170,9 +329,9 @@
       "metadata": {
         "namespace": "member.example",
         "dev": false,
-        "serviceDirectories": { "api": "apps/api" },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://api.member.example"
@@ -187,9 +346,9 @@
       "metadata": {
         "namespace": "xn--bcher-kva.example",
         "dev": false,
-        "serviceDirectories": { "api": "." },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "xn--bcher-kva.example",
             "hostname": "api.xn--bcher-kva.example",
             "url": "https://api.xn--bcher-kva.example"
@@ -204,9 +363,9 @@
       "metadata": {
         "namespace": "xn--a.example",
         "dev": false,
-        "serviceDirectories": { "api": "." },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://api.member.example"
@@ -221,9 +380,9 @@
       "metadata": {
         "namespace": "member.example",
         "dev": false,
-        "serviceDirectories": { "api-": "." },
         "services": {
           "api-": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://api.member.example"
@@ -238,14 +397,15 @@
       "metadata": {
         "namespace": "member.example",
         "dev": false,
-        "serviceDirectories": { "api": ".", "web": "." },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://api.member.example"
           },
           "web": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://api.member.example"
@@ -260,9 +420,9 @@
       "metadata": {
         "namespace": "member.example",
         "dev": false,
-        "serviceDirectories": { "api": "." },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://other.example"
@@ -272,15 +432,16 @@
       }
     },
     {
-      "name": "unclean service directory",
+      "name": "removed service directories",
       "valid": false,
       "runtimeValid": true,
       "metadata": {
         "namespace": "member.example",
         "dev": false,
-        "serviceDirectories": { "api": "../api" },
+        "serviceDirectories": { "api": "." },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://api.member.example"
@@ -296,9 +457,9 @@
       "metadata": {
         "namespace": "member.example",
         "dev": false,
-        "serviceDirectories": { "api": "." },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://api.member.example"
@@ -314,9 +475,9 @@
       "metadata": {
         "namespace": "member.example",
         "dev": true,
-        "serviceDirectories": { "api": "." },
         "services": {
           "api": {
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "api.member.example",
             "url": "https://api.member.example"

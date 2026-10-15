@@ -10,7 +10,7 @@ import (
 )
 
 const clearIntegrationURLReady = `-- name: ClearIntegrationURLReady :exec
-DELETE FROM integration_url_publishers WHERE server_origin = ?1
+DELETE FROM integration_url_leases WHERE server_origin = ?1
   AND hostname = ?2 AND publisher_instance_id = ?3
 `
 
@@ -26,7 +26,7 @@ func (q *Queries) ClearIntegrationURLReady(ctx context.Context, arg ClearIntegra
 }
 
 const integrationURLReady = `-- name: IntegrationURLReady :one
-SELECT count(*) FROM integration_url_publishers
+SELECT count(*) FROM integration_url_leases
 WHERE server_origin = ?1 AND hostname = ?2 AND expires_at > ?3
 `
 
@@ -44,7 +44,7 @@ func (q *Queries) IntegrationURLReady(ctx context.Context, arg IntegrationURLRea
 }
 
 const markIntegrationURLReady = `-- name: MarkIntegrationURLReady :exec
-INSERT INTO integration_url_publishers (server_origin, hostname, publisher_instance_id, expires_at)
+INSERT INTO integration_url_leases (server_origin, hostname, publisher_instance_id, expires_at)
 VALUES (?1, ?2, ?3, ?4)
 ON CONFLICT(server_origin, hostname) DO UPDATE SET publisher_instance_id = excluded.publisher_instance_id, expires_at = excluded.expires_at
 `

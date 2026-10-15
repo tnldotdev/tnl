@@ -259,7 +259,7 @@ func insertAdminAuditEvent(
 }
 
 func maintenanceControl(row controlstatedb.ControlMaintenanceControl) (MaintenanceControl, error) {
-	name := MaintenanceControlName(row.ControlName)
+	name := MaintenanceControlName(row.Operation)
 	if !validMaintenanceControlName(name) || row.Revision <= 0 || !row.UpdatedAt.Valid || !validStateText(row.UpdatedBy) {
 		return MaintenanceControl{}, errors.New("controlstate: invalid maintenance control row")
 	}

@@ -11,8 +11,8 @@ FROM control.feedback_event_clock WHERE id = 1;
 -- name: CreateFeedbackThread :one
 INSERT INTO control.feedback_threads (
     id, preview_id, team_id, public_url_id, publish_run_id,
-    publish_run_number, service, page_path, page_title, report_text, author_display_name, author_identity_id, author_verified,
-    anchor, evidence, source_at_report, created_at, state_updated_at,
+    publish_run_number, service_name, page_path, page_title, report_text, author_display_name, author_identity_id, author_verified,
+    pin, evidence, report_source_state, created_at, state_updated_at,
     idempotency_key, request_digest
 ) VALUES (
     sqlc.arg(id), sqlc.arg(preview_id), sqlc.arg(team_id), sqlc.arg(public_url_id),
