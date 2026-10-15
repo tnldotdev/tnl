@@ -130,7 +130,7 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 	}
 	start := httptest.NewRecorder()
 	h.BeginPreviewBrowserLogin(start, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{
-		PreviewId: "pv_0123456789abcdefghijkl", PublicUrlId: "url_0123456789abcdefghijkl", ReturnPath: "/settings?tab=profile",
+		PreviewId: new("pv_0123456789abcdefghijkl"), PublicUrlId: "url_0123456789abcdefghijkl", ReturnPath: "/settings?tab=profile",
 	})
 	if start.Code != http.StatusFound {
 		t.Fatalf("browser login = %d %s", start.Code, start.Body.String())
@@ -177,7 +177,7 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 	store.consumed = false
 	secondStart := httptest.NewRecorder()
 	h.BeginPreviewBrowserLogin(secondStart, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{
-		PreviewId: "pv_0123456789abcdefghijkl", PublicUrlId: "url_0123456789abcdefghijkl", ReturnPath: "/",
+		PreviewId: new("pv_0123456789abcdefghijkl"), PublicUrlId: "url_0123456789abcdefghijkl", ReturnPath: "/",
 	})
 	wrongNonce := signer.Token(t, "browser-test", map[string]any{
 		"iss": provider.URL, "aud": "tnl-browser", "sub": "identity_1", "name": "Sam",
@@ -228,7 +228,7 @@ func TestBrowserLoginDoesNotHideStorageFailureAsNotFound(t *testing.T) {
 	} {
 		h := &handler{config: Config{ServerDomain: "example.test"}, browserAccess: &browserFlowStore{}, browserVerifier: failingBrowserVerifier{}, browserAuthority: &authorityclient.Client{}, previews: failingBrowserPreviewStore{err: test.err}}
 		response := httptest.NewRecorder()
-		h.BeginPreviewBrowserLogin(response, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{PreviewId: "pv_example", PublicUrlId: "url_example", ReturnPath: "/"})
+		h.BeginPreviewBrowserLogin(response, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{PreviewId: new("pv_example"), PublicUrlId: "url_example", ReturnPath: "/"})
 		var body struct {
 			Code      string `json:"code"`
 			RequestID string `json:"request_id"`

@@ -106,7 +106,9 @@ func (s *memoryStream) SetDeadline(at time.Time) error {
 	}
 	return s.Conn.SetDeadline(at)
 }
-func (s *memoryStream) CloseWrite() error  { return errors.ErrUnsupported }
+
+// the in-memory pipe has no half-close; admission frames are length-delimited.
+func (s *memoryStream) CloseWrite() error  { return nil }
 func (s *memoryStream) Reset(uint32) error { return s.Close() }
 
 func tunnelContext(t *testing.T) context.Context {

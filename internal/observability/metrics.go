@@ -35,6 +35,7 @@ type Metrics struct {
 	inspectionFailures      *prometheus.CounterVec
 	challengeRejections     *prometheus.CounterVec
 	forwardedBytes          *prometheus.CounterVec
+	trafficAdmissions       *prometheus.CounterVec
 	relayAttempts           *prometheus.CounterVec
 	apiDuration             *prometheus.HistogramVec
 	apiInFlight             *prometheus.GaugeVec
@@ -118,6 +119,7 @@ func New(role string) *Metrics {
 		forwardedBytes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_ingress_forwarded_bytes_total", Help: "Bytes forwarded through ingress, recorded after a copy finishes.",
 		}, []string{"direction"}),
+		trafficAdmissions: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_ingress_traffic_admissions_total", Help: "Process-local traffic decisions by fixed stage and result; excludes identities and network addresses."}, []string{"stage", "result"}),
 		relayAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_ingress_relay_attempts_total", Help: "Ingress internal-forwarding attempts by connection slot and bounded outcome.",
 		}, []string{"connection_slot", "outcome"}),
@@ -217,6 +219,7 @@ func New(role string) *Metrics {
 		registered = append(registered,
 			metrics.ingressStreams, metrics.ingressConnections, metrics.visitorConnections, metrics.visitorOpenDuration,
 			metrics.capacityRejections, metrics.drainingRejections, metrics.forwardedBytes, metrics.relayAttempts,
+			metrics.trafficAdmissions,
 			metrics.inspectionFailures, metrics.challengeRejections, metrics.ingressOperations,
 			metrics.recoveryPending, metrics.recoveryAttempts, metrics.usageRetained,
 		)
@@ -368,6 +371,9 @@ func admissionResource(resource string) bool {
 		"denied_connections", "denied_public_url_connections", "challenge_connections",
 		"challenge_hostname_connections", "control_connections", "relay_tcp_connections",
 		"publisher_connections", "relay_streams":
+		return true
+	case "process_connection_rate", "source_connection_rate", "source_connections", "public_url_connection_rate", "public_url_connection_total",
+		"pending_source_capacity", "pending_source_connections", "pending_public_url_connections", "pending_source_rate", "pending_public_url_rate", "traffic_keys", "traffic_bandwidth", "invalid_traffic_projection":
 		return true
 	}
 	return false

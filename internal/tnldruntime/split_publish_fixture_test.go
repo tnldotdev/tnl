@@ -1,13 +1,19 @@
 package tnldruntime
 
 import (
+	"context"
 	"crypto/tls"
 	"database/sql"
+	"io"
+	"net"
 	"net/http"
+	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
@@ -35,6 +41,7 @@ type splitPublishFixture struct {
 
 type splitPublishOptions struct {
 	dns                  *integrationRoute53
+	proxyIngress         bool
 	configureControlHTTP func(*http.Client)
 	configureProcess     func(*tnldconfig.Config)
 }
@@ -57,13 +64,17 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		relayBCertificate = certificateAuthority.issueServer(t, "relay-b."+serverDomain)
 	}
 	controlAddress, privateControlAddress, ingressAddress := unusedTCPAddress(t), unusedTCPAddress(t), unusedTCPAddress(t)
+	publicIngressAddress := ingressAddress
+	if options.proxyIngress {
+		ingressAddress = unusedTCPAddress(t)
+	}
 	var dnsAddress string
 	if options.dns != nil {
 		dnsAddress = options.dns.address
 	} else {
 		dnsAddress = startIntegrationDNS(t)
 	}
-	pebble := startIntegrationPebble(t, integrationPort(t, ingressAddress), dnsAddress)
+	pebble := startIntegrationPebble(t, integrationPort(t, publicIngressAddress), dnsAddress)
 	for _, configure := range configureACME {
 		configure(pebble.httpClient)
 	}
@@ -101,6 +112,9 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	}
 	// dependencies outlive every incarnation of control, ingress, and relay.
 	owner := newRuntimeTopology(t)
+	if options.proxyIngress {
+		startSplitIngressProxy(t, owner, publicIngressAddress, ingressAddress)
+	}
 	controlOptions := integrationProcessOptions{acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, owner: owner}
 	control := startIntegrationProcessWithOptions(t, controlConfig, controlOptions)
 	waitForProcessReady(t, control)
@@ -149,8 +163,68 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	}
 	f.identity = newIntegrationPublishingIdentity(t, "https://"+controlHostname, controlHTTP, hostnameLabel, owner)
 	f.controlHTTP = controlHTTP
-	f.visitor = newIntegrationVisitor(t, pebble.roots, ingressAddress, owner)
+	f.visitor = newIntegrationVisitor(t, pebble.roots, publicIngressAddress, owner)
 	return f
+}
+
+// a disposable front address writes trusted PROXY v2 metadata for ordinary
+// ACME TLS-ALPN visitors. database test clients supply their own original port
+// through the separate private ingress listener.
+func startSplitIngressProxy(t *testing.T, owner *runtimeTopology, public, backend string) {
+	t.Helper()
+	listener, err := net.Listen("tcp", public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var active sync.WaitGroup
+	acceptDone := make(chan struct{})
+	owner.cleanupResource(t, func() {
+		_ = listener.Close()
+		<-acceptDone
+		active.Wait()
+	})
+	go func() {
+		defer close(acceptDone)
+		for {
+			visitor, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			active.Add(1)
+			go func() {
+				defer active.Done()
+				defer visitor.Close()
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				upstream, err := (&net.Dialer{}).DialContext(ctx, "tcp", backend)
+				cancel()
+				if err != nil {
+					return
+				}
+				defer upstream.Close()
+				source := visitor.RemoteAddr().(*net.TCPAddr).AddrPort()
+				meta, err := proxyproto.Encode(proxyproto.Header{Source: netip.AddrPortFrom(source.Addr().Unmap(), source.Port()), Destination: netip.MustParseAddrPort("127.0.0.1:443")})
+				if err != nil {
+					return
+				}
+				if _, err := upstream.Write(meta); err != nil {
+					return
+				}
+				finished := make(chan struct{})
+				go func() {
+					_, _ = io.Copy(visitor, upstream)
+					if tcp, ok := visitor.(*net.TCPConn); ok {
+						_ = tcp.CloseWrite()
+					}
+					close(finished)
+				}()
+				_, _ = io.Copy(upstream, visitor)
+				if tcp, ok := upstream.(*net.TCPConn); ok {
+					_ = tcp.CloseWrite()
+				}
+				<-finished
+			}()
+		}
+	}()
 }
 
 func splitPublishConfig(t *testing.T, role tnldconfig.Role) tnldconfig.Config {

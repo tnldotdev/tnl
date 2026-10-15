@@ -151,7 +151,7 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 		if err != nil {
 			return Share{}, fmt.Errorf("controlstate: create share: lock public URL: %w", err)
 		}
-		if route.TeamID != request.TeamID || route.LifecycleState != string(PublicURLLifecycleEnabled) ||
+		if route.TeamID != request.TeamID || route.LifecycleState != string(PublicURLLifecycleEnabled) || route.Purpose != "app" || route.ServiceProtocol != "http" ||
 			route.MutationRevision != int64(authorized.ExpectedMutationRevision) || route.PolicyRevision > policyRevision {
 			return Share{}, ErrShareStale
 		}
@@ -267,14 +267,37 @@ func sharePageFromRows(ctx context.Context, queries *controlstatedb.Queries, row
 	return page, nil
 }
 
-func (d *Database) RevokeShare(ctx context.Context, id, identityID string, now time.Time) (Share, error) {
+func (d *Database) RevokeShare(ctx context.Context, id, identityID string, now time.Time) (result Share, retErr error) {
 	if !opaqueid.Valid(id, opaqueid.SharePrefix) || identityID == "" {
 		return Share{}, ErrShareInvalid
 	}
 	if err := d.requireOpen(); err != nil {
 		return Share{}, err
 	}
-	queries := controlstatedb.New(d.pool)
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return Share{}, err
+	}
+	defer rollback(ctx, tx, "revoke anonymous share", &retErr)()
+	queries := controlstatedb.New(tx)
+	candidate, err := queries.GetShare(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Share{}, ErrShareNotFound
+	}
+	if err != nil {
+		return Share{}, err
+	}
+	if candidate.CreatedByIdentityID != identityID {
+		return Share{}, ErrShareNotFound
+	}
+	if _, err = queries.LockLocalTeamForMutation(ctx, candidate.TeamID); err != nil {
+		return Share{}, err
+	}
+	if _, err = queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{TeamID: candidate.TeamID, IdentityID: identityID}); errors.Is(err, pgx.ErrNoRows) {
+		return Share{}, ErrPreviewAccess
+	} else if err != nil {
+		return Share{}, err
+	}
 	row, err := queries.RevokeShare(ctx, controlstatedb.RevokeShareParams{
 		ShareID: id, IdentityID: identityID,
 		RevokedAt: timestamptz(now), RevokedByIdentityID: identityID,
@@ -285,7 +308,11 @@ func (d *Database) RevokeShare(ctx context.Context, id, identityID string, now t
 	if err != nil {
 		return Share{}, fmt.Errorf("controlstate: revoke share: %w", err)
 	}
-	return shareWithURLs(ctx, queries, row)
+	result, err = shareWithURLs(ctx, queries, row)
+	if err != nil {
+		return Share{}, err
+	}
+	return result, tx.Commit(ctx)
 }
 
 func shareWithURLs(ctx context.Context, queries *controlstatedb.Queries, row controlstatedb.ControlShare) (Share, error) {

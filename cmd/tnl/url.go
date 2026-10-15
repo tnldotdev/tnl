@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strconv"
@@ -10,14 +11,18 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type publicURLCommand struct {
-	List       publicURLListCommand       `cmd:"" help:"List public URLs for the selected team."`
-	Update     publicURLUpdateCommand     `cmd:"" help:"Change a saved public URL target or visitor policy."`
-	Delete     publicURLDeleteCommand     `cmd:"" help:"Delete a public URL by ID; use tnl url list to find it."`
-	Credential publicURLCredentialCommand `cmd:"" help:"Manage credentials scoped to publishing one public URL."`
+	List        publicURLListCommand      `cmd:"" help:"List public URLs you may visit; --team filters the results."`
+	Available   urlAvailableCommand       `cmd:"" help:"List public URLs you may visit."`
+	Inventory   publicURLInventoryCommand `cmd:"" help:"List saved public URLs owned by the selected team."`
+	Certificate visitorCertificateCommand `cmd:"" help:"Save a locally generated visitor key and database certificate."`
+	IP          urlIPCommand              `cmd:"" name:"ip" help:"Manage visitor IP grants."`
+	Update      publicURLUpdateCommand    `cmd:"" help:"Change a saved public URL target or visitor policy."`
+	Delete      publicURLDeleteCommand    `cmd:"" help:"Delete a public URL by ID; use tnl url list to find it."`
 }
 
 type publicURLUpdateCommand struct {
@@ -30,6 +35,11 @@ type publicURLUpdateCommand struct {
 
 type publicURLListCommand struct {
 	scopedTeamFlags `embed:""`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+}
+
+type publicURLInventoryCommand struct {
+	scopedTeamFlags `embed:""`
 }
 
 type publicURLDeleteCommand struct {
@@ -39,6 +49,79 @@ type publicURLDeleteCommand struct {
 
 func runURLList(ctx context.Context, command publicURLListCommand, output, diagnostics io.Writer) error {
 	session, err := openTeamSession(ctx, command.selection(), "tnl url list", diagnostics)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	items, err := visitorURLList(ctx, session.authenticated.Control, command.Team)
+	if err != nil {
+		return err
+	}
+	if command.Output == statusOutputJSON {
+		return json.NewEncoder(output).Encode(items)
+	}
+	blocks := make([]clioutput.Block, 0, len(items))
+	for _, item := range items {
+		address, err := availablePublicAddress(item)
+		if err != nil {
+			return err
+		}
+		blocks = append(blocks, clioutput.Section(item.CanonicalHostname, clioutput.Fields(
+			clioutput.Field{Label: "public URL", Value: address},
+			clioutput.Field{Label: "public URL ID", Value: item.Id},
+			clioutput.Field{Label: "team", Value: item.TeamName},
+			clioutput.Field{Label: "protocol", Value: item.ServiceProtocol},
+			clioutput.Field{Label: "access", Value: string(item.VisitorAccess)},
+		)))
+	}
+	return writeHumanFrame(output, "tnl url list", countState(len(items), "public URL", "public URLs"), "", blocks...)
+}
+
+type visitorURLListClient interface {
+	ListAvailablePublicURLs(context.Context, string, string) (controlv1.AvailablePublicURLPage, error)
+}
+
+func visitorURLList(ctx context.Context, control visitorURLListClient, team string) ([]controlv1.AvailablePublicURL, error) {
+	teamID := ""
+	if opaqueid.Valid(team, opaqueid.TeamPrefix) {
+		teamID = team
+	}
+	items := []controlv1.AvailablePublicURL{}
+	seen := map[string]bool{}
+	cursor := ""
+	for {
+		page, err := control.ListAvailablePublicURLs(ctx, teamID, cursor)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range page.PublicUrls {
+			if team == "" || item.TeamId == team || item.TeamName == team {
+				items = append(items, item)
+			}
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		if *page.NextCursor == "" || *page.NextCursor == cursor || seen[*page.NextCursor] {
+			return nil, failure.Wrap("read visitor inventory", failure.ServerResponseInvalid, errors.New("invalid visitor inventory cursor"))
+		}
+		cursor = *page.NextCursor
+		seen[cursor] = true
+	}
+	return items, nil
+}
+
+func availablePublicAddress(item controlv1.AvailablePublicURL) (string, error) {
+	var port *int
+	if item.PublicPort != nil {
+		value := int(*item.PublicPort)
+		port = &value
+	}
+	return savedPublicAddress(controlv1.PublicURL{CanonicalHostname: item.CanonicalHostname, ServiceProtocol: controlv1.PublicURLServiceProtocol(item.ServiceProtocol), PublicPort: port})
+}
+
+func runURLInventory(ctx context.Context, command publicURLInventoryCommand, output, diagnostics io.Writer) error {
+	session, err := openTeamSession(ctx, command.selection(), "tnl url inventory", diagnostics)
 	if err != nil {
 		return err
 	}
@@ -72,7 +155,7 @@ func runURLList(ctx context.Context, command publicURLListCommand, output, diagn
 		}
 		blocks = append(blocks, clioutput.Section(route.CanonicalHostname, clioutput.Fields(fields...)))
 	}
-	return writeHumanFrame(output, "tnl url list", countState(len(routes), "public URL", "public URLs"), "", blocks...)
+	return writeHumanFrame(output, "tnl url inventory", countState(len(routes), "public URL", "public URLs"), "", blocks...)
 }
 
 func runURLDelete(ctx context.Context, command publicURLDeleteCommand, output, diagnostics io.Writer) error {

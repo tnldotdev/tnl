@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -26,9 +27,10 @@ import (
 )
 
 type shareCommand struct {
-	Link linkShareCommand `cmd:"" help:"Create and revoke preview links."`
-	Team teamShareCommand `cmd:"" help:"Share the preview with its team."`
-	List shareListCommand `cmd:"" help:"List preview access for the selected team."`
+	Invite shareInviteCommand `cmd:"" help:"Invite a verified-email visitor without team membership."`
+	Link   linkShareCommand   `cmd:"" help:"Create and revoke preview links."`
+	Team   teamShareCommand   `cmd:"" help:"Share the preview with its team."`
+	List   shareListCommand   `cmd:"" help:"List preview access for the selected team."`
 }
 
 type teamShareCommand struct {
@@ -37,12 +39,14 @@ type teamShareCommand struct {
 }
 
 type teamShareCreateCommand struct {
+	ExpiresIn       string `name:"expires-in" help:"Exact URL grant lifetime; omit for perpetual access."`
 	scopedTeamFlags `embed:""`
 	URL             string           `arg:"" name:"url" optional:"" help:"Public URL ID, hostname, or HTTPS origin to open."`
 	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
 type teamShareRevokeCommand struct {
+	URL             string `arg:"" optional:"" help:"Exact public URL whose team grants should be revoked; omit for this preview."`
 	scopedTeamFlags `embed:""`
 	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
@@ -78,7 +82,10 @@ type shareServiceResult struct {
 
 func shareServiceURLs(project projectConfiguration, routes []controlv1.PublicURL) map[string]shareServiceResult {
 	names := make([]string, 0, len(project.Config.Services))
-	for name := range project.Config.Services {
+	for name, service := range project.Config.Services {
+		if config.Protocol(service) != "http" {
+			continue
+		}
 		names = append(names, name)
 	}
 	slices.Sort(names)
@@ -179,6 +186,9 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 	routes := make([]controlv1.PublicURL, 0, len(names))
 	for _, name := range names {
 		route, routeErr := session.authenticated.Control.GetPublicURLByHostname(ctx, current.team.Id, metadata.Services[name].Hostname)
+		if routeErr == nil && route.ServiceProtocol != controlv1.Http {
+			continue
+		}
 		if routeErr != nil || !slices.Contains(preview.PublicUrlIds, route.Id) {
 			session.Close()
 			if routeErr != nil {
@@ -245,6 +255,9 @@ func runShareCreate(ctx context.Context, flags shareCreateCommand, project proje
 }
 
 func runShareList(ctx context.Context, flags shareListCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	if flags.URL != "" {
+		return runExactShareList(ctx, flags.selection(), flags.URL, flags.Output, output, diagnostics)
+	}
 	session, err := openTeamSession(ctx, flags.selection(), "tnl share list", diagnostics)
 	if err != nil {
 		return err
@@ -322,7 +335,67 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 	return writeHumanFrame(output, "tnl share list", countState(count, "share", "shares"), "", blocks...)
 }
 
+func runExactShareList(ctx context.Context, flags remoteFlags, selector string, mode statusOutputMode, output, diagnostics io.Writer) error {
+	s, err := openTeamSession(ctx, flags, "tnl share list", diagnostics)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	item, err := resolveVisitorPublicURL(ctx, s, selector)
+	if err != nil {
+		return err
+	}
+	grants, err := s.authenticated.Control.ListVisitorGrants(ctx, item.Id)
+	if err != nil {
+		return err
+	}
+	invitations, err := s.authenticated.Control.ListVisitorInvitations(ctx, item.Id)
+	if err != nil {
+		return err
+	}
+	shares, err := s.authenticated.Control.ListTeamShares(ctx, item.TeamId)
+	if err != nil {
+		return err
+	}
+	shares = slices.DeleteFunc(shares, func(share controlv1.Share) bool { return !slices.Contains(share.PublicUrlIds, item.Id) })
+	if mode == statusOutputJSON {
+		return json.NewEncoder(output).Encode(struct {
+			Grants      []controlv1.VisitorGrant      `json:"grants"`
+			Invitations []controlv1.VisitorInvitation `json:"invitations"`
+			Shares      []controlv1.Share             `json:"shares"`
+		}{grants, invitations, shares})
+	}
+	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "public URL ID", Value: item.Id})}
+	for _, grant := range grants {
+		expiry := "perpetual"
+		state := "active"
+		if grant.ExpiresAt != nil {
+			expiry = grant.ExpiresAt.UTC().Format(time.RFC3339)
+			if !grant.ExpiresAt.After(time.Now()) {
+				state = "expired"
+			}
+		}
+		if grant.RevokedAt != nil {
+			state = "revoked"
+		}
+		blocks = append(blocks, clioutput.Section(grant.Id, clioutput.Fields(clioutput.Field{Label: "kind", Value: string(grant.Kind)}, clioutput.Field{Label: "state", Value: state}, clioutput.Field{Label: "expires", Value: expiry})))
+	}
+	for _, invitation := range invitations {
+		blocks = append(blocks, clioutput.Section(invitation.Id, clioutput.Fields(clioutput.Field{Label: "email", Value: invitation.Email}, clioutput.Field{Label: "expires", Value: invitation.ExpiresAt.UTC().Format(time.RFC3339)})))
+	}
+	for _, share := range shares {
+		blocks = append(blocks, clioutput.Section(share.Id, clioutput.Fields(clioutput.Field{Label: "kind", Value: "anonymous preview share"}, clioutput.Field{Label: "expires", Value: share.ExpiresAt.UTC().Format(time.RFC3339)})))
+	}
+	return writeHumanFrame(output, "tnl share list", countState(len(grants)+len(invitations)+len(shares), "share", "shares"), "", blocks...)
+}
+
 func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	if flags.URL != "" {
+		return runExactTeamShare(ctx, flags.selection(), flags.URL, flags.ExpiresIn, false, flags.Output, output, diagnostics)
+	}
+	if flags.ExpiresIn != "" {
+		return failure.Wrap("select expiring team grant", failure.ShareInputInvalid, errors.New("an expiring team grant requires an exact public URL"))
+	}
 	session, preview, routes, err := previewShares(ctx, flags.selection(), project, "tnl share team create", diagnostics)
 	if err != nil {
 		return err
@@ -357,6 +430,9 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 }
 
 func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	if flags.URL != "" {
+		return runExactTeamShare(ctx, flags.selection(), flags.URL, "", true, flags.Output, output, diagnostics)
+	}
 	if !project.Found() || project.Root == "" {
 		return failure.Wrap("select share project", failure.PreviewNotSaved, errors.New("select a configured project to revoke this checkout's team access"))
 	}
@@ -391,6 +467,60 @@ func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, proje
 		}{1, id, false}))
 	}
 	return writeHumanFrame(output, "tnl share team revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "preview ID", Value: id}))
+}
+
+func runExactTeamShare(ctx context.Context, flags remoteFlags, selector, lifetime string, revoke bool, mode statusOutputMode, output, diagnostics io.Writer) error {
+	session, err := openTeamSession(ctx, flags, "tnl share team", diagnostics)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	item, err := resolveVisitorPublicURL(ctx, session, selector)
+	if err != nil {
+		return err
+	}
+	var result controlv1.VisitorGrant
+	state := "shared"
+	if revoke {
+		grants, err := session.authenticated.Control.ListVisitorGrants(ctx, item.Id)
+		if err != nil {
+			return err
+		}
+		for _, grant := range grants {
+			if string(grant.Kind) == "team" && grant.RevokedAt == nil {
+				if err := session.authenticated.Control.RevokeVisitorGrant(ctx, item.Id, grant.Id); err != nil {
+					return err
+				}
+			}
+		}
+		state = "revoked"
+	} else {
+		var expires *time.Time
+		if lifetime != "" {
+			duration, err := time.ParseDuration(lifetime)
+			if err != nil || duration <= 0 {
+				return failure.Wrap("validate team grant lifetime", failure.ShareInputInvalid, errors.New("team grant lifetime must be greater than zero"))
+			}
+			at := time.Now().Add(duration)
+			expires = &at
+		}
+		key, err := randomIdempotencyKey()
+		if err != nil {
+			return err
+		}
+		result, err = session.authenticated.Control.CreateTeamVisitorGrant(ctx, item.Id, key, controlv1.CreateTeamVisitorGrantRequest{ExpiresAt: expires})
+		if err != nil {
+			return err
+		}
+	}
+	if mode == statusOutputJSON {
+		return json.NewEncoder(output).Encode(struct {
+			PublicURLID string                 `json:"public_url_id"`
+			Grant       controlv1.VisitorGrant `json:"grant"`
+			State       string                 `json:"state"`
+		}{item.Id, result, state})
+	}
+	return writeHumanFrame(output, "tnl share team", state, "", clioutput.Fields(clioutput.Field{Label: "public URL ID", Value: item.Id}, clioutput.Field{Label: "hostname", Value: item.CanonicalHostname}))
 }
 
 func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagnostics io.Writer) error {

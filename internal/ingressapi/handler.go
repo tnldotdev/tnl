@@ -10,6 +10,7 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
@@ -360,5 +361,26 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		AllowedIpHashes: hashed, IpPolicyKey: verifier,
 		PublicUrlExpiresAt: projection.PublicUrlExpiresAt,
 		RecoveryEpisodeId:  recoveryEpisodeID, PublisherConnections: connections,
+		Traffic: ingressTraffic(projection.Traffic),
 	}
+}
+
+func ingressTraffic(l *trafficlimits.Limits) *ingressv1.IngressTrafficLimits {
+	if l == nil {
+		return nil
+	}
+	result := &ingressv1.IngressTrafficLimits{Connections: l.Connections, Rate: l.Rate, RatePerNs: int64(l.Period()), Burst: l.Burst, UploadBytes: l.UploadBytes, DownloadBytes: l.DownloadBytes}
+	if l.TotalConnections > 0 {
+		v := l.TotalConnections
+		result.TotalConnections = &v
+	}
+	if l.TotalUploadBytes > 0 {
+		v := l.TotalUploadBytes
+		result.TotalUploadBytes = &v
+	}
+	if l.TotalDownloadBytes > 0 {
+		v := l.TotalDownloadBytes
+		result.TotalDownloadBytes = &v
+	}
+	return result
 }

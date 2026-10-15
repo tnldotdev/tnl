@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/routebackend"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 )
 
 func TestIngressRoutesTLSWithProxyMetadata(t *testing.T) {
@@ -180,7 +181,7 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	backend := gatedDeniedBackend{&gatedOpenBackend{entered: make(chan struct{}), release: release, err: errors.New("relay unavailable")}}
 	usage := newUsageRecorder()
 	config := Config{
-		RequireProxyHeader: true, MaxDeniedConnections: 2, OpenUsage: usage.Open,
+		RequireProxyHeader: true, Pending: PendingConfig{Connections: 2, PublicURLConnections: 1, SourceConnections: 1}, OpenUsage: usage.Open,
 		Lookup: func(host string) (PublicURL, LookupReason) {
 			if host != "route.example" {
 				return PublicURL{}, "not_found"
@@ -228,7 +229,9 @@ func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
 	usage := newUsageRecorder()
 	config := publicURLConfig(backend)
 	config.OpenUsage = usage.Open
-	config.MaxConnections = 2 // one public URL receives half of this ingress budget.
+	config.MaxConnections = 2
+	config.Traffic.Default = trafficlimits.Default()
+	config.Traffic.Default.Connections = 1
 	_, address := startIngress(t, config)
 	first := ingressClient(t, address, "route.example", "")
 	result := ingressWorker(t, func() { unblock(); _ = first.Close() }, first.Handshake)

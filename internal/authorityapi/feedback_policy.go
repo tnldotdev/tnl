@@ -1,0 +1,93 @@
+package authorityapi
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+)
+
+type visitorAuthorityStore interface {
+	GetTeamFeedbackPolicy(context.Context, string, string) (controlstate.TeamFeedbackPolicy, error)
+	SetTeamFeedbackPolicy(context.Context, string, string, string, time.Time) (controlstate.TeamFeedbackPolicy, error)
+	IssueAdminBrowserHandoff(context.Context, credentials.AccessToken, credentials.RefreshToken, string, int64, time.Duration, time.Duration, time.Time) (controlstate.BrowserHandoff, string, error)
+}
+
+func (h *handler) GetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, teamID string) {
+	principal, ok := h.authenticateControlRequest(w, r)
+	if !ok {
+		return
+	}
+	store, ok := h.store.(visitorAuthorityStore)
+	if !ok {
+		writeAuthenticationUnavailable(w, "read feedback author policy", nil)
+		return
+	}
+	policy, err := store.GetTeamFeedbackPolicy(r.Context(), principal.IdentityID, teamID)
+	if err != nil {
+		writeControlStateProblem(w, "read feedback author policy", err)
+		return
+	}
+	writeJSON(w, 200, policy)
+}
+func (h *handler) SetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, teamID string) {
+	principal, ok := h.authenticateControlRequest(w, r)
+	if !ok {
+		return
+	}
+	store, ok := h.store.(visitorAuthorityStore)
+	if !ok {
+		writeAuthenticationUnavailable(w, "set feedback author policy", nil)
+		return
+	}
+	var body authorityv1.TeamFeedbackPolicy
+	if decodeJSON(w, r, &body) != nil {
+		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid feedback author policy")
+		return
+	}
+	policy, err := store.SetTeamFeedbackPolicy(r.Context(), principal.IdentityID, teamID, string(body.Authors), time.Now())
+	if err != nil {
+		writeControlStateProblem(w, "set feedback author policy", err)
+		return
+	}
+	writeJSON(w, 200, policy)
+}
+func (h *handler) IssueAdminBrowserHandoff(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.authenticateControlRequest(w, r); !ok {
+		return
+	}
+	store, ok := h.store.(visitorAuthorityStore)
+	if !ok {
+		writeAuthenticationUnavailable(w, "create browser handoff", nil)
+		return
+	}
+	var body authorityv1.IssueAdminBrowserHandoffJSONRequestBody
+	if decodeJSON(w, r, &body) != nil {
+		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid browser handoff")
+		return
+	}
+	access, err := credentials.Bearer(r.Header)
+	if err != nil {
+		writeBearerProblem(w)
+		return
+	}
+	handoff, host, err := store.IssueAdminBrowserHandoff(r.Context(), credentials.AccessToken(access), credentials.RefreshToken(body.RefreshToken), body.PublicUrlId, h.loginSourceRevision, h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now())
+	if err != nil {
+		switch {
+		case errors.Is(err, controlstate.ErrControlAuthentication):
+			writeBearerProblem(w)
+		case errors.Is(err, controlstate.ErrPreviewAccess):
+			writeProblem(w, 403, authorityv1.Forbidden, "browser access denied")
+		default:
+			writeAuthenticationUnavailable(w, "create browser handoff", err)
+		}
+		return
+	}
+	writeJSON(w, 201, struct {
+		URL string `json:"url"`
+	}{URL: "https://" + host + "/__tnl/team/handoff/" + handoff.Token})
+}
