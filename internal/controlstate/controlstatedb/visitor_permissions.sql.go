@@ -27,7 +27,7 @@ func (q *Queries) AcceptVisitorInvitation(ctx context.Context, arg AcceptVisitor
 }
 
 const bindBrowserSessionHost = `-- name: BindBrowserSessionHost :exec
-INSERT INTO control.browser_session_hosts(session_digest, public_url_id, publish_run_id) VALUES ($1, $2, $3)
+INSERT INTO control.browser_session_run_bindings(session_digest, public_url_id, publish_run_id) VALUES ($1, $2, $3)
 ON CONFLICT (session_digest, public_url_id) DO NOTHING
 `
 
@@ -43,7 +43,7 @@ func (q *Queries) BindBrowserSessionHost(ctx context.Context, arg BindBrowserSes
 }
 
 const browserSessionCurrentHost = `-- name: BrowserSessionCurrentHost :one
-SELECT h.publish_run_id FROM control.browser_session_hosts h JOIN control.publish_runs r ON r.id = h.publish_run_id
+SELECT h.publish_run_id FROM control.browser_session_run_bindings h JOIN control.publish_runs r ON r.id = h.publish_run_id
 WHERE h.session_digest = $1 AND h.public_url_id = $2 AND r.closed_at IS NULL AND r.publisher_expires_at > $3
   AND r.state = 'ready' AND r.public_url_id = h.public_url_id
 `
@@ -338,7 +338,7 @@ func (q *Queries) GetVisitorParentSession(ctx context.Context, id string) (Contr
 }
 
 const hasVisitorIPSet = `-- name: HasVisitorIPSet :one
-SELECT EXISTS(SELECT 1 FROM control.visitor_ip_sets WHERE public_url_id = $1)::boolean
+SELECT EXISTS(SELECT 1 FROM control.visitor_ip_policy_sets WHERE public_url_id = $1)::boolean
 `
 
 func (q *Queries) HasVisitorIPSet(ctx context.Context, publicUrlID string) (bool, error) {
@@ -594,7 +594,7 @@ func (q *Queries) LockVisitorInvitation(ctx context.Context, id string) (Control
 }
 
 const markVisitorIPSet = `-- name: MarkVisitorIPSet :exec
-INSERT INTO control.visitor_ip_sets(public_url_id) VALUES ($1) ON CONFLICT DO NOTHING
+INSERT INTO control.visitor_ip_policy_sets(public_url_id) VALUES ($1) ON CONFLICT DO NOTHING
 `
 
 func (q *Queries) MarkVisitorIPSet(ctx context.Context, publicUrlID string) error {

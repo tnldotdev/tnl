@@ -277,7 +277,7 @@ func (q *Queries) CompleteACMEAuthorizationCleanup(ctx context.Context, arg Comp
 }
 
 const deleteControlTLSCacheEntry = `-- name: DeleteControlTLSCacheEntry :exec
-DELETE FROM control.control_tls_cache
+DELETE FROM control.control_tls_certificate_cache
 WHERE directory_url = $1
   AND cache_key = $2
 `
@@ -506,7 +506,7 @@ func (q *Queries) GetCertificateOrderDomainKind(ctx context.Context, publicUrlID
 
 const getControlTLSCacheEntry = `-- name: GetControlTLSCacheEntry :one
 SELECT cache_ciphertext, cache_storage_key_id
-FROM control.control_tls_cache
+FROM control.control_tls_certificate_cache
 WHERE directory_url = $1
   AND cache_key = $2
 `
@@ -901,7 +901,7 @@ func (q *Queries) LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrder
 const lockCertificateIssuanceControl = `-- name: LockCertificateIssuanceControl :one
 SELECT allowed
 FROM control.maintenance_controls
-WHERE control_name = 'certificate_issuance'
+WHERE operation = 'certificate_issuance'
 FOR SHARE
 `
 
@@ -993,7 +993,7 @@ func (q *Queries) MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderI
 }
 
 const putControlTLSCacheEntry = `-- name: PutControlTLSCacheEntry :exec
-INSERT INTO control.control_tls_cache (
+INSERT INTO control.control_tls_certificate_cache (
     directory_url,
     cache_key,
     cache_ciphertext,
@@ -1063,7 +1063,7 @@ func (q *Queries) RotateACMEAccountKey(ctx context.Context, arg RotateACMEAccoun
 }
 
 const rotateControlTLSCacheEntry = `-- name: RotateControlTLSCacheEntry :exec
-UPDATE control.control_tls_cache
+UPDATE control.control_tls_certificate_cache
 SET cache_ciphertext = $1,
     cache_storage_key_id = $2,
     updated_at = $3

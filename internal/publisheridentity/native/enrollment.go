@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -19,7 +22,8 @@ type EnrollmentAuthority interface {
 
 // EnrollNative durably saves the locally generated key before redeeming a
 // one-use secret. a lost response retries with that exact key under a local
-// lock. neither the enrollment secret nor access tokens enter client state.
+// lock. a locally issued one-use secret remains protected until promotion;
+// access tokens do not enter client state.
 func EnrollNative(ctx context.Context, state *clientstate.Store, control NativeControl, authority EnrollmentAuthority, secret string) (*Native, authorityv1.PublisherEnrollmentResult, error) {
 	if state == nil || control == nil || authority == nil || len(secret) > 256 {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
@@ -34,17 +38,32 @@ func EnrollNative(ctx context.Context, state *clientstate.Store, control NativeC
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
 	defer lock.Close()
+	secretDigest := sha256.Sum256([]byte(secret))
+	if installed, found, err := state.SelectedPublisherIdentity(ctx, "enrollment", hex.EncodeToString(secretDigest[:])); err != nil {
+		return nil, authorityv1.PublisherEnrollmentResult{}, err
+	} else if found {
+		var identity authorityv1.PublisherEnrollmentResult
+		if json.Unmarshal(installed.PublicDocument, &identity) != nil || identity.ClientId != installed.ID {
+			return nil, identity, ErrScope
+		}
+		native, err := NewNative(control, authority, identity, installed.SigningKey)
+		return native, identity, err
+	}
 	saved, found, err := state.PublisherSigningIdentity(ctx, scope)
 	if err != nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
 	if !found {
-		_, private, err := ed25519.GenerateKey(rand.Reader)
+		public, private, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			return nil, authorityv1.PublisherEnrollmentResult{}, err
 		}
 		saved = clientstate.PublisherSigningIdentity{ID: p[0], PublicValue: []byte("{}"), PrivateValue: private}
-		if err := state.SavePublisherSigningIdentity(ctx, scope, saved); err != nil {
+		if err := state.SavePendingPublisherEnrollment(ctx, clientstate.PendingPublisherEnrollment{
+			EnrollmentID: p[0], SelectionKind: "explicit", SelectionKey: p[0],
+			PublicKey: public, SigningKey: private, EnrollmentSecret: []byte(secret),
+			ExpiresAt: time.Now().Add(10 * time.Minute),
+		}); err != nil {
 			return nil, authorityv1.PublisherEnrollmentResult{}, err
 		}
 	}
@@ -59,6 +78,16 @@ func EnrollNative(ctx context.Context, state *clientstate.Store, control NativeC
 		current, found, err := state.PublisherSigningIdentity(ctx, "publisher:"+identity.ClientId)
 		if err != nil {
 			return nil, identity, err
+		}
+		if !found {
+			saved.ID = identity.ClientId
+			if err := state.SavePublisherSigningIdentity(ctx, scope, saved); err != nil {
+				return nil, identity, err
+			}
+			current, found, err = state.PublisherSigningIdentity(ctx, "publisher:"+identity.ClientId)
+			if err != nil {
+				return nil, identity, err
+			}
 		}
 		if found {
 			if json.Unmarshal(current.PublicValue, &identity) != nil || identity.ClientId != current.ID {

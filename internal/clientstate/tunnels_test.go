@@ -32,7 +32,7 @@ func TestFinishedTunnelPersistsReasonInsteadOfCause(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stored string
-	if err := database.db.QueryRowContext(t.Context(), "SELECT last_error FROM local_tunnels WHERE id = ?", tunnel.ID()).Scan(&stored); err != nil || stored != string(failure.ServerUnavailable) {
+	if err := database.db.QueryRowContext(t.Context(), "SELECT failure_code FROM local_tunnels WHERE id = ?", tunnel.ID()).Scan(&stored); err != nil || stored != string(failure.ServerUnavailable) {
 		t.Fatalf("stored tunnel error = %q, %v", stored, err)
 	}
 }
@@ -271,7 +271,7 @@ func TestPersistedTunnelSnapshotExpiresWithoutHeartbeat(t *testing.T) {
 	}
 }
 
-func TestTunnelProjectStateIsPartOfFreshV3Baseline(t *testing.T) {
+func TestTunnelProjectStateIsPartOfFreshV1Baseline(t *testing.T) {
 	entries, err := fs.ReadDir(migrationFiles, "migrations")
 	if err != nil {
 		t.Fatal(err)
@@ -284,9 +284,9 @@ func TestTunnelProjectStateIsPartOfFreshV3Baseline(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, required := range []string{
-		"worktree_hash_salt BLOB NOT NULL", "length(worktree_hash_salt) IN (0, 32)",
+		"worktree_hash_salt BLOB CHECK", "worktree_hash_salt IS NULL OR length(worktree_hash_salt) = 32",
 		"project_root TEXT NOT NULL", "service TEXT NOT NULL", "local_tunnels_project_open_idx",
-		"CREATE TABLE client_setting", "telemetry_enabled INTEGER NOT NULL",
+		"CREATE TABLE installation_settings", "telemetry_enabled INTEGER NOT NULL",
 	} {
 		if !strings.Contains(string(data), required) {
 			t.Fatalf("initial migration does not contain %q", required)

@@ -34,9 +34,9 @@ func (d *Database) snapshotAliases(ctx context.Context, tx *sql.Tx, project stri
 	result := make([]AliasInfo, 0, len(rows))
 	for _, row := range rows {
 		info := AliasInfo{Name: row.Name, Server: row.ServerOrigin, Hostname: row.Hostname, PublicURL: "https://" + row.Hostname,
-			Service: row.Service, SelectedProject: row.SelectedProject, DefaultProject: row.ProjectKey, State: "unavailable"}
+			Service: row.Service, SelectedProject: row.SelectedProjectRoot, DefaultProject: row.PrimaryProjectRoot, State: "unavailable"}
 		receiver, receiverErr := queries.ReadyAliasReceiver(ctx, clientstatedb.ReadyAliasReceiverParams{
-			AliasID: row.ID, ProjectRoot: row.SelectedProject, Now: at.UnixNano(),
+			AliasID: row.ID, ProjectRoot: row.SelectedProjectRoot, Now: at.UnixNano(),
 		})
 		if receiverErr != nil && !errors.Is(receiverErr, sql.ErrNoRows) {
 			return nil, receiverErr
@@ -49,7 +49,7 @@ func (d *Database) snapshotAliases(ctx context.Context, tx *sql.Tx, project stri
 			}
 		case receiverErr != nil:
 			reason = failure.AliasReceiverUnready
-		case row.PublisherExpiresAt <= at.UnixNano() || receiver.ID != row.RunTunnelID || row.RunRevision != row.SelectionRevision || row.TargetProject != row.SelectedProject ||
+		case row.PublisherExpiresAt <= at.UnixNano() || receiver.ID != row.RunTunnelID || row.RunRevision != row.SelectionRevision || row.TargetProject != row.SelectedProjectRoot ||
 			row.TargetState != "ready" || row.TargetExpiresAt <= at.UnixNano() || row.TargetStoppedAt != 0 ||
 			row.TargetPublicURLID != row.RunTargetPublicURLID || row.TargetPublishRunNumber != row.RunTargetPublishRunNumber:
 			reason = failure.IntegrationURLNotReady

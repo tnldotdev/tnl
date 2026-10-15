@@ -26,19 +26,19 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 			t.Fatalf("legacy table %s exists: %v", name, err)
 		}
 	}
-	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publish_run_publisher_identities", "previews", "shares", "feedback_threads", "browser_access_sessions", "tcp_port_claims"} {
+	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publish_run_publisher_grants", "previews", "shares", "feedback_threads", "browser_access_sessions", "tcp_port_claims"} {
 		var present bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NOT NULL`, name).Scan(&present); err != nil || !present {
 			t.Fatalf("final table %s missing: %v", name, err)
 		}
 	}
 	files, err := migrationFiles.ReadDir("migrations")
-	if err != nil || len(files) != 1 || schemaVersion != 1 || minimumSchemaVersion != 1 {
+	if err != nil || len(files) != 1 || schemaVersion != 1 {
 		t.Fatalf("baseline = %v, %v", files, err)
 	}
 	// an older database's larger migration counter cannot pass this baseline's
 	// readiness check just because its numeric version is greater than one.
-	if _, err := d.pool.Exec(t.Context(), `ALTER TABLE control.publish_run_publisher_identities RENAME TO missing_publisher_baseline`); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `ALTER TABLE control.publish_run_publisher_grants RENAME TO missing_publisher_baseline`); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.Readiness(t.Context()); err == nil {

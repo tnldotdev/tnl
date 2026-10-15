@@ -10,7 +10,7 @@ import (
 )
 
 const getPreviewID = `-- name: GetPreviewID :one
-SELECT preview_id FROM previews
+SELECT preview_id FROM project_previews
 WHERE server_origin = ?1
   AND team_id = ?2
   AND project_root = ?3
@@ -30,7 +30,7 @@ func (q *Queries) GetPreviewID(ctx context.Context, arg GetPreviewIDParams) (str
 }
 
 const savePreviewID = `-- name: SavePreviewID :exec
-INSERT INTO previews (server_origin, team_id, project_root, preview_id, updated_at)
+INSERT INTO project_previews (server_origin, team_id, project_root, preview_id, updated_at)
 VALUES (?1, ?2, ?3, ?4, ?5)
 ON CONFLICT (server_origin, team_id, project_root) DO UPDATE SET
     preview_id = excluded.preview_id,

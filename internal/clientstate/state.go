@@ -18,8 +18,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-// bump this only when the local SQLite schema intentionally starts fresh.
-const databaseFormatVersion = 3
+// databaseFilename identifies the fresh client-state baseline independently of
+// the SQLite migration and local event schema versions.
+const databaseFilename = "v1.db"
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -61,7 +62,7 @@ func (s *Store) SaveSelectedTeam(ctx context.Context, teamID string) error {
 		return errors.New("clientstate: invalid selected team")
 	}
 	if err := s.database.queries.SetSelectedTeam(ctx, clientstatedb.SetSelectedTeamParams{
-		TeamID: teamID, Now: s.database.now().UTC().UnixNano(), Origin: s.controlEndpoint,
+		TeamID: sql.NullString{String: teamID, Valid: true}, Now: s.database.now().UTC().UnixNano(), Origin: s.controlEndpoint,
 	}); err != nil {
 		return fmt.Errorf("clientstate: save selected team: %w", err)
 	}
@@ -70,7 +71,7 @@ func (s *Store) SaveSelectedTeam(ctx context.Context, teamID string) error {
 
 // DatabasePath returns the shared client database path within root.
 func DatabasePath(root string) string {
-	return filepath.Join(root, fmt.Sprintf("client-v%d.db", databaseFormatVersion))
+	return filepath.Join(root, databaseFilename)
 }
 
 func DefaultDir() (string, error) {
@@ -94,7 +95,7 @@ type OpenOptions struct {
 	Protection ProtectionMode
 }
 
-// Open initializes fresh v3 state without reading any earlier database.
+// Open initializes fresh v1 state without reading any earlier database.
 func Open(ctx context.Context, root string) (result *Database, retErr error) {
 	return OpenWithOptions(ctx, root, OpenOptions{})
 }
@@ -161,7 +162,7 @@ func OpenWithOptions(ctx context.Context, root string, options OpenOptions) (res
 	if exists {
 		var storedMode string
 		var check []byte
-		if err := db.QueryRowContext(ctx, "SELECT protector, key_check FROM state_protection WHERE id = 1").Scan(&storedMode, &check); err != nil {
+		if err := db.QueryRowContext(ctx, "SELECT protection_mode, key_check_ciphertext FROM state_protection WHERE id = 1").Scan(&storedMode, &check); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("clientstate: read state protection: %w", err)
 		}
@@ -170,7 +171,7 @@ func OpenWithOptions(ctx context.Context, root string, options OpenOptions) (res
 			return nil, errors.New("clientstate: state protection mode does not match")
 		}
 		value, err := protector.Open(ctx, "wrapping-key-check", check)
-		if err != nil || string(value) != "tnl client state v3" {
+		if err != nil || string(value) != "tnl client state v1" {
 			db.Close()
 			return nil, errors.New("clientstate: wrapping key does not match database")
 		}

@@ -76,7 +76,7 @@ INSERT INTO control.public_url_usage_buckets (
     egress_bytes,
     histogram_data,
     finalized,
-    complete,
+    coverage_complete,
     finalized_at,
     updated_at
 )
@@ -395,7 +395,7 @@ func (q *Queries) EnsureIngressUsageRun(ctx context.Context, arg EnsureIngressUs
 }
 
 const ensurePublicURLUsageConfiguration = `-- name: EnsurePublicURLUsageConfiguration :one
-INSERT INTO control.public_url_usage_configuration (
+INSERT INTO control.visitor_network_hash_keys (
     id,
     visitor_network_hash_master_key_ciphertext,
     visitor_network_hash_master_key_storage_key_id,
@@ -416,9 +416,9 @@ type EnsurePublicURLUsageConfigurationParams struct {
 	CreatedAt                               pgtype.Timestamptz
 }
 
-func (q *Queries) EnsurePublicURLUsageConfiguration(ctx context.Context, arg EnsurePublicURLUsageConfigurationParams) (ControlPublicUrlUsageConfiguration, error) {
+func (q *Queries) EnsurePublicURLUsageConfiguration(ctx context.Context, arg EnsurePublicURLUsageConfigurationParams) (ControlVisitorNetworkHashKey, error) {
 	row := q.db.QueryRow(ctx, ensurePublicURLUsageConfiguration, arg.VisitorNetworkHashMasterKeyCiphertext, arg.VisitorNetworkHashMasterKeyStorageKeyID, arg.CreatedAt)
-	var i ControlPublicUrlUsageConfiguration
+	var i ControlVisitorNetworkHashKey
 	err := row.Scan(
 		&i.ID,
 		&i.VisitorNetworkHashMasterKeyCiphertext,
@@ -454,7 +454,7 @@ WITH finalizable AS (
 )
 UPDATE control.public_url_usage_buckets AS buckets
 SET finalized = true,
-    complete = finalizable.complete,
+    coverage_complete = finalizable.complete,
     observed_through = CASE
         WHEN finalizable.complete THEN buckets.bucket_end
         ELSE buckets.observed_through
@@ -463,7 +463,7 @@ SET finalized = true,
     updated_at = $1
 FROM finalizable
 WHERE buckets.id = finalizable.id
-RETURNING buckets.id, buckets.public_url_id, buckets.publish_run_number, buckets.team_id, buckets.acting_identity_id, buckets.bucket_start, buckets.bucket_end, buckets.bucket_revision, buckets.observed_through, buckets.connection_attempts, buckets.policy_denials, buckets.capacity_denials, buckets.visitor_stream_open_failures, buckets.successful_streams, buckets.connection_nanoseconds, buckets.ingress_bytes, buckets.egress_bytes, buckets.histogram_data, buckets.finalized, buckets.complete, buckets.finalized_at, buckets.updated_at
+RETURNING buckets.id, buckets.public_url_id, buckets.publish_run_number, buckets.team_id, buckets.acting_identity_id, buckets.bucket_start, buckets.bucket_end, buckets.bucket_revision, buckets.observed_through, buckets.connection_attempts, buckets.policy_denials, buckets.capacity_denials, buckets.visitor_stream_open_failures, buckets.successful_streams, buckets.connection_nanoseconds, buckets.ingress_bytes, buckets.egress_bytes, buckets.histogram_data, buckets.finalized, buckets.coverage_complete, buckets.finalized_at, buckets.updated_at
 `
 
 type FinalizePublicURLUsageBucketsParams struct {
@@ -500,7 +500,7 @@ func (q *Queries) FinalizePublicURLUsageBuckets(ctx context.Context, arg Finaliz
 			&i.EgressBytes,
 			&i.HistogramData,
 			&i.Finalized,
-			&i.Complete,
+			&i.CoverageComplete,
 			&i.FinalizedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -570,7 +570,7 @@ func (q *Queries) GetIngressUsageReport(ctx context.Context, arg GetIngressUsage
 }
 
 const getPublicURLUsageBucketByID = `-- name: GetPublicURLUsageBucketByID :one
-SELECT id, public_url_id, publish_run_number, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
+SELECT id, public_url_id, publish_run_number, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, coverage_complete, finalized_at, updated_at
 FROM control.public_url_usage_buckets
 WHERE id = $1
   AND finalized
@@ -599,7 +599,7 @@ func (q *Queries) GetPublicURLUsageBucketByID(ctx context.Context, bucketID int6
 		&i.EgressBytes,
 		&i.HistogramData,
 		&i.Finalized,
-		&i.Complete,
+		&i.CoverageComplete,
 		&i.FinalizedAt,
 		&i.UpdatedAt,
 	)
@@ -607,7 +607,7 @@ func (q *Queries) GetPublicURLUsageBucketByID(ctx context.Context, bucketID int6
 }
 
 const getPublicURLUsageBucketForUpdate = `-- name: GetPublicURLUsageBucketForUpdate :one
-SELECT id, public_url_id, publish_run_number, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, complete, finalized_at, updated_at
+SELECT id, public_url_id, publish_run_number, team_id, acting_identity_id, bucket_start, bucket_end, bucket_revision, observed_through, connection_attempts, policy_denials, capacity_denials, visitor_stream_open_failures, successful_streams, connection_nanoseconds, ingress_bytes, egress_bytes, histogram_data, finalized, coverage_complete, finalized_at, updated_at
 FROM control.public_url_usage_buckets
 WHERE public_url_id = $1
   AND publish_run_number = $2
@@ -644,7 +644,7 @@ func (q *Queries) GetPublicURLUsageBucketForUpdate(ctx context.Context, arg GetP
 		&i.EgressBytes,
 		&i.HistogramData,
 		&i.Finalized,
-		&i.Complete,
+		&i.CoverageComplete,
 		&i.FinalizedAt,
 		&i.UpdatedAt,
 	)

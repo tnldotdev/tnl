@@ -118,10 +118,12 @@ and cleanup without a deployed server.
 Edit the source, then run `mise exec -- task generate` and
 `mise exec -- task format`. Do not edit committed generated files by hand.
 
-The client starts fresh `client-v3.db` state without reading or importing an
-older database. The server's current PostgreSQL baseline requires a fresh
-database rather than an upgrade from an older schema. Stop all serving roles
-before initializing this baseline; each role checks the exact schema version.
+The client uses `v1.db` in its state directory, without reading or importing
+older client databases. Its one Goose migration creates the fresh baseline;
+future compatible migrations may advance that version. The server's PostgreSQL
+baseline requires a fresh database and a coordinated stop/start of all serving
+roles. Control checks both the exact migration version and baseline identity
+before serving.
 
 | Source                                                                                    | Generated output                                                                          |
 | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |

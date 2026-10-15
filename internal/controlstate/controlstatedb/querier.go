@@ -47,7 +47,7 @@ type Querier interface {
 	ClaimACMEOrderWork(ctx context.Context, arg ClaimACMEOrderWorkParams) (ControlAcmeOrder, error)
 	ClaimDNSAuthorityWork(ctx context.Context, arg ClaimDNSAuthorityWorkParams) (ControlDnsAuthority, error)
 	ClaimDNSPublicURLWork(ctx context.Context, arg ClaimDNSPublicURLWorkParams) (ControlPublicUrl, error)
-	ClaimInvitationEmail(ctx context.Context, arg ClaimInvitationEmailParams) (ControlEmailDelivery, error)
+	ClaimInvitationEmail(ctx context.Context, arg ClaimInvitationEmailParams) (ControlTeamInvitationEmailDelivery, error)
 	ClaimPublicURLUsageDeliveries(ctx context.Context, arg ClaimPublicURLUsageDeliveriesParams) ([]ControlPublicUrlUsageDelivery, error)
 	ClaimPublisherAssertion(ctx context.Context, arg ClaimPublisherAssertionParams) (int64, error)
 	// require the exact publish run, assignment revision, and relay service. only
@@ -112,7 +112,7 @@ type Querier interface {
 	EnsureGuestPrincipal(ctx context.Context, arg EnsureGuestPrincipalParams) (ControlIdentity, error)
 	EnsureGuestRetryMasterKey(ctx context.Context, arg EnsureGuestRetryMasterKeyParams) (EnsureGuestRetryMasterKeyRow, error)
 	EnsureIngressUsageRun(ctx context.Context, arg EnsureIngressUsageRunParams) (ControlIngressUsageRun, error)
-	EnsurePublicURLUsageConfiguration(ctx context.Context, arg EnsurePublicURLUsageConfigurationParams) (ControlPublicUrlUsageConfiguration, error)
+	EnsurePublicURLUsageConfiguration(ctx context.Context, arg EnsurePublicURLUsageConfigurationParams) (ControlVisitorNetworkHashKey, error)
 	ExpirePublisherConnection(ctx context.Context, arg ExpirePublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
 	ExpireTeamInvitations(ctx context.Context, arg ExpireTeamInvitationsParams) ([]string, error)
 	ExpireVisitorIPGrants(ctx context.Context, arg ExpireVisitorIPGrantsParams) error
@@ -172,7 +172,7 @@ type Querier interface {
 	GetPublishRun(ctx context.Context, publishRunID string) (ControlPublishRun, error)
 	GetPublishRunByIdempotency(ctx context.Context, arg GetPublishRunByIdempotencyParams) (ControlPublishRun, error)
 	GetPublishRunByTokenID(ctx context.Context, publishRunTokenID string) (ControlPublishRun, error)
-	GetPublisherAccess(ctx context.Context, digest []byte) (ControlPublisherAccessToken, error)
+	GetPublisherAccess(ctx context.Context, accessTokenDigest []byte) (ControlPublisherAccessToken, error)
 	GetPublisherAllocation(ctx context.Context, publicUrlID string) (ControlPublisherNamespaceAllocation, error)
 	GetPublisherConnectionForClaim(ctx context.Context, publisherConnectionID string) (ControlPublishRunConnectionSlot, error)
 	// publisher checks may already hold a URL lock. never acquire a domain lock
@@ -181,7 +181,7 @@ type Querier interface {
 	GetPublisherDomain(ctx context.Context, arg GetPublisherDomainParams) (ControlDomain, error)
 	GetPublisherGrant(ctx context.Context, arg GetPublisherGrantParams) (ControlPublisherGrant, error)
 	GetPublisherKey(ctx context.Context, arg GetPublisherKeyParams) (ControlPublisherIdentityKey, error)
-	GetPublisherRun(ctx context.Context, publishRunID string) (ControlPublishRunPublisherIdentity, error)
+	GetPublisherRun(ctx context.Context, publishRunID string) (ControlPublishRunPublisherGrant, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)
 	// claims and readiness share the relay-service guard across processes.
 	// claims take NO KEY UPDATE on the selected lease to serialize capacity with
