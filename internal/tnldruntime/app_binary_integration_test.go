@@ -65,7 +65,6 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		_, _ = io.WriteString(response, "app-led visitor")
 	}))
 	defer app.Close()
-	runIntegrationBinaryCommand(t, project, fixture.environment, fixture.tnlPath, "publisher", "setup", "--namespace")
 	runtimeProcess := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "runtime", "serve", "--directory", project)
 	t.Cleanup(func() {
 		if t.Failed() {

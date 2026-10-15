@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,8 +14,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientruntime"
@@ -40,6 +44,8 @@ func run() error {
 	case "app":
 		name, _ := os.Hostname()
 		return http.ListenAndServe(":3000", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, name) }))
+	case "app-register":
+		return registeredApp()
 	case "query":
 		flags := flag.NewFlagSet("query", flag.ContinueOnError)
 		path := flags.String("descriptor", os.Getenv("TNL_APP_ENDPOINT"), "private endpoint")
@@ -97,6 +103,79 @@ func run() error {
 		return owner()
 	}
 	return errors.New("unknown fixture command")
+}
+
+// registeredApp runs a real app listener and renews its scoped registration.
+// after owner replacement it reads the rotated descriptor and prepares again.
+func registeredApp() error {
+	endpointPath := os.Getenv("TNL_APP_ENDPOINT")
+	if endpointPath == "" {
+		return errors.New("the scoped app endpoint is missing")
+	}
+	listener, err := net.Listen("tcp", ":3000")
+	if err != nil {
+		return err
+	}
+	name, err := os.Hostname()
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, name) }), ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = server.Serve(listener) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return err
+	}
+	owner := hex.EncodeToString(bytes[:])
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	var endpoint privateprotocol.Endpoint
+	var registration privateprotocol.Registration
+	registered := false
+	for {
+		if !registered {
+			current, err := privateprotocol.ReadEndpoint(endpointPath)
+			if err == nil {
+				callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				var assignment privateprotocol.Assignment
+				err = privateprotocol.Call(callCtx, current, "POST", "/v1/prepare", privateprotocol.Prepare{Version: 1, Directory: "/workspace", Service: "web", Framework: "node", Owner: owner, PID: os.Getpid()}, &assignment)
+				if err == nil {
+					registration = privateprotocol.Registration{Version: 1, RegistrationID: assignment.RegistrationID, Owner: owner, Target: "http://0.0.0.0:3000"}
+					err = privateprotocol.Call(callCtx, current, "POST", "/v1/register", registration, nil)
+				}
+				cancel()
+				if err == nil {
+					endpoint, registered = current, true
+				}
+			}
+		}
+		interval := 250 * time.Millisecond
+		if registered {
+			interval = 3 * time.Second
+		}
+		select {
+		case <-ctx.Done():
+			if registered {
+				cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = privateprotocol.Call(cleanup, endpoint, "POST", "/v1/unregister", registration, nil)
+				cancel()
+			}
+			return nil
+		case <-time.After(interval):
+		}
+		if registered {
+			callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := privateprotocol.Call(callCtx, endpoint, "POST", "/v1/renew", registration, nil)
+			cancel()
+			registered = err == nil
+		}
+	}
 }
 
 func owner() error {

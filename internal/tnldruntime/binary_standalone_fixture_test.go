@@ -15,12 +15,17 @@ type integrationBinaryStandalone struct {
 	tnlPath        string
 	databaseURL    string
 	stateDirectory string
+	trustFile      string
 	environment    []string
 	server         *integrationBinaryProcess
 	pebble         integrationPebble
 }
 
 func startIntegrationBinaryStandalone(t *testing.T, modes ...string) *integrationBinaryStandalone {
+	return startIntegrationBinaryStandaloneWithBind(t, false, modes...)
+}
+
+func startIntegrationBinaryStandaloneWithBind(t *testing.T, containerReachable bool, modes ...string) *integrationBinaryStandalone {
 	t.Helper()
 	testutil.RequireTestTier(t, testutil.TestTierBinary)
 	if runtime.GOOS == "darwin" {
@@ -48,6 +53,11 @@ func startIntegrationBinaryStandalone(t *testing.T, modes ...string) *integratio
 	metricsAddress := unusedTCPAddress(t)
 	// standalone creates its own internal listeners. the unused split-role
 	// addresses below only need to satisfy configuration validation.
+	publicListen := "127.0.0.1:443"
+	if containerReachable {
+		// a disposable Compose owner reaches this host through host-gateway.
+		publicListen = "0.0.0.0:443"
+	}
 	serveEnvironment := integrationBinaryEnvironment(map[string]string{
 		"SSL_CERT_FILE":                     trustFile,
 		"TNLD_ACCESS_TOKEN_LIFETIME":        "5m",
@@ -55,13 +65,13 @@ func startIntegrationBinaryStandalone(t *testing.T, modes ...string) *integratio
 		"TNLD_ACME_DIRECTORY_URL":           pebble.directoryURL,
 		"TNLD_ACME_EMAIL":                   "integration@example.test",
 		"TNLD_ACME_PROFILE":                 "tlsserver",
-		"TNLD_CONTROL_LISTEN":               "127.0.0.1:443",
+		"TNLD_CONTROL_LISTEN":               publicListen,
 		"TNLD_CONTROL_TLS_CERTIFICATE_FILE": serverCertificate.certificateFile,
 		"TNLD_CONTROL_TLS_PRIVATE_KEY_FILE": serverCertificate.privateKeyFile,
 		"TNLD_DATABASE_URL":                 databaseURL,
 		"TNLD_DRAIN_TIMEOUT":                "1s",
 		"TNLD_INGRESS_LEASE_DURATION":       "5s",
-		"TNLD_INGRESS_LISTEN":               "127.0.0.1:443",
+		"TNLD_INGRESS_LISTEN":               publicListen,
 		"TNLD_INTERNAL_RELAY_LISTEN":        "127.0.0.1:1",
 		"TNLD_LEASE_RENEWAL_INTERVAL":       "500ms",
 		"TNLD_LOGIN_TOKEN":                  testLoginToken,
@@ -71,10 +81,10 @@ func startIntegrationBinaryStandalone(t *testing.T, modes ...string) *integratio
 		"TNLD_PRIVATE_CONTROL_LISTEN":       "127.0.0.1:1",
 		"TNLD_REFRESH_TOKEN_LIFETIME":       "1h",
 		"TNLD_RELAY_LEASE_DURATION":         "5s",
-		"TNLD_RELAY_TCP_LISTEN":             "127.0.0.1:443",
+		"TNLD_RELAY_TCP_LISTEN":             publicListen,
 		"TNLD_RELAY_TLS_CERTIFICATE_FILE":   serverCertificate.certificateFile,
 		"TNLD_RELAY_TLS_PRIVATE_KEY_FILE":   serverCertificate.privateKeyFile,
-		"TNLD_RELAY_UDP_LISTEN":             "127.0.0.1:443",
+		"TNLD_RELAY_UDP_LISTEN":             publicListen,
 		"TNLD_ROUTING_TABLE_WAIT":           "1s",
 		"TNLD_SERVER_DOMAIN":                "127.0.0.1.nip.io",
 		"TNLD_STORAGE_KEY":                  testStorageKey,
@@ -95,6 +105,6 @@ func startIntegrationBinaryStandalone(t *testing.T, modes ...string) *integratio
 	})
 	runIntegrationBinaryCommand(t, repositoryRoot, clientEnvironment, tnlPath, "auth", "login", "--login-token")
 	clientEnvironment = removeIntegrationEnvironment(clientEnvironment, "TNL_LOGIN_TOKEN")
-	return &integrationBinaryStandalone{repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL,
+	return &integrationBinaryStandalone{repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL, trustFile: trustFile,
 		stateDirectory: stateDirectory, environment: clientEnvironment, server: server, pebble: pebble}
 }
