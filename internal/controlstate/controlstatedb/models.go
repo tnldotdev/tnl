@@ -819,8 +819,11 @@ type ControlSchemaIdentity struct {
 type ControlShare struct {
 	ID                  string
 	SchemaVersion       int16
-	PreviewID           string
+	PreviewID           pgtype.Text
 	TeamID              string
+	GuestID             pgtype.Text
+	Scope               string
+	Label               string
 	CreatedByIdentityID string
 	IdempotencyKey      string
 	RequestDigest       []byte
@@ -938,9 +941,7 @@ type ControlVisitorGrant struct {
 	PublicURLID         string
 	TeamID              string
 	Kind                string
-	Label               string
 	IdentityID          pgtype.Text
-	TokenDigest         []byte
 	CreatedByIdentityID string
 	IdempotencyKey      string
 	RequestDigest       []byte

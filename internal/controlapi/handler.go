@@ -127,6 +127,7 @@ type BrowserAccessStore interface {
 
 type ShareStore interface {
 	CreateShare(context.Context, controlstate.CreateShareRequest, time.Time) (controlstate.Share, error)
+	CreateGuestShare(context.Context, string, string, string, [32]byte, time.Time) (controlstate.Share, error)
 	GetShare(context.Context, string) (controlstate.Share, error)
 	ListShares(context.Context, string, string) (controlstate.SharePage, error)
 	ListTeamShares(context.Context, string, string, string) (controlstate.SharePage, error)

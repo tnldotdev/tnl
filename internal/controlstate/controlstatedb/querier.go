@@ -14,6 +14,7 @@ type Querier interface {
 	AcceptTeamInvitation(ctx context.Context, arg AcceptTeamInvitationParams) (int64, error)
 	AcceptVisitorInvitation(ctx context.Context, arg AcceptVisitorInvitationParams) error
 	ActivateMemberSlug(ctx context.Context, arg ActivateMemberSlugParams) (int64, error)
+	AddGuestSharePublicURL(ctx context.Context, arg AddGuestSharePublicURLParams) (string, error)
 	AddPreviewPublicURL(ctx context.Context, arg AddPreviewPublicURLParams) (string, error)
 	AddPublishRunPreviewURL(ctx context.Context, arg AddPublishRunPreviewURLParams) error
 	AddSharePublicURL(ctx context.Context, arg AddSharePublicURLParams) (string, error)
@@ -80,6 +81,7 @@ type Querier interface {
 	CreateCustomDNSAuthority(ctx context.Context, arg CreateCustomDNSAuthorityParams) error
 	CreateCustomDomain(ctx context.Context, arg CreateCustomDomainParams) (ControlDomain, error)
 	CreateFeedbackThread(ctx context.Context, arg CreateFeedbackThreadParams) (ControlFeedbackThread, error)
+	CreateGuestShare(ctx context.Context, arg CreateGuestShareParams) (ControlShare, error)
 	CreateIdentity(ctx context.Context, arg CreateIdentityParams) error
 	CreateInvitationEmail(ctx context.Context, arg CreateInvitationEmailParams) error
 	CreateManagedDomain(ctx context.Context, arg CreateManagedDomainParams) error
@@ -474,7 +476,6 @@ type Querier interface {
 	UpdatePublicURL(ctx context.Context, arg UpdatePublicURLParams) (ControlPublicUrl, error)
 	UpdatePublicURLRecoveryHistogram(ctx context.Context, arg UpdatePublicURLRecoveryHistogramParams) (ControlPublicUrlRecoveryHistogram, error)
 	UpsertDNSChallengeChange(ctx context.Context, arg UpsertDNSChallengeChangeParams) error
-	ValidVisitorToken(ctx context.Context, arg ValidVisitorTokenParams) (string, error)
 	VisitorCurrentMembership(ctx context.Context, arg VisitorCurrentMembershipParams) (string, error)
 	VisitorFeedbackPolicy(ctx context.Context, id string) (string, error)
 	VisitorPermission(ctx context.Context, arg VisitorPermissionParams) (VisitorPermissionRow, error)

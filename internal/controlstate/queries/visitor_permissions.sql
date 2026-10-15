@@ -23,14 +23,10 @@ WHERE u.id > sqlc.arg(cursor)::text AND (sqlc.arg(team_id)::text = '' OR u.team_
 ORDER BY u.id LIMIT 101;
 
 -- name: CreateVisitorGrant :one
-INSERT INTO control.visitor_grants(id, public_url_id, team_id, kind, label, identity_id, token_digest, created_by_identity_id,
+INSERT INTO control.visitor_grants(id, public_url_id, team_id, kind, identity_id, created_by_identity_id,
     idempotency_key, request_digest, created_at, expires_at)
-VALUES ($1, $2, $3, $4, sqlc.arg(label), sqlc.narg(identity_id), sqlc.narg(token_digest), $5, $6, $7, $8, sqlc.narg(expires_at))
+VALUES ($1, $2, $3, $4, sqlc.narg(identity_id), $5, $6, $7, $8, sqlc.narg(expires_at))
 ON CONFLICT (created_by_identity_id, kind, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING *;
-
--- name: ValidVisitorToken :one
-SELECT id FROM control.visitor_grants WHERE id = $1 AND public_url_id = $2 AND kind = 'token'
-  AND token_digest = $3 AND revoked_at IS NULL AND expires_at > sqlc.arg(now);
 
 -- name: ListVisitorGrants :many
 SELECT * FROM control.visitor_grants WHERE public_url_id = $1 ORDER BY id;

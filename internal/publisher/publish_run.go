@@ -144,15 +144,19 @@ func runSession(
 		config.PreviewID = preview.Id
 	}
 	var shareRuntime *shareAccess
-	if config.PreviewID != "" && !config.Demo {
+	if setup.PublicUrl.ServiceProtocol == controlv1.Http && (setup.PublicUrl.Purpose == controlv1.App || setup.PublicUrl.Purpose == controlv1.Alias || setup.PublicUrl.Purpose == controlv1.Demo) {
 		if err := progress("share_access"); err != nil {
 			return err
 		}
 		client, ok := config.Control.(shareAccessClient)
 		if !ok {
-			return errors.New("publisher: share-capable control client is required for this preview")
+			return errors.New("publisher: share-capable control client is required for HTTP public URLs")
 		}
-		if err := client.EnableShareAccess(ctx, setup.PublishRun.Id, version, config.PreviewID, publishRunToken); err != nil {
+		previewID := config.PreviewID
+		if config.Demo {
+			previewID = ""
+		}
+		if err := client.EnableShareAccess(ctx, setup.PublishRun.Id, version, previewID, publishRunToken); err != nil {
 			return fmt.Errorf("publisher: enable share access: %w", err)
 		}
 		shareRuntime = &shareAccess{client: client, runID: setup.PublishRun.Id, version: version, token: publishRunToken}

@@ -30,11 +30,6 @@ func (c *Client) CreateTeamVisitorGrant(ctx context.Context, id, key string, bod
 	})
 }
 
-func (c *Client) CreateVisitorToken(ctx context.Context, id, key string, body controlv1.CreateVisitorTokenRequest) (controlv1.VisitorGrant, error) {
-	return requestWithAccess[controlv1.VisitorGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateVisitorToken(ctx, id, &controlv1.CreateVisitorTokenParams{IdempotencyKey: key}, body, e...)
-	})
-}
 func (c *Client) ListVisitorGrants(ctx context.Context, id string) ([]controlv1.VisitorGrant, error) {
 	return requestWithAccess[[]controlv1.VisitorGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.ListVisitorGrants(ctx, id, e...)

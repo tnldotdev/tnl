@@ -19,8 +19,7 @@ import (
 )
 
 const browserAccessCookieName = "__Host-tnl-browser"
-const visitorAccessCookieName = "__Host-tnl-visitor"
-const visitorAccessHeaderName = "Tnl-Visitor-Token"
+const shareAccessHeaderName = "Tnl-Share-Token"
 
 type browserAccessClient interface {
 	RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error)
@@ -109,15 +108,16 @@ func (a *browserAccess) decision(request *http.Request) (controlv1.HTTPVisitorRe
 		return controlv1.HTTPVisitorResponse{}, errors.New("visitor source is invalid")
 	}
 	input := controlv1.HTTPVisitorRequest{PublishRunNumber: int64(a.version), SourceIp: source.Addr().Unmap().String()}
-	if token := request.Header.Get(visitorAccessHeaderName); token != "" {
-		input.VisitorToken = &token
-	} else if cookie, err := request.Cookie(visitorAccessCookieName); err == nil {
-		input.VisitorToken = &cookie.Value
+	if token := request.Header.Get(shareAccessHeaderName); token != "" {
+		id, secret, valid := strings.Cut(token, ".")
+		if valid {
+			input.ShareId, input.ShareSecret = &id, &secret
+		}
 	}
 	if cookie, err := request.Cookie(browserAccessCookieName); err == nil {
 		input.BrowserCookieSecret = &cookie.Value
 	}
-	if cookie, err := request.Cookie(shareCookieName); err == nil {
+	if cookie, err := request.Cookie(shareCookieName); err == nil && input.ShareId == nil {
 		if id, secret, found := strings.Cut(cookie.Value, "."); found {
 			input.ShareId = &id
 			input.ShareCookieSecret = &secret

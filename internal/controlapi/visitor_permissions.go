@@ -22,7 +22,6 @@ import (
 type VisitorStore interface {
 	HTTPVisitorPermission(context.Context, controlstate.PublishRunAuthentication, controlstate.HTTPVisitorRequest, time.Time) (controlstate.VisitorPermission, error)
 	CreateTeamVisitorGrant(context.Context, string, string, string, *time.Time, time.Time) (controlstate.VisitorGrant, error)
-	CreateVisitorToken(context.Context, string, string, string, string, [32]byte, time.Time, time.Time) (controlstate.VisitorGrant, error)
 	ListVisitorGrants(context.Context, string, string) ([]controlstate.VisitorGrant, error)
 	RevokeVisitorGrant(context.Context, string, string, string, time.Time) error
 	CreateVisitorInvitation(context.Context, string, string, string, string, [32]byte, time.Time, time.Time) (controlstate.VisitorInvitation, error)
@@ -49,7 +48,15 @@ func (h *handler) AuthorizeHTTPVisitor(w http.ResponseWriter, r *http.Request, r
 	if !ok {
 		return
 	}
-	input := controlstate.HTTPVisitorRequest{SourceIP: body.SourceIp, BrowserCookieSecret: optionalFeedbackString(body.BrowserCookieSecret), ShareID: optionalFeedbackString(body.ShareId), VisitorToken: optionalFeedbackString(body.VisitorToken)}
+	input := controlstate.HTTPVisitorRequest{SourceIP: body.SourceIp, BrowserCookieSecret: optionalFeedbackString(body.BrowserCookieSecret), ShareID: optionalFeedbackString(body.ShareId)}
+	if body.ShareSecret != nil {
+		raw, err := base64.RawURLEncoding.Strict().DecodeString(*body.ShareSecret)
+		if err != nil || len(raw) != 32 {
+			writeProblem(w, 403, controlv1.Forbidden, "invalid share secret")
+			return
+		}
+		input.ShareSecret = raw
+	}
 	if body.ShareCookieSecret != nil {
 		raw, err := base64.RawURLEncoding.Strict().DecodeString(*body.ShareCookieSecret)
 		if err != nil || len(raw) != 32 {
@@ -144,26 +151,6 @@ func (h *handler) CreateTeamVisitorGrant(w http.ResponseWriter, r *http.Request,
 	visitorResult(w, "create team visitor grant", result, err, 201)
 }
 
-func (h *handler) CreateVisitorToken(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, p controlv1.CreateVisitorTokenParams) {
-	actor, ok := h.visitorActor(w, r)
-	if !ok {
-		return
-	}
-	var body controlv1.CreateVisitorTokenRequest
-	if decodeJSON(w, r, &body) != nil {
-		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid visitor token")
-		return
-	}
-	raw, err := hex.DecodeString(body.TokenDigest)
-	if err != nil || len(raw) != 32 {
-		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid visitor token digest")
-		return
-	}
-	var digest [32]byte
-	copy(digest[:], raw)
-	result, err := h.visitorState.CreateVisitorToken(r.Context(), id, actor, p.IdempotencyKey, body.Label, digest, body.ExpiresAt, time.Now())
-	visitorResult(w, "create visitor token", result, err, http.StatusCreated)
-}
 func (h *handler) ListVisitorGrants(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
 	actor, ok := h.visitorActor(w, r)
 	if !ok {

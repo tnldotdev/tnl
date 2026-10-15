@@ -71,25 +71,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/VisitorGrant" }
         default: { $ref: "#/components/responses/Problem" }
-  /v1/public-urls/{public_url_id}/visitor-tokens:
-    post:
-      operationId: createVisitorToken
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { $ref: "#/components/parameters/PublicURLID" }
-        - { $ref: "#/components/parameters/IdempotencyKey" }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/CreateVisitorTokenRequest" }
-      responses:
-        "201":
-          description: One URL-scoped, revocable visitor token without its secret
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/VisitorGrant" }
-        default: { $ref: "#/components/responses/Problem" }
   /v1/public-urls/{public_url_id}/visitor-grants/{grant_id}:
     delete:
       operationId: revokeVisitorGrant
@@ -636,6 +617,28 @@ paths:
         default:
           $ref: "#/components/responses/Problem"
   /v1/shares:
+    post:
+      operationId: createURLShare
+      summary: Store one share for an exact authorized HTTP public URL
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateShareRequest"
+      responses:
+        "201":
+          description: Stored share without its secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Share"
+        default:
+          $ref: "#/components/responses/Problem"
     get:
       operationId: listTeamShares
       summary: List manageable shares for one team
@@ -651,6 +654,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SharePage"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/public-urls/{public_url_id}/guest-share:
+    post:
+      operationId: createGuestShare
+      summary: Store one trial-bound share for a guest demo URL
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PublicURLID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGuestShareRequest"
+      responses:
+        "201":
+          description: Stored guest share without its secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Share"
         default:
           $ref: "#/components/responses/Problem"
   /v1/shares/{share_id}:
@@ -1600,15 +1627,7 @@ components:
         browser_cookie_secret: { type: string, maxLength: 43 }
         share_id: { type: string }
         share_cookie_secret: { type: string, maxLength: 43 }
-        visitor_token: { type: string, maxLength: 128 }
-    CreateVisitorTokenRequest:
-      type: object
-      additionalProperties: false
-      required: [label, token_digest, expires_at]
-      properties:
-        label: { type: string, minLength: 1, maxLength: 64 }
-        token_digest: { type: string, minLength: 64, maxLength: 64, pattern: "^[0-9a-f]{64}$" }
-        expires_at: { type: string, format: date-time }
+        share_secret: { type: string, maxLength: 43 }
     ReplaceVisitorAccessRequest:
       type: object
       additionalProperties: false
@@ -1642,8 +1661,7 @@ components:
       properties:
         id: { type: string }
         public_url_id: { $ref: "#/components/schemas/PublicURLID" }
-        kind: { type: string, enum: [team, identity, token] }
-        label: { type: string, maxLength: 64 }
+        kind: { type: string, enum: [team, identity] }
         identity_id: { type: string }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
@@ -2369,6 +2387,17 @@ components:
         secret_fingerprint:
           type: string
           pattern: "^[0-9a-f]{64}$"
+        label:
+          type: string
+          maxLength: 128
+    CreateGuestShareRequest:
+      type: object
+      additionalProperties: false
+      required: [secret_fingerprint]
+      properties:
+        secret_fingerprint:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
     Share:
       type: object
       additionalProperties: false
@@ -2376,7 +2405,8 @@ components:
         [
           schema_version,
           id,
-          preview_id,
+          scope,
+          label,
           team_id,
           public_url_ids,
           created_by_identity_id,
@@ -2390,6 +2420,11 @@ components:
           $ref: "#/components/schemas/ShareID"
         preview_id:
           $ref: "#/components/schemas/PreviewID"
+        scope:
+          type: string
+          enum: [url, preview, guest]
+        label:
+          type: string
         team_id:
           $ref: "#/components/schemas/TeamID"
         public_url_ids:
@@ -2808,7 +2843,7 @@ components:
           maxLength: 64
         visit_allowed:
           type: boolean
-        visitor_token: { type: string, maxLength: 128 }
+        share_secret: { type: string, minLength: 43, maxLength: 43 }
         share_id:
           $ref: "#/components/schemas/ShareID"
         cookie_secret:
@@ -3208,7 +3243,7 @@ components:
     EnableShareAccessRequest:
       type: object
       additionalProperties: false
-      required: [publish_run_number, preview_id]
+      required: [publish_run_number]
       properties:
         publish_run_number:
           type: integer

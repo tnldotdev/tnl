@@ -141,4 +141,5 @@ WHERE share.id = sqlc.arg(share_id)
   AND cookie.token_digest = sqlc.arg(token_digest)
   AND cookie.expires_at > sqlc.arg(now)
   AND share.expires_at > sqlc.arg(now)
-  AND share.revoked_at IS NULL;
+  AND share.revoked_at IS NULL
+  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)));

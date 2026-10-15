@@ -15,8 +15,12 @@ import (
 
 func feedbackReviewerActor(access controlv1.FeedbackReviewerAccess) (controlstate.FeedbackActor, error) {
 	actor := controlstate.FeedbackActor{Kind: "reviewer", VisitAllowed: access.VisitAllowed}
-	if access.VisitorToken != nil {
-		actor.VisitorToken = *access.VisitorToken
+	if access.ShareSecret != nil {
+		secret, err := base64.RawURLEncoding.Strict().DecodeString(*access.ShareSecret)
+		if err != nil || len(secret) != 32 || access.ShareId == nil {
+			return actor, controlstate.ErrFeedbackAccess
+		}
+		actor.ShareID, actor.ShareSecret = *access.ShareId, secret
 	}
 	if access.SourceIp != nil {
 		actor.SourceIP = *access.SourceIp
@@ -29,7 +33,7 @@ func feedbackReviewerActor(access controlv1.FeedbackReviewerAccess) (controlstat
 		actor.BrowserCookieSecret = secret
 	}
 	if access.ShareId == nil || access.CookieSecret == nil {
-		if actor.VisitAllowed || actor.VisitorToken != "" || len(actor.BrowserCookieSecret) != 0 {
+		if actor.VisitAllowed || len(actor.ShareSecret) != 0 || len(actor.BrowserCookieSecret) != 0 {
 			return actor, nil
 		}
 		return actor, controlstate.ErrFeedbackAccess

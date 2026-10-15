@@ -252,33 +252,6 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 				}
 				denied := request.Context().Value(denialContextKey{}) == true
-				if strings.HasPrefix(request.URL.EscapedPath(), "/__tnl/access/") {
-					response.Header().Set("Cache-Control", "no-store")
-					response.Header().Set("Referrer-Policy", "no-referrer")
-					if config.BrowserAccess == nil || request.Method != http.MethodGet || request.URL.RawQuery != "" {
-						response.WriteHeader(http.StatusNotFound)
-						return
-					}
-					select {
-					case shareSlots <- struct{}{}:
-						defer func() { <-shareSlots }()
-					default:
-						response.WriteHeader(http.StatusTooManyRequests)
-						return
-					}
-					token := strings.TrimPrefix(request.URL.EscapedPath(), "/__tnl/access/")
-					copy := request.Clone(request.Context())
-					copy.Header = request.Header.Clone()
-					copy.Header.Set(visitorAccessHeaderName, token)
-					decision, err := config.BrowserAccess.decision(copy)
-					if err != nil || !decision.VisitAllowed {
-						response.WriteHeader(http.StatusForbidden)
-						return
-					}
-					http.SetCookie(response, &http.Cookie{Name: visitorAccessCookieName, Value: token, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
-					http.Redirect(response, request, "/", http.StatusSeeOther)
-					return
-				}
 				var shareExpiry time.Time
 				sharePermitted := false
 				if config.ShareAccess != nil {
@@ -377,7 +350,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					request = config.Feedback.prepareBrowser(response, request)
 				}
 				request = stripTnlCookies(request)
-				request.Header.Del(visitorAccessHeaderName)
+				request.Header.Del(shareAccessHeaderName)
 				if proof {
 					select {
 					case probeSlots <- struct{}{}:

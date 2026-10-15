@@ -13,15 +13,8 @@ import (
 )
 
 type urlAccessCommand struct {
-	Show  urlAccessShowCommand   `cmd:"" help:"Show the saved visitor access policy."`
-	Set   urlAccessSetCommand    `cmd:"" help:"Replace the complete visitor access policy, including its IP list, without stopping the publisher."`
-	Token urlVisitorTokenCommand `cmd:"" help:"Create and revoke one-public-URL visitor credentials."`
-}
-
-type urlVisitorTokenCommand struct {
-	Create urlVisitorTokenCreateCommand `cmd:"" help:"Print one expiring visitor credential or browser link."`
-	List   urlVisitorTokenListCommand   `cmd:"" help:"List visitor credentials without secrets."`
-	Revoke urlVisitorTokenRevokeCommand `cmd:"" help:"Revoke a visitor credential."`
+	Show urlAccessShowCommand `cmd:"" help:"Show the saved visitor access policy."`
+	Set  urlAccessSetCommand  `cmd:"" help:"Replace the complete visitor access policy, including its IP list, without stopping the publisher."`
 }
 
 type urlAccessShowCommand struct {

@@ -695,6 +695,27 @@ func (e ReadinessResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for ShareScope.
+const (
+	ShareScopeGuest   ShareScope = "guest"
+	ShareScopePreview ShareScope = "preview"
+	ShareScopeUrl     ShareScope = "url"
+)
+
+// Valid indicates whether the value is a known member of the ShareScope enum.
+func (e ShareScope) Valid() bool {
+	switch e {
+	case ShareScopeGuest:
+		return true
+	case ShareScopePreview:
+		return true
+	case ShareScopeUrl:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SourceFileStateStatus.
 const (
 	Added    SourceFileStateStatus = "added"
@@ -738,7 +759,6 @@ func (e VisitorAccessMode) Valid() bool {
 const (
 	Identity VisitorGrantKind = "identity"
 	Team     VisitorGrantKind = "team"
-	Token    VisitorGrantKind = "token"
 )
 
 // Valid indicates whether the value is a known member of the VisitorGrantKind enum.
@@ -747,8 +767,6 @@ func (e VisitorGrantKind) Valid() bool {
 	case Identity:
 		return true
 	case Team:
-		return true
-	case Token:
 		return true
 	default:
 		return false
@@ -1129,6 +1147,11 @@ type CreateFeedbackReportRequest struct {
 	SourceAtReport SourceState `json:"source_at_report"`
 }
 
+// CreateGuestShareRequest defines model for CreateGuestShareRequest.
+type CreateGuestShareRequest struct {
+	SecretFingerprint string `json:"secret_fingerprint"`
+}
+
 // CreatePreviewRequest defines model for CreatePreviewRequest.
 type CreatePreviewRequest struct {
 	TeamId TeamID `json:"team_id"`
@@ -1180,6 +1203,7 @@ type CreatePublisherGrantRequest struct {
 // CreateShareRequest defines model for CreateShareRequest.
 type CreateShareRequest struct {
 	ExpiresAt         time.Time     `json:"expires_at"`
+	Label             *string       `json:"label,omitempty"`
 	PublicUrlIds      []PublicURLID `json:"public_url_ids"`
 	SecretFingerprint string        `json:"secret_fingerprint"`
 }
@@ -1196,20 +1220,13 @@ type CreateVisitorInvitationRequest struct {
 	TokenDigest string    `json:"token_digest"`
 }
 
-// CreateVisitorTokenRequest defines model for CreateVisitorTokenRequest.
-type CreateVisitorTokenRequest struct {
-	ExpiresAt   time.Time `json:"expires_at"`
-	Label       string    `json:"label"`
-	TokenDigest string    `json:"token_digest"`
-}
-
 // DomainID defines model for DomainID.
 type DomainID = ResourceID
 
 // EnableShareAccessRequest defines model for EnableShareAccessRequest.
 type EnableShareAccessRequest struct {
-	PreviewId        PreviewID `json:"preview_id"`
-	PublishRunNumber int64     `json:"publish_run_number"`
+	PreviewId        *PreviewID `json:"preview_id,omitempty"`
+	PublishRunNumber int64      `json:"publish_run_number"`
 }
 
 // EnrollGuestPublisherRequest defines model for EnrollGuestPublisherRequest.
@@ -1319,9 +1336,9 @@ type FeedbackReviewerAccess struct {
 	BrowserCookieSecret *string  `json:"browser_cookie_secret,omitempty"`
 	CookieSecret        *string  `json:"cookie_secret,omitempty"`
 	ShareId             *ShareID `json:"share_id,omitempty"`
+	ShareSecret         *string  `json:"share_secret,omitempty"`
 	SourceIp            *string  `json:"source_ip,omitempty"`
 	VisitAllowed        bool     `json:"visit_allowed"`
-	VisitorToken        *string  `json:"visitor_token,omitempty"`
 }
 
 // FeedbackScope defines model for FeedbackScope.
@@ -1421,8 +1438,8 @@ type HTTPVisitorRequest struct {
 	PublishRunNumber    int64   `json:"publish_run_number"`
 	ShareCookieSecret   *string `json:"share_cookie_secret,omitempty"`
 	ShareId             *string `json:"share_id,omitempty"`
+	ShareSecret         *string `json:"share_secret,omitempty"`
 	SourceIp            string  `json:"source_ip"`
-	VisitorToken        *string `json:"visitor_token,omitempty"`
 }
 
 // HTTPVisitorResponse defines model for HTTPVisitorResponse.
@@ -1786,14 +1803,19 @@ type Share struct {
 	CreatedByIdentityId IdentityID    `json:"created_by_identity_id"`
 	ExpiresAt           time.Time     `json:"expires_at"`
 	Id                  ShareID       `json:"id"`
-	PreviewId           PreviewID     `json:"preview_id"`
+	Label               string        `json:"label"`
+	PreviewId           *PreviewID    `json:"preview_id,omitempty"`
 	PublicUrlIds        []PublicURLID `json:"public_url_ids"`
 	RevokedAt           *time.Time    `json:"revoked_at,omitempty"`
 
 	// SchemaVersion Review data format version; writers currently emit 1. Separate from revisions and publish run numbers.
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
+	Scope         ShareScope          `json:"scope"`
 	TeamId        TeamID              `json:"team_id"`
 }
+
+// ShareScope defines model for Share.Scope.
+type ShareScope string
 
 // ShareID defines model for ShareID.
 type ShareID = ResourceID
@@ -1919,7 +1941,6 @@ type VisitorGrant struct {
 	Id          string           `json:"id"`
 	IdentityId  *string          `json:"identity_id,omitempty"`
 	Kind        VisitorGrantKind `json:"kind"`
-	Label       *string          `json:"label,omitempty"`
 	PublicUrlId PublicURLID      `json:"public_url_id"`
 	RevokedAt   *time.Time       `json:"revoked_at,omitempty"`
 }
@@ -2052,6 +2073,11 @@ type CreatePublicURLParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// CreateGuestShareParams defines parameters for CreateGuestShare.
+type CreateGuestShareParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
 // CreatePublishRunParams defines parameters for CreatePublishRun.
 type CreatePublishRunParams struct {
 	IdempotencyKey    IdempotencyKey `json:"Idempotency-Key"`
@@ -2070,11 +2096,6 @@ type CreateTeamVisitorGrantParams struct {
 
 // CreateVisitorInvitationParams defines parameters for CreateVisitorInvitation.
 type CreateVisitorInvitationParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
-// CreateVisitorTokenParams defines parameters for CreateVisitorToken.
-type CreateVisitorTokenParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
@@ -2122,6 +2143,11 @@ type ListTeamSharesParams struct {
 	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// CreateURLShareParams defines parameters for CreateURLShare.
+type CreateURLShareParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
 // AcceptVisitorInvitationJSONBody defines parameters for AcceptVisitorInvitation.
 type AcceptVisitorInvitationJSONBody struct {
 	Secret string `json:"secret"`
@@ -2166,6 +2192,9 @@ type UpdatePublicURLJSONRequestBody = UpdatePublicURLRequest
 // ReplaceVisitorAccessJSONRequestBody defines body for ReplaceVisitorAccess for application/json ContentType.
 type ReplaceVisitorAccessJSONRequestBody = ReplaceVisitorAccessRequest
 
+// CreateGuestShareJSONRequestBody defines body for CreateGuestShare for application/json ContentType.
+type CreateGuestShareJSONRequestBody = CreateGuestShareRequest
+
 // CreatePublishRunJSONRequestBody defines body for CreatePublishRun for application/json ContentType.
 type CreatePublishRunJSONRequestBody = CreatePublishRunRequest
 
@@ -2177,9 +2206,6 @@ type CreateTeamVisitorGrantJSONRequestBody = CreateTeamVisitorGrantRequest
 
 // CreateVisitorInvitationJSONRequestBody defines body for CreateVisitorInvitation for application/json ContentType.
 type CreateVisitorInvitationJSONRequestBody = CreateVisitorInvitationRequest
-
-// CreateVisitorTokenJSONRequestBody defines body for CreateVisitorToken for application/json ContentType.
-type CreateVisitorTokenJSONRequestBody = CreateVisitorTokenRequest
 
 // CheckPreviewBrowserAccessJSONRequestBody defines body for CheckPreviewBrowserAccess for application/json ContentType.
 type CheckPreviewBrowserAccessJSONRequestBody = BrowserAccessRequest
@@ -2243,6 +2269,9 @@ type CreatePublisherGrantJSONRequestBody = CreatePublisherGrantRequest
 
 // AllocatePublisherPublicURLJSONRequestBody defines body for AllocatePublisherPublicURL for application/json ContentType.
 type AllocatePublisherPublicURLJSONRequestBody = AllocateEphemeralPublicURLRequest
+
+// CreateURLShareJSONRequestBody defines body for CreateURLShare for application/json ContentType.
+type CreateURLShareJSONRequestBody = CreateShareRequest
 
 // AcceptVisitorInvitationJSONRequestBody defines body for AcceptVisitorInvitation for application/json ContentType.
 type AcceptVisitorInvitationJSONRequestBody AcceptVisitorInvitationJSONBody
@@ -2641,6 +2670,20 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
 	ReplaceVisitorAccess(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateGuestShareWithBody Store one trial-bound share for a guest demo URL
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
+	CreateGuestShareWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateGuestShare Store one trial-bound share for a guest demo URL
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
+	CreateGuestShare(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, body CreateGuestShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreatePublishRunWithBody Create a publish run and allocate its publish run number
 	//
 	// Takes any type of body and a specified content type.
@@ -2690,14 +2733,6 @@ type ClientInterface interface {
 
 	// RevokeVisitorInvitation performs a DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId) request.
 	RevokeVisitorInvitation(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateVisitorTokenWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request,
-	// with any type of body and a specified content type.
-	CreateVisitorTokenWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateVisitorToken performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request.
-	// Takes a body of the `application/json` content type.
-	CreateVisitorToken(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, body CreateVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClosePublishRun Close and drain a publish run without deleting its public URL
 	//
@@ -3012,6 +3047,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
 	ListTeamShares(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateURLShareWithBody Store one share for an exact authorized HTTP public URL
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/shares (the `CreateURLShare` operationId).
+	CreateURLShareWithBody(ctx context.Context, params *CreateURLShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateURLShare Store one share for an exact authorized HTTP public URL
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/shares (the `CreateURLShare` operationId).
+	CreateURLShare(ctx context.Context, params *CreateURLShareParams, body CreateURLShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetShare Read one share
 	//
@@ -3738,6 +3787,40 @@ func (c *Client) ReplaceVisitorAccess(ctx context.Context, publicUrlId PublicURL
 	return c.Client.Do(req)
 }
 
+// CreateGuestShareWithBody Store one trial-bound share for a guest demo URL
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
+func (c *Client) CreateGuestShareWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateGuestShareRequestWithBody(c.Server, publicUrlId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateGuestShare Store one trial-bound share for a guest demo URL
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
+func (c *Client) CreateGuestShare(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, body CreateGuestShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateGuestShareRequest(c.Server, publicUrlId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CreatePublishRunWithBody Create a publish run and allocate its publish run number
 //
 // Takes any type of body and a specified content type.
@@ -3898,34 +3981,6 @@ func (c *Client) CreateVisitorInvitation(ctx context.Context, publicUrlId Public
 // RevokeVisitorInvitation performs a DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id} (the `RevokeVisitorInvitation` operationId) request.
 func (c *Client) RevokeVisitorInvitation(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeVisitorInvitationRequest(c.Server, publicUrlId, invitationId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateVisitorTokenWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) CreateVisitorTokenWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateVisitorTokenRequestWithBody(c.Server, publicUrlId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateVisitorToken performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) CreateVisitorToken(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, body CreateVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateVisitorTokenRequest(c.Server, publicUrlId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4740,6 +4795,40 @@ func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn
 // Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
 func (c *Client) ListTeamShares(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListTeamSharesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateURLShareWithBody Store one share for an exact authorized HTTP public URL
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/shares (the `CreateURLShare` operationId).
+func (c *Client) CreateURLShareWithBody(ctx context.Context, params *CreateURLShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateURLShareRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateURLShare Store one share for an exact authorized HTTP public URL
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/shares (the `CreateURLShare` operationId).
+func (c *Client) CreateURLShare(ctx context.Context, params *CreateURLShareParams, body CreateURLShareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateURLShareRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6325,6 +6414,66 @@ func NewReplaceVisitorAccessRequestWithBody(server string, publicUrlId PublicURL
 	return req, nil
 }
 
+// NewCreateGuestShareRequest calls the generic CreateGuestShare builder with application/json body
+func NewCreateGuestShareRequest(server string, publicUrlId PublicURLID, params *CreateGuestShareParams, body CreateGuestShareJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateGuestShareRequestWithBody(server, publicUrlId, params, "application/json", bodyReader)
+}
+
+// NewCreateGuestShareRequestWithBody constructs an http.Request for the CreateGuestShare method, with any body, and a specified content type
+func NewCreateGuestShareRequestWithBody(server string, publicUrlId PublicURLID, params *CreateGuestShareParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/public-urls/%s/guest-share", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewCreatePublishRunRequest calls the generic CreatePublishRun builder with application/json body
 func NewCreatePublishRunRequest(server string, publicUrlId PublicURLID, params *CreatePublishRunParams, body CreatePublishRunJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -6706,66 +6855,6 @@ func NewRevokeVisitorInvitationRequest(server string, publicUrlId PublicURLID, i
 	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateVisitorTokenRequest calls the generic CreateVisitorToken builder with application/json body
-func NewCreateVisitorTokenRequest(server string, publicUrlId PublicURLID, params *CreateVisitorTokenParams, body CreateVisitorTokenJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateVisitorTokenRequestWithBody(server, publicUrlId, params, "application/json", bodyReader)
-}
-
-// NewCreateVisitorTokenRequestWithBody constructs an http.Request for the CreateVisitorToken method, with any body, and a specified content type
-func NewCreateVisitorTokenRequestWithBody(server string, publicUrlId PublicURLID, params *CreateVisitorTokenParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-tokens", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
 	}
 
 	return req, nil
@@ -8171,6 +8260,59 @@ func NewListTeamSharesRequest(server string, params *ListTeamSharesParams) (*htt
 	return req, nil
 }
 
+// NewCreateURLShareRequest calls the generic CreateURLShare builder with application/json body
+func NewCreateURLShareRequest(server string, params *CreateURLShareParams, body CreateURLShareJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateURLShareRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreateURLShareRequestWithBody constructs an http.Request for the CreateURLShare method, with any body, and a specified content type
+func NewCreateURLShareRequestWithBody(server string, params *CreateURLShareParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/shares")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewGetShareRequest constructs an http.Request for the GetShare method
 func NewGetShareRequest(server string, shareId ShareID) (*http.Request, error) {
 	var err error
@@ -8727,6 +8869,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/public-urls/{public_url_id}/access (the `ReplaceVisitorAccess` operationId).
 	ReplaceVisitorAccessWithResponse(ctx context.Context, publicUrlId PublicURLID, body ReplaceVisitorAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceVisitorAccessResponse, error)
 
+	// CreateGuestShareWithBodyWithResponse Store one trial-bound share for a guest demo URL
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
+	CreateGuestShareWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateGuestShareResponse, error)
+
+	// CreateGuestShareWithResponse Store one trial-bound share for a guest demo URL
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
+	CreateGuestShareWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, body CreateGuestShareJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateGuestShareResponse, error)
+
 	// CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -8790,16 +8946,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RevokeVisitorInvitationWithResponse(ctx context.Context, publicUrlId PublicURLID, invitationId string, reqEditors ...RequestEditorFn) (*RevokeVisitorInvitationResponse, error)
-
-	// CreateVisitorTokenWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	CreateVisitorTokenWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorTokenResponse, error)
-
-	// CreateVisitorTokenWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	CreateVisitorTokenWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, body CreateVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorTokenResponse, error)
 
 	// ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
 	//
@@ -9136,6 +9282,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/shares (the `ListTeamShares` operationId).
 	ListTeamSharesWithResponse(ctx context.Context, params *ListTeamSharesParams, reqEditors ...RequestEditorFn) (*ListTeamSharesResponse, error)
+
+	// CreateURLShareWithBodyWithResponse Store one share for an exact authorized HTTP public URL
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/shares (the `CreateURLShare` operationId).
+	CreateURLShareWithBodyWithResponse(ctx context.Context, params *CreateURLShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateURLShareResponse, error)
+
+	// CreateURLShareWithResponse Store one share for an exact authorized HTTP public URL
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/shares (the `CreateURLShare` operationId).
+	CreateURLShareWithResponse(ctx context.Context, params *CreateURLShareParams, body CreateURLShareJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateURLShareResponse, error)
 
 	// GetShareWithResponse Read one share
 	//
@@ -10737,6 +10897,54 @@ func (r ReplaceVisitorAccessResponse) ContentType() string {
 	return ""
 }
 
+type CreateGuestShareResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Share
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateGuestShareResponse) GetJSON201() *Share {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateGuestShareResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateGuestShareResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateGuestShareResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateGuestShareResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateGuestShareResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CreatePublishRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -11101,54 +11309,6 @@ func (r RevokeVisitorInvitationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeVisitorInvitationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateVisitorTokenResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *VisitorGrant
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateVisitorTokenResponse) GetJSON201() *VisitorGrant {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateVisitorTokenResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateVisitorTokenResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateVisitorTokenResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateVisitorTokenResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateVisitorTokenResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12518,6 +12678,54 @@ func (r ListTeamSharesResponse) ContentType() string {
 	return ""
 }
 
+type CreateURLShareResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Share
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateURLShareResponse) GetJSON201() *Share {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateURLShareResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateURLShareResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateURLShareResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateURLShareResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateURLShareResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetShareResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -13334,6 +13542,32 @@ func (c *ClientWithResponses) ReplaceVisitorAccessWithResponse(ctx context.Conte
 	return ParseReplaceVisitorAccessResponse(rsp)
 }
 
+// CreateGuestShareWithBodyWithResponse Store one trial-bound share for a guest demo URL
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
+func (c *ClientWithResponses) CreateGuestShareWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateGuestShareResponse, error) {
+	rsp, err := c.CreateGuestShareWithBody(ctx, publicUrlId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateGuestShareResponse(rsp)
+}
+
+// CreateGuestShareWithResponse Store one trial-bound share for a guest demo URL
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/guest-share (the `CreateGuestShare` operationId).
+func (c *ClientWithResponses) CreateGuestShareWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateGuestShareParams, body CreateGuestShareJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateGuestShareResponse, error) {
+	rsp, err := c.CreateGuestShare(ctx, publicUrlId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateGuestShareResponse(rsp)
+}
+
 // CreatePublishRunWithBodyWithResponse Create a publish run and allocate its publish run number
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -13468,28 +13702,6 @@ func (c *ClientWithResponses) RevokeVisitorInvitationWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseRevokeVisitorInvitationResponse(rsp)
-}
-
-// CreateVisitorTokenWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreateVisitorTokenWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorTokenResponse, error) {
-	rsp, err := c.CreateVisitorTokenWithBody(ctx, publicUrlId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateVisitorTokenResponse(rsp)
-}
-
-// CreateVisitorTokenWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-tokens (the `CreateVisitorToken` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreateVisitorTokenWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateVisitorTokenParams, body CreateVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorTokenResponse, error) {
-	rsp, err := c.CreateVisitorToken(ctx, publicUrlId, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateVisitorTokenResponse(rsp)
 }
 
 // ClosePublishRunWithResponse Close and drain a publish run without deleting its public URL
@@ -14126,6 +14338,32 @@ func (c *ClientWithResponses) ListTeamSharesWithResponse(ctx context.Context, pa
 		return nil, err
 	}
 	return ParseListTeamSharesResponse(rsp)
+}
+
+// CreateURLShareWithBodyWithResponse Store one share for an exact authorized HTTP public URL
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/shares (the `CreateURLShare` operationId).
+func (c *ClientWithResponses) CreateURLShareWithBodyWithResponse(ctx context.Context, params *CreateURLShareParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateURLShareResponse, error) {
+	rsp, err := c.CreateURLShareWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateURLShareResponse(rsp)
+}
+
+// CreateURLShareWithResponse Store one share for an exact authorized HTTP public URL
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/shares (the `CreateURLShare` operationId).
+func (c *ClientWithResponses) CreateURLShareWithResponse(ctx context.Context, params *CreateURLShareParams, body CreateURLShareJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateURLShareResponse, error) {
+	rsp, err := c.CreateURLShare(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateURLShareResponse(rsp)
 }
 
 // GetShareWithResponse Read one share
@@ -15277,6 +15515,39 @@ func ParseReplaceVisitorAccessResponse(rsp *http.Response) (*ReplaceVisitorAcces
 	return response, nil
 }
 
+// ParseCreateGuestShareResponse parses an HTTP response from a CreateGuestShareWithResponse call
+func ParseCreateGuestShareResponse(rsp *http.Response) (*CreateGuestShareResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateGuestShareResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Share
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreatePublishRunResponse parses an HTTP response from a CreatePublishRunWithResponse call
 func ParseCreatePublishRunResponse(rsp *http.Response) (*CreatePublishRunResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -15520,39 +15791,6 @@ func ParseRevokeVisitorInvitationResponse(rsp *http.Response) (*RevokeVisitorInv
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateVisitorTokenResponse parses an HTTP response from a CreateVisitorTokenWithResponse call
-func ParseCreateVisitorTokenResponse(rsp *http.Response) (*CreateVisitorTokenResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateVisitorTokenResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest VisitorGrant
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -16509,6 +16747,39 @@ func ParseListTeamSharesResponse(rsp *http.Response) (*ListTeamSharesResponse, e
 	return response, nil
 }
 
+// ParseCreateURLShareResponse parses an HTTP response from a CreateURLShareWithResponse call
+func ParseCreateURLShareResponse(rsp *http.Response) (*CreateURLShareResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateURLShareResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Share
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetShareResponse parses an HTTP response from a GetShareWithResponse call
 func ParseGetShareResponse(rsp *http.Response) (*GetShareResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -16798,6 +17069,9 @@ type ServerInterface interface {
 	// ReplaceVisitorAccess Replace the complete live visitor access policy
 	// (PUT /v1/public-urls/{public_url_id}/access)
 	ReplaceVisitorAccess(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
+	// CreateGuestShare Store one trial-bound share for a guest demo URL
+	// (POST /v1/public-urls/{public_url_id}/guest-share)
+	CreateGuestShare(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreateGuestShareParams)
 	// CreatePublishRun Create a publish run and allocate its publish run number
 	// (POST /v1/public-urls/{public_url_id}/publish-runs)
 	CreatePublishRun(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreatePublishRunParams)
@@ -16822,9 +17096,6 @@ type ServerInterface interface {
 
 	// (DELETE /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id})
 	RevokeVisitorInvitation(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, invitationId string)
-
-	// (POST /v1/public-urls/{public_url_id}/visitor-tokens)
-	CreateVisitorToken(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreateVisitorTokenParams)
 	// ClosePublishRun Close and drain a publish run without deleting its public URL
 	// (DELETE /v1/publish-runs/{publish_run_id})
 	ClosePublishRun(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
@@ -16912,6 +17183,9 @@ type ServerInterface interface {
 	// ListTeamShares List manageable shares for one team
 	// (GET /v1/shares)
 	ListTeamShares(w http.ResponseWriter, r *http.Request, params ListTeamSharesParams)
+	// CreateURLShare Store one share for an exact authorized HTTP public URL
+	// (POST /v1/shares)
+	CreateURLShare(w http.ResponseWriter, r *http.Request, params CreateURLShareParams)
 	// GetShare Read one share
 	// (GET /v1/shares/{share_id})
 	GetShare(w http.ResponseWriter, r *http.Request, shareId ShareID)
@@ -17972,6 +18246,60 @@ func (siw *ServerInterfaceWrapper) ReplaceVisitorAccess(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// CreateGuestShare operation middleware
+func (siw *ServerInterfaceWrapper) CreateGuestShare(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateGuestShareParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateGuestShare(w, r, publicUrlId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreatePublishRun operation middleware
 func (siw *ServerInterfaceWrapper) CreatePublishRun(w http.ResponseWriter, r *http.Request) {
 
@@ -18296,60 +18624,6 @@ func (siw *ServerInterfaceWrapper) RevokeVisitorInvitation(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RevokeVisitorInvitation(w, r, publicUrlId, invitationId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateVisitorToken operation middleware
-func (siw *ServerInterfaceWrapper) CreateVisitorToken(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "public_url_id" -------------
-	var publicUrlId PublicURLID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateVisitorTokenParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateVisitorToken(w, r, publicUrlId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19257,6 +19531,51 @@ func (siw *ServerInterfaceWrapper) ListTeamShares(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// CreateURLShare operation middleware
+func (siw *ServerInterfaceWrapper) CreateURLShare(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateURLShareParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateURLShare(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetShare operation middleware
 func (siw *ServerInterfaceWrapper) GetShare(w http.ResponseWriter, r *http.Request) {
 
@@ -19519,7 +19838,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/visitor/public-urls", wrapper.ListAvailablePublicURLs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.ListVisitorGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.CreateTeamVisitorGrant)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-tokens", wrapper.CreateVisitorToken)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants/{grant_id}", wrapper.RevokeVisitorGrant)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-invitations", wrapper.ListVisitorInvitations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-invitations", wrapper.CreateVisitorInvitation)
@@ -19549,6 +19867,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.ListShares)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/previews/{preview_id}/shares", wrapper.CreateShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares", wrapper.ListTeamShares)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares", wrapper.CreateURLShare)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/guest-share", wrapper.CreateGuestShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/{share_id}", wrapper.GetShare)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/{share_id}/revoke", wrapper.RevokeShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback", wrapper.ListFeedbackThreads)

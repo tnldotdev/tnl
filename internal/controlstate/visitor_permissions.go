@@ -4,21 +4,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 type HTTPVisitorRequest struct {
-	SourceIP, BrowserCookieSecret, ShareID, VisitorToken string
-	ShareCookieSecret                                    []byte
+	SourceIP, BrowserCookieSecret, ShareID string
+	ShareCookieSecret, ShareSecret         []byte
 }
 
 func (d *Database) httpVisitorDecision(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, input HTTPVisitorRequest, now time.Time) (VisitorPermission, error) {
@@ -42,34 +39,22 @@ func (d *Database) httpVisitorDecision(ctx context.Context, q *controlstatedb.Qu
 	if result.VisitAllowed {
 		return result, nil
 	}
-	if url.Purpose == "demo" && input.VisitorToken != "" {
-		guest, guestErr := q.GetGuestTrialByID(ctx, url.CreatedByIdentityID)
-		if guestErr != nil && !errors.Is(guestErr, pgx.ErrNoRows) {
-			return result, guestErr
+	if len(input.ShareSecret) == 32 {
+		share, lookupErr := q.GetActiveShareForPublicURL(ctx, controlstatedb.GetActiveShareForPublicURLParams{
+			ShareID: input.ShareID, PublicURLID: url.ID, Now: timestamptz(now),
+		})
+		if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
+			return result, lookupErr
 		}
-		if guestErr == nil && guest.EndedAt.Valid == false && guest.ExpiresAt.Time.After(now) &&
-			credentials.GuestVisitorTokenMatches(input.VisitorToken, guest.ID, url.ID, guest.CredentialHash) {
-			result.VisitAllowed, result.Reason = true, "guest_link"
-			return result, nil
-		}
-	}
-	if id, encoded, found := strings.Cut(input.VisitorToken, "."); found && opaqueid.Valid(id, opaqueid.VisitorTokenPrefix) {
-		raw, decodeErr := base64.RawURLEncoding.Strict().DecodeString(encoded)
-		if decodeErr == nil && len(raw) == 32 && base64.RawURLEncoding.EncodeToString(raw) == encoded {
-			digest := sha256.Sum256(raw)
-			_, lookupErr := q.ValidVisitorToken(ctx, controlstatedb.ValidVisitorTokenParams{
-				ID: id, PublicURLID: url.ID, TokenDigest: digest[:], Now: timestamptz(now),
-			})
-			if lookupErr == nil {
-				result.VisitAllowed, result.Reason = true, "visitor_token"
+		if lookupErr == nil {
+			digest := sha256.Sum256(input.ShareSecret)
+			if subtle.ConstantTimeCompare(digest[:], share.SecretDigest) == 1 {
+				result.VisitAllowed, result.Reason = true, "anonymous_share"
 				return result, nil
 			}
-			if !errors.Is(lookupErr, pgx.ErrNoRows) {
-				return result, lookupErr
-			}
 		}
 	}
-	if !result.VisitAllowed && len(input.ShareCookieSecret) == 32 && url.Purpose == "app" {
+	if !result.VisitAllowed && len(input.ShareCookieSecret) == 32 {
 		digest := sha256.Sum256(input.ShareCookieSecret)
 		_, err = q.ReviewerShareCookieValid(ctx, controlstatedb.ReviewerShareCookieValidParams{ShareID: input.ShareID, PublicURLID: url.ID, TokenDigest: digest[:], Now: timestamptz(now)})
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {

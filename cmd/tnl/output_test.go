@@ -193,7 +193,7 @@ func TestGuestVisitorLinkStaysOutOfFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	output.setGuestDemo()
-	output.setGuestVisitorToken("gst_trial.visitor-secret")
+	output.setGuestShare("shr_trial.visitor-secret")
 	if err := output.starting("tun_0123456789abcdefghijkl", "http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestGuestVisitorLinkStaysOutOfFrames(t *testing.T) {
 	if err := output.ready(url, 1); err != nil {
 		t.Fatal(err)
 	}
-	link := url + "/__tnl/access/gst_trial.visitor-secret"
+	link := url + "/__tnl/share/shr_trial.visitor-secret"
 	if stdout.String() != link+"\n" || opened != link || strings.Contains(stderr.String(), "visitor-secret") {
 		t.Fatalf("guest link leaked or lost: stdout=%q, opened=%q, frame=%q", stdout.String(), opened, stderr.String())
 	}

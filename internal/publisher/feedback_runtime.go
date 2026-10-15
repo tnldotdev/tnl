@@ -173,10 +173,10 @@ func (f *feedbackRuntime) evidenceForBrowser(request *http.Request) []failedRequ
 
 func (f *feedbackRuntime) reviewerAccess(request *http.Request, denied bool) (controlv1.FeedbackReviewerAccess, bool) {
 	result := controlv1.FeedbackReviewerAccess{VisitAllowed: !denied}
-	if token := request.Header.Get(visitorAccessHeaderName); token != "" {
-		result.VisitorToken = &token
-	} else if cookie, err := request.Cookie(visitorAccessCookieName); err == nil {
-		result.VisitorToken = &cookie.Value
+	if token := request.Header.Get(shareAccessHeaderName); token != "" {
+		if id, secret, found := strings.Cut(token, "."); found && opaqueid.Valid(id, opaqueid.SharePrefix) {
+			result.ShareId, result.ShareSecret = &id, &secret
+		}
 	}
 	if _, verified := request.Context().Value(browserIdentityKey{}).(controlv1.BrowserAccessResponse); verified {
 		if cookie, err := request.Cookie(browserAccessCookieName); err == nil {
@@ -184,13 +184,16 @@ func (f *feedbackRuntime) reviewerAccess(request *http.Request, denied bool) (co
 			result.BrowserCookieSecret = &secret
 		}
 	}
+	if result.ShareSecret != nil {
+		return result, true
+	}
 	cookie, err := request.Cookie(shareCookieName)
 	if err != nil {
-		return result, result.VisitAllowed || result.VisitorToken != nil || result.BrowserCookieSecret != nil
+		return result, result.VisitAllowed || result.ShareSecret != nil || result.BrowserCookieSecret != nil
 	}
 	id, secret, found := strings.Cut(cookie.Value, ".")
 	if !found || !opaqueid.Valid(id, opaqueid.SharePrefix) {
-		return result, result.VisitAllowed || result.VisitorToken != nil || result.BrowserCookieSecret != nil
+		return result, result.VisitAllowed || result.ShareSecret != nil || result.BrowserCookieSecret != nil
 	}
 	result.ShareId, result.CookieSecret = &id, &secret
 	return result, true

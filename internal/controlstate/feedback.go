@@ -69,7 +69,7 @@ type FeedbackActor struct {
 	TeamMember               bool
 	ShareID                  string
 	CookieSecret             []byte
-	VisitorToken             string
+	ShareSecret              []byte
 	VisitAllowed             bool
 	PolicyRevision           uint64
 	ExpectedMutationRevision uint64
@@ -417,9 +417,6 @@ func (d *Database) authorizeFeedbackActor(ctx context.Context, queries *controls
 		}
 		if actor.ShareID != "" {
 			return actor.ShareID, nil
-		}
-		if actor.VisitorToken != "" {
-			return "visitor_token", nil
 		}
 		return "anonymous", nil
 	}

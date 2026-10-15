@@ -70,7 +70,7 @@ type publishOutput struct {
 	target                string
 	demo                  bool
 	guestDemo             bool
-	guestVisitorToken     string
+	guestShare            string
 	openURL               func(string) error
 }
 
@@ -233,9 +233,9 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			if err := writeHumanFrame(o.stderr, o.command, "ready", footer, blocks...); err != nil {
 				return err
 			}
-			if o.guestDemo && o.guestVisitorToken != "" {
+			if o.guestDemo && o.guestShare != "" {
 				// a guest link is a one-time credential, not a diagram field or log.
-				if _, err := io.WriteString(o.stdout, url+"/__tnl/access/"+o.guestVisitorToken+"\n"); err != nil {
+				if _, err := io.WriteString(o.stdout, url+"/__tnl/share/"+o.guestShare+"\n"); err != nil {
 					return err
 				}
 			}
@@ -275,8 +275,8 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 
 // openPublicURL releases the output lock while DNS and the browser opener run.
 func (o *publishOutput) openPublicURL(url string) error {
-	if o.guestDemo && o.guestVisitorToken != "" {
-		url += "/__tnl/access/" + o.guestVisitorToken
+	if o.guestDemo && o.guestShare != "" {
+		url += "/__tnl/share/" + o.guestShare
 	}
 	o.mu.Unlock()
 	err := o.openURL(url)
@@ -296,9 +296,9 @@ func (o *publishOutput) setGuestDemo() {
 	o.mu.Unlock()
 }
 
-func (o *publishOutput) setGuestVisitorToken(token string) {
+func (o *publishOutput) setGuestShare(token string) {
 	o.mu.Lock()
-	o.guestVisitorToken = token
+	o.guestShare = token
 	o.mu.Unlock()
 }
 

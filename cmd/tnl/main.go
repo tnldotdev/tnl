@@ -526,12 +526,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runURLAccessShow(ctx, flags.URL.Access.Show, stdout, stderr)
 	case "url access set <url> <mode>":
 		return runURLAccessSet(ctx, flags.URL.Access.Set, stdout, stderr)
-	case "url access token create <url>":
-		return runURLVisitorTokenCreate(ctx, flags.URL.Access.Token.Create, stdout, stderr)
-	case "url access token list <url>":
-		return runURLVisitorTokenList(ctx, flags.URL.Access.Token.List, stdout, stderr)
-	case "url access token revoke <url> <token-id>":
-		return runURLVisitorTokenRevoke(ctx, flags.URL.Access.Token.Revoke, stdout, stderr)
 	case "url update <public-url-id>":
 		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
 	case "url delete <public-url-id>":
@@ -544,10 +538,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runURLCredentialRevoke(ctx, flags.URL.Credential.Revoke, stdout, stderr)
 	case "share link create <url>":
 		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
+	case "share token create <url>":
+		return runShareTokenCreate(ctx, flags.Share.Token.Create, project, stdout, stderr)
 	case "share list <url>":
 		return runShareList(ctx, flags.Share.List, project, stdout, stderr)
-	case "share link revoke <share-id>":
-		return runShareRevoke(ctx, flags.Share.Link.Revoke, stdout, stderr)
+	case "share revoke <share-id>":
+		return runShareRevoke(ctx, flags.Share.Revoke, stdout, stderr)
 	case "share team create <url>":
 		return runShareTeamCreate(ctx, flags.Share.Team.Create, project, stdout, stderr)
 	case "share team revoke":

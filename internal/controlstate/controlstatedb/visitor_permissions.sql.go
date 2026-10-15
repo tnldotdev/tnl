@@ -94,10 +94,10 @@ func (q *Queries) CleanupVisitorSessions(ctx context.Context, now pgtype.Timesta
 }
 
 const createVisitorGrant = `-- name: CreateVisitorGrant :one
-INSERT INTO control.visitor_grants(id, public_url_id, team_id, kind, label, identity_id, token_digest, created_by_identity_id,
+INSERT INTO control.visitor_grants(id, public_url_id, team_id, kind, identity_id, created_by_identity_id,
     idempotency_key, request_digest, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $9, $10, $11, $5, $6, $7, $8, $12)
-ON CONFLICT (created_by_identity_id, kind, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, public_url_id, team_id, kind, label, identity_id, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
+VALUES ($1, $2, $3, $4, $9, $5, $6, $7, $8, $10)
+ON CONFLICT (created_by_identity_id, kind, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, public_url_id, team_id, kind, identity_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
 `
 
 type CreateVisitorGrantParams struct {
@@ -109,9 +109,7 @@ type CreateVisitorGrantParams struct {
 	IdempotencyKey      string
 	RequestDigest       []byte
 	CreatedAt           pgtype.Timestamptz
-	Label               string
 	IdentityID          pgtype.Text
-	TokenDigest         []byte
 	ExpiresAt           pgtype.Timestamptz
 }
 
@@ -125,9 +123,7 @@ func (q *Queries) CreateVisitorGrant(ctx context.Context, arg CreateVisitorGrant
 		arg.IdempotencyKey,
 		arg.RequestDigest,
 		arg.CreatedAt,
-		arg.Label,
 		arg.IdentityID,
-		arg.TokenDigest,
 		arg.ExpiresAt,
 	)
 	var i ControlVisitorGrant
@@ -136,9 +132,7 @@ func (q *Queries) CreateVisitorGrant(ctx context.Context, arg CreateVisitorGrant
 		&i.PublicURLID,
 		&i.TeamID,
 		&i.Kind,
-		&i.Label,
 		&i.IdentityID,
-		&i.TokenDigest,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -267,7 +261,7 @@ func (q *Queries) ExpiringVisitorIPURLs(ctx context.Context, expiresAt pgtype.Ti
 }
 
 const getVisitorGrant = `-- name: GetVisitorGrant :one
-SELECT id, public_url_id, team_id, kind, label, identity_id, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE id = $1
+SELECT id, public_url_id, team_id, kind, identity_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE id = $1
 `
 
 func (q *Queries) GetVisitorGrant(ctx context.Context, id string) (ControlVisitorGrant, error) {
@@ -278,9 +272,7 @@ func (q *Queries) GetVisitorGrant(ctx context.Context, id string) (ControlVisito
 		&i.PublicURLID,
 		&i.TeamID,
 		&i.Kind,
-		&i.Label,
 		&i.IdentityID,
-		&i.TokenDigest,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -357,7 +349,7 @@ func (q *Queries) HasVisitorIPSet(ctx context.Context, publicUrlID string) (bool
 }
 
 const listVisitorGrants = `-- name: ListVisitorGrants :many
-SELECT id, public_url_id, team_id, kind, label, identity_id, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE public_url_id = $1 ORDER BY id
+SELECT id, public_url_id, team_id, kind, identity_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE public_url_id = $1 ORDER BY id
 `
 
 func (q *Queries) ListVisitorGrants(ctx context.Context, publicUrlID string) ([]ControlVisitorGrant, error) {
@@ -374,9 +366,7 @@ func (q *Queries) ListVisitorGrants(ctx context.Context, publicUrlID string) ([]
 			&i.PublicURLID,
 			&i.TeamID,
 			&i.Kind,
-			&i.Label,
 			&i.IdentityID,
-			&i.TokenDigest,
 			&i.CreatedByIdentityID,
 			&i.IdempotencyKey,
 			&i.RequestDigest,
@@ -787,30 +777,6 @@ type SetVisitorFeedbackPolicyParams struct {
 func (q *Queries) SetVisitorFeedbackPolicy(ctx context.Context, arg SetVisitorFeedbackPolicyParams) error {
 	_, err := q.db.Exec(ctx, setVisitorFeedbackPolicy, arg.ID, arg.FeedbackAuthors)
 	return err
-}
-
-const validVisitorToken = `-- name: ValidVisitorToken :one
-SELECT id FROM control.visitor_grants WHERE id = $1 AND public_url_id = $2 AND kind = 'token'
-  AND token_digest = $3 AND revoked_at IS NULL AND expires_at > $4
-`
-
-type ValidVisitorTokenParams struct {
-	ID          string
-	PublicURLID string
-	TokenDigest []byte
-	Now         pgtype.Timestamptz
-}
-
-func (q *Queries) ValidVisitorToken(ctx context.Context, arg ValidVisitorTokenParams) (string, error) {
-	row := q.db.QueryRow(ctx, validVisitorToken,
-		arg.ID,
-		arg.PublicURLID,
-		arg.TokenDigest,
-		arg.Now,
-	)
-	var id string
-	err := row.Scan(&id)
-	return id, err
 }
 
 const visitorCurrentMembership = `-- name: VisitorCurrentMembership :one

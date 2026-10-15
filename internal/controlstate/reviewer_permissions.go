@@ -19,7 +19,7 @@ func (d *Database) currentReviewer(ctx context.Context, q *controlstatedb.Querie
 	if len(actor.BrowserCookieSecret) != 0 {
 		token = base64.RawURLEncoding.EncodeToString(actor.BrowserCookieSecret)
 	}
-	identity, err := d.httpVisitorDecision(ctx, q, url, HTTPVisitorRequest{SourceIP: actor.SourceIP, BrowserCookieSecret: token, ShareID: actor.ShareID, ShareCookieSecret: actor.CookieSecret, VisitorToken: actor.VisitorToken}, now)
+	identity, err := d.httpVisitorDecision(ctx, q, url, HTTPVisitorRequest{SourceIP: actor.SourceIP, BrowserCookieSecret: token, ShareID: actor.ShareID, ShareCookieSecret: actor.CookieSecret, ShareSecret: actor.ShareSecret}, now)
 	if err != nil {
 		return FeedbackActor{}, "", err
 	}

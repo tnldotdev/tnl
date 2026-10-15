@@ -382,12 +382,6 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Access.Show.remoteFlags, true)
 	case "url access set <url> <mode>":
 		apply(&flags.URL.Access.Set.remoteFlags, true)
-	case "url access token create <url>":
-		apply(&flags.URL.Access.Token.Create.remoteFlags, true)
-	case "url access token list <url>":
-		apply(&flags.URL.Access.Token.List.remoteFlags, true)
-	case "url access token revoke <url> <token-id>":
-		apply(&flags.URL.Access.Token.Revoke.remoteFlags, true)
 	case "url update <public-url-id>":
 		apply(&flags.URL.Update.remoteFlags, true)
 	case "url delete <public-url-id>":
@@ -400,10 +394,12 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Credential.Revoke.remoteFlags, true)
 	case "share link create <url>":
 		apply(&flags.Share.Link.Create.remoteFlags, true)
+	case "share token create <url>":
+		apply(&flags.Share.Token.Create.remoteFlags, true)
 	case "share list <url>":
 		apply(&flags.Share.List.remoteFlags, true)
-	case "share link revoke <share-id>":
-		apply(&flags.Share.Link.Revoke.remoteFlags, true)
+	case "share revoke <share-id>":
+		apply(&flags.Share.Revoke.remoteFlags, true)
 	case "share team create <url>":
 		apply(&flags.Share.Team.Create.remoteFlags, true)
 	case "share team revoke":

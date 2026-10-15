@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -12,11 +15,11 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -258,11 +261,23 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {
 		if guest != nil && event.Type == publisher.EventPublicURLAssigned {
-			token, err := credentials.GuestVisitorToken(credentials.AccessToken(guest.AccessToken), guest.GuestID, event.PublicURLID)
+			secret := make([]byte, 32)
+			if _, err := rand.Read(secret); err != nil {
+				return err
+			}
+			fingerprint := sha256.Sum256(secret)
+			key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 			if err != nil {
 				return err
 			}
-			output.setGuestVisitorToken(token)
+			share, err := authenticated.Control.CreateGuestShare(ctx, event.PublicURLID, key, fingerprint)
+			if err != nil {
+				return fmt.Errorf("create guest share: %w", err)
+			}
+			if share.Scope != controlv1.ShareScopeGuest || len(share.PublicUrlIds) != 1 || share.PublicUrlIds[0] != event.PublicURLID {
+				return failure.Wrap("create guest share", failure.ServerResponseInvalid, errors.New("server returned a share for another public URL"))
+			}
+			output.setGuestShare(share.Id + "." + base64.RawURLEncoding.EncodeToString(secret))
 		}
 		if localDemo != nil && event.Type == publisher.EventReady {
 			localDemo.SetPublicURL(event.PublicURL)

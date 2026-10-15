@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -542,28 +543,42 @@ func TestIntegrationReplaceVisitorAccessChangesLiveRunWithoutIPBypass(t *testing
 	}
 }
 
-func TestIntegrationVisitorTokenIsURLScopedAndRevocable(t *testing.T) {
+func TestIntegrationExactURLShareSecretAndCookieAreInterchangeable(t *testing.T) {
 	f, auth := finalVisitorRun(t, "http")
 	d := f.database
 	secret := bytes.Repeat([]byte{7}, 32)
 	digest := sha256.Sum256(secret)
-	grant, err := d.CreateVisitorToken(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, "automation", "ci", digest, f.now.Add(time.Hour), f.now)
-	if err != nil || grant.Kind != "token" || grant.ExpiresAt == nil {
-		t.Fatalf("visitor token: %+v, %v", grant, err)
-	}
-	input := HTTPVisitorRequest{SourceIP: "192.0.2.1", VisitorToken: grant.ID + "." + base64.RawURLEncoding.EncodeToString(secret)}
-	check := func(at time.Time, allowed bool) {
-		t.Helper()
-		decision, err := d.HTTPVisitorPermission(t.Context(), auth, input, at)
-		if err != nil || decision.VisitAllowed != allowed {
-			t.Fatalf("token permission = %+v, want %t: %v", decision, allowed, err)
-		}
-	}
-	check(f.now, true)
 	var revision int64
 	if err := d.pool.QueryRow(t.Context(), `SELECT mutation_revision FROM control.public_urls WHERE id=$1`, auth.PublicURLID).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
+	share, err := d.CreateShare(t.Context(), CreateShareRequest{
+		TeamID: f.request.TeamID, ActingIdentityID: f.request.ActingIdentityID,
+		IdempotencyKey: "automation", Label: "ci", SecretFingerprint: digest,
+		ExpiresAt: f.now.Add(time.Hour), PolicyRevision: f.request.PolicyRevision,
+		PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: auth.PublicURLID, ExpectedMutationRevision: uint64(revision)}},
+	}, f.now)
+	if err != nil || share.Scope != "url" || share.PreviewID != "" || !slices.Equal(share.PublicURLIDs, []string{auth.PublicURLID}) {
+		t.Fatalf("exact URL share: %+v, %v", share, err)
+	}
+	input := HTTPVisitorRequest{SourceIP: "192.0.2.1", ShareID: share.ID, ShareSecret: secret}
+	check := func(at time.Time, allowed bool) {
+		t.Helper()
+		decision, err := d.HTTPVisitorPermission(t.Context(), auth, input, at)
+		if err != nil || decision.VisitAllowed != allowed {
+			t.Fatalf("share permission = %+v, want %t: %v", decision, allowed, err)
+		}
+	}
+	check(f.now, true)
+	cookie := bytes.Repeat([]byte{9}, 32)
+	cookieDigest := sha256.Sum256(cookie)
+	if _, err := controlstatedb.New(d.pool).InsertShareCookie(t.Context(), controlstatedb.InsertShareCookieParams{
+		TokenDigest: cookieDigest[:], PublicURLID: auth.PublicURLID, CreatedAt: timestamptz(f.now), ShareID: share.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	input.ShareSecret, input.ShareCookieSecret = nil, cookie
+	check(f.now, true)
 	if _, err := d.ReplaceVisitorAccess(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, VisitorAccessRestricted, []string{"192.0.2.0/24"}, uint64(revision), f.now); err != nil {
 		t.Fatal(err)
 	}
@@ -571,10 +586,10 @@ func TestIntegrationVisitorTokenIsURLScopedAndRevocable(t *testing.T) {
 	check(f.now, false)
 	input.SourceIP = "192.0.2.1"
 	check(f.now.Add(time.Hour), false)
-	input.VisitorToken = "vt_other." + base64.RawURLEncoding.EncodeToString(secret)
+	input.ShareID = "shr_other"
 	check(f.now, false)
-	input.VisitorToken = grant.ID + "." + base64.RawURLEncoding.EncodeToString(secret)
-	if err := d.RevokeVisitorGrant(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, grant.ID, f.now); err != nil {
+	input.ShareID, input.ShareSecret, input.ShareCookieSecret = share.ID, secret, nil
+	if _, err := d.RevokeShare(t.Context(), share.ID, f.request.ActingIdentityID, f.now); err != nil {
 		t.Fatal(err)
 	}
 	check(f.now, false)

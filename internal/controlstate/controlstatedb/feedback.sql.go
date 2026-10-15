@@ -738,6 +738,7 @@ WHERE share.id = $1
   AND cookie.expires_at > $4
   AND share.expires_at > $4
   AND share.revoked_at IS NULL
+  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, $4))
 `
 
 type ReviewerShareCookieValidParams struct {
