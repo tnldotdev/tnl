@@ -3,15 +3,12 @@ package controlstate
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 )
 
 func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
@@ -47,10 +44,10 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		t.Fatalf("query mode = %v, want exec", mode)
 	}
 	for _, table := range []string{
-		"identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "runtime_secret", "dns_authorities", "dns_challenge_changes",
-		"public_urls", "publish_runs", "publish_run_connection_slots", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events", "relay_service_assignment_totals",
-		"control_tls_cache", "acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_usage_runs", "ingress_usage_reports",
-		"public_url_usage_configuration", "public_url_usage_buckets", "public_url_usage_deliveries", "public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
+		"schema_identity", "identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "guest_retry_keys", "dns_authorities", "dns_challenge_changes",
+		"public_urls", "publish_runs", "publish_run_connection_slots", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events", "relay_service_reservations",
+		"control_tls_certificate_cache", "acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_usage_runs", "ingress_usage_reports",
+		"visitor_network_hash_keys", "public_url_usage_buckets", "public_url_usage_deliveries", "public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
 	} {
 		var exists bool
 		if err := database.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'control' AND table_name = $1)`, table).Scan(&exists); err != nil {
@@ -70,45 +67,26 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	if err := database.pool.QueryRow(ctx, `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&version); err != nil || version != schemaVersion {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
-	// a newer additive migration must not make serving processes unready.
+	// serving roles require the exact coordinated baseline and version.
 	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.public_urls ADD COLUMN future_note text`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.pool.Exec(ctx, `INSERT INTO control.goose_db_version (version_id, is_applied) VALUES ($1, true)`, schemaVersion+1); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Readiness(ctx); err != nil {
-		t.Fatalf("Readiness rejected additive newer schema: %v", err)
+	if err := database.Readiness(ctx); err == nil {
+		t.Fatal("readiness accepted a newer database schema")
 	}
-	newer, err := Open(ctx, databaseURL, testStorageKey, "")
-	if err != nil {
-		t.Fatalf("Open rejected additive newer schema: %v", err)
+	if newer, err := Open(ctx, databaseURL, testStorageKey, ""); err == nil {
+		newer.Close()
+		t.Fatal("open accepted a newer database schema")
 	}
-	newer.Close()
 }
 
-func TestIntegrationCustomDomainMigrationConvertsExistingRows(t *testing.T) {
+func TestIntegrationMigrationRejectsOtherVersionOneBaseline(t *testing.T) {
 	ctx := t.Context()
-	url := newDisposableControlStateDatabaseURL(t, "custom_domain_migration")
-	config, err := parseDirectConfig(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	direct := stdlib.OpenDB(*config)
-	t.Cleanup(func() { _ = direct.Close() })
-	if err := ensureMigrationLock(ctx, direct); err != nil {
-		t.Fatal(err)
-	}
-	migrations, err := fs.Sub(migrationFiles, "migrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, direct, migrations,
-		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.UpTo(ctx, 13); err != nil {
+	url := newDisposableControlStateDatabaseURL(t, "baseline_identity")
+	if err := Migrate(ctx, url); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := pgxpool.New(ctx, url)
@@ -116,29 +94,15 @@ func TestIntegrationCustomDomainMigrationConvertsExistingRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	now := time.Now().UTC()
-	for _, statement := range []string{
-		`INSERT INTO control.identities (id, kind, display_name, created_at, updated_at)
-			VALUES ('identity_custom_upgrade', 'authority', 'Test', $1, $1)`,
-		`INSERT INTO control.managed_label_reservations (label, created_at) VALUES ('team-custom-upgrade', $1)`,
-		`INSERT INTO control.teams (id, kind, display_name, managed_label, created_by_identity_id, created_at, updated_at)
-			VALUES ('team_custom_upgrade', 'personal', 'Test', 'team-custom-upgrade', 'identity_custom_upgrade', $1, $1)`,
-		`INSERT INTO control.domains (id, kind, team_id, canonical_domain, state, authority_revision, created_by_identity_id, created_at, updated_at)
-			VALUES ('domain_custom_upgrade', 'claimed', 'team_custom_upgrade', 'custom.example.test', 'ready', 1, 'identity_custom_upgrade', $1, $1)`,
-	} {
-		if _, err := pool.Exec(ctx, statement, now); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := Migrate(ctx, url); err != nil {
+	if _, err := pool.Exec(ctx, `DROP TABLE control.schema_identity`); err != nil {
 		t.Fatal(err)
 	}
-	var kind string
-	if err := pool.QueryRow(ctx, `SELECT kind FROM control.domains WHERE id = 'domain_custom_upgrade'`).Scan(&kind); err != nil || kind != "custom" {
-		t.Fatalf("migrated domain kind = %q, %v", kind, err)
+	if err := Migrate(ctx, url); err == nil {
+		t.Fatal("migration accepted a different version-one baseline")
 	}
-	if _, err := pool.Exec(ctx, `UPDATE control.domains SET kind = 'claimed' WHERE id = 'domain_custom_upgrade'`); err == nil {
-		t.Fatal("legacy domain kind was still writable")
+	if database, err := Open(ctx, url, testStorageKey, ""); err == nil {
+		database.Close()
+		t.Fatal("serving accepted a different version-one baseline")
 	}
 }
 

@@ -77,11 +77,11 @@ WHERE u.lifecycle_state = 'enabled' AND u.purpose = 'app' AND u.service_protocol
 ORDER BY u.id LIMIT 32;
 
 -- name: BindBrowserSessionHost :exec
-INSERT INTO control.browser_session_hosts(session_digest, public_url_id, publish_run_id) VALUES ($1, $2, $3)
+INSERT INTO control.browser_session_run_bindings(session_digest, public_url_id, publish_run_id) VALUES ($1, $2, $3)
 ON CONFLICT (session_digest, public_url_id) DO NOTHING;
 
 -- name: BrowserSessionCurrentHost :one
-SELECT h.publish_run_id FROM control.browser_session_hosts h JOIN control.publish_runs r ON r.id = h.publish_run_id
+SELECT h.publish_run_id FROM control.browser_session_run_bindings h JOIN control.publish_runs r ON r.id = h.publish_run_id
 WHERE h.session_digest = $1 AND h.public_url_id = $2 AND r.closed_at IS NULL AND r.publisher_expires_at > $3
   AND r.state = 'ready' AND r.public_url_id = h.public_url_id;
 
@@ -99,10 +99,10 @@ UPDATE control.visitor_ip_grants SET revoked_at = $2 WHERE public_url_id = $1 AN
 UPDATE control.visitor_ip_grants SET revoked_at = $3 WHERE public_url_id = $1 AND id = $2 AND revoked_at IS NULL;
 
 -- name: MarkVisitorIPSet :exec
-INSERT INTO control.visitor_ip_sets(public_url_id) VALUES ($1) ON CONFLICT DO NOTHING;
+INSERT INTO control.visitor_ip_policy_sets(public_url_id) VALUES ($1) ON CONFLICT DO NOTHING;
 
 -- name: HasVisitorIPSet :one
-SELECT EXISTS(SELECT 1 FROM control.visitor_ip_sets WHERE public_url_id = $1)::boolean;
+SELECT EXISTS(SELECT 1 FROM control.visitor_ip_policy_sets WHERE public_url_id = $1)::boolean;
 
 -- name: ExpiringVisitorIPURLs :many
 SELECT DISTINCT public_url_id FROM control.visitor_ip_grants WHERE revoked_at IS NULL AND expires_at <= $1 ORDER BY public_url_id LIMIT 100;

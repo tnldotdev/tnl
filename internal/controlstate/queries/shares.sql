@@ -1,7 +1,7 @@
 -- name: CreateShare :one
 INSERT INTO control.shares (
     id, preview_id, team_id, created_by_identity_id,
-    idempotency_key, request_digest, secret_fingerprint, created_at, expires_at
+    idempotency_key, request_digest, secret_digest, created_at, expires_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (created_by_identity_id, idempotency_key)
 DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key

@@ -228,7 +228,7 @@ func (d *Database) RedeemBrowserHandoff(ctx context.Context, publicURLID, token 
 	if err != nil {
 		return "", "", "", false, time.Time{}, err
 	}
-	return string(cookie), row.ReturnPath, row.NextUrl, row.Bridge, row.ExpiresAt.Time, nil
+	return string(cookie), row.ReturnPath, row.RedirectUrl, row.Bridge, row.ExpiresAt.Time, nil
 }
 
 func (d *Database) BrowserSession(ctx context.Context, publicURLID, token string, now time.Time) (BrowserAccessSession, error) {
