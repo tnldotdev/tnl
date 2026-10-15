@@ -91,6 +91,32 @@ jobs:
       - name: Run binary integration tests
         run: task go:test:integration:binary
 
+  compose:
+    name: Compose publisher integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            .github/workflows/integration.yml
+
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          repo-token: ""
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+
       - name: Check Compose publisher ownership
         run: task go:test:integration:compose
 
@@ -126,7 +152,7 @@ jobs:
   integration:
     name: Go integration
     if: always()
-    needs: [postgres, binary, dns]
+    needs: [postgres, binary, compose, dns]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -135,8 +161,10 @@ jobs:
         env:
           POSTGRES_RESULT: ${{ needs.postgres.result }}
           BINARY_RESULT: ${{ needs.binary.result }}
+          COMPOSE_RESULT: ${{ needs.compose.result }}
           DNS_RESULT: ${{ needs.dns.result }}
         run: |
           test "$POSTGRES_RESULT" = success
           test "$BINARY_RESULT" = success
+          test "$COMPOSE_RESULT" = success
           test "$DNS_RESULT" = success

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -57,7 +56,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		}
 	})
 	project := t.TempDir()
-	configuration := []byte(`{"version":1,"tnl":{"server":"https://control.127.0.0.1.nip.io","services":{"api":{"directory":".","tunnel":{"name":"app-led-binary","allow_all_ips":true}}}}}`)
+	configuration := []byte(`{"version":1,"tnl":{"server":"https://control.127.0.0.1.nip.io","services":{"api":{"target":{"type":"app"},"tunnel":{"name":"app-led-binary","allow_all_ips":true}}}}}`)
 	if err := os.WriteFile(filepath.Join(project, "tnl.json"), configuration, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -66,41 +65,23 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		_, _ = io.WriteString(response, "app-led visitor")
 	}))
 	defer app.Close()
+	runIntegrationBinaryCommand(t, project, fixture.environment, fixture.tnlPath, "publisher", "setup", "--namespace")
 	runtimeProcess := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "runtime", "serve", "--directory", project)
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("local publisher output:\n%s", runtimeProcess.output.String())
 		}
 	})
-	socket := filepath.Join("/tmp", fmt.Sprintf("tnl-%d", os.Getuid()), "app-"+clientruntime.Identity(project, fixture.stateDirectory)+".sock")
-	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
-		connection, err := (&net.Dialer{}).DialContext(ctx, "unix", socket)
-		if err == nil {
-			_ = connection.Close()
-			return true, nil
-		}
-		select {
-		case <-runtimeProcess.done:
-			t.Fatalf("local publisher exited before registration: %v\n%s", runtimeProcess.result(), runtimeProcess.output.String())
-		default:
-		}
-		return false, err
-	})
-	started := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "runtime", "address", "--directory", project)
+	started := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "runtime", "endpoint", "--directory", project, "--service", "api")
 	if err := waitForDoneWithin(started.done, 30*time.Second); err != nil {
 		t.Fatal("local publisher did not start")
 	}
 	assertIntegrationBinaryProcessResult(t, started)
-	var endpoint struct {
-		Version int    `json:"version"`
-		Socket  string `json:"socket"`
+	var endpoint privateprotocol.Endpoint
+	if err := json.Unmarshal([]byte(started.output.String()), &endpoint); err != nil || endpoint.Scope != "app" || endpoint.Service == nil || *endpoint.Service != "api" || endpoint.Capability == "" {
+		t.Fatalf("runtime did not return the scoped api app endpoint: %v", err)
 	}
-	if err := json.Unmarshal([]byte(started.output.String()), &endpoint); err != nil || endpoint.Version != privateprotocol.Version || endpoint.Socket == "" {
-		t.Fatalf("runtime address response = %q, error %v", started.output.String(), err)
-	}
-	client := &http.Client{Timeout: 35 * time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", endpoint.Socket)
-	}}}
+	client := &http.Client{Timeout: 35 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
 	request := func(operation string, value any, target any) int {
 		t.Helper()
 		body, err := json.Marshal(value)
@@ -109,11 +90,12 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		}
 		operationCtx, cancel := context.WithTimeout(t.Context(), 35*time.Second)
 		defer cancel()
-		call, err := http.NewRequestWithContext(operationCtx, http.MethodPost, "http://localhost/v1/"+operation, bytes.NewReader(body))
+		call, err := http.NewRequestWithContext(operationCtx, http.MethodPost, endpoint.Url+"/v1/"+operation, bytes.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
 		call.Header.Set("Content-Type", "application/json")
+		call.Header.Set("Authorization", "Bearer "+endpoint.Capability)
 		response, err := client.Do(call)
 		if err != nil {
 			t.Fatal(err)
@@ -161,11 +143,12 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 					return
 				case <-ticker.C:
 					payload, _ := json.Marshal(privateprotocol.Registration{Version: 1, RegistrationID: assigned.RegistrationID, Owner: owner})
-					call, err := http.NewRequest(http.MethodPost, "http://localhost/v1/renew", bytes.NewReader(payload))
+					call, err := http.NewRequest(http.MethodPost, endpoint.Url+"/v1/renew", bytes.NewReader(payload))
 					if err != nil {
 						return
 					}
 					call.Header.Set("Content-Type", "application/json")
+					call.Header.Set("Authorization", "Bearer "+endpoint.Capability)
 					response, err := client.Do(call)
 					if err != nil {
 						return
