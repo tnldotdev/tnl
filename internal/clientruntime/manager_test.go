@@ -25,34 +25,6 @@ func newTestManager(t *testing.T, project, root string, services []Service, run 
 	return New(t.Context(), project, database, services, run)
 }
 
-func TestPersistentComposeOwnerUsesLeasesInsteadOfForeignProcessIDs(t *testing.T) {
-	m, err := newTestManager(t, t.TempDir(), t.TempDir(), []Service{{Name: "web", Directory: "."}}, func(ctx context.Context, _ Service, _ func(uint64, bool) error) error {
-		<-ctx.Done()
-		return ctx.Err()
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer m.Close()
-	m.Persistent = true
-	id, err := m.Reserve("web", "owner", 99999999, "https://web.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Register(id, "owner", "http://127.0.0.1:3000", "node"); err != nil {
-		t.Fatal(err)
-	}
-	if m.Sweep(nil) || !m.Snapshot().Services[0].Registered {
-		t.Fatal("another container's pid caused publication to stop")
-	}
-	m.mu.Lock()
-	m.registrations["web"].expires = time.Now().Add(-time.Second)
-	m.mu.Unlock()
-	if m.Sweep(nil) || m.Snapshot().Services[0].Registered {
-		t.Fatal("expired app lease survived or stopped the persistent owner")
-	}
-}
-
 func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T) {
 	var runs atomic.Uint64
 	started := make(chan uint64, 4)

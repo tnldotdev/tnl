@@ -1,7 +1,6 @@
 package config
 
 import (
-	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"net"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
-	"go.yaml.in/yaml/v3"
 )
 
 var composeProject = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
@@ -30,48 +28,6 @@ func MatchesDockerIdentifier(identifier, id, name string) bool {
 		return false
 	}
 	return identifier == strings.TrimPrefix(name, "/") || identifier == id
-}
-
-func (publisher *AppPublisher) UnmarshalJSON(data []byte) error {
-	type object AppPublisher
-	var value object
-	if err := json.Unmarshal(data, &value, json.RejectUnknownMembers(true)); err != nil {
-		return err
-	}
-	if value.Type == "host" {
-		var fields map[string]any
-		if err := json.Unmarshal(data, &fields); err != nil {
-			return err
-		}
-		if len(fields) != 1 {
-			return errors.New("publisher.type host accepts only type")
-		}
-	}
-	*publisher = AppPublisher(value)
-	return nil
-}
-
-func (publisher *AppPublisher) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.MappingNode {
-		return errors.New("publisher must be an object")
-	}
-	for i := 0; i < len(node.Content); i += 2 {
-		switch node.Content[i].Value {
-		case "type", "service", "file":
-		default:
-			return fmt.Errorf("unknown publisher field %q", node.Content[i].Value)
-		}
-	}
-	type object AppPublisher
-	var value object
-	if err := node.Decode(&value); err != nil {
-		return err
-	}
-	if value.Type == "host" && len(node.Content) != 2 {
-		return errors.New("publisher.type host accepts only type")
-	}
-	*publisher = AppPublisher(value)
-	return nil
 }
 
 func ValidProtocol(protocol string) bool {
@@ -204,31 +160,6 @@ func validTLSHostname(value string) bool {
 		}
 	}
 	return true
-}
-
-func validatePublisher(config TNL) error {
-	p := config.Publisher
-	if p == nil {
-		return nil
-	}
-	if p.Type == "host" {
-		if p.Service != "" || p.File != nil {
-			return errors.New("publisher.type host accepts no compose placement fields")
-		}
-		return nil
-	}
-	if p.Type != "compose" {
-		return errors.New("publisher.type must be host or compose")
-	}
-	if !composeService.MatchString(p.Service) {
-		return errors.New("publisher compose requires service")
-	}
-	if p.File != nil {
-		if err := validateProjectRelativeFile(*p.File); err != nil {
-			return fmt.Errorf("publisher.file: %w", err)
-		}
-	}
-	return nil
 }
 
 func validateProjectRelativeFile(value string) error {

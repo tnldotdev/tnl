@@ -92,15 +92,6 @@ export interface TnlConfig {
      */
     publicURL?: string;
   };
-  publisher?:
-    | {
-        type: "host";
-      }
-    | {
-        type: "compose";
-        service: string;
-        file?: string;
-      };
   /**
    * Named services, private targets, and public tunnel settings.
    */

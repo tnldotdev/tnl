@@ -24,8 +24,6 @@ its signing key private; it never enters app metadata or status.
 For a configured app service, `tnl.run("myapp:app")` registers the listener
 after Uvicorn binds it. Pass `service="api"` when the project has more than
 one app service; the working directory selects the project, not the service.
-With a Compose publisher, start the app normally: the runtime provides its
-scoped private endpoint descriptor.
 
 See the [Python ASGI guide](https://tnl.dev/docs/publish#publish-a-python-asgi-app)
 for FastAPI, visitor policy, limits, streaming, and WebSocket examples.

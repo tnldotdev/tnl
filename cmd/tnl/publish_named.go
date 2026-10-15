@@ -50,8 +50,8 @@ func runNamedPublish(ctx context.Context, project projectConfiguration, stateDir
 			if lastOwner == "" || errors.Is(err, privateprotocol.ErrUnauthorized) || errors.Is(err, privateprotocol.ErrForbidden) || errors.Is(err, clientruntime.ErrOwnerConflict) {
 				return err
 			}
-			// a Compose owner may be unavailable between container replacement
-			// and the host bridge receiving its new scoped endpoint.
+			// a restarted local publisher may be unavailable until its new
+			// scoped endpoint is ready.
 			if ownerRecoveryDeadline.IsZero() {
 				ownerRecoveryDeadline = time.Now().Add(45 * time.Second)
 			}

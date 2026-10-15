@@ -15,9 +15,7 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 	}{
 		{"app default", `{services:{web:{}}}`, true},
 		{"removed directory", `{services:{web:{directory:"apps/web"}}}`, false},
-		{"placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{target:{type:"app"}}}}`, true},
-		{"database placement", `{publisher:{type:"compose",service:"publisher"},services:{db:{protocol:"postgres",target:{type:"address",address:5432}}}}`, true},
-		{"mixed placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{},db:{protocol:"postgres",target:{type:"address",address:5432}}}}`, true},
+		{"removed publisher placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{target:{type:"app"}}}}`, false},
 		{"private TLS", `{services:{db:{protocol:"mysql",target:{type:"address",address:"db.internal:3306",tls:{serverName:"db.internal",caFile:"./ca.pem"}}}}}`, true},
 		{"compose", `{services:{web:{target:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000}}}}`, true},
 		{"docker", `{services:{cache:{protocol:"redis",target:{type:"docker",container:"shop-cache",port:6379}}}}`, true},
@@ -91,16 +89,11 @@ func TestComposeDefaultsUseSelectedWorktreeAndProject(t *testing.T) {
 	}
 	service, protocol, port := "db", "postgres", 5432
 	project := Project{Root: root, Worktree: Worktree{Label: WorktreeLabel{FullLabel: "shop-worktree-a12345"}}, Config: config.TNL{
-		Publisher: &config.AppPublisher{Type: "compose", Service: "publisher"},
-		Services:  config.Services{"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "compose", Service: &service, Port: &port}}},
+		Services: config.Services{"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "compose", Service: &service, Port: &port}}},
 	}}
 	file, err := project.ComposeFile("db")
 	if err != nil || file != filepath.Join(canonicalRoot, "compose.yaml") {
 		t.Fatalf("target Compose file = %q: %v", file, err)
-	}
-	file, err = project.PublisherComposeFile()
-	if err != nil || file != filepath.Join(canonicalRoot, "compose.yaml") {
-		t.Fatalf("publisher Compose file = %q: %v", file, err)
 	}
 	name, err := project.ComposeProject("db")
 	if err != nil || name != "shop-worktree-a12345" {
