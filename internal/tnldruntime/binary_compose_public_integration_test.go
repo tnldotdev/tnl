@@ -3,6 +3,7 @@ package tnldruntime
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net"
 	"net/http"
@@ -23,6 +24,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
+var composeHostAddress = flag.String("tnl-test-compose-host-address", "host-gateway", "address of the disposable binary test's ingress on the Docker host")
+
 // this test crosses the generated Compose owner and real public URLs for an
 // app and a database. it verifies replacement through visitor connections.
 func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
@@ -34,10 +37,16 @@ func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
 	}
 	appBinary := filepath.Join(root, "compose-app-linux")
 	buildIntegrationBinary(t, fixture.repositoryRoot, appBinary, "./internal/tnldruntime/testdata/compose-owner")
+	if *composeHostAddress != "host-gateway" {
+		if address := net.ParseIP(*composeHostAddress); address == nil || address.To4() == nil {
+			t.Fatal("-tnl-test-compose-host-address must be an IPv4 address or host-gateway")
+		}
+	}
 	image := "mirror.gcr.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61"
 	postgresImage := "mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
 	base := filepath.Join(root, "compose.yaml")
 	configuration := fmt.Sprintf("services:\n  publisher:\n    image: %s\n    extra_hosts:\n      - control.127.0.0.1.nip.io:host-gateway\n      - relay.127.0.0.1.nip.io:host-gateway\n    environment:\n      SSL_CERT_FILE: /run/tnl/roots.pem\n    volumes:\n      - %q\n      - %q\n  web:\n    image: %s\n    command: [/fixture/app, app-register]\n    volumes:\n      - %q\n      - %q\n  db:\n    image: %s\n    environment:\n      POSTGRES_PASSWORD: postgres\n    healthcheck:\n      test: [CMD-SHELL, pg_isready -U postgres -d postgres]\n      interval: 2s\n      timeout: 5s\n      retries: 10\n", image, fixture.tnlPath+":/usr/local/bin/tnl:ro", fixture.trustFile+":/run/tnl/roots.pem:ro", image, appBinary+":/fixture/app:ro", root+":/workspace:ro", postgresImage)
+	configuration = strings.ReplaceAll(configuration, ":host-gateway", ":"+*composeHostAddress)
 	if err := os.WriteFile(base, []byte(configuration), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +94,7 @@ func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
 		}
 		return output
 	}
-	runIntegrationBinaryCommand(t, root, fixture.environment, fixture.tnlPath, "compose", "up", "--detach")
-	runIntegrationBinaryCommand(t, root, fixture.environment, fixture.tnlPath, "runtime", "owner-endpoint", "--directory", root)
+	var databasePublish *integrationBinaryPublish
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return
@@ -102,7 +110,7 @@ func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
 				err = privateprotocol.Call(diagnostic, endpoint, "GET", "/v1/status", nil, &snapshot)
 				if err == nil {
 					for _, service := range snapshot.Services {
-						t.Logf("Compose owner service=%s registered=%t routable=%t run=%d failure=%s", service.Name, service.Registered, service.Routable, service.PublishRunNumber, service.Failure)
+						t.Logf("Compose owner service=%s registered=%t routable=%t run=%d stage=%s failure=%s", service.Name, service.Registered, service.Routable, service.PublishRunNumber, service.ProvisioningStage, service.Failure)
 					}
 				}
 			}
@@ -110,10 +118,21 @@ func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
 		if err != nil {
 			t.Logf("read Compose owner state: %v", err)
 		}
-		command := exec.CommandContext(diagnostic, "docker", append(append([]string{}, args...), "logs", "--no-color", "--tail", "25", "publisher")...)
+		if databasePublish != nil {
+			events, _ := databasePublish.events.snapshot()
+			for _, event := range events {
+				t.Logf("Compose database publication event=%s run=%d reason=%s", event.Type, event.PublishRunNumber, event.Reason)
+			}
+		}
+		command := exec.CommandContext(diagnostic, "docker", append(append([]string{}, args...), "ps", "--all")...)
 		command.Dir = root
 		if output, err := command.CombinedOutput(); err == nil {
-			t.Logf("Compose publisher output:\n%s", output)
+			t.Logf("Compose containers:\n%s", output)
+		}
+		command = exec.CommandContext(diagnostic, "docker", append(append([]string{}, args...), "logs", "--no-color", "--tail", "25", "publisher", "web")...)
+		command.Dir = root
+		if output, err := command.CombinedOutput(); err == nil {
+			t.Logf("Compose publisher and app output:\n%s", output)
 		}
 		inspect := inspectStandaloneTestDatabase(t, fixture.databaseURL)
 		rows, err := inspect.QueryContext(diagnostic, `
@@ -137,6 +156,24 @@ func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
 		}
 		t.Logf("disposable server output:\n%s", fixture.server.output.String())
 	})
+	ownerEndpoint := func() {
+		t.Helper()
+		ready, stop := context.WithTimeout(ctx, 30*time.Second)
+		defer stop()
+		if err := pollCondition(ready, 250*time.Millisecond, 15*time.Second, func(operation context.Context) (bool, error) {
+			command := exec.CommandContext(operation, fixture.tnlPath, "runtime", "owner-endpoint", "--directory", root)
+			command.Dir, command.Env = root, fixture.environment
+			output, err := command.CombinedOutput()
+			if err != nil {
+				return false, fmt.Errorf("start Compose owner endpoint: %w: %s", err, output)
+			}
+			return true, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runIntegrationBinaryCommand(t, root, fixture.environment, fixture.tnlPath, "compose", "up", "--detach")
+	ownerEndpoint()
 	compose("exec", "--no-TTY", "--env", "TNL_LOGIN_TOKEN="+testLoginToken, "publisher", "tnl", "auth", "login", "--login-token")
 	compose("up", "--detach", "--wait", "db")
 	visitor := newIntegrationVisitor(t, fixture.pebble.roots, "")
@@ -164,31 +201,46 @@ func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
 	request := func(previous string) string {
 		t.Helper()
 		var body string
+		var status int
+		t.Cleanup(func() {
+			if t.Failed() {
+				t.Logf("Compose public visitor previous=%q status=%d body=%q", previous, status, body)
+			}
+		})
 		waitForIntegrationCondition(t, 40*time.Second, func(ctx context.Context) (bool, error) {
 			response, data, err := visitor.requestURLContext(ctx, http.MethodGet, publicURL+"/", nil)
 			if err != nil {
 				return false, err
 			}
+			status = response.StatusCode
 			body = strings.TrimSpace(string(data))
 			return response.StatusCode == http.StatusOK && body != "" && body != previous, nil
 		})
 		return body
 	}
 	first := request("")
-	databasePublish := startIntegrationBinaryPublish(t, root, fixture.environment, fixture.tnlPath, "publish", "db", "--output=ndjson")
+	databasePublish = startIntegrationBinaryPublish(t, root, fixture.environment, fixture.tnlPath, "publish", "db", "--output=ndjson")
 	databaseReady := waitForIntegrationBinaryPublishEvent(t, databasePublish, "ready", 90*time.Second)
 	if _, port, err := net.SplitHostPort(databaseReady.URL); err != nil || port != "15432" {
 		t.Fatalf("Compose database public address has no verified ingress port: %q, %v", databaseReady.URL, err)
 	}
 	queryDatabase := func() {
 		t.Helper()
+		hostname, port, err := net.SplitHostPort(databaseReady.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
 		waitForIntegrationCondition(t, 45*time.Second, func(ctx context.Context) (bool, error) {
 			settings, err := pgx.ParseConfig("postgres://postgres:postgres@" + databaseReady.URL + "/postgres?sslmode=verify-full&channel_binding=disable")
 			if err != nil {
 				return false, err
 			}
 			settings.TLSConfig.RootCAs = fixture.pebble.roots
+			settings.TLSConfig.ServerName = hostname
 			settings.Fallbacks = nil
+			settings.DialFunc = func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return new(net.Dialer).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
+			}
 			connection, err := pgx.ConnectConfig(ctx, settings)
 			if err != nil {
 				return false, err
@@ -210,12 +262,18 @@ func TestBinaryIntegrationGeneratedComposePublicHTTPAndPostgres(t *testing.T) {
 	queryDatabase()
 	compose("exec", "--no-TTY", "web", "/fixture/app", "query", "--save", "/tmp/old-endpoint.json", "--path", "/v1/status")
 	compose("up", "--detach", "--no-deps", "--force-recreate", "publisher")
-	runIntegrationBinaryCommand(t, root, fixture.environment, fixture.tnlPath, "runtime", "owner-endpoint", "--directory", root)
+	ownerEndpoint()
 	if after := request(""); after != second {
 		t.Fatalf("owner replacement changed the selected app container: %q, want %q", after, second)
 	}
 	if current, err := service(); err != nil || current.PublicURL != publicURL {
 		t.Fatalf("owner replacement lost the saved public URL: %v, url %q", err, current.PublicURL)
+	}
+	previousDatabaseRun := databaseReady.PublishRunNumber
+	previousDatabaseAddress := databaseReady.URL
+	databaseReady = waitForIntegrationBinaryPublishEvent(t, databasePublish, "ready", 90*time.Second)
+	if databaseReady.PublishRunNumber <= previousDatabaseRun || databaseReady.URL != previousDatabaseAddress {
+		t.Fatalf("owner replacement did not restore the saved database public address: run=%d address=%q", databaseReady.PublishRunNumber, databaseReady.URL)
 	}
 	queryDatabase()
 	stale := compose("exec", "--no-TTY", "web", "/fixture/app", "query", "--descriptor", "/tmp/old-endpoint.json", "--path", "/v1/status")

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -111,7 +112,7 @@ func composeOverride(project projectconfig.Project, file string) ([]byte, error)
 		Networks: map[string]struct {
 			Labels map[string]string `yaml:"labels"`
 		}{"tnl-private": {Labels: map[string]string{"tnl.worktree": label}}},
-		Volumes: map[string]volume{"tnl-owner-state": {}},
+		Volumes: map[string]volume{"tnl-owner-state": {}, "tnl-project-metadata": {}},
 	}
 	for name := range source.Services {
 		result.Services[name] = serviceOverride{Labels: map[string]string{"tnl.worktree": label}, Networks: []string{"tnl-private"}}
@@ -130,7 +131,7 @@ func composeOverride(project projectconfig.Project, file string) ([]byte, error)
 	}
 	publisher.Volumes = []string{
 		project.Root + ":/workspace:ro", "/var/run/docker.sock:/var/run/docker.sock",
-		"tnl-owner-state:/run/tnl/state",
+		"tnl-owner-state:/run/tnl/state", "tnl-project-metadata:/run/tnl/.tnl",
 	}
 	names := make([]string, 0, len(project.Config.Services))
 	for name := range project.Config.Services {
@@ -156,8 +157,11 @@ func composeOverride(project projectconfig.Project, file string) ([]byte, error)
 		result.Volumes[volumeName] = volume{}
 		publisher.Volumes = append(publisher.Volumes, volumeName+":/run/tnl/apps/"+name)
 		app := result.Services[name]
-		app.Volumes = append(app.Volumes, volumeName+":/run/tnl/apps/"+name+":ro")
-		app.Environment = map[string]string{"TNL_APP_ENDPOINT": "/run/tnl/apps/" + name + "/private/endpoint.json"}
+		app.Volumes = append(app.Volumes, volumeName+":/run/tnl/apps/"+name+":ro", "tnl-project-metadata:/workspace/.tnl:ro")
+		app.Environment = map[string]string{
+			"TNL_APP_ENDPOINT":  "/run/tnl/apps/" + name + "/private/endpoint.json",
+			"TNL_APP_AUTHORITY": "http://" + net.JoinHostPort(owner, "8123"),
+		}
 		result.Services[name] = app
 	}
 	result.Services[owner] = publisher

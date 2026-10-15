@@ -37,7 +37,16 @@ export function allowedKeys(
   );
 }
 
-export function parseEndpoint(value: unknown, selection: EndpointSelection = {}): RuntimeEndpoint {
+function validComposeAuthority(value: string): boolean {
+  const hostname = /^http:\/\/([A-Za-z0-9][A-Za-z0-9._-]{0,127}):8123$/.exec(value)?.[1];
+  return hostname !== undefined && isIP(hostname) === 0;
+}
+
+export function parseEndpoint(
+  value: unknown,
+  selection: EndpointSelection = {},
+  composeAuthority?: string,
+): RuntimeEndpoint {
   try {
     const object = record(value, "local publisher endpoint");
     allowedKeys(
@@ -67,7 +76,14 @@ export function parseEndpoint(value: unknown, selection: EndpointSelection = {})
       port === undefined ||
       Number(port) > 65535 ||
       object.url !== `http://${url.hostname}:${port}` ||
-      !((isIP(hostname) === 4 && hostname.startsWith("127.")) || hostname === "::1")
+      !(
+        (isIP(hostname) === 4 && hostname.startsWith("127.")) ||
+        hostname === "::1" ||
+        (object.scope === "app" &&
+          composeAuthority !== undefined &&
+          validComposeAuthority(composeAuthority) &&
+          object.url === composeAuthority)
+      )
     )
       throw new TnlError("sdk.response_invalid");
     if (object.scope === "app") {
@@ -129,7 +145,11 @@ async function readEndpoint(file: string, selection: EndpointSelection): Promise
     const buffer = Buffer.alloc(64 * 1024 + 1);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     if (bytesRead > 64 * 1024) throw new TnlError("sdk.response_invalid");
-    return parseEndpoint(JSON.parse(buffer.subarray(0, bytesRead).toString("utf8")), selection);
+    return parseEndpoint(
+      JSON.parse(buffer.subarray(0, bytesRead).toString("utf8")),
+      selection,
+      process.env.TNL_APP_AUTHORITY,
+    );
   } finally {
     await handle.close();
   }
@@ -197,6 +217,7 @@ export function runtimeRequest(
     endpoint.scope === "app"
       ? { service: endpoint.service }
       : { invocationID: endpoint.invocation_id },
+    process.env.TNL_APP_ENDPOINT === undefined ? undefined : process.env.TNL_APP_AUTHORITY,
   );
   if (
     !["health", "status", "prepare", "register", "renew", "unregister", "ad-hoc/register"].includes(

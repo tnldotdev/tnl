@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
@@ -69,5 +71,16 @@ func TestReserveConfiguredURLCreatesBeforeEnrollingPublisher(t *testing.T) {
 		if err != nil || selected.Id != route.Id || !created {
 			t.Fatalf("selected URL = %+v; created = %t, err = %v", selected, created, err)
 		}
+	}
+	lock, err := clientstate.LockHostnameContext(t.Context(), state, cfg.Hostname)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	lookup, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	selected, err := reserveConfiguredURL(lookup, services, cfg)
+	if err != nil || selected.Id != route.Id {
+		t.Fatalf("unchanged URL waited for its active publisher's hostname lock: %+v, %v", selected, err)
 	}
 }

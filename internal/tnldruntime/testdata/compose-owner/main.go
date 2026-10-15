@@ -69,6 +69,9 @@ func run() error {
 		if err := json.Unmarshal(data, &endpoint); err != nil {
 			return err
 		}
+		if err := privateprotocol.ValidateComposeAppEndpoint(endpoint, os.Getenv("TNL_APP_AUTHORITY")); err != nil {
+			return err
+		}
 		req, err := http.NewRequest(*method, endpoint.Url+*urlPath, strings.NewReader(*body))
 		if err != nil {
 			return err
@@ -109,8 +112,9 @@ func run() error {
 // after owner replacement it reads the rotated descriptor and prepares again.
 func registeredApp() error {
 	endpointPath := os.Getenv("TNL_APP_ENDPOINT")
-	if endpointPath == "" {
-		return errors.New("the scoped app endpoint is missing")
+	authority := os.Getenv("TNL_APP_AUTHORITY")
+	if endpointPath == "" || authority == "" {
+		return errors.New("the scoped app endpoint or publisher authority is missing")
 	}
 	listener, err := net.Listen("tcp", ":3000")
 	if err != nil {
@@ -138,21 +142,28 @@ func registeredApp() error {
 	var endpoint privateprotocol.Endpoint
 	var registration privateprotocol.Registration
 	registered := false
+	lastError := ""
 	for {
 		if !registered {
-			current, err := privateprotocol.ReadEndpoint(endpointPath)
+			current, err := privateprotocol.ReadComposeAppEndpoint(endpointPath, authority)
 			if err == nil {
 				callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				var assignment privateprotocol.Assignment
-				err = privateprotocol.Call(callCtx, current, "POST", "/v1/prepare", privateprotocol.Prepare{Version: 1, Directory: "/workspace", Service: "web", Framework: "node", Owner: owner, PID: os.Getpid()}, &assignment)
+				err = privateprotocol.CallComposeApp(callCtx, current, authority, "POST", "/v1/prepare", privateprotocol.Prepare{Version: 1, Directory: "/workspace", Service: "web", Framework: "node", Owner: owner, PID: os.Getpid()}, &assignment)
 				if err == nil {
 					registration = privateprotocol.Registration{Version: 1, RegistrationID: assignment.RegistrationID, Owner: owner, Target: "http://0.0.0.0:3000"}
-					err = privateprotocol.Call(callCtx, current, "POST", "/v1/register", registration, nil)
+					err = privateprotocol.CallComposeApp(callCtx, current, authority, "POST", "/v1/register", registration, nil)
 				}
 				cancel()
 				if err == nil {
 					endpoint, registered = current, true
 				}
+			}
+			if err != nil && err.Error() != lastError {
+				fmt.Fprintln(os.Stderr, "app registration:", err)
+				lastError = err.Error()
+			} else if err == nil {
+				lastError = ""
 			}
 		}
 		interval := 250 * time.Millisecond
@@ -163,7 +174,7 @@ func registeredApp() error {
 		case <-ctx.Done():
 			if registered {
 				cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				_ = privateprotocol.Call(cleanup, endpoint, "POST", "/v1/unregister", registration, nil)
+				_ = privateprotocol.CallComposeApp(cleanup, endpoint, authority, "POST", "/v1/unregister", registration, nil)
 				cancel()
 			}
 			return nil
@@ -171,7 +182,7 @@ func registeredApp() error {
 		}
 		if registered {
 			callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			err := privateprotocol.Call(callCtx, endpoint, "POST", "/v1/renew", registration, nil)
+			err := privateprotocol.CallComposeApp(callCtx, endpoint, authority, "POST", "/v1/renew", registration, nil)
 			cancel()
 			registered = err == nil
 		}

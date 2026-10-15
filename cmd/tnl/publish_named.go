@@ -40,14 +40,32 @@ func runNamedPublish(ctx context.Context, project projectConfiguration, stateDir
 	defer ticker.Stop()
 	lastRun := uint64(0)
 	lastOwner, lastTunnel := "", ""
+	var ownerRecoveryDeadline time.Time
 	for {
 		if ctx.Err() != nil {
 			return output.stopped()
 		}
 		endpoint, registration, err := lease.Renew(ctx)
 		if err != nil {
-			return err
+			if lastOwner == "" || errors.Is(err, privateprotocol.ErrUnauthorized) || errors.Is(err, privateprotocol.ErrForbidden) || errors.Is(err, clientruntime.ErrOwnerConflict) {
+				return err
+			}
+			// a Compose owner may be unavailable between container replacement
+			// and the host bridge receiving its new scoped endpoint.
+			if ownerRecoveryDeadline.IsZero() {
+				ownerRecoveryDeadline = time.Now().Add(45 * time.Second)
+			}
+			if time.Now().After(ownerRecoveryDeadline) {
+				return err
+			}
+			select {
+			case <-ctx.Done():
+				return output.stopped()
+			case <-time.After(500 * time.Millisecond):
+				continue
+			}
 		}
+		ownerRecoveryDeadline = time.Time{}
 		if endpoint.OwnerId != lastOwner {
 			lastOwner = endpoint.OwnerId
 			lastRun = 0

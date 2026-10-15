@@ -27,7 +27,9 @@ def native_binary() -> Path:
     return binary
 
 
-def _read_endpoint(file: str, service: str | None, invocation_id: str | None) -> Endpoint:
+def _read_endpoint(
+    file: str, service: str | None, invocation_id: str | None, compose_authority: str | None
+) -> Endpoint:
     path = Path(file)
     if not path.is_absolute():
         raise InvalidResponse()
@@ -48,7 +50,12 @@ def _read_endpoint(file: str, service: str | None, invocation_id: str | None) ->
             data = stream.read((64 << 10) + 1)
         if len(data) > 64 << 10:
             raise InvalidResponse()
-        return parse_endpoint(json.loads(data), service=service, invocation_id=invocation_id)
+        return parse_endpoint(
+            json.loads(data),
+            service=service,
+            invocation_id=invocation_id,
+            compose_authority=compose_authority,
+        )
     finally:
         os.close(descriptor)
 
@@ -72,7 +79,11 @@ class NativeRuntime:
                 while True:
                     try:
                         endpoint = await asyncio.to_thread(
-                            _read_endpoint, mounted, service, invocation_id
+                            _read_endpoint,
+                            mounted,
+                            service,
+                            invocation_id,
+                            os.environ.get("TNL_APP_AUTHORITY"),
                         )
                         await self.request(endpoint, "health")
                         return endpoint
