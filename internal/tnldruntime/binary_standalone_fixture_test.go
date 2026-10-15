@@ -1,11 +1,17 @@
 package tnldruntime
 
 import (
+	"fmt"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
@@ -50,15 +56,32 @@ func startIntegrationBinaryStandaloneWithBind(t *testing.T, containerReachable b
 		t.Fatal(err)
 	}
 	runIntegrationBinaryCommand(t, repositoryRoot, integrationBinaryEnvironment(map[string]string{"TNLD_DATABASE_DIRECT_URL": databaseURL}), tnldPath, "migrate")
+	if containerReachable {
+		// the disposable test has no Route 53 zone. seed only the verified front
+		// destination for this fresh database, as the split database test does.
+		inspect := inspectStandaloneTestDatabase(t, databaseURL)
+		if _, err := inspect.ExecContext(t.Context(), `UPDATE control.ingress_pools SET ipv4_address = '127.0.0.1'::inet, state = 'enabled' WHERE id = 'ingress-a'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := inspect.ExecContext(t.Context(), `INSERT INTO control.ingress_pool_ports (ingress_pool_id, port, enabled) VALUES ('ingress-a', 15432, true)`); err != nil {
+			t.Fatal(err)
+		}
+	}
 	metricsAddress := unusedTCPAddress(t)
 	// standalone creates its own internal listeners. the unused split-role
 	// addresses below only need to satisfy configuration validation.
 	publicListen := "127.0.0.1:443"
+	relayUDPListen := publicListen
 	if containerReachable {
-		// a disposable Compose owner reaches this host through host-gateway.
-		publicListen = "0.0.0.0:443"
+		// the front accepts container connections at :443 and database visitors
+		// at :15432, then preserves their original destination for ingress.
+		publicListen = unusedTCPAddress(t)
+		for _, port := range []int{443, 15432} {
+			startBinaryPublicProxy(t, port, publicListen)
+		}
+		relayUDPListen = unusedTCPAddress(t)
 	}
-	serveEnvironment := integrationBinaryEnvironment(map[string]string{
+	serveSettings := map[string]string{
 		"SSL_CERT_FILE":                     trustFile,
 		"TNLD_ACCESS_TOKEN_LIFETIME":        "5m",
 		"TNLD_ACME_ACCEPT_TERMS":            "true",
@@ -84,11 +107,15 @@ func startIntegrationBinaryStandaloneWithBind(t *testing.T, containerReachable b
 		"TNLD_RELAY_TCP_LISTEN":             publicListen,
 		"TNLD_RELAY_TLS_CERTIFICATE_FILE":   serverCertificate.certificateFile,
 		"TNLD_RELAY_TLS_PRIVATE_KEY_FILE":   serverCertificate.privateKeyFile,
-		"TNLD_RELAY_UDP_LISTEN":             publicListen,
+		"TNLD_RELAY_UDP_LISTEN":             relayUDPListen,
 		"TNLD_ROUTING_TABLE_WAIT":           "1s",
 		"TNLD_SERVER_DOMAIN":                "127.0.0.1.nip.io",
 		"TNLD_STORAGE_KEY":                  testStorageKey,
-	})
+	}
+	if containerReachable {
+		serveSettings["TNLD_REQUIRE_PROXY_HEADER"] = "true"
+	}
+	serveEnvironment := integrationBinaryEnvironment(serveSettings)
 	if len(modes) != 0 {
 		serveEnvironment = append(serveEnvironment, "TNLD_MANAGED_URL_MODE="+modes[0])
 	}
@@ -107,4 +134,57 @@ func startIntegrationBinaryStandaloneWithBind(t *testing.T, containerReachable b
 	clientEnvironment = removeIntegrationEnvironment(clientEnvironment, "TNL_LOGIN_TOKEN")
 	return &integrationBinaryStandalone{repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL, trustFile: trustFile,
 		stateDirectory: stateDirectory, environment: clientEnvironment, server: server, pebble: pebble}
+}
+
+func startBinaryPublicProxy(t *testing.T, port int, backend string) {
+	t.Helper()
+	listener, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", port))
+	if err != nil {
+		t.Fatalf("listen for public test port %d: %v", port, err)
+	}
+	var connections sync.WaitGroup
+	accepted := make(chan struct{})
+	t.Cleanup(func() {
+		_ = listener.Close()
+		<-accepted
+		connections.Wait()
+	})
+	go func() {
+		defer close(accepted)
+		for {
+			visitor, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			connections.Add(1)
+			go func() {
+				defer connections.Done()
+				defer visitor.Close()
+				upstream, err := net.DialTimeout("tcp", backend, 5*time.Second)
+				if err != nil {
+					return
+				}
+				defer upstream.Close()
+				original, err := proxyproto.Encode(proxyproto.Header{
+					Source:      visitor.RemoteAddr().(*net.TCPAddr).AddrPort(),
+					Destination: visitor.LocalAddr().(*net.TCPAddr).AddrPort(),
+				})
+				if err == nil {
+					_, err = upstream.Write(original)
+				}
+				if err != nil {
+					return
+				}
+				finished := make(chan struct{})
+				go func() {
+					_, _ = io.Copy(visitor, upstream)
+					_ = visitor.(*net.TCPConn).CloseWrite()
+					close(finished)
+				}()
+				_, _ = io.Copy(upstream, visitor)
+				_ = upstream.(*net.TCPConn).CloseWrite()
+				<-finished
+			}()
+		}
+	}()
 }
