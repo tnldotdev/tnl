@@ -40,9 +40,11 @@ such as `duration_ms`.
 Protected publisher signing keys are saved once per server and identity;
 selections point to that installed identity. A pending enrollment holds the
 same key across a lost redemption response and may hold a protected one-use
-enrollment secret while that retry is possible. Identity promotion must commit
-the installed key and selection together. Job-registry documents stay encrypted
-as whole values; their file manifest is checked on restart.
+enrollment secret while that retry is possible. Identity promotion commits the
+installed key, its selection, and an expiring enrollment-secret digest binding
+together; repeated enrollment never creates a second signing key. Job-registry
+documents stay encrypted as whole values; their file manifest is checked on
+restart.
 
 `telemetry_enabled` and `refresh_pending` are genuine SQLite booleans, stored
 as integers constrained to 0 or 1. An OAuth alias handoff uses `consumed_at`

@@ -280,6 +280,7 @@ type PublisherSelection struct {
 	SelectionKey  string
 	IdentityID    string
 	UpdatedAt     int64
+	ExpiresAt     sql.NullInt64
 }
 
 type ServerProfile struct {

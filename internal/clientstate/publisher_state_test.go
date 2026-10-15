@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -90,6 +91,18 @@ func TestPublisherEnrollmentPromotionKeepsOneKeyAndSelection(t *testing.T) {
 	}
 	if _, found, err := other.PublisherIdentity(t.Context(), identity.ID); err != nil || found {
 		t.Fatalf("publisher key crossed server scope: found=%v, %v", found, err)
+	}
+	digest := sha256.Sum256(pending.EnrollmentSecret)
+	receiptKey := hex.EncodeToString(digest[:])
+	if redeemed, found, err := store.SelectedPublisherIdentity(t.Context(), "enrollment", receiptKey); err != nil || !found || redeemed.ID != identity.ID {
+		t.Fatalf("completed enrollment is not resumable: found=%v, id=%q, %v", found, redeemed.ID, err)
+	}
+	database.now = func() time.Time { return pending.ExpiresAt.Add(time.Second) }
+	if _, found, err := store.SelectedPublisherIdentity(t.Context(), "enrollment", receiptKey); err != nil || found {
+		t.Fatalf("expired enrollment receipt was reused: found=%v, %v", found, err)
+	}
+	if _, found, err := store.SelectedPublisherIdentity(t.Context(), "namespace", pending.SelectionKey); err != nil || !found {
+		t.Fatalf("expiring a receipt removed the installed grant selection: found=%v, %v", found, err)
 	}
 }
 

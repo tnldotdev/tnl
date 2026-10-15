@@ -74,6 +74,36 @@ const (
 
 func (m Mode) Valid() bool { return m == "" || m == None || m == SummaryMode }
 
+// Summary is the only publisher observation contract. it cannot carry SQL,
+// arguments, headers, credentials, or reply bodies. callbacks must return quickly.
+type Summary struct {
+	Protocol       string
+	ReceivedAt     time.Time
+	Duration       time.Duration
+	Result         Result
+	Operation      Operation
+	Command        string
+	SQLState       string
+	MySQLErrorCode uint16
+	Rows           int64
+	ResultSets     int
+	Method         string
+	Path           string
+	Status         int
+	Origin         string
+}
+
+type Observer func(Summary)
+
+const MaxCount = 1_000_000_000
+
+func SQLStateOrEmpty(value string) string {
+	if ValidSQLState(value) {
+		return value
+	}
+	return ""
+}
+
 // HTTPResult classifies an HTTP response without hiding its exact status.
 func HTTPResult(status int) Result {
 	if status >= 400 {

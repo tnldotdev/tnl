@@ -51,7 +51,7 @@ func validPublisherSelection(kind, key string) bool {
 		return false
 	}
 	switch kind {
-	case "namespace", "project", "job", "explicit":
+	case "namespace", "project", "job", "enrollment", "explicit":
 		return true
 	}
 	return false
@@ -73,6 +73,9 @@ func (s *Store) SavePendingPublisherEnrollment(ctx context.Context, value Pendin
 		if err != nil {
 			return err
 		}
+	}
+	if err := s.database.queries.PruneExpiredPendingPublisherEnrollments(ctx, s.database.now().UTC().UnixNano()); err != nil {
+		return err
 	}
 	if err := s.database.queries.SavePendingPublisherEnrollment(ctx, clientstatedb.SavePendingPublisherEnrollmentParams{
 		ServerOrigin: s.controlEndpoint, EnrollmentID: value.EnrollmentID,
@@ -220,6 +223,22 @@ func (s *Store) PromotePublisherEnrollment(ctx context.Context, enrollmentID str
 			return err
 		}
 	}
+	if len(row.EnrollmentSecretCiphertext) != 0 {
+		secret, err := s.secrets.Open(ctx, pendingSecretContext(enrollmentID), row.EnrollmentSecretCiphertext)
+		if err != nil {
+			return err
+		}
+		digest := sha256.Sum256(secret)
+		if err := queries.SelectPublisherIdentity(ctx, clientstatedb.SelectPublisherIdentityParams{
+			ServerOrigin: s.controlEndpoint, SelectionKind: "enrollment", SelectionKey: hex.EncodeToString(digest[:]),
+			IdentityID: identity.ID, UpdatedAt: now, ExpiresAt: sql.NullInt64{Int64: row.ExpiresAt, Valid: true},
+		}); err != nil {
+			return err
+		}
+	}
+	if err := queries.PruneExpiredPublisherEnrollmentSelections(ctx, sql.NullInt64{Int64: now, Valid: true}); err != nil {
+		return err
+	}
 	if err := queries.DeletePendingPublisherEnrollment(ctx, clientstatedb.DeletePendingPublisherEnrollmentParams{
 		ServerOrigin: s.controlEndpoint, EnrollmentID: enrollmentID,
 	}); err != nil {
@@ -247,6 +266,7 @@ func (s *Store) SelectedPublisherIdentity(ctx context.Context, kind, key string)
 	}
 	row, err := s.database.queries.GetSelectedPublisherIdentity(ctx, clientstatedb.GetSelectedPublisherIdentityParams{
 		ServerOrigin: s.controlEndpoint, SelectionKind: kind, SelectionKey: key,
+		Now: sql.NullInt64{Int64: s.database.now().UTC().UnixNano(), Valid: true},
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return PublisherIdentity{}, false, nil

@@ -1,147 +1,68 @@
 package main
 
 import (
-	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
-	"net/http"
-	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/tcptarget"
+	"github.com/tnldotdev/tnl/internal/privateprotocol"
 )
 
 type waitCommand struct {
 	StateDir string        `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
 	Service  []string      `name:"service" help:"Check this service; repeat to select several. Defaults to every configured service."`
-	Timeout  time.Duration `name:"timeout" default:"2m" help:"Time to wait for fresh readiness checks."`
+	Timeout  time.Duration `name:"timeout" default:"2m" help:"Time to wait for fresh public readiness checks."`
 	Output   string        `name:"output" enum:"human,json" default:"human"`
 }
 type watchCommand struct {
 	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
-	After    string `name:"after" help:"Resume after this local event cursor. Without it, show current services before following new events."`
+	After    string `name:"after" help:"Resume exclusively after this opaque local event cursor."`
 	Output   string `name:"output" enum:"human,ndjson" default:"human"`
 }
 
-func readAppSnapshot(ctx context.Context, project projectConfiguration, state string) (clientruntime.Snapshot, error) {
-	snapshot, err := clientruntime.ReadSnapshot(project.Root, state)
+func readAppSnapshotFrom(ctx context.Context, project projectConfiguration, state *clientstate.Database) (clientruntime.Snapshot, error) {
+	snapshot, err := clientruntime.ReadSnapshotFrom(ctx, state, project.Root)
 	if err != nil {
 		return snapshot, err
 	}
 	configured := configuredRuntimeServices(project)
 	for index := range configured {
 		for _, saved := range snapshot.Services {
-			if saved.Name == configured[index].Name {
-				current := configured[index]
-				configured[index] = saved
-				configured[index].Directory = current.Directory
-				configured[index].Readiness = current.Readiness
-				if saved.Readiness != current.Readiness {
-					configured[index].Ready = false
-					configured[index].Observation = nil
-				}
-				break
+			if saved.Name != configured[index].Name {
+				continue
 			}
+			definition := configured[index]
+			configured[index] = saved
+			configured[index].Directory, configured[index].Readiness, configured[index].ServiceProtocol = definition.Directory, definition.Readiness, definition.ServiceProtocol
+			if saved.Readiness != definition.Readiness {
+				configured[index].Ready, configured[index].Observation = false, nil
+			}
+			for _, publication := range snapshot.Publications {
+				if publication.Service == saved.Name && publication.Target == saved.Target && publication.State == clientstate.TunnelStateStale {
+					configured[index].Registered, configured[index].Routable, configured[index].Ready = false, false, false
+					configured[index].Observation, configured[index].Failure = nil, "runtime.manager_unavailable"
+				}
+			}
+			break
 		}
 	}
 	snapshot.Services = configured
-	snapshot.ObservedAt = time.Now().UTC()
-	socket, err := runtimeSocket(project.Root, state)
-	if err != nil {
-		return snapshot, err
-	}
-	if !runtimeAvailable(ctx, socket) {
-		for index := range snapshot.Services {
-			service := &snapshot.Services[index]
-			if service.Registered {
-				service.Failure = "runtime.manager_unavailable"
-			}
-			service.Registered, service.Routable, service.Ready = false, false, false
-			service.Observation = nil
-		}
-	}
 	return snapshot, nil
-}
-
-func readProjectServicesSnapshot(ctx context.Context, project projectConfiguration, state string) (clientruntime.Snapshot, error) {
-	snapshot, err := readAppSnapshot(ctx, project, state)
-	if err != nil {
-		return snapshot, err
-	}
-	if len(project.Config.Services) == len(configuredRuntimeServices(project)) {
-		return snapshot, nil
-	}
-	database, err := clientstate.Open(ctx, state)
-	if err != nil {
-		return snapshot, err
-	}
-	defer database.Close()
-	tunnels, err := database.SnapshotProject(ctx, project.Root)
-	if err != nil {
-		return snapshot, err
-	}
-	return mergeTCPServices(snapshot, project, tunnels.Tunnels), nil
-}
-
-func mergeTCPServices(snapshot clientruntime.Snapshot, project projectConfiguration, tunnels []clientstate.TunnelInfo) clientruntime.Snapshot {
-	for name := range project.Config.Services {
-		effective, _ := project.EffectiveService(name)
-		protocol := config.ServiceProtocol(effective.Publish)
-		if protocol == "http" {
-			continue
-		}
-		service := clientruntime.Service{Name: name, Directory: project.RelativeServiceDirectories[name], ServiceProtocol: protocol}
-		if effective.Publish != nil && effective.Publish.Target != nil {
-			service.Target = string(*effective.Publish.Target)
-		}
-		var selected *clientstate.TunnelInfo
-		for index := range tunnels {
-			tunnel := &tunnels[index]
-			if tunnel.Service != name || string(tunnel.ServiceProtocol) != protocol {
-				continue
-			}
-			if selected == nil || (selected.State != clientstate.TunnelStateReady && tunnel.State == clientstate.TunnelStateReady) ||
-				(selected.State == tunnel.State && tunnel.StartedAt.After(selected.StartedAt)) {
-				selected = tunnel
-			}
-		}
-		if selected != nil {
-			service.TunnelID = selected.ID
-			service.Registered = selected.State != clientstate.TunnelStateStale && selected.State != clientstate.TunnelStateDraining
-			service.Routable = selected.State == clientstate.TunnelStateReady
-			service.PublicURL, service.Target = selected.PublicURL, selected.Target
-			service.PublishRunNumber = selected.PublishRunNumber
-		}
-		snapshot.Services = append(snapshot.Services, service)
-	}
-	slices.SortFunc(snapshot.Services, func(a, b clientruntime.Service) int { return cmp.Compare(a.Name, b.Name) })
-	return snapshot
 }
 
 func appServiceBlocks(snapshot clientruntime.Snapshot) []clioutput.Block {
 	blocks := make([]clioutput.Block, 0, len(snapshot.Services))
 	for _, service := range snapshot.Services {
 		state := "not registered"
-		if service.ServiceProtocol != "" {
-			state = "not publishing"
-			if service.Registered {
-				state = "publishing"
-			}
-		}
-		if service.Registered && service.ServiceProtocol == "" {
+		if service.Registered {
 			state = "registered"
 		}
 		if service.Routable {
@@ -151,26 +72,13 @@ func appServiceBlocks(snapshot clientruntime.Snapshot) []clioutput.Block {
 			state = "ready"
 		}
 		fields := []clioutput.Field{{Label: "service", Value: service.Name}, {Label: "directory", Value: service.Directory}}
-		if service.ServiceProtocol != "" {
-			fields = append(fields, clioutput.Field{Label: "protocol", Value: service.ServiceProtocol})
-		}
-		if service.Project != "" {
-			fields = append(fields, clioutput.Field{Label: "project", Value: service.Project})
-		}
-		if service.PublicURL != "" {
-			fields = append(fields, clioutput.Field{Label: "public URL", Value: service.PublicURL})
-		}
-		if service.Target != "" {
-			fields = append(fields, clioutput.Field{Label: "target", Value: service.Target})
+		for _, value := range []clioutput.Field{{Label: "protocol", Value: service.ServiceProtocol}, {Label: "project", Value: service.Project}, {Label: "public URL", Value: service.PublicURL}, {Label: "target", Value: service.Target}, {Label: "provisioning", Value: service.ProvisioningStage}, {Label: "recent failure", Value: service.Failure}} {
+			if value.Value != "" {
+				fields = append(fields, value)
+			}
 		}
 		if service.PublishRunNumber != 0 {
 			fields = append(fields, clioutput.Field{Label: "publish run number", Value: strconv.FormatUint(service.PublishRunNumber, 10)})
-		}
-		if service.ProvisioningStage != "" {
-			fields = append(fields, clioutput.Field{Label: "provisioning", Value: service.ProvisioningStage})
-		}
-		if service.Failure != "" {
-			fields = append(fields, clioutput.Field{Label: "recent failure", Value: service.Failure})
 		}
 		if service.Observation != nil {
 			fields = append(fields, clioutput.Field{Label: "checked at", Value: service.Observation.CheckedAt.Format(time.RFC3339Nano)})
@@ -181,7 +89,7 @@ func appServiceBlocks(snapshot clientruntime.Snapshot) []clioutput.Block {
 				fields = append(fields, clioutput.Field{Label: "readiness", Value: service.Observation.Reason})
 			}
 		}
-		blocks = append(blocks, clioutput.Section(service.Name+" "+state, clioutput.Fields(fields...)))
+		blocks = append(blocks, clioutput.Section("local "+service.Name+" "+state, clioutput.Fields(fields...)))
 	}
 	return blocks
 }
@@ -202,22 +110,13 @@ func runAppObservation(ctx context.Context, flags cli, command string, output io
 	if !project.Found() || len(project.Config.Services) == 0 {
 		return failure.Wrap("observe services", failure.ProjectConfigMissing, errors.New("configured services are required"))
 	}
-	if canonical, err := filepath.EvalSymlinks(root); err == nil {
-		root = canonical
-	}
 	if command == "watch" {
 		return runAppWatch(ctx, project, root, flags.Watch, output)
 	}
 	return runAppWait(ctx, project, root, flags.Wait, output)
 }
 
-func runAppWait(ctx context.Context, project projectConfiguration, state string, flags waitCommand, output io.Writer) error {
-	return runAppWaitWithProbe(ctx, project, state, flags, output, func(ctx context.Context, service clientruntime.Service) clientruntime.Observation {
-		return clientruntime.Probe(ctx, service, nil)
-	})
-}
-
-func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, state string, flags waitCommand, output io.Writer, probe func(context.Context, clientruntime.Service) clientruntime.Observation) error {
+func runAppWait(ctx context.Context, project projectConfiguration, root string, flags waitCommand, output io.Writer) error {
 	if flags.Timeout <= 0 {
 		return failure.Wrap("wait for apps", failure.InvalidCommand, errors.New("timeout must be positive"))
 	}
@@ -226,82 +125,61 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 			return failure.Wrap("wait for service", failure.ServiceNotConfigured, errors.New("service is not configured"))
 		}
 	}
+	state, err := clientstate.Open(ctx, root)
+	if err != nil {
+		return err
+	}
+	defer state.Close()
+	path, err := privateprotocol.DescriptorPath(state.Root(), project.Root)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, flags.Timeout)
 	defer cancel()
 	var latest clientruntime.Snapshot
+	checkSource := "local publisher process unavailable"
 	for attempt := 0; ; attempt++ {
-		snapshot, err := readProjectServicesSnapshot(ctx, project, state)
+		snapshot, err := readAppSnapshotFrom(context.WithoutCancel(ctx), project, state)
 		if err != nil {
 			return err
 		}
-		if len(flags.Service) != 0 {
-			snapshot.Services = slices.DeleteFunc(snapshot.Services, func(service clientruntime.Service) bool { return !slices.Contains(flags.Service, service.Name) })
+		checked := false
+		if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil {
+			request := privateprotocol.Check{}
+			if len(flags.Service) != 0 {
+				request.Services = &flags.Service
+			}
+			var current clientruntime.Snapshot
+			if err := privateprotocol.Call(ctx, endpoint, "POST", "/v1/check", request, &current); err == nil {
+				snapshot, checked = current, true
+				checkSource = "selected local publisher process (fresh public-path check)"
+			} else {
+				checkSource = "selected local publisher process unavailable"
+			}
 		}
-		var workers sync.WaitGroup
+		snapshot.Services = slices.DeleteFunc(snapshot.Services, func(s clientruntime.Service) bool {
+			if len(flags.Service) != 0 {
+				return !slices.Contains(flags.Service, s.Name)
+			}
+			_, configured := project.Config.Services[s.Name]
+			return !configured
+		})
+		want := len(flags.Service)
+		if want == 0 {
+			want = len(project.Config.Services)
+		}
+		ready := checked && len(snapshot.Services) == want
 		for index := range snapshot.Services {
-			service := &snapshot.Services[index]
-			service.Ready = false
-			if !service.Registered || !service.Routable {
-				continue
+			if !checked {
+				snapshot.Services[index].Ready = false
+				snapshot.Services[index].Observation = nil
+				snapshot.Services[index].Failure = "runtime.manager_unavailable"
 			}
-			workers.Add(1)
-			go func() {
-				defer workers.Done()
-				if service.ServiceProtocol != "" {
-					service.Ready = probeTCPTarget(ctx, service.Target)
-					return
-				}
-				observation := probe(ctx, *service)
-				service.Ready, service.Observation = observation.Ready, &observation
-			}()
-		}
-		workers.Wait()
-		// a successful response is valid only for the registration and publish run
-		// that were still current after its headers arrived.
-		current, err := readProjectServicesSnapshot(ctx, project, state)
-		if err != nil {
-			return err
-		}
-		ready := len(snapshot.Services) > 0
-		for index := range snapshot.Services {
-			service := &snapshot.Services[index]
-			matched := false
-			for _, now := range current.Services {
-				if now.Name == service.Name && now.Registered && now.Routable && now.RegistrationID == service.RegistrationID && now.TunnelID == service.TunnelID && now.PublishRunNumber == service.PublishRunNumber {
-					matched = true
-					break
-				}
-			}
-			service.Ready = service.Ready && matched
-			if matched && service.ServiceProtocol == "" && service.Observation != nil {
-				data, err := json.Marshal(service.Observation)
-				if err != nil {
-					return err
-				}
-				socket, err := runtimeSocket(project.Root, state)
-				if err != nil {
-					return err
-				}
-				request, err := http.NewRequestWithContext(ctx, "POST", "http://localhost/v1/observe", bytes.NewReader(data))
-				if err != nil {
-					return err
-				}
-				request.Header.Set("Content-Type", "application/json")
-				response, err := runtimeHTTP(socket).Do(request)
-				if err == nil {
-					response.Body.Close()
-					if response.StatusCode != http.StatusNoContent {
-						service.Ready = false
-					}
-				} else {
-					service.Ready = false
-				}
-			}
-			ready = ready && service.Ready
+			ready = ready && snapshot.Services[index].Registered && snapshot.Services[index].Routable && snapshot.Services[index].Ready
 		}
 		latest = snapshot
 		if ready {
-			return writeAppWait(output, flags.Output, latest, "ready")
+			return writeAppWait(output, flags.Output, latest, "ready", checkSource)
 		}
 		if ctx.Err() != nil {
 			break
@@ -316,65 +194,37 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 			break
 		}
 	}
-	if err := writeAppWait(output, flags.Output, latest, "timed out"); err != nil {
+	if err := writeAppWait(output, flags.Output, latest, "timed out", checkSource); err != nil {
 		return err
 	}
 	return failure.Wrap("wait for public readiness", failure.AppReadinessTimeout, ctx.Err())
 }
 
-func probeTCPTarget(ctx context.Context, target string) bool {
-	if _, err := tcptarget.Host(target); err != nil {
-		return false
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	connection, err := (&net.Dialer{}).DialContext(probeCtx, "tcp", target)
-	if err != nil {
-		return false
-	}
-	connection.Close()
-	return true
-}
-
-func writeAppWait(output io.Writer, mode string, snapshot clientruntime.Snapshot, state string) error {
+func writeAppWait(output io.Writer, mode string, snapshot clientruntime.Snapshot, state, checkedBy string) error {
 	if mode == "json" {
-		return json.NewEncoder(output).Encode(snapshot)
+		return json.NewEncoder(output).Encode(struct {
+			clientruntime.Snapshot
+			State     string `json:"state"`
+			CheckedBy string `json:"checked_by"`
+		}{snapshot, state, checkedBy})
 	}
-	return writeHumanFrame(output, "tnl wait", state, "", appServiceBlocks(snapshot)...)
+	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "checked by", Value: checkedBy})}
+	return writeHumanFrame(output, "tnl wait", state, "", append(blocks, appServiceBlocks(snapshot)...)...)
 }
 
-func runAppWatch(ctx context.Context, project projectConfiguration, state string, flags watchCommand, output io.Writer) error {
-	hasTCP := len(project.Config.Services) != len(configuredRuntimeServices(project))
-	var database *clientstate.Database
-	if hasTCP {
-		var err error
-		database, err = clientstate.Open(ctx, state)
-		if err != nil {
-			return err
-		}
-		defer database.Close()
+func runAppWatch(ctx context.Context, project projectConfiguration, root string, flags watchCommand, output io.Writer) error {
+	state, err := clientstate.Open(ctx, root)
+	if err != nil {
+		return err
 	}
+	defer state.Close()
 	cursor := flags.After
 	if cursor == "" {
-		snapshot, err := readAppSnapshot(ctx, project, state)
+		snapshot, err := readAppSnapshotFrom(ctx, project, state)
 		if err != nil {
 			return err
 		}
-		if hasTCP {
-			sequence, err := database.LatestTunnelEventCursor(ctx, project.Root)
-			if err != nil {
-				return err
-			}
-			tunnels, err := database.SnapshotProject(ctx, project.Root)
-			if err != nil {
-				return err
-			}
-			snapshot = mergeTCPServices(snapshot, project, tunnels.Tunnels)
-			cursor = watchCursor(snapshot.Cursor, sequence, true)
-		} else {
-			cursor = snapshot.Cursor
-		}
-		snapshot.Cursor = cursor
+		cursor = snapshot.Cursor
 		if flags.Output == "ndjson" {
 			if err := json.NewEncoder(output).Encode(struct {
 				Type     string                 `json:"type"`
@@ -386,67 +236,24 @@ func runAppWatch(ctx context.Context, project projectConfiguration, state string
 			return err
 		}
 	}
-	appCursor, tunnelCursor, err := parseWatchCursor(cursor)
-	if err != nil {
-		return failure.Wrap("resume local events", failure.InvalidCommand, err)
-	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
-		snapshot, err := clientruntime.ReadSnapshot(project.Root, state)
+		events, err := clientruntime.EventsAfterFrom(ctx, state, project.Root, cursor)
 		if err != nil {
-			return err
-		}
-		events, err := clientruntime.EventsAfter(snapshot, appCursor)
-		if err != nil {
-			return failure.Wrap("resume local events", failure.AppCursorExpired, err)
-		}
-		for _, event := range events {
-			appCursor = event.Cursor
-			event.Cursor = watchCursor(appCursor, tunnelCursor, hasTCP)
-			if err := writeAppWatchEvent(output, flags.Output, event); err != nil {
-				return err
-			}
-		}
-		if hasTCP {
 			if ctx.Err() != nil {
 				return nil
 			}
-			tunnelEvents, err := database.TunnelEventsAfter(ctx, project.Root, tunnelCursor)
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				return failure.Wrap("resume local events", failure.AppCursorExpired, err)
+			return failure.Wrap("resume local events", failure.AppCursorExpired, err)
+		}
+		for _, event := range events {
+			if err := writeAppWatchEvent(output, flags.Output, event); err != nil {
+				return err
 			}
-			for _, change := range tunnelEvents {
-				tunnelCursor = change.Sequence
-				effective, err := project.EffectiveService(change.Service)
-				if err != nil || config.ServiceProtocol(effective.Publish) != string(change.ServiceProtocol) {
-					continue
-				}
-				service := clientruntime.Service{
-					Name: change.Service, Directory: project.RelativeServiceDirectories[change.Service],
-					ServiceProtocol: string(change.ServiceProtocol), TunnelID: change.TunnelID, Target: change.Target,
-					PublishRunNumber: change.PublishRunNumber,
-					Registered:       change.State != clientstate.TunnelStateStopped && change.State != clientstate.TunnelStateFailed && change.State != clientstate.TunnelStateDraining,
-					Routable:         change.State == clientstate.TunnelStateReady,
-				}
-				if change.Hostname != "" && change.PublicPort != 0 {
-					service.PublicURL = net.JoinHostPort(change.Hostname, strconv.Itoa(int(change.PublicPort)))
-				}
-				kind := "service." + string(change.State)
-				if change.State == clientstate.TunnelStateReady {
-					kind = "service.publication"
-				}
-				event := clientruntime.Event{Cursor: watchCursor(appCursor, tunnelCursor, true), Type: kind, At: change.At, Service: &service}
-				if err := writeAppWatchEvent(output, flags.Output, event); err != nil {
-					return err
-				}
-			}
+			cursor = event.Cursor
 		}
 		select {
 		case <-ctx.Done():
@@ -454,28 +261,6 @@ func runAppWatch(ctx context.Context, project projectConfiguration, state string
 		case <-ticker.C:
 		}
 	}
-}
-
-func watchCursor(app string, database uint64, hasTCP bool) string {
-	if hasTCP {
-		return app + ":" + strconv.FormatUint(database, 10)
-	}
-	return app
-}
-
-func parseWatchCursor(cursor string) (string, uint64, error) {
-	app, database, combined := strings.Cut(cursor, ":")
-	if _, err := clientruntime.ParseCursor(app); err != nil {
-		return "", 0, err
-	}
-	if !combined {
-		return app, 0, nil
-	}
-	sequence, err := clientruntime.ParseCursor(database)
-	if err != nil {
-		return "", 0, err
-	}
-	return app, sequence, nil
 }
 
 func writeAppWatchEvent(output io.Writer, mode string, event clientruntime.Event) error {
@@ -488,6 +273,9 @@ func writeAppWatchEvent(output io.Writer, mode string, event clientruntime.Event
 	}
 	if event.Snapshot != nil {
 		blocks = append(blocks, appServiceBlocks(*event.Snapshot)...)
+	}
+	if event.Publication != nil {
+		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "tunnel", Value: event.Publication.ID}, clioutput.Field{Label: "state", Value: string(event.Publication.State)}, clioutput.Field{Label: "public URL", Value: event.Publication.PublicURL}))
 	}
 	return writeHumanFrame(output, "tnl watch", event.Type, "", blocks...)
 }

@@ -1,6 +1,9 @@
 -- name: GetPendingPublisherEnrollment :one
 SELECT * FROM pending_publisher_enrollments WHERE server_origin = sqlc.arg(server_origin) AND enrollment_id = sqlc.arg(enrollment_id);
 
+-- name: PruneExpiredPendingPublisherEnrollments :exec
+DELETE FROM pending_publisher_enrollments WHERE expires_at <= sqlc.arg(now);
+
 -- name: GetPendingPublisherEnrollmentForSelection :one
 SELECT * FROM pending_publisher_enrollments WHERE server_origin = sqlc.arg(server_origin)
   AND selection_kind = sqlc.arg(selection_kind) AND selection_key = sqlc.arg(selection_key);
@@ -37,17 +40,22 @@ VALUES (sqlc.arg(server_origin), sqlc.arg(identity_id), sqlc.arg(public_document
 ON CONFLICT (server_origin, identity_id) DO NOTHING;
 
 -- name: SelectPublisherIdentity :exec
-INSERT INTO publisher_selections (server_origin, selection_kind, selection_key, identity_id, updated_at)
+INSERT INTO publisher_selections (server_origin, selection_kind, selection_key, identity_id, updated_at, expires_at)
 VALUES (sqlc.arg(server_origin), sqlc.arg(selection_kind), sqlc.arg(selection_key),
-    sqlc.arg(identity_id), sqlc.arg(updated_at))
+    sqlc.arg(identity_id), sqlc.arg(updated_at), sqlc.narg(expires_at))
 ON CONFLICT (server_origin, selection_kind, selection_key) DO UPDATE SET
-    identity_id = excluded.identity_id, updated_at = excluded.updated_at;
+    identity_id = excluded.identity_id, updated_at = excluded.updated_at,
+    expires_at = excluded.expires_at;
+
+-- name: PruneExpiredPublisherEnrollmentSelections :exec
+DELETE FROM publisher_selections WHERE selection_kind = 'enrollment' AND expires_at <= sqlc.arg(now);
 
 -- name: GetSelectedPublisherIdentity :one
 SELECT identity.* FROM publisher_selections selection
 JOIN publisher_identities identity ON identity.server_origin = selection.server_origin AND identity.identity_id = selection.identity_id
 WHERE selection.server_origin = sqlc.arg(server_origin)
-  AND selection.selection_kind = sqlc.arg(selection_kind) AND selection.selection_key = sqlc.arg(selection_key);
+  AND selection.selection_kind = sqlc.arg(selection_kind) AND selection.selection_key = sqlc.arg(selection_key)
+  AND (selection.selection_kind <> 'enrollment' OR selection.expires_at > sqlc.arg(now));
 
 -- name: DeletePublisherIdentity :exec
 DELETE FROM publisher_identities WHERE server_origin = sqlc.arg(server_origin) AND identity_id = sqlc.arg(identity_id);

@@ -390,13 +390,19 @@ CREATE TABLE publisher_identities (
 -- identity without copying its private key into several scope-named records.
 CREATE TABLE publisher_selections (
     server_origin TEXT NOT NULL,
-    selection_kind TEXT NOT NULL CHECK (selection_kind IN ('default_namespace', 'namespace', 'project', 'job')),
+    selection_kind TEXT NOT NULL CHECK (selection_kind IN ('default_namespace', 'namespace', 'project', 'job', 'enrollment')),
     selection_key TEXT NOT NULL,
     identity_id TEXT NOT NULL,
     updated_at INTEGER NOT NULL,
+    expires_at INTEGER,
     PRIMARY KEY (server_origin, selection_kind, selection_key),
-    FOREIGN KEY (server_origin, identity_id) REFERENCES publisher_identities(server_origin, identity_id) ON DELETE CASCADE
+    FOREIGN KEY (server_origin, identity_id) REFERENCES publisher_identities(server_origin, identity_id) ON DELETE CASCADE,
+    CHECK ((selection_kind = 'enrollment') = (expires_at IS NOT NULL)),
+    CHECK (expires_at IS NULL OR expires_at > updated_at)
 ) STRICT;
+
+CREATE INDEX publisher_enrollment_selections_expiry ON publisher_selections (expires_at)
+    WHERE selection_kind = 'enrollment';
 
 -- the root-owned system publisher keeps both documents encrypted in their
 -- entirety. its file manifest protects the registry across process restarts.

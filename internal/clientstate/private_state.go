@@ -27,7 +27,7 @@ func publisherSelectionScope(scope string) (kind, key string, ok bool) {
 	}
 	for _, selected := range []struct{ prefix, kind string }{
 		{"owner-namespace:", "namespace"}, {"owner-url:", "project"},
-		{"project-publisher:", "project"}, {"job:", "job"},
+		{"project-publisher:", "project"}, {"guest-publisher:", "project"}, {"job:", "job"},
 	} {
 		if strings.HasPrefix(scope, selected.prefix) && len(scope) > len(selected.prefix) {
 			return selected.kind, scope, true
@@ -72,7 +72,11 @@ func (s *Store) PublisherSigningIdentity(ctx context.Context, scope string) (Pub
 	if len(result) == 0 {
 		result = []byte("{}")
 	}
-	return PublisherSigningIdentity{ID: pending.EnrollmentID, PublicValue: result, PrivateValue: pending.EnrollmentSecret}, true, nil
+	private := pending.EnrollmentSecret
+	if strings.HasPrefix(scope, "guest-publisher:") {
+		private = pending.SigningKey
+	}
+	return PublisherSigningIdentity{ID: pending.EnrollmentID, PublicValue: result, PrivateValue: private}, true, nil
 }
 
 func (s *Store) SavePublisherSigningIdentity(ctx context.Context, scope string, value PublisherSigningIdentity) error {
@@ -111,6 +115,42 @@ func (s *Store) SavePublisherSigningIdentity(ctx context.Context, scope string, 
 			return err
 		}
 		return s.PromotePublisherEnrollment(ctx, id, PublisherIdentity{ID: value.ID, PublicDocument: value.PublicValue, SigningKey: value.PrivateValue})
+	}
+	if urlID, ok := strings.CutPrefix(scope, "guest-publisher:"); ok {
+		if !opaqueid.Valid(urlID, opaqueid.PublicURLPrefix) {
+			return ErrPublisherStateConflict
+		}
+		if value.ID == urlID {
+			if string(value.PublicValue) != "{}" || len(value.PrivateValue) != ed25519.PrivateKeySize {
+				return ErrPublisherStateConflict
+			}
+			if pending, found, err := s.PendingPublisherEnrollmentForSelection(ctx, "project", scope); err != nil {
+				return err
+			} else if found {
+				if pending.EnrollmentID != urlID || !bytes.Equal(pending.SigningKey, value.PrivateValue) {
+					return ErrPublisherStateConflict
+				}
+				return nil
+			}
+			return s.SavePendingPublisherEnrollment(ctx, PendingPublisherEnrollment{
+				EnrollmentID: urlID, SelectionKind: "project", SelectionKey: scope,
+				PublicKey:  ed25519.PrivateKey(value.PrivateValue).Public().(ed25519.PublicKey),
+				SigningKey: value.PrivateValue, ExpiresAt: time.Now().Add(24 * time.Hour),
+			})
+		}
+		if pending, found, err := s.PendingPublisherEnrollmentForSelection(ctx, "project", scope); err != nil {
+			return err
+		} else if found {
+			if pending.EnrollmentID != urlID || !bytes.Equal(pending.SigningKey, value.PrivateValue) {
+				return ErrPublisherStateConflict
+			}
+			if err := s.RecordPublisherEnrollmentResult(ctx, urlID, value.PublicValue); err != nil {
+				return err
+			}
+			return s.PromotePublisherEnrollment(ctx, urlID, PublisherIdentity{
+				ID: value.ID, PublicDocument: value.PublicValue, SigningKey: value.PrivateValue,
+			})
+		}
 	}
 	kind, key, ok := publisherSelectionScope(scope)
 	if !ok {

@@ -177,16 +177,23 @@ SELECT identity.server_origin, identity.identity_id, identity.public_document_js
 JOIN publisher_identities identity ON identity.server_origin = selection.server_origin AND identity.identity_id = selection.identity_id
 WHERE selection.server_origin = ?1
   AND selection.selection_kind = ?2 AND selection.selection_key = ?3
+  AND (selection.selection_kind <> 'enrollment' OR selection.expires_at > ?4)
 `
 
 type GetSelectedPublisherIdentityParams struct {
 	ServerOrigin  string
 	SelectionKind string
 	SelectionKey  string
+	Now           sql.NullInt64
 }
 
 func (q *Queries) GetSelectedPublisherIdentity(ctx context.Context, arg GetSelectedPublisherIdentityParams) (PublisherIdentity, error) {
-	row := q.db.QueryRowContext(ctx, getSelectedPublisherIdentity, arg.ServerOrigin, arg.SelectionKind, arg.SelectionKey)
+	row := q.db.QueryRowContext(ctx, getSelectedPublisherIdentity,
+		arg.ServerOrigin,
+		arg.SelectionKind,
+		arg.SelectionKey,
+		arg.Now,
+	)
 	var i PublisherIdentity
 	err := row.Scan(
 		&i.ServerOrigin,
@@ -196,6 +203,24 @@ func (q *Queries) GetSelectedPublisherIdentity(ctx context.Context, arg GetSelec
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const pruneExpiredPendingPublisherEnrollments = `-- name: PruneExpiredPendingPublisherEnrollments :exec
+DELETE FROM pending_publisher_enrollments WHERE expires_at <= ?1
+`
+
+func (q *Queries) PruneExpiredPendingPublisherEnrollments(ctx context.Context, now int64) error {
+	_, err := q.db.ExecContext(ctx, pruneExpiredPendingPublisherEnrollments, now)
+	return err
+}
+
+const pruneExpiredPublisherEnrollmentSelections = `-- name: PruneExpiredPublisherEnrollmentSelections :exec
+DELETE FROM publisher_selections WHERE selection_kind = 'enrollment' AND expires_at <= ?1
+`
+
+func (q *Queries) PruneExpiredPublisherEnrollmentSelections(ctx context.Context, now sql.NullInt64) error {
+	_, err := q.db.ExecContext(ctx, pruneExpiredPublisherEnrollmentSelections, now)
+	return err
 }
 
 const recordPublisherEnrollmentResult = `-- name: RecordPublisherEnrollmentResult :execrows
@@ -325,11 +350,12 @@ func (q *Queries) SavePublisherJobRegistry(ctx context.Context, arg SavePublishe
 }
 
 const selectPublisherIdentity = `-- name: SelectPublisherIdentity :exec
-INSERT INTO publisher_selections (server_origin, selection_kind, selection_key, identity_id, updated_at)
+INSERT INTO publisher_selections (server_origin, selection_kind, selection_key, identity_id, updated_at, expires_at)
 VALUES (?1, ?2, ?3,
-    ?4, ?5)
+    ?4, ?5, ?6)
 ON CONFLICT (server_origin, selection_kind, selection_key) DO UPDATE SET
-    identity_id = excluded.identity_id, updated_at = excluded.updated_at
+    identity_id = excluded.identity_id, updated_at = excluded.updated_at,
+    expires_at = excluded.expires_at
 `
 
 type SelectPublisherIdentityParams struct {
@@ -338,6 +364,7 @@ type SelectPublisherIdentityParams struct {
 	SelectionKey  string
 	IdentityID    string
 	UpdatedAt     int64
+	ExpiresAt     sql.NullInt64
 }
 
 func (q *Queries) SelectPublisherIdentity(ctx context.Context, arg SelectPublisherIdentityParams) error {
@@ -347,6 +374,7 @@ func (q *Queries) SelectPublisherIdentity(ctx context.Context, arg SelectPublish
 		arg.SelectionKey,
 		arg.IdentityID,
 		arg.UpdatedAt,
+		arg.ExpiresAt,
 	)
 	return err
 }

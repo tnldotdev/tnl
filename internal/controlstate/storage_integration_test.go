@@ -83,11 +83,11 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	}{
 		{"control_sessions", "retry_secret_ciphertext", "retry_secret_storage_key_id", principal.RetrySecret[:]},
 		{"acme_accounts", "account_key_ciphertext", "account_key_storage_key_id", account.AccountKeyDER},
-		{"control_tls_cache", "cache_ciphertext", "cache_storage_key_id", cacheData},
+		{"control_tls_certificate_cache", "cache_ciphertext", "cache_storage_key_id", cacheData},
 		{"relay_services", "transport_private_key_ciphertext", "transport_private_key_storage_key_id", privateKey},
 		{"relay_certificate_orders", "private_key_ciphertext", "private_key_storage_key_id", order.PrivateKeyPEM},
-		{"runtime_secret", "guest_retry_master_key_ciphertext", "guest_retry_master_key_storage_key_id", masterKey[:]},
-		{"public_url_usage_configuration", "visitor_network_hash_master_key_ciphertext", "visitor_network_hash_master_key_storage_key_id", visitorKey},
+		{"guest_retry_keys", "guest_retry_master_key_ciphertext", "guest_retry_master_key_storage_key_id", masterKey[:]},
+		{"visitor_network_hash_keys", "visitor_network_hash_master_key_ciphertext", "visitor_network_hash_master_key_storage_key_id", visitorKey},
 	}
 	before := make(map[string][]byte)
 	oldKeyID := database.storageKey.CurrentID()

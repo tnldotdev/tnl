@@ -65,12 +65,6 @@ type Status struct {
 	PublishRunNumber uint64 `json:"publish_run_number,omitempty"`
 }
 
-type identityBinding struct {
-	JobID    string                                `json:"job_id"`
-	Server   string                                `json:"server"`
-	Identity authorityv1.PublisherEnrollmentResult `json:"identity"`
-}
-
 type Registry struct {
 	mu       sync.Mutex
 	database *clientstate.Database
@@ -184,7 +178,7 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 		if err != nil {
 			return err
 		}
-		public, err := json.Marshal(identityBinding{JobID: job.ID, Server: job.Server, Identity: identity})
+		public, err := json.Marshal(identity)
 		if err != nil {
 			return err
 		}
@@ -213,11 +207,11 @@ func (r *Registry) signingIdentity(ctx context.Context, job Job) (authorityv1.Pu
 	if err != nil {
 		return authorityv1.PublisherEnrollmentResult{}, nil, nil, err
 	}
-	var binding identityBinding
-	if !found || json.Unmarshal(saved.PublicValue, &binding) != nil || binding.JobID != job.ID || binding.Server != job.Server || saved.ID != job.PublisherID || !matches(job, binding.Identity) || len(saved.PrivateValue) != ed25519.PrivateKeySize {
-		return binding.Identity, nil, nil, ErrScope
+	var identity authorityv1.PublisherEnrollmentResult
+	if !found || json.Unmarshal(saved.PublicValue, &identity) != nil || saved.ID != job.PublisherID || !matches(job, identity) || len(saved.PrivateValue) != ed25519.PrivateKeySize {
+		return identity, nil, nil, ErrScope
 	}
-	return binding.Identity, ed25519.PrivateKey(saved.PrivateValue), profile, nil
+	return identity, ed25519.PrivateKey(saved.PrivateValue), profile, nil
 }
 
 func (r *Registry) Start(ctx context.Context, id string) error { return r.setEnabled(ctx, id, true) }
