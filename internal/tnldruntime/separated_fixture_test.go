@@ -226,6 +226,14 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 		cfg.DrainTimeout = 30 * time.Second
 	}
 	runtimeLoadAdmission.apply(&cfg)
+	if !*runtimeLoadCapacityOnly {
+		// the CI recovery workload offers 160 new connections per second.
+		// measure forwarding and recovery above its configured ingress
+		// traffic limits; capacity-only runs keep their own selected bounds.
+		cfg.TrafficDefaultRate, cfg.TrafficDefaultBurst = 100, 200
+		cfg.TrafficSourceRate, cfg.TrafficSourceBurst = 200, 400
+		cfg.TrafficProcessRate, cfg.TrafficProcessBurst = 500, 1000
+	}
 	cfg.PublicURLCertificateWorkers = *runtimeLoadCertificateWorkers
 	cfg.QUICIdleTimeout = 45 * time.Second
 	cfg.ClusterSecret = testClusterSecret
