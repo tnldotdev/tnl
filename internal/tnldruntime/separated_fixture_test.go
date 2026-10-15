@@ -25,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 )
 
 const separatedDirectory = "/load"
@@ -230,6 +231,11 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 		// the CI recovery workload offers 160 new connections per second.
 		// measure forwarding and recovery above its configured ingress
 		// traffic limits; capacity-only runs keep their own selected bounds.
+		defaults := trafficlimits.Default()
+		cfg.TrafficDefaultConnections = defaults.Connections
+		cfg.TrafficDefaultRatePer = defaults.RatePer
+		cfg.TrafficDefaultUploadBytes = defaults.UploadBytes
+		cfg.TrafficDefaultDownloadBytes = defaults.DownloadBytes
 		cfg.TrafficDefaultRate, cfg.TrafficDefaultBurst = 100, 200
 		cfg.TrafficSourceRate, cfg.TrafficSourceBurst = 200, 400
 		cfg.TrafficProcessRate, cfg.TrafficProcessBurst = 500, 1000

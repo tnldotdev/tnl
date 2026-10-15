@@ -46,7 +46,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 	case "app", "app-2", "app-3", "app-4":
 		runSeparatedApp(t, ctx, component)
 	case "publishers", "publishers-2", "publishers-3", "publishers-4":
-		runSeparatedPublishers(t, ctx, routes, slices.Index(separatedPublisherComponents(), component))
+		runSeparatedPublishers(t, ctx, routes, rate, slices.Index(separatedPublisherComponents(), component))
 	case "visitor-1", "visitor-2", "visitor-3", "visitor-4":
 		runSeparatedVisitor(t, ctx, component, rate)
 	case "control-a", "control-b", "ingress-a", "ingress-b", "relay-a", "relay-b", "relay-a-2", "relay-b-2":
@@ -289,7 +289,7 @@ func TestSeparatedPublisherIndexesCoverRoutesAndTransports(t *testing.T) {
 	}
 }
 
-func runSeparatedPublishers(t *testing.T, ctx context.Context, count, shard int) {
+func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shard int) {
 	separatedWrite(t, separatedPublisherShardKey(shard, "concurrency"), runtimeLoadAdmission.PublisherConcurrency)
 	if !separatedRead(t, ctx, "publish.start", nil) {
 		return
@@ -313,6 +313,12 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, shard int)
 	var fallbacks atomic.Int64
 	client := separatedHTTP(t)
 	inspect := inspectStandaloneTestDatabase(t, testutil.PostgresURL(t))
+	rateRequests := 0
+	if !*runtimeLoadCapacityOnly {
+		// shutdown retains only half the URLs, so each remaining publisher
+		// must allow the full selected visitor request rate.
+		rateRequests = max(rate, 160)
+	}
 	if *runtimeLoadTrace {
 		traceRuntimeCertificateHTTP(t, client, time.Now())
 	}
@@ -321,7 +327,7 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, shard int)
 		Domain: "routes." + separatedDomain, StateRoot: filepath.Join(t.TempDir(), "state"), Target: "http://127.0.0.1:8080",
 		HTTPClient: client, RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
 		Transport: transport, Parallel: 4, StartParallel: max(1, *runtimeLoadStartParallel/len(separatedPublisherComponents())),
-		Concurrency:  runtimeLoadAdmission.PublisherConcurrency,
+		Concurrency: runtimeLoadAdmission.PublisherConcurrency, RateRequests: rateRequests,
 		ReadyTimeout: *runtimeLoadReadyTimeout, StopTimeout: 10 * time.Second, DrainTime: time.Second,
 		OnActivationFailure: func(index int) {
 			if err := captureSeparatedPublisherFailure(inspect, index); err != nil {

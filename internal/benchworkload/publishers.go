@@ -54,6 +54,7 @@ type PublisherConfig struct {
 	QUICKeepAlive               time.Duration
 	Parallel                    int
 	Concurrency                 int
+	RateRequests                int
 	// StartParallel overrides Parallel only during activation; shutdown has its own bound.
 	StartParallel             int
 	ReadyTimeout, StopTimeout time.Duration
@@ -120,7 +121,7 @@ func (c scopedBenchmarkControl) CreatePublishRun(ctx context.Context, id, retry 
 }
 
 func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers, retErr error) {
-	if config.Parallel < 1 || config.StartParallel < 0 || config.ReadyTimeout <= 0 || config.StopTimeout <= 0 || config.DrainTime < 0 {
+	if config.Parallel < 1 || config.StartParallel < 0 || config.RateRequests < 0 || config.ReadyTimeout <= 0 || config.StopTimeout <= 0 || config.DrainTime < 0 {
 		return nil, errors.New("publisher concurrency and deadlines must be positive")
 	}
 	if !config.Transport.Valid() {
@@ -255,11 +256,15 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 		publicationControl = native
 	}
 	groupCtx, cancel := context.WithCancel(ctx)
+	limits := publisher.ApplicationLimits{Concurrency: config.Concurrency}
+	if config.RateRequests > 0 {
+		limits.RateRequests, limits.RatePer, limits.RateBurst = config.RateRequests, time.Second, config.RateRequests
+	}
 	return &Publishers{config: config, database: database, ctx: groupCtx, cancel: cancel,
 		namespace: membership.ManagedLabel + "." + domain.CanonicalDomain, failures: make(chan error, 1), run: publisher.Run,
 		prepare: prepare,
 		base: publisher.Config{Control: publicationControl, State: store, Target: config.Target, DrainTime: config.DrainTime,
-			Limits:    publisher.ApplicationLimits{Concurrency: config.Concurrency},
+			Limits:    limits,
 			Ephemeral: config.Ephemeral,
 			TeamID:    team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,
 			PolicyRevision: uint64(team.PolicyRevision), AllowedIPPrefixes: config.AllowedIPPrefixes,
