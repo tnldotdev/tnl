@@ -38,7 +38,7 @@ ARG COMMIT
 
 LABEL org.opencontainers.image.source="https://github.com/tnldotdev/tnl" \
       org.opencontainers.image.description="tnl client and self-hosted server daemon" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="BSD-3-Clause" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$COMMIT
 
