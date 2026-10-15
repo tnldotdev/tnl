@@ -1,0 +1,52 @@
+services:
+  publisher:
+    image: mirror.gcr.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+    command: [/fixture/owner, owner]
+    labels:
+      tnl.worktree: ${TNL_COMPOSE_FIXTURE_WORKTREE:?}
+    volumes:
+      - ${TNL_COMPOSE_FIXTURE_BINARY:?}:/fixture/owner:ro
+      - ${TNL_COMPOSE_FIXTURE_SETUP:?}:/setup:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - state:/state
+      - web-cap:/caps/web
+      - api-cap:/caps/api
+    networks: [private]
+  web:
+    image: mirror.gcr.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+    command: [/fixture/owner, app]
+    environment:
+      TNL_APP_ENDPOINT: /caps/private/endpoint.json
+    labels:
+      tnl.worktree: ${TNL_COMPOSE_FIXTURE_WORKTREE:?}
+    ports: ["127.0.0.1::3000"]
+    volumes:
+      - ${TNL_COMPOSE_FIXTURE_BINARY:?}:/fixture/owner:ro
+      - web-cap:/caps:ro
+    networks: [private]
+  api:
+    image: mirror.gcr.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+    command: [/fixture/owner, app]
+    environment:
+      TNL_APP_ENDPOINT: /caps/private/endpoint.json
+    labels:
+      tnl.worktree: ${TNL_COMPOSE_FIXTURE_WORKTREE:?}
+    ports: ["127.0.0.1::3000"]
+    volumes:
+      - ${TNL_COMPOSE_FIXTURE_BINARY:?}:/fixture/owner:ro
+      - api-cap:/caps:ro
+    networks: [private]
+  db:
+    image: mirror.gcr.io/library/redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    labels:
+      tnl.worktree: ${TNL_COMPOSE_FIXTURE_WORKTREE:?}
+    ports: ["127.0.0.1::6379"]
+    networks: [private]
+networks:
+  private:
+    labels:
+      tnl.worktree: ${TNL_COMPOSE_FIXTURE_WORKTREE:?}
+volumes:
+  state:
+  web-cap:
+  api-cap:
