@@ -110,7 +110,8 @@ func (d *Database) RegisterAlias(ctx context.Context, registration AliasRegistra
 	}
 	count, err := queries.RegisterAliasDeclaration(ctx, clientstatedb.RegisterAliasDeclarationParams{
 		AliasID: row.ID, TunnelID: registration.TunnelID, Fingerprint: registration.Fingerprint[:],
-		ServerOrigin: scope.Server, Service: registration.Service, IntegrationGroup: registration.IntegrationGroup, Now: now,
+		ServerOrigin: scope.Server, Service: sql.NullString{String: registration.Service, Valid: true},
+		IntegrationGroup: registration.IntegrationGroup, Now: now,
 	})
 	if err != nil {
 		return AliasSelection{}, err
@@ -163,7 +164,7 @@ func (d *Database) AliasCandidate(ctx context.Context, id string) (AliasSelectio
 	}
 	selection := aliasSelection(row)
 	tunnel, err := queries.ReadyAliasReceiver(ctx, clientstatedb.ReadyAliasReceiverParams{
-		AliasID: id, ProjectRoot: row.SelectedProject, Now: d.now().UTC().UnixNano(),
+		AliasID: id, ProjectRoot: row.SelectedProjectRoot, Now: d.now().UTC().UnixNano(),
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return selection, TunnelInfo{}, ErrAliasReceiverUnavailable
@@ -175,9 +176,9 @@ func (d *Database) AliasCandidate(ctx context.Context, id string) (AliasSelectio
 		return selection, TunnelInfo{}, err
 	}
 	return selection, TunnelInfo{ID: tunnel.ID, Server: tunnel.ServerOrigin, Project: tunnel.ProjectRoot,
-		Service: tunnel.Service, IntegrationGroup: tunnel.IntegrationGroup, State: TunnelState(tunnel.State),
-		Target: tunnel.Target, Hostname: tunnel.Hostname, PublicURL: "https://" + tunnel.Hostname,
-		PublicURLID: tunnel.PublicURLID, PublishRunNumber: uint64(tunnel.PublishRunNumber)}, nil
+		Service: tunnel.Service.String, IntegrationGroup: tunnel.IntegrationGroup, State: TunnelState(tunnel.State),
+		Target: tunnel.Target.String, Hostname: tunnel.Hostname.String, PublicURL: "https://" + tunnel.Hostname.String,
+		PublicURLID: tunnel.PublicURLID.String, PublishRunNumber: uint64(tunnel.PublishRunNumber.Int64)}, nil
 }
 
 // SelectAlias requires a ready caller service. without force, another selected
@@ -215,17 +216,17 @@ func (d *Database) changeAliasSelection(ctx context.Context, scope AliasScope, p
 		return AliasSelection{}, err
 	}
 	if release {
-		if row.SelectedProject != project {
+		if row.SelectedProjectRoot != project {
 			return AliasSelection{}, ErrAliasNotSelected
 		}
-		project = row.ProjectKey
+		project = row.PrimaryProjectRoot
 	} else {
 		if _, err := queries.ReadyAliasReceiver(ctx, clientstatedb.ReadyAliasReceiverParams{AliasID: row.ID, ProjectRoot: project, Now: now}); errors.Is(err, sql.ErrNoRows) {
 			return AliasSelection{}, ErrAliasReceiverUnavailable
 		} else if err != nil {
 			return AliasSelection{}, err
 		}
-		if row.SelectedProject != project && !force {
+		if row.SelectedProjectRoot != project && !force {
 			live, err := queries.LiveAliasOwner(ctx, clientstatedb.LiveAliasOwnerParams{AliasID: row.ID, Now: now})
 			if err != nil {
 				return AliasSelection{}, err
@@ -235,7 +236,7 @@ func (d *Database) changeAliasSelection(ctx context.Context, scope AliasScope, p
 			}
 		}
 	}
-	if project != row.SelectedProject {
+	if project != row.SelectedProjectRoot {
 		count, err := queries.SetAliasSelectedProject(ctx, clientstatedb.SetAliasSelectedProjectParams{
 			AliasID: row.ID, ProjectRoot: project, ExpectedRevision: row.SelectionRevision,
 		})
@@ -245,7 +246,7 @@ func (d *Database) changeAliasSelection(ctx context.Context, scope AliasScope, p
 		if count != 1 {
 			return AliasSelection{}, ErrAliasSelectionStale
 		}
-		row.SelectedProject, row.SelectionRevision = project, row.SelectionRevision+1
+		row.SelectedProjectRoot, row.SelectionRevision = project, row.SelectionRevision+1
 	}
 	if err := tx.Commit(); err != nil {
 		return AliasSelection{}, err
@@ -256,8 +257,8 @@ func (d *Database) changeAliasSelection(ctx context.Context, scope AliasScope, p
 func aliasSelection(row clientstatedb.ProjectAlias) AliasSelection {
 	var fingerprint [32]byte
 	copy(fingerprint[:], row.Fingerprint)
-	return AliasSelection{ID: row.ID, Scope: AliasScope{Server: row.ServerOrigin, ProjectKey: row.ProjectKey,
+	return AliasSelection{ID: row.ID, Scope: AliasScope{Server: row.ServerOrigin, ProjectKey: row.PrimaryProjectRoot,
 		TeamID: row.TeamID, MembershipID: row.MembershipID, Namespace: row.Namespace, Name: row.Name},
-		Hostname: row.Hostname, Service: row.Service, Project: row.SelectedProject,
+		Hostname: row.Hostname, Service: row.Service, Project: row.SelectedProjectRoot,
 		Revision: uint64(row.SelectionRevision), Fingerprint: fingerprint}
 }

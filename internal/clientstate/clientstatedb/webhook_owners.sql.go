@@ -7,12 +7,13 @@ package clientstatedb
 
 import (
 	"context"
+	"database/sql"
 )
 
 const claimWebhookReceiver = `-- name: ClaimWebhookReceiver :execrows
-INSERT INTO webhook_owners (server_origin, integration_group, name, tunnel_id)
-SELECT t.server_origin, t.integration_group, e.name, t.id
-FROM local_tunnels t JOIN webhook_endpoints e ON e.tunnel_id = t.id AND e.service = t.service
+INSERT INTO webhook_owners (server_origin, primary_project_root, integration_namespace, name, tunnel_id)
+SELECT t.server_origin, t.primary_project_root, t.integration_namespace, e.name, t.id
+FROM local_tunnels t JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.service = t.service
 WHERE t.id = ?1 AND t.server_origin = ?2
   AND t.integration_group = ?3 AND e.name = ?4
   AND e.fingerprint = ?5 AND t.state = 'ready'
@@ -73,7 +74,7 @@ func (q *Queries) DeleteExpiredWebhookOwner(ctx context.Context, arg DeleteExpir
 const exclusiveWebhookReceiver = `-- name: ExclusiveWebhookReceiver :one
 SELECT t.id, t.server_origin, t.integration_group, t.hostname, t.target, t.public_url_id, t.publish_run_number
 FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
-JOIN webhook_endpoints e ON e.tunnel_id = t.id AND e.name = owner.name AND e.service = t.service
+JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.name = owner.name AND e.service = t.service
 WHERE owner.server_origin = ?1 AND owner.integration_group = ?2
   AND owner.name = ?3 AND e.fingerprint = ?4
   AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > ?5
@@ -91,10 +92,10 @@ type ExclusiveWebhookReceiverRow struct {
 	ID               string
 	ServerOrigin     string
 	IntegrationGroup string
-	Hostname         string
-	Target           string
-	PublicURLID      string
-	PublishRunNumber int64
+	Hostname         sql.NullString
+	Target           sql.NullString
+	PublicURLID      sql.NullString
+	PublishRunNumber sql.NullInt64
 }
 
 func (q *Queries) ExclusiveWebhookReceiver(ctx context.Context, arg ExclusiveWebhookReceiverParams) (ExclusiveWebhookReceiverRow, error) {
@@ -146,7 +147,7 @@ func (q *Queries) ForceWebhookReceiver(ctx context.Context, arg ForceWebhookRece
 
 const getWebhookHostname = `-- name: GetWebhookHostname :one
 SELECT hostname FROM integration_url_hostnames
-WHERE server_origin = ?1 AND project_key = ?2
+WHERE server_origin = ?1 AND primary_project_root = ?2
   AND namespace = ?3 AND purpose = 'hooks'
 `
 
@@ -164,7 +165,7 @@ func (q *Queries) GetWebhookHostname(ctx context.Context, arg GetWebhookHostname
 }
 
 const readyExclusiveReceiver = `-- name: ReadyExclusiveReceiver :one
-SELECT COUNT(*) FROM local_tunnels t JOIN webhook_endpoints e ON e.tunnel_id = t.id AND e.service = t.service
+SELECT COUNT(*) FROM local_tunnels t JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.service = t.service
 WHERE t.id = ?1 AND t.server_origin = ?2
   AND t.integration_group = ?3 AND e.name = ?4
   AND e.fingerprint = ?5 AND t.state = 'ready'

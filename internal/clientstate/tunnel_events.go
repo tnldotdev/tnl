@@ -3,6 +3,7 @@ package clientstate
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"math"
 	"time"
@@ -26,12 +27,17 @@ type TunnelEvent struct {
 	At               time.Time
 }
 
+// these numeric reads retain the intermediate CLI's TCP-only observation API.
+// the project journal is the source of truth for both app and publication events.
 func (d *Database) LatestTunnelEventCursor(ctx context.Context, project string) (uint64, error) {
-	sequence, err := d.queries.LatestTunnelEventCursor(ctx, project)
+	journal, err := d.queries.GetRuntimeProject(ctx, project)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
-	return uint64(sequence), err
+	if err != nil {
+		return 0, err
+	}
+	return uint64(journal.LastSequence), nil
 }
 
 func (d *Database) TunnelEventsAfter(ctx context.Context, project string, after uint64) ([]TunnelEvent, error) {
@@ -42,24 +48,46 @@ func (d *Database) TunnelEventsAfter(ctx context.Context, project string, after 
 	if after > latest || after > math.MaxInt64 {
 		return nil, ErrTunnelCursorExpired
 	}
-	oldest, err := d.queries.OldestTunnelEventCursor(ctx, project)
+	oldest, err := d.queries.OldestRuntimeEvent(ctx, project)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if err == nil && uint64(oldest) > after+1 {
+	if err == nil && uint64(oldest) > after+1 || errors.Is(err, sql.ErrNoRows) && after != latest {
 		return nil, ErrTunnelCursorExpired
 	}
-	rows, err := d.queries.ListTunnelEventsAfter(ctx, clientstatedb.ListTunnelEventsAfterParams{ProjectRoot: project, After: int64(after), Latest: int64(latest)})
+	rows, err := d.queries.ListRuntimeEvents(ctx, clientstatedb.ListRuntimeEventsParams{ProjectRoot: project, After: int64(after)})
 	if err != nil {
 		return nil, err
 	}
 	events := make([]TunnelEvent, 0, len(rows))
 	for _, row := range rows {
+		if row.EventType != "publication.started" && row.EventType != "publication.changed" {
+			continue
+		}
+		var payload struct {
+			Publication struct {
+				TunnelID         string `json:"tunnel_id"`
+				Service          string `json:"service"`
+				ServiceProtocol  string `json:"service_protocol"`
+				State            string `json:"state"`
+				Target           string `json:"target"`
+				Hostname         string `json:"hostname"`
+				PublicPort       uint16 `json:"public_port"`
+				PublishRunNumber uint64 `json:"publish_run_number"`
+			} `json:"publication"`
+		}
+		if err := json.Unmarshal([]byte(row.PayloadJson), &payload); err != nil {
+			return nil, err
+		}
+		publication := payload.Publication
+		if publication.Service == "" || publication.ServiceProtocol == "" || publication.ServiceProtocol == "http" {
+			continue
+		}
 		events = append(events, TunnelEvent{
-			Sequence: uint64(row.Sequence), TunnelID: row.TunnelID, Service: row.Service,
-			ServiceProtocol: controlv1.PublicURLServiceProtocol(row.ServiceProtocol), State: TunnelState(row.State),
-			Target: row.Target, Hostname: row.Hostname, PublicPort: uint16(row.PublicPort),
-			PublishRunNumber: uint64(row.PublishRunNumber), At: unixNanoTime(row.CreatedAt),
+			Sequence: uint64(row.Sequence), TunnelID: publication.TunnelID, Service: publication.Service,
+			ServiceProtocol: controlv1.PublicURLServiceProtocol(publication.ServiceProtocol), State: TunnelState(publication.State),
+			Target: publication.Target, Hostname: publication.Hostname, PublicPort: publication.PublicPort,
+			PublishRunNumber: publication.PublishRunNumber, At: unixNanoTime(row.OccurredAt),
 		})
 	}
 	return events, nil

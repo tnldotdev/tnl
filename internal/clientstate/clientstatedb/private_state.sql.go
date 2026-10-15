@@ -7,105 +7,299 @@ package clientstatedb
 
 import (
 	"context"
+	"database/sql"
 )
 
-const deletePublisherSigningIdentity = `-- name: DeletePublisherSigningIdentity :exec
-DELETE FROM publisher_signing_identities WHERE server_origin = ?1 AND scope = ?2
+const deletePendingPublisherEnrollment = `-- name: DeletePendingPublisherEnrollment :exec
+DELETE FROM pending_publisher_enrollments WHERE server_origin = ?1 AND enrollment_id = ?2
 `
 
-type DeletePublisherSigningIdentityParams struct {
+type DeletePendingPublisherEnrollmentParams struct {
 	ServerOrigin string
-	Scope        string
+	EnrollmentID string
 }
 
-func (q *Queries) DeletePublisherSigningIdentity(ctx context.Context, arg DeletePublisherSigningIdentityParams) error {
-	_, err := q.db.ExecContext(ctx, deletePublisherSigningIdentity, arg.ServerOrigin, arg.Scope)
+func (q *Queries) DeletePendingPublisherEnrollment(ctx context.Context, arg DeletePendingPublisherEnrollmentParams) error {
+	_, err := q.db.ExecContext(ctx, deletePendingPublisherEnrollment, arg.ServerOrigin, arg.EnrollmentID)
 	return err
 }
 
-const deleteSystemState = `-- name: DeleteSystemState :exec
-DELETE FROM system_state WHERE name = ?1
+const deletePublisherIdentity = `-- name: DeletePublisherIdentity :exec
+DELETE FROM publisher_identities WHERE server_origin = ?1 AND identity_id = ?2
 `
 
-func (q *Queries) DeleteSystemState(ctx context.Context, name string) error {
-	_, err := q.db.ExecContext(ctx, deleteSystemState, name)
+type DeletePublisherIdentityParams struct {
+	ServerOrigin string
+	IdentityID   string
+}
+
+func (q *Queries) DeletePublisherIdentity(ctx context.Context, arg DeletePublisherIdentityParams) error {
+	_, err := q.db.ExecContext(ctx, deletePublisherIdentity, arg.ServerOrigin, arg.IdentityID)
 	return err
 }
 
-const getPublisherSigningIdentity = `-- name: GetPublisherSigningIdentity :one
-SELECT server_origin, scope, identity_id, public_value, stored_private, updated_at FROM publisher_signing_identities WHERE server_origin = ?1 AND scope = ?2
+const deletePublisherSelection = `-- name: DeletePublisherSelection :exec
+DELETE FROM publisher_selections WHERE server_origin = ?1
+  AND selection_kind = ?2 AND selection_key = ?3
 `
 
-type GetPublisherSigningIdentityParams struct {
-	ServerOrigin string
-	Scope        string
+type DeletePublisherSelectionParams struct {
+	ServerOrigin  string
+	SelectionKind string
+	SelectionKey  string
 }
 
-func (q *Queries) GetPublisherSigningIdentity(ctx context.Context, arg GetPublisherSigningIdentityParams) (PublisherSigningIdentity, error) {
-	row := q.db.QueryRowContext(ctx, getPublisherSigningIdentity, arg.ServerOrigin, arg.Scope)
-	var i PublisherSigningIdentity
+func (q *Queries) DeletePublisherSelection(ctx context.Context, arg DeletePublisherSelectionParams) error {
+	_, err := q.db.ExecContext(ctx, deletePublisherSelection, arg.ServerOrigin, arg.SelectionKind, arg.SelectionKey)
+	return err
+}
+
+const getPendingPublisherEnrollment = `-- name: GetPendingPublisherEnrollment :one
+SELECT server_origin, enrollment_id, selection_kind, selection_key, public_key, signing_key_ciphertext, enrollment_secret_ciphertext, result_json, expires_at, updated_at FROM pending_publisher_enrollments WHERE server_origin = ?1 AND enrollment_id = ?2
+`
+
+type GetPendingPublisherEnrollmentParams struct {
+	ServerOrigin string
+	EnrollmentID string
+}
+
+func (q *Queries) GetPendingPublisherEnrollment(ctx context.Context, arg GetPendingPublisherEnrollmentParams) (PendingPublisherEnrollment, error) {
+	row := q.db.QueryRowContext(ctx, getPendingPublisherEnrollment, arg.ServerOrigin, arg.EnrollmentID)
+	var i PendingPublisherEnrollment
 	err := row.Scan(
 		&i.ServerOrigin,
-		&i.Scope,
-		&i.IdentityID,
-		&i.PublicValue,
-		&i.StoredPrivate,
+		&i.EnrollmentID,
+		&i.SelectionKind,
+		&i.SelectionKey,
+		&i.PublicKey,
+		&i.SigningKeyCiphertext,
+		&i.EnrollmentSecretCiphertext,
+		&i.ResultJson,
+		&i.ExpiresAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const getSystemState = `-- name: GetSystemState :one
-SELECT stored_value FROM system_state WHERE name = ?1
+const getPublisherIdentity = `-- name: GetPublisherIdentity :one
+SELECT server_origin, identity_id, public_document_json, signing_key_ciphertext, updated_at FROM publisher_identities WHERE server_origin = ?1 AND identity_id = ?2
 `
 
-func (q *Queries) GetSystemState(ctx context.Context, name string) ([]byte, error) {
-	row := q.db.QueryRowContext(ctx, getSystemState, name)
-	var stored_value []byte
-	err := row.Scan(&stored_value)
-	return stored_value, err
+type GetPublisherIdentityParams struct {
+	ServerOrigin string
+	IdentityID   string
 }
 
-const savePublisherSigningIdentity = `-- name: SavePublisherSigningIdentity :exec
-INSERT INTO publisher_signing_identities (server_origin, scope, identity_id, public_value, stored_private, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-ON CONFLICT (server_origin, scope) DO UPDATE SET identity_id = excluded.identity_id, public_value = excluded.public_value,
-    stored_private = excluded.stored_private, updated_at = excluded.updated_at
+func (q *Queries) GetPublisherIdentity(ctx context.Context, arg GetPublisherIdentityParams) (PublisherIdentity, error) {
+	row := q.db.QueryRowContext(ctx, getPublisherIdentity, arg.ServerOrigin, arg.IdentityID)
+	var i PublisherIdentity
+	err := row.Scan(
+		&i.ServerOrigin,
+		&i.IdentityID,
+		&i.PublicDocumentJson,
+		&i.SigningKeyCiphertext,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getPublisherJobFileManifest = `-- name: GetPublisherJobFileManifest :one
+SELECT manifest_ciphertext FROM publisher_job_file_manifest WHERE id = 1
 `
 
-type SavePublisherSigningIdentityParams struct {
+func (q *Queries) GetPublisherJobFileManifest(ctx context.Context) ([]byte, error) {
+	row := q.db.QueryRowContext(ctx, getPublisherJobFileManifest)
+	var manifest_ciphertext []byte
+	err := row.Scan(&manifest_ciphertext)
+	return manifest_ciphertext, err
+}
+
+const getPublisherJobRegistry = `-- name: GetPublisherJobRegistry :one
+SELECT jobs_ciphertext FROM publisher_job_registry WHERE id = 1
+`
+
+func (q *Queries) GetPublisherJobRegistry(ctx context.Context) ([]byte, error) {
+	row := q.db.QueryRowContext(ctx, getPublisherJobRegistry)
+	var jobs_ciphertext []byte
+	err := row.Scan(&jobs_ciphertext)
+	return jobs_ciphertext, err
+}
+
+const getSelectedPublisherIdentity = `-- name: GetSelectedPublisherIdentity :one
+SELECT identity.server_origin, identity.identity_id, identity.public_document_json, identity.signing_key_ciphertext, identity.updated_at FROM publisher_selections selection
+JOIN publisher_identities identity ON identity.server_origin = selection.server_origin AND identity.identity_id = selection.identity_id
+WHERE selection.server_origin = ?1
+  AND selection.selection_kind = ?2 AND selection.selection_key = ?3
+`
+
+type GetSelectedPublisherIdentityParams struct {
 	ServerOrigin  string
-	Scope         string
-	IdentityID    string
-	PublicValue   []byte
-	StoredPrivate []byte
-	UpdatedAt     int64
+	SelectionKind string
+	SelectionKey  string
 }
 
-func (q *Queries) SavePublisherSigningIdentity(ctx context.Context, arg SavePublisherSigningIdentityParams) error {
-	_, err := q.db.ExecContext(ctx, savePublisherSigningIdentity,
+func (q *Queries) GetSelectedPublisherIdentity(ctx context.Context, arg GetSelectedPublisherIdentityParams) (PublisherIdentity, error) {
+	row := q.db.QueryRowContext(ctx, getSelectedPublisherIdentity, arg.ServerOrigin, arg.SelectionKind, arg.SelectionKey)
+	var i PublisherIdentity
+	err := row.Scan(
+		&i.ServerOrigin,
+		&i.IdentityID,
+		&i.PublicDocumentJson,
+		&i.SigningKeyCiphertext,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const recordPublisherEnrollmentResult = `-- name: RecordPublisherEnrollmentResult :execrows
+UPDATE pending_publisher_enrollments SET result_json = ?1, updated_at = ?2
+WHERE server_origin = ?3 AND enrollment_id = ?4
+  AND (result_json IS NULL OR result_json = ?1)
+`
+
+type RecordPublisherEnrollmentResultParams struct {
+	ResultJson   sql.NullString
+	UpdatedAt    int64
+	ServerOrigin string
+	EnrollmentID string
+}
+
+func (q *Queries) RecordPublisherEnrollmentResult(ctx context.Context, arg RecordPublisherEnrollmentResultParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordPublisherEnrollmentResult,
+		arg.ResultJson,
+		arg.UpdatedAt,
 		arg.ServerOrigin,
-		arg.Scope,
-		arg.IdentityID,
-		arg.PublicValue,
-		arg.StoredPrivate,
+		arg.EnrollmentID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const savePendingPublisherEnrollment = `-- name: SavePendingPublisherEnrollment :exec
+INSERT INTO pending_publisher_enrollments
+    (server_origin, enrollment_id, selection_kind, selection_key, public_key, signing_key_ciphertext,
+     enrollment_secret_ciphertext, result_json, expires_at, updated_at)
+VALUES (?1, ?2, ?3, ?4,
+    ?5, ?6, ?7,
+    ?8, ?9, ?10)
+ON CONFLICT (server_origin, enrollment_id) DO UPDATE SET
+    result_json = coalesce(excluded.result_json, pending_publisher_enrollments.result_json),
+    updated_at = excluded.updated_at
+WHERE pending_publisher_enrollments.public_key = excluded.public_key
+  AND pending_publisher_enrollments.selection_kind = excluded.selection_kind
+  AND pending_publisher_enrollments.selection_key = excluded.selection_key
+`
+
+type SavePendingPublisherEnrollmentParams struct {
+	ServerOrigin               string
+	EnrollmentID               string
+	SelectionKind              string
+	SelectionKey               string
+	PublicKey                  []byte
+	SigningKeyCiphertext       []byte
+	EnrollmentSecretCiphertext []byte
+	ResultJson                 sql.NullString
+	ExpiresAt                  int64
+	UpdatedAt                  int64
+}
+
+func (q *Queries) SavePendingPublisherEnrollment(ctx context.Context, arg SavePendingPublisherEnrollmentParams) error {
+	_, err := q.db.ExecContext(ctx, savePendingPublisherEnrollment,
+		arg.ServerOrigin,
+		arg.EnrollmentID,
+		arg.SelectionKind,
+		arg.SelectionKey,
+		arg.PublicKey,
+		arg.SigningKeyCiphertext,
+		arg.EnrollmentSecretCiphertext,
+		arg.ResultJson,
+		arg.ExpiresAt,
 		arg.UpdatedAt,
 	)
 	return err
 }
 
-const saveSystemState = `-- name: SaveSystemState :exec
-INSERT INTO system_state (name, stored_value, updated_at) VALUES (?1, ?2, ?3)
-ON CONFLICT (name) DO UPDATE SET stored_value = excluded.stored_value, updated_at = excluded.updated_at
+const savePublisherIdentity = `-- name: SavePublisherIdentity :exec
+INSERT INTO publisher_identities (server_origin, identity_id, public_document_json, signing_key_ciphertext, updated_at)
+VALUES (?1, ?2, ?3,
+    ?4, ?5)
+ON CONFLICT (server_origin, identity_id) DO NOTHING
 `
 
-type SaveSystemStateParams struct {
-	Name        string
-	StoredValue []byte
-	UpdatedAt   int64
+type SavePublisherIdentityParams struct {
+	ServerOrigin         string
+	IdentityID           string
+	PublicDocumentJson   string
+	SigningKeyCiphertext []byte
+	UpdatedAt            int64
 }
 
-func (q *Queries) SaveSystemState(ctx context.Context, arg SaveSystemStateParams) error {
-	_, err := q.db.ExecContext(ctx, saveSystemState, arg.Name, arg.StoredValue, arg.UpdatedAt)
+func (q *Queries) SavePublisherIdentity(ctx context.Context, arg SavePublisherIdentityParams) error {
+	_, err := q.db.ExecContext(ctx, savePublisherIdentity,
+		arg.ServerOrigin,
+		arg.IdentityID,
+		arg.PublicDocumentJson,
+		arg.SigningKeyCiphertext,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const savePublisherJobFileManifest = `-- name: SavePublisherJobFileManifest :exec
+INSERT INTO publisher_job_file_manifest (id, manifest_ciphertext, updated_at) VALUES (1, ?1, ?2)
+ON CONFLICT (id) DO UPDATE SET manifest_ciphertext = excluded.manifest_ciphertext, updated_at = excluded.updated_at
+`
+
+type SavePublisherJobFileManifestParams struct {
+	ManifestCiphertext []byte
+	UpdatedAt          int64
+}
+
+func (q *Queries) SavePublisherJobFileManifest(ctx context.Context, arg SavePublisherJobFileManifestParams) error {
+	_, err := q.db.ExecContext(ctx, savePublisherJobFileManifest, arg.ManifestCiphertext, arg.UpdatedAt)
+	return err
+}
+
+const savePublisherJobRegistry = `-- name: SavePublisherJobRegistry :exec
+INSERT INTO publisher_job_registry (id, jobs_ciphertext, updated_at) VALUES (1, ?1, ?2)
+ON CONFLICT (id) DO UPDATE SET jobs_ciphertext = excluded.jobs_ciphertext, updated_at = excluded.updated_at
+`
+
+type SavePublisherJobRegistryParams struct {
+	JobsCiphertext []byte
+	UpdatedAt      int64
+}
+
+func (q *Queries) SavePublisherJobRegistry(ctx context.Context, arg SavePublisherJobRegistryParams) error {
+	_, err := q.db.ExecContext(ctx, savePublisherJobRegistry, arg.JobsCiphertext, arg.UpdatedAt)
+	return err
+}
+
+const selectPublisherIdentity = `-- name: SelectPublisherIdentity :exec
+INSERT INTO publisher_selections (server_origin, selection_kind, selection_key, identity_id, updated_at)
+VALUES (?1, ?2, ?3,
+    ?4, ?5)
+ON CONFLICT (server_origin, selection_kind, selection_key) DO UPDATE SET
+    identity_id = excluded.identity_id, updated_at = excluded.updated_at
+`
+
+type SelectPublisherIdentityParams struct {
+	ServerOrigin  string
+	SelectionKind string
+	SelectionKey  string
+	IdentityID    string
+	UpdatedAt     int64
+}
+
+func (q *Queries) SelectPublisherIdentity(ctx context.Context, arg SelectPublisherIdentityParams) error {
+	_, err := q.db.ExecContext(ctx, selectPublisherIdentity,
+		arg.ServerOrigin,
+		arg.SelectionKind,
+		arg.SelectionKey,
+		arg.IdentityID,
+		arg.UpdatedAt,
+	)
 	return err
 }

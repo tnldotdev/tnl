@@ -176,17 +176,17 @@ func (d *Database) saveInspection(ctx context.Context, tunnelID, primary, projec
 		return err
 	}
 	var usedBytes int64
-	if err := tx.QueryRowContext(ctx, `SELECT used_bytes FROM local_inspection_usage WHERE project_root = ? AND service = ?`,
+	if err := tx.QueryRowContext(ctx, `SELECT used_bytes FROM inspection_storage_usage WHERE project_root = ? AND service = ?`,
 		project, service).Scan(&usedBytes); err != nil {
 		return fmt.Errorf("clientstate: read service inspection budget: %w", err)
 	}
 	for usedBytes > policy.MaxBytes {
 		var rowID, oldBytes int64
-		if err := tx.QueryRowContext(ctx, `SELECT row_id, stored_bytes FROM local_inspections
+		if err := tx.QueryRowContext(ctx, `SELECT row_id, stored_bytes FROM inspections
 			WHERE project_root = ? AND service = ? ORDER BY received_at, row_id LIMIT 1`, project, service).Scan(&rowID, &oldBytes); err != nil {
 			return fmt.Errorf("clientstate: read oldest service inspection: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM local_inspections WHERE row_id = ?`, rowID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM inspections WHERE row_id = ?`, rowID); err != nil {
 			return fmt.Errorf("clientstate: prune service inspection budget: %w", err)
 		}
 		usedBytes -= oldBytes
@@ -226,7 +226,7 @@ func (d *Database) ListInspections(ctx context.Context, filter InspectionFilter)
 	query := `SELECT number, primary_checkout_root, tunnel_id, project_root, shared_project_root,
 		service, service_protocol, received_at, method, path, status, duration_ms, origin,
 		sql_operation, result, redis_command, sql_state, sql_rows, mysql_result_sets, mysql_error_code
-		FROM local_inspections WHERE ` + column + ` = ? AND expires_at > ? AND (? = '' OR service = ?)
+		FROM inspections WHERE ` + column + ` = ? AND expires_at > ? AND (? = '' OR service = ?)
 		AND (? = '' OR service_protocol = ?) AND (? = '' OR method = ?) AND (? = 0 OR status = ?)
 		AND (? = '' OR CASE WHEN service_protocol = 'http' THEN
 		 CASE WHEN status >= 400 THEN 'error' ELSE 'ok' END ELSE result END = ?)
@@ -274,7 +274,7 @@ func (d *Database) GetInspection(ctx context.Context, primary string, number int
 	row := d.db.QueryRowContext(ctx, `SELECT number, primary_checkout_root, tunnel_id, project_root,
 		shared_project_root, service, service_protocol, received_at, method, path, status, duration_ms, origin,
 		sql_operation, result, redis_command, sql_state, sql_rows, mysql_result_sets, mysql_error_code
-		FROM local_inspections WHERE primary_checkout_root = ? AND number = ? AND expires_at > ?`,
+		FROM inspections WHERE primary_checkout_root = ? AND number = ? AND expires_at > ?`,
 		primary, number, d.now().UnixNano())
 	return scanInspection(row)
 }
