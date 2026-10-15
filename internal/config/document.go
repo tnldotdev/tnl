@@ -38,7 +38,6 @@ type TNL struct {
 	OAuth      bool               `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
 	Inspection *Inspection        `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP and supported TCP services."`
 	Tunnel     *Tunnel            `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
-	Publisher  *AppPublisher      `json:"publisher,omitempty" yaml:"publisher,omitempty"`
 	Publish    *Publish           `json:"-" yaml:"-"`
 	Readiness  *Readiness         `json:"-" yaml:"-"`
 	Services   Services           `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named services, private targets, and public tunnel settings."`
@@ -55,14 +54,6 @@ type Service struct {
 	Protocol   *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh"`
 	Target     *ServiceTarget `json:"target,omitempty" yaml:"target,omitempty"`
 	HTTP       *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
-}
-
-// AppPublisher selects where app registrations are published. a compose file,
-// when supplied, is relative to the selected project root.
-type AppPublisher struct {
-	Type    string  `json:"type" yaml:"type" jsonschema:"required,enum=host,enum=compose"`
-	Service string  `json:"service,omitempty" yaml:"service,omitempty"`
-	File    *string `json:"file,omitempty" yaml:"file,omitempty"`
 }
 
 // ServiceTarget describes exactly one private discovery mechanism. an omitted
