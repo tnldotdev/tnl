@@ -25,10 +25,9 @@ import (
 
 const (
 	// schemaVersion is the newest embedded migration; update it when adding a migration.
-	schemaVersion int64 = 28
-	// minimumSchemaVersion is the oldest schema this runtime can serve safely.
-	// advance it only when runtime reads or writes require a newer migration.
-	minimumSchemaVersion int64 = 26
+	schemaVersion int64 = 1
+	// minimumSchemaVersion is the first clean-slate publisher-grant baseline.
+	minimumSchemaVersion int64 = 1
 	versionTable               = "control.goose_db_version"
 	bootstrapRetryDelay        = 25 * time.Millisecond
 )
@@ -229,7 +228,8 @@ type schemaVersionQuerier interface {
 func readSchemaVersion(ctx context.Context, database schemaVersionQuerier) (int64, error) {
 	var version int64
 	if err := database.QueryRow(ctx, `
-		SELECT COALESCE(MAX(version_id) FILTER (WHERE is_applied), 0)
+		SELECT CASE WHEN to_regclass('control.publish_run_publisher_identities') IS NULL THEN 0
+		    ELSE COALESCE(MAX(version_id) FILTER (WHERE is_applied), 0) END
 		FROM control.goose_db_version
 	`).Scan(&version); err != nil {
 		return 0, fmt.Errorf("controlstate: read schema version: %w", err)

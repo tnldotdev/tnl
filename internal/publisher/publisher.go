@@ -12,10 +12,10 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	projectconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -44,48 +44,52 @@ type PublicURLControlClient interface {
 }
 
 type Config struct {
-	Control                  PublicURLControlClient
-	ControlURL               string
-	BrowserLoginAvailable    bool
-	TeamID                   string
-	DomainID                 string
-	MembershipID             string
-	PolicyRevision           uint64
-	PublicURLScope           controlv1.PublicURLScope
-	Purpose                  controlv1.PublicURLPurpose
-	Hostname                 string
-	PreviewID                string
-	Feedback                 bool
-	Demo                     bool
-	ProjectRoot              string
-	Service                  string
-	Target                   string
-	ServiceProtocol          controlv1.PublicURLServiceProtocol
-	TargetTLSName            string
-	TargetTLS                bool
-	VisitorTLSPassthrough    bool
-	PreserveSavedURLTarget   bool
-	TargetOptions            localproxy.TargetOptions
-	Handler                  http.Handler // integration URL handler; no local target is dialed.
-	AdmitRequest             func(*http.Request, PublishRunIdentity) error
-	ObserveResponse          ResponseObserver
-	Mounts                   []localproxy.Mount
-	RequestLimit             int // zero selects localproxy.DefaultRequestLimit.
-	Limits                   ApplicationLimits
-	ObserveRequest           func(RequestObservation)
-	InspectionMode           projectconfig.InspectionMode
-	AllowedIPPrefixes        []string
-	Ephemeral                bool
-	AllocatedPublicURL       *controlv1.PublicURL
-	State                    *clientstate.Store
-	QUICConnector            muxsession.Connector
-	TCPConnector             muxsession.Connector
-	FallbackDelay            time.Duration
-	DrainTime                time.Duration
-	ProvisioningStalledDelay time.Duration
-	Logf                     func(string, ...any)
-	Observe                  func(Event) error
-	heartbeatInterval        time.Duration
+	Control                     PublicURLControlClient
+	ControlURL                  string
+	BrowserLoginAvailable       bool
+	TeamID                      string
+	DomainID                    string
+	MembershipID                string
+	PolicyRevision              uint64
+	PublicURLScope              controlv1.PublicURLScope
+	Purpose                     controlv1.PublicURLPurpose
+	Hostname                    string
+	PreviewID                   string
+	Feedback                    bool
+	Demo                        bool
+	ProjectRoot                 string
+	Service                     string
+	Target                      string
+	ResolveTarget               func(context.Context) (string, string, error)
+	ServiceProtocol             controlv1.PublicURLServiceProtocol
+	TargetTLSName               string
+	TargetTLS                   bool
+	PreserveSavedURLTarget      bool
+	TargetOptions               localproxy.TargetOptions
+	Handler                     http.Handler // integration URL handler; no local target is dialed.
+	AdmitRequest                func(*http.Request, PublishRunIdentity) error
+	ObserveResponse             ResponseObserver
+	Mounts                      []localproxy.Mount
+	Limits                      ApplicationLimits
+	ObserveSummary              inspection.Observer
+	PromoteVisitor              PromoteVisitor
+	AdmitVisitor                AdmitVisitor
+	AuthorizeVisitorCertificate AuthorizeVisitorCertificate
+	ReadinessProof              func(PublishRunIdentity) *ReadinessProof
+	OnWarning                   func(string)
+	InspectionMode              inspection.Mode
+	AllowedIPPrefixes           []string
+	Ephemeral                   bool
+	AllocatedPublicURL          *controlv1.PublicURL
+	State                       *clientstate.Store
+	QUICConnector               muxsession.Connector
+	TCPConnector                muxsession.Connector
+	FallbackDelay               time.Duration
+	DrainTime                   time.Duration
+	ProvisioningStalledDelay    time.Duration
+	Logf                        func(string, ...any)
+	Observe                     func(Event) error
+	heartbeatInterval           time.Duration
 }
 
 type EventType string
@@ -115,9 +119,10 @@ type Event struct {
 
 // PublishRunIdentity binds a response observer to the run that served it.
 type PublishRunIdentity struct {
-	Hostname    string
-	PublicURLID string
-	Number      uint64
+	Hostname     string
+	PublicURLID  string
+	PublishRunID string
+	Number       uint64
 }
 
 type ResponseObserver func(*http.Response, PublishRunIdentity) error
@@ -126,8 +131,11 @@ func Run(ctx context.Context, config Config) (result error) {
 	if config.Control == nil {
 		return errors.New("publisher: control client is required")
 	}
-	if config.RequestLimit < 0 {
-		return errors.New("publisher: request limit cannot be negative")
+	if err := config.Limits.Validate(); err != nil {
+		return err
+	}
+	if !config.InspectionMode.Valid() {
+		return errors.New("publisher: inspection mode must be none or summary")
 	}
 	if config.DrainTime < 0 || config.FallbackDelay < 0 {
 		return errors.New("publisher: drain time and fallback delay cannot be negative")
@@ -159,8 +167,11 @@ func Run(ctx context.Context, config Config) (result error) {
 		config.ServiceProtocol = controlv1.Http
 	}
 	if config.ServiceProtocol == controlv1.Http {
-		if config.TargetTLSName != "" || config.TargetTLS || config.VisitorTLSPassthrough {
+		if config.TargetTLS {
 			return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target TLS settings require a TCP service protocol"))
+		}
+		if config.TargetTLSName != "" {
+			config.TargetOptions.ServerName = config.TargetTLSName
 		}
 		config.Target, err = localproxy.NormalizeTarget(config.Target)
 		if err != nil {
@@ -173,8 +184,8 @@ func Run(ctx context.Context, config Config) (result error) {
 		_, err = validateTCPForwarding(PublicURLServerConfig{
 			Hostname: config.Hostname, ServiceProtocol: config.ServiceProtocol,
 			Target: config.Target, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS,
-			VisitorTLSPassthrough: config.VisitorTLSPassthrough, TargetOptions: config.TargetOptions,
-			Handler: config.Handler, Mounts: config.Mounts,
+			TargetOptions: config.TargetOptions,
+			Handler:       config.Handler, Mounts: config.Mounts,
 		})
 		if err == nil {
 			var connection net.Conn

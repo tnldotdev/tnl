@@ -15,6 +15,10 @@ import (
 
 func writeControlStateProblem(response http.ResponseWriter, operation string, err error) {
 	switch {
+	case errors.Is(err, controlstate.ErrTrafficSelection):
+		writeProblem(response, http.StatusBadRequest, controlv1.TrafficSelectionInvalid, "traffic selection is invalid or exceeds operator ceilings; lower the selected limits and retry")
+	case errors.Is(err, controlstate.ErrVisitorSignIn):
+		writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "feedback requires sign-in; sign in and retry")
 	case errors.Is(err, controlstate.ErrDNSAuthorityInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid DNS authority request")
 	case errors.Is(err, controlstate.ErrDNSAuthorityNotFound):
@@ -50,7 +54,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "certificate issuance state conflict")
 	case errors.Is(err, controlstate.ErrCertificateChallengeNotReady):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "certificate challenge state conflict")
-	case errors.Is(err, controlstate.ErrPublicURLCredential), errors.Is(err, controlstate.ErrPublishRunCredential), errors.Is(err, controlstate.ErrPublicURLPublishCredential):
+	case errors.Is(err, controlstate.ErrPublishRunCredential), errors.Is(err, controlstate.ErrPublisherIdentity):
 		writeBearerProblem(response)
 	case errors.Is(err, controlstate.ErrPublicURLCreationGated), errors.Is(err, controlstate.ErrPublishRunCreationGated),
 		errors.Is(err, controlstate.ErrCertificateIssuanceGated):
