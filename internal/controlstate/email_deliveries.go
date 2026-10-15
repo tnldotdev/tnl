@@ -13,7 +13,9 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
-func emailPayloadContext(id string) string { return "control.email_deliveries.payload\x00" + id }
+func emailPayloadContext(id string) string {
+	return "control.team_invitation_email_deliveries.payload\x00" + id
+}
 
 func (d *Database) queueInvitationEmail(ctx context.Context, queries *controlstatedb.Queries, id, teamName, to, secret string, expiresAt, now time.Time) error {
 	encoded, err := json.Marshal(authorityv1.EmailDeliveryRequest{DeliveryId: id, Type: authorityv1.TeamInvitation, To: openapi_types.Email(to),
@@ -65,7 +67,7 @@ func (d *Database) FinishInvitationEmail(ctx context.Context, delivery EmailDeli
 	delay := time.Second * time.Duration(1<<min(delivery.Attempts, 8))
 	rows, err := controlstatedb.New(d.pool).FinishInvitationEmail(ctx, controlstatedb.FinishInvitationEmailParams{
 		DeliveryID: delivery.ID, LeaseOwner: text(delivery.Owner), Complete: complete,
-		Now: timestamp(now), AvailableAt: timestamp(now.Add(delay)), LastStatus: int32(status),
+		Now: timestamp(now), AvailableAt: timestamp(now.Add(delay)), LastHTTPStatus: int32(status),
 	})
 	if err != nil {
 		return err

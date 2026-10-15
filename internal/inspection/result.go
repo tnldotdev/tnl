@@ -1,6 +1,9 @@
 package inspection
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 const (
 	DefaultRetention = 24 * time.Hour
@@ -44,9 +47,32 @@ func ValidSQLState(value string) bool {
 }
 
 type Policy struct {
+	Mode      Mode
 	Retention time.Duration
 	MaxBytes  int64
 }
+
+func (p Policy) Validate() error {
+	if !p.Mode.Valid() {
+		return errors.New("inspection mode must be none or summary")
+	}
+	if p.Retention != 0 && (p.Retention < time.Minute || p.Retention > MaxRetention) {
+		return errors.New("inspection retention must be between one minute and thirty days")
+	}
+	if p.MaxBytes != 0 && (p.MaxBytes < MinMaxBytes || p.MaxBytes > MaxMaxBytes) {
+		return errors.New("inspection byte budget must be between 1 MiB and 1 GiB")
+	}
+	return nil
+}
+
+type Mode string
+
+const (
+	None        Mode = "none"
+	SummaryMode Mode = "summary"
+)
+
+func (m Mode) Valid() bool { return m == "" || m == None || m == SummaryMode }
 
 // HTTPResult classifies an HTTP response without hiding its exact status.
 func HTTPResult(status int) Result {

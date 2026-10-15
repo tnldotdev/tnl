@@ -13,7 +13,7 @@ import (
 
 const claimInvitationEmail = `-- name: ClaimInvitationEmail :one
 WITH candidate AS (
-    SELECT delivery.delivery_id FROM control.email_deliveries AS delivery
+    SELECT delivery.delivery_id FROM control.team_invitation_email_deliveries AS delivery
     JOIN control.team_invitations AS invitation ON invitation.id = delivery.delivery_id
     WHERE delivery.completed_at IS NULL AND delivery.available_at <= $3
       AND (delivery.lease_owner IS NULL OR delivery.lease_expires_at <= $3)
@@ -21,10 +21,10 @@ WITH candidate AS (
     ORDER BY delivery.available_at, delivery.delivery_id
     FOR UPDATE OF delivery SKIP LOCKED LIMIT 1
 )
-UPDATE control.email_deliveries AS delivery
+UPDATE control.team_invitation_email_deliveries AS delivery
 SET lease_owner = $1, lease_expires_at = $2, attempts = attempts + 1
 FROM candidate WHERE delivery.delivery_id = candidate.delivery_id
-RETURNING delivery.delivery_id, delivery.payload_ciphertext, delivery.storage_key_id, delivery.available_at, delivery.attempts, delivery.lease_owner, delivery.lease_expires_at, delivery.completed_at, delivery.last_status
+RETURNING delivery.delivery_id, delivery.payload_ciphertext, delivery.storage_key_id, delivery.available_at, delivery.attempts, delivery.lease_owner, delivery.lease_expires_at, delivery.completed_at, delivery.last_http_status
 `
 
 type ClaimInvitationEmailParams struct {
@@ -33,9 +33,9 @@ type ClaimInvitationEmailParams struct {
 	Now            pgtype.Timestamptz
 }
 
-func (q *Queries) ClaimInvitationEmail(ctx context.Context, arg ClaimInvitationEmailParams) (ControlEmailDelivery, error) {
+func (q *Queries) ClaimInvitationEmail(ctx context.Context, arg ClaimInvitationEmailParams) (ControlTeamInvitationEmailDelivery, error) {
 	row := q.db.QueryRow(ctx, claimInvitationEmail, arg.LeaseOwner, arg.LeaseExpiresAt, arg.Now)
-	var i ControlEmailDelivery
+	var i ControlTeamInvitationEmailDelivery
 	err := row.Scan(
 		&i.DeliveryID,
 		&i.PayloadCiphertext,
@@ -45,13 +45,13 @@ func (q *Queries) ClaimInvitationEmail(ctx context.Context, arg ClaimInvitationE
 		&i.LeaseOwner,
 		&i.LeaseExpiresAt,
 		&i.CompletedAt,
-		&i.LastStatus,
+		&i.LastHTTPStatus,
 	)
 	return i, err
 }
 
 const createInvitationEmail = `-- name: CreateInvitationEmail :exec
-INSERT INTO control.email_deliveries(delivery_id, payload_ciphertext, storage_key_id, available_at)
+INSERT INTO control.team_invitation_email_deliveries(delivery_id, payload_ciphertext, storage_key_id, available_at)
 VALUES ($1, $2, $3, $4)
 `
 
@@ -73,7 +73,7 @@ func (q *Queries) CreateInvitationEmail(ctx context.Context, arg CreateInvitatio
 }
 
 const discardInactiveInvitationEmails = `-- name: DiscardInactiveInvitationEmails :exec
-UPDATE control.email_deliveries AS delivery
+UPDATE control.team_invitation_email_deliveries AS delivery
 SET completed_at = $1, payload_ciphertext = NULL, storage_key_id = NULL,
     lease_owner = NULL, lease_expires_at = NULL
 FROM control.team_invitations AS invitation
@@ -88,23 +88,23 @@ func (q *Queries) DiscardInactiveInvitationEmails(ctx context.Context, now pgtyp
 }
 
 const finishInvitationEmail = `-- name: FinishInvitationEmail :execrows
-UPDATE control.email_deliveries
+UPDATE control.team_invitation_email_deliveries
 SET completed_at = CASE WHEN $1::boolean THEN $2::timestamptz ELSE NULL END,
     payload_ciphertext = CASE WHEN $1::boolean THEN NULL ELSE payload_ciphertext END,
     storage_key_id = CASE WHEN $1::boolean THEN NULL ELSE storage_key_id END,
-    available_at = $3, last_status = $4,
+     available_at = $3, last_http_status = $4,
     lease_owner = NULL, lease_expires_at = NULL
 WHERE delivery_id = $5 AND lease_owner = $6
   AND lease_expires_at > $2 AND completed_at IS NULL
 `
 
 type FinishInvitationEmailParams struct {
-	Complete    bool
-	Now         pgtype.Timestamptz
-	AvailableAt pgtype.Timestamptz
-	LastStatus  int32
-	DeliveryID  string
-	LeaseOwner  pgtype.Text
+	Complete       bool
+	Now            pgtype.Timestamptz
+	AvailableAt    pgtype.Timestamptz
+	LastHTTPStatus int32
+	DeliveryID     string
+	LeaseOwner     pgtype.Text
 }
 
 func (q *Queries) FinishInvitationEmail(ctx context.Context, arg FinishInvitationEmailParams) (int64, error) {
@@ -112,7 +112,7 @@ func (q *Queries) FinishInvitationEmail(ctx context.Context, arg FinishInvitatio
 		arg.Complete,
 		arg.Now,
 		arg.AvailableAt,
-		arg.LastStatus,
+		arg.LastHTTPStatus,
 		arg.DeliveryID,
 		arg.LeaseOwner,
 	)

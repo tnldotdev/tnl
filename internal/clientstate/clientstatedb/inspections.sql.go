@@ -10,7 +10,7 @@ import (
 )
 
 const deleteExpiredInspections = `-- name: DeleteExpiredInspections :exec
-DELETE FROM local_inspections WHERE expires_at <= ?1
+DELETE FROM inspections WHERE expires_at <= ?1
 `
 
 func (q *Queries) DeleteExpiredInspections(ctx context.Context, now int64) error {
@@ -19,7 +19,7 @@ func (q *Queries) DeleteExpiredInspections(ctx context.Context, now int64) error
 }
 
 const insertInspection = `-- name: InsertInspection :exec
-INSERT INTO local_inspections (
+INSERT INTO inspections (
     number, primary_checkout_root, tunnel_id, project_root, shared_project_root,
     service, service_protocol, received_at, expires_at, stored_bytes,
     method, path, status, duration_ms, origin,
@@ -88,7 +88,7 @@ func (q *Queries) InsertInspection(ctx context.Context, arg InsertInspectionPara
 }
 
 const nextInspectionNumber = `-- name: NextInspectionNumber :one
-INSERT INTO local_inspection_counters (primary_checkout_root, last_number)
+INSERT INTO inspection_number_counters (primary_checkout_root, last_number)
 VALUES (?1, 1)
 ON CONFLICT (primary_checkout_root) DO UPDATE SET last_number = last_number + 1
 RETURNING last_number

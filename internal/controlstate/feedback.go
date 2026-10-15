@@ -554,11 +554,11 @@ func feedbackThreadFromRow(row controlstatedb.ControlFeedbackThread) FeedbackThr
 		PageTitle: row.PageTitle, MessageCount: uint64(row.MessageCount), LatestEventCursor: uint64(row.LatestEventCursor),
 		ID: row.ID, PreviewID: row.PreviewID, TeamID: row.TeamID, PublicURLID: row.PublicURLID,
 		PublishRunID: row.PublishRunID, PublishRunNumber: uint64(row.PublishRunNumber),
-		Service: row.Service, PagePath: row.PagePath, State: FeedbackThreadState(row.State),
+		Service: row.ServiceName, PagePath: row.PagePath, State: FeedbackThreadState(row.State),
 		ReportText: row.ReportText, AuthorDisplayName: row.AuthorDisplayName.String,
 		AuthorIdentityID: row.AuthorIdentityID.String, AuthorVerified: row.AuthorVerified,
-		SchemaVersion: int(row.SchemaVersion), Anchor: slices.Clone(row.Anchor), Evidence: slices.Clone(row.Evidence),
-		SourceAtReport: slices.Clone(row.SourceAtReport),
+		SchemaVersion: int(row.SchemaVersion), Anchor: slices.Clone(row.Pin), Evidence: slices.Clone(row.Evidence),
+		SourceAtReport: slices.Clone(row.ReportSourceState),
 		CreatedAt:      row.CreatedAt.Time, StateUpdatedAt: row.StateUpdatedAt.Time,
 	}
 }
