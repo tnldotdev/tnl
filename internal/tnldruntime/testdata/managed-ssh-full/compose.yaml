@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    environment:
+      POSTGRES_PASSWORD: fixture
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  test:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 1g
+    volumes:
+      - ${TNL_MANAGED_SSH_FULL_BIN_DIR:?set the fixture binary directory}:/fixture:ro
+    command:
+      - -test.run=^TestIntegrationFullManagedSSH$$
+      - -test.v
+      - -test.timeout=5m
+      - -tnl-test-tier=integration
+      - -tnl-test-postgres-url=postgres://postgres:fixture@postgres:5432/postgres?sslmode=disable
+      - -tnl-test-managed-ssh-root-user=tnl-ssh-test
+      - -tnl-test-managed-ssh-other-user=tnl-ssh-other
+      - -tnl-test-managed-ssh-binary=/fixture/tnl
