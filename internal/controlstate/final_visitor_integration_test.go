@@ -175,6 +175,9 @@ func TestIntegrationFinalVisitorLiveIPExpiryAndRunBoundary(t *testing.T) {
 		}
 	}
 	check(f.now, true)
+	if permission, err := d.DatabaseVisitorPermission(t.Context(), auth, "", "192.0.2.9", f.now); err != nil || permission.ExpiresAt == nil || !permission.ExpiresAt.Equal(expiry) {
+		t.Fatalf("cached database decision outlived IP grant: %+v %v", permission, err)
+	}
 	check(expiry, false)
 	var ciphertext []byte
 	if err = d.pool.QueryRow(t.Context(), `SELECT prefix_ciphertext FROM control.visitor_ip_grants WHERE id=$1`, grants[0].ID).Scan(&ciphertext); err != nil || bytes.Contains(ciphertext, []byte("192.0.2.")) {
@@ -555,7 +558,7 @@ func TestIntegrationExactURLShareSecretAndCookieAreInterchangeable(t *testing.T)
 	share, err := d.CreateShare(t.Context(), CreateShareRequest{
 		TeamID: f.request.TeamID, ActingIdentityID: f.request.ActingIdentityID,
 		IdempotencyKey: "automation", Label: "ci", SecretFingerprint: digest,
-		ExpiresAt: f.now.Add(time.Hour), PolicyRevision: f.request.PolicyRevision,
+		ExpiresAt: f.now.Add(30 * time.Second), PolicyRevision: f.request.PolicyRevision,
 		PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: auth.PublicURLID, ExpectedMutationRevision: uint64(revision)}},
 	}, f.now)
 	if err != nil || share.Scope != "url" || share.PreviewID != "" || !slices.Equal(share.PublicURLIDs, []string{auth.PublicURLID}) {
@@ -570,6 +573,9 @@ func TestIntegrationExactURLShareSecretAndCookieAreInterchangeable(t *testing.T)
 		}
 	}
 	check(f.now, true)
+	if permission, err := d.HTTPVisitorPermission(t.Context(), auth, input, f.now); err != nil || permission.ExpiresAt == nil || !permission.ExpiresAt.Equal(share.ExpiresAt) {
+		t.Fatalf("HTTP decision outlived its share: %+v %v", permission, err)
+	}
 	cookie := bytes.Repeat([]byte{9}, 32)
 	cookieDigest := sha256.Sum256(cookie)
 	if _, err := controlstatedb.New(d.pool).InsertShareCookie(t.Context(), controlstatedb.InsertShareCookieParams{
@@ -579,6 +585,9 @@ func TestIntegrationExactURLShareSecretAndCookieAreInterchangeable(t *testing.T)
 	}
 	input.ShareSecret, input.ShareCookieSecret = nil, cookie
 	check(f.now, true)
+	if permission, err := d.HTTPVisitorPermission(t.Context(), auth, input, f.now); err != nil || permission.ExpiresAt == nil || !permission.ExpiresAt.Equal(share.ExpiresAt) {
+		t.Fatalf("browser cookie decision outlived its share: %+v %v", permission, err)
+	}
 	if _, err := d.ReplaceVisitorAccess(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, VisitorAccessRestricted, []string{"192.0.2.0/24"}, uint64(revision), f.now); err != nil {
 		t.Fatal(err)
 	}

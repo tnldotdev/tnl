@@ -214,6 +214,7 @@ paths:
                 properties:
                   identity_id: { $ref: "#/components/schemas/IdentityID" }
                   public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+                  valid_until: { type: string, format: date-time }
         default: { $ref: "#/components/responses/Problem" }
   /v1/guest-demo/publisher:
     post:
@@ -1626,6 +1627,7 @@ components:
         team_member: { type: boolean }
         identity_id: { type: string }
         display_name: { type: string }
+        valid_until: { type: string, format: date-time }
     CreateTeamVisitorGrantRequest:
       type: object
       additionalProperties: false

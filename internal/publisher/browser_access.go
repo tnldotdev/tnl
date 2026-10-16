@@ -2,7 +2,9 @@ package publisher
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"html"
 	"io"
@@ -33,6 +35,7 @@ type browserAccess struct {
 	version                                   uint64
 	token                                     credentials.PublishRunToken
 	shares                                    *shareAccess
+	decisions                                 *visitorDecisionCache[controlv1.HTTPVisitorResponse]
 }
 
 type browserIdentityKey struct{}
@@ -51,7 +54,7 @@ func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token c
 	}
 	return &browserAccess{client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,
 		runID: setup.PublishRun.Id, version: uint64(setup.PublishRun.PublishRunNumber), token: token,
-		controlURL: config.ControlURL, shares: shares}
+		controlURL: config.ControlURL, shares: shares, decisions: &visitorDecisionCache[controlv1.HTTPVisitorResponse]{}}
 }
 
 func browserCookie(response http.ResponseWriter, secret string, expires time.Time) {
@@ -123,7 +126,28 @@ func (a *browserAccess) decision(request *http.Request) (controlv1.HTTPVisitorRe
 			input.ShareCookieSecret = &secret
 		}
 	}
-	return client.AuthorizeHTTPVisitor(request.Context(), a.runID, input, a.token)
+	if a.decisions == nil {
+		return client.AuthorizeHTTPVisitor(request.Context(), a.runID, input, a.token)
+	}
+	proof, err := json.Marshal(struct {
+		RunID       string                       `json:"run_id"`
+		PublicURLID string                       `json:"public_url_id"`
+		Request     controlv1.HTTPVisitorRequest `json:"request"`
+	}{a.runID, a.publicURLID, input})
+	if err != nil {
+		return controlv1.HTTPVisitorResponse{}, err
+	}
+	key := sha256.Sum256(proof)
+	return a.decisions.check(request.Context(), key, func(ctx context.Context) (controlv1.HTTPVisitorResponse, time.Time, bool, error) {
+		decision, err := client.AuthorizeHTTPVisitor(ctx, a.runID, input, a.token)
+		if err != nil {
+			return controlv1.HTTPVisitorResponse{}, time.Time{}, false, err
+		}
+		if decision.ValidUntil == nil {
+			return decision, time.Time{}, decision.VisitAllowed, nil
+		}
+		return decision, *decision.ValidUntil, decision.VisitAllowed, nil
+	})
 }
 
 func (a *browserAccess) handle(response http.ResponseWriter, request *http.Request, permitted bool) bool {

@@ -55,6 +55,7 @@ type shareHeaderDecisionClient struct {
 	secret       string
 	cookieSecret string
 	revoked      bool
+	checks       int
 }
 
 func (*shareHeaderDecisionClient) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
@@ -70,10 +71,50 @@ func (*shareHeaderDecisionClient) RevokeBrowserAccess(context.Context, string, u
 }
 
 func (c *shareHeaderDecisionClient) AuthorizeHTTPVisitor(_ context.Context, _ string, request controlv1.HTTPVisitorRequest, _ credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
+	c.checks++
 	allowed := !c.revoked && request.ShareId != nil && *request.ShareId == c.shareID &&
 		(request.ShareSecret != nil && c.secret != "" && *request.ShareSecret == c.secret ||
 			request.ShareCookieSecret != nil && c.cookieSecret != "" && *request.ShareCookieSecret == c.cookieSecret)
-	return controlv1.HTTPVisitorResponse{VisitAllowed: allowed}, nil
+	result := controlv1.HTTPVisitorResponse{VisitAllowed: allowed}
+	if allowed {
+		expires := time.Now().Add(time.Minute)
+		result.ValidUntil = &expires
+	}
+	return result, nil
+}
+
+func TestShareHTTPDecisionCacheRechecksAfterRefresh(t *testing.T) {
+	secret := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("s", 32)))
+	client := &shareHeaderDecisionClient{shareID: "shr_0123456789abcdefghijkl", secret: secret}
+	access := &browserAccess{client: client, publicURLID: "url_one", runID: "run_one", version: 1,
+		decisions: &visitorDecisionCache[controlv1.HTTPVisitorResponse]{}}
+	request := httptest.NewRequest(http.MethodGet, "https://route.example/", nil)
+	request.Header.Set(shareAccessHeaderName, client.shareID+"."+secret)
+	for range 2 {
+		decision, err := access.decision(request)
+		if err != nil || !decision.VisitAllowed {
+			t.Fatalf("cached share = %+v, %v", decision, err)
+		}
+	}
+	if client.checks != 1 {
+		t.Fatalf("two requests made %d control checks", client.checks)
+	}
+	other := request.Clone(request.Context())
+	other.RemoteAddr = "198.51.100.7:1234"
+	if decision, err := access.decision(other); err != nil || !decision.VisitAllowed || client.checks != 2 {
+		t.Fatalf("another source reused a visitor decision: %+v, %d checks, %v", decision, client.checks, err)
+	}
+	access.decisions.mu.Lock()
+	for key, entry := range access.decisions.entries {
+		entry.refreshAfter = time.Now().Add(-time.Second)
+		access.decisions.entries[key] = entry
+	}
+	access.decisions.mu.Unlock()
+	client.revoked = true
+	decision, err := access.decision(request)
+	if err != nil || decision.VisitAllowed || client.checks != 3 {
+		t.Fatalf("revoked share remained cached: %+v, %d checks, %v", decision, client.checks, err)
+	}
 }
 
 func TestShareHeaderUsesCurrentDecisionAndIsRemovedBeforeForwarding(t *testing.T) {

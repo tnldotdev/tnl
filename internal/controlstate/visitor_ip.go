@@ -311,61 +311,67 @@ func (d *Database) ExpireVisitorPermissions(ctx context.Context, now time.Time) 
 	return q.CleanupVisitorLogins(ctx, timestamptz(now))
 }
 
-func (d *Database) visitorIPAllowed(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, source string, now time.Time) (bool, error) {
+func (d *Database) visitorIPAllowed(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, source string, now time.Time) (bool, *time.Time, error) {
 	addr, err := netip.ParseAddr(source)
 	if err != nil {
-		return false, nil
+		return false, nil, nil
 	}
 	addr = addr.Unmap()
 	if url.IpPolicy == string(IPPolicyAllowAll) {
-		return true, nil
+		return true, nil, nil
 	}
 	initialized, err := q.HasVisitorIPSet(ctx, url.ID)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if initialized {
 		grants, err := d.readVisitorIPs(ctx, q, url.ID, now)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
+		var latest *time.Time
 		for _, g := range grants {
 			prefix, _ := netip.ParsePrefix(g.Prefix)
 			if prefix.Contains(addr) {
-				return true, nil
+				if g.ExpiresAt == nil {
+					return true, nil, nil
+				}
+				if latest == nil || g.ExpiresAt.After(*latest) {
+					latest = g.ExpiresAt
+				}
 			}
 		}
-		return false, nil
+		return latest != nil, latest, nil
 	}
 	if url.IpPolicy == "allow_all" {
-		return true, nil
+		return true, nil, nil
 	}
 	if len(url.AllowedIpPolicyCiphertext) == 0 && len(url.AllowedIpHashes) != 0 {
 		var entries []ippolicy.Entry
 		if err := json.Unmarshal(url.AllowedIpHashes, &entries); err != nil {
-			return false, err
+			return false, nil, err
 		}
 		if len(entries) == 0 {
-			return false, nil
+			return false, nil, nil
 		}
 		key, err := d.storageKey.IPPolicyKey(url.AllowedIpHashKeyID.String, "url:"+url.ID)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 		policy, err := ippolicy.New(key, entries)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
-		return policy.Allows(addr), nil
+		return policy.Allows(addr), nil, nil
 	}
 	prefixes, err := d.openIPPolicy(url.ID, url.AllowedIpPolicyStorageKeyID.String, url.AllowedIpPolicyCiphertext)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	for _, prefix := range prefixes {
 		if prefix.Contains(addr) {
-			return true, nil
+			return true, nil, nil
 		}
 	}
-	return false, nil
+	return false, nil, nil
 }

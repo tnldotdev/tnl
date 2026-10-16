@@ -81,6 +81,9 @@ func (h *handler) AuthorizeHTTPVisitor(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	result := controlv1.HTTPVisitorResponse{VisitAllowed: decision.VisitAllowed, TeamMember: decision.TeamMember}
+	if decision.VisitAllowed {
+		result.ValidUntil = decision.ExpiresAt
+	}
 	if decision.IdentityID != "" {
 		result.IdentityId = &decision.IdentityID
 		result.DisplayName = &decision.DisplayName
@@ -320,7 +323,8 @@ func (h *handler) AuthorizeVisitorCertificate(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, 200, struct {
-		IdentityID  string `json:"identity_id,omitempty"`
-		PublicURLID string `json:"public_url_id"`
-	}{identity, auth.PublicURLID})
+		IdentityID  string     `json:"identity_id,omitempty"`
+		PublicURLID string     `json:"public_url_id"`
+		ValidUntil  *time.Time `json:"valid_until,omitempty"`
+	}{identity, auth.PublicURLID, permission.ExpiresAt})
 }

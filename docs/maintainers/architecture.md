@@ -78,6 +78,16 @@ the exact connection through relay back to ingress. A source outside a configure
 IP filter is rejected before forwarding. The publisher removes
 untrusted forwarding headers before proxying an allowed HTTP request.
 
+The publisher checks every HTTP app request against a run-local visitor decision.
+Positive decisions are scoped to the public URL, run, credential digest, and
+trusted source IP. An active decision refreshes after 30 seconds; if control is
+unavailable, its last successful decision expires within two minutes or sooner
+at the underlying credential, IP grant, or run expiry. Unknown visitors fail
+closed. Only the first allowed request on a restricted visitor connection
+promotes ingress capacity; subsequent requests still check visitor access.
+Database certificates use the same bounded decision cache for new connections,
+not for commands on an already admitted connection.
+
 For a TCP public URL, ingress uses the original destination port in the
 trusted outer PROXY v2 header instead of inspecting a ClientHello. A routing
 entry binds that port to a saved public URL within one ingress pool; missing or

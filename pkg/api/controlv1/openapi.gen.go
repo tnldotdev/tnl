@@ -1439,10 +1439,11 @@ type HTTPVisitorRequest struct {
 
 // HTTPVisitorResponse defines model for HTTPVisitorResponse.
 type HTTPVisitorResponse struct {
-	DisplayName  *string `json:"display_name,omitempty"`
-	IdentityId   *string `json:"identity_id,omitempty"`
-	TeamMember   bool    `json:"team_member"`
-	VisitAllowed bool    `json:"visit_allowed"`
+	DisplayName  *string    `json:"display_name,omitempty"`
+	IdentityId   *string    `json:"identity_id,omitempty"`
+	TeamMember   bool       `json:"team_member"`
+	ValidUntil   *time.Time `json:"valid_until,omitempty"`
+	VisitAllowed bool       `json:"visit_allowed"`
 }
 
 // HealthResponse defines model for HealthResponse.
@@ -11994,6 +11995,7 @@ type AuthorizeVisitorCertificateResponse struct {
 	JSON200 *struct {
 		IdentityId  *IdentityID `json:"identity_id,omitempty"`
 		PublicUrlId PublicURLID `json:"public_url_id"`
+		ValidUntil  *time.Time  `json:"valid_until,omitempty"`
 	}
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
@@ -12003,6 +12005,7 @@ type AuthorizeVisitorCertificateResponse struct {
 func (r AuthorizeVisitorCertificateResponse) GetJSON200() *struct {
 	IdentityId  *IdentityID `json:"identity_id,omitempty"`
 	PublicUrlId PublicURLID `json:"public_url_id"`
+	ValidUntil  *time.Time  `json:"valid_until,omitempty"`
 } {
 	return r.JSON200
 }
@@ -16178,6 +16181,7 @@ func ParseAuthorizeVisitorCertificateResponse(rsp *http.Response) (*AuthorizeVis
 		var dest struct {
 			IdentityId  *IdentityID `json:"identity_id,omitempty"`
 			PublicUrlId PublicURLID `json:"public_url_id"`
+			ValidUntil  *time.Time  `json:"valid_until,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err

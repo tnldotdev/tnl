@@ -305,24 +305,24 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						}
 					}
 				}
-				browser := controlv1.BrowserAccessResponse{}
-				browserPermitted := false
-				if config.BrowserAccess != nil {
-					browser, browserPermitted = config.BrowserAccess.check(request)
-				}
-				if browserPermitted {
-					request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
-				}
 				// the publisher can inspect browser credentials that ingress cannot.
-				// recheck the exact run and current access mode before every request,
-				// including one on an already-promoted visitor connection.
+				// check each request against the bounded, run-scoped decision,
+				// including requests on an already-promoted visitor connection.
 				serverPermitted := false
+				browser := controlv1.BrowserAccessResponse{}
 				if !proof && config.BrowserAccess != nil {
 					decision, err := config.BrowserAccess.decision(request)
-					serverPermitted = err == nil && decision.VisitAllowed
+					if err == nil {
+						serverPermitted = decision.VisitAllowed
+						if decision.IdentityId != nil && decision.DisplayName != nil {
+							browser = controlv1.BrowserAccessResponse{IdentityId: *decision.IdentityId, DisplayName: *decision.DisplayName,
+								TeamMember: decision.TeamMember && decision.VisitAllowed, VisitAllowed: decision.VisitAllowed}
+							request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
+						}
+					}
 				}
-				// cached share state is only a hint for the browser UI. the current
-				// control decision, including revocation, owns app admission.
+				// cached share state is only a hint for the browser UI. the bounded
+				// control decision, including its revocation deadline, owns admission.
 				sharePermitted = sharePermitted && serverPermitted
 				integrationRequest := (config.Purpose == controlv1.Oauth || config.Purpose == controlv1.Webhooks) && config.AccessMode == controlv1.Anonymous && !denied
 				allowed := proof || serverPermitted || integrationRequest

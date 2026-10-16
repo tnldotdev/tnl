@@ -728,7 +728,7 @@ func (q *Queries) ReserveFeedbackEventCursor(ctx context.Context) (int64, error)
 }
 
 const reviewerShareCookieValid = `-- name: ReviewerShareCookieValid :one
-SELECT share.id FROM control.shares AS share
+SELECT LEAST(share.expires_at, cookie.expires_at)::timestamptz FROM control.shares AS share
 JOIN control.share_cookies AS cookie ON cookie.share_id = share.id
 JOIN control.share_public_urls AS included ON included.share_id = share.id
 WHERE share.id = $1
@@ -748,16 +748,16 @@ type ReviewerShareCookieValidParams struct {
 	Now         pgtype.Timestamptz
 }
 
-func (q *Queries) ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (string, error) {
+func (q *Queries) ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (pgtype.Timestamptz, error) {
 	row := q.db.QueryRow(ctx, reviewerShareCookieValid,
 		arg.ShareID,
 		arg.PublicURLID,
 		arg.TokenDigest,
 		arg.Now,
 	)
-	var id string
-	err := row.Scan(&id)
-	return id, err
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const updateFeedbackThreadState = `-- name: UpdateFeedbackThreadState :one

@@ -132,7 +132,7 @@ WHERE p.id = sqlc.arg(preview_id)
 ON CONFLICT (preview_id, public_url_id) DO NOTHING;
 
 -- name: ReviewerShareCookieValid :one
-SELECT share.id FROM control.shares AS share
+SELECT LEAST(share.expires_at, cookie.expires_at)::timestamptz FROM control.shares AS share
 JOIN control.share_cookies AS cookie ON cookie.share_id = share.id
 JOIN control.share_public_urls AS included ON included.share_id = share.id
 WHERE share.id = sqlc.arg(share_id)
