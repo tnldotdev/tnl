@@ -273,6 +273,6 @@ if paid options arrive.
 
 ## license
 
-The client and server are [MIT-licensed](LICENSE). See the
+The client and server are licensed under [BSD-3-Clause](LICENSE). See the
 [dependency notices](THIRD_PARTY_LICENSES.txt), browse the
 [command reference](https://tnl.dev/docs/cli), or [contribute](contributing.md).

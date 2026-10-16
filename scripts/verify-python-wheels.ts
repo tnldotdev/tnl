@@ -60,6 +60,7 @@ for (const wheel of manifest.wheels) {
   const metadata = (await unzip(file, `${distribution}.dist-info/METADATA`)).toString("utf8");
   const wheelMetadata = (await unzip(file, `${distribution}.dist-info/WHEEL`)).toString("utf8");
   assert(metadata.includes(`Version: ${manifest.version}\n`));
+  assert(metadata.includes("License-Expression: BSD-3-Clause\n"));
   assert(wheelMetadata.includes(`Tag: py3-none-${wheel.tag}\n`));
 }
 
