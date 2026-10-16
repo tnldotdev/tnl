@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/config"
@@ -39,7 +40,7 @@ func TestResolveVisitorAccessNeverAddsAnImplicitIP(t *testing.T) {
 		{configured: &config.Access{IP: []string{"192.0.2.0/24"}}, mode: controlv1.Restricted, prefixes: []string{"192.0.2.0/24"}, explicit: true},
 	} {
 		policy, err := resolveVisitorAccess(t.Context(), lookup, tc.configured, tc.anonymous, nil)
-		if err != nil || policy.access != tc.mode || policy.explicit != tc.explicit || !reflect.DeepEqual(policy.prefixes, tc.prefixes) {
+		if err != nil || policy.access != tc.mode || policy.explicit != tc.explicit || !slices.Equal(policy.prefixes, tc.prefixes) {
 			t.Fatalf("policy=%+v, want=%+v, error=%v", policy, tc, err)
 		}
 	}
