@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -170,7 +171,7 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	}
 	if flags.Publish.ServerURL != "https://environment.example" || flags.Publish.Name != "environment-name" ||
 		flags.Publish.selectedTeam != "environment-team" ||
-		flags.Publish.PublicURL != "" || flags.Publish.Target != "3000" || flags.Publish.access != access ||
+		flags.Publish.PublicURL != "" || flags.Publish.Target != "3000" || !reflect.DeepEqual(flags.Publish.access, access) ||
 		len(flags.Publish.IP) != 1 || flags.Publish.IP[0] != "198.51.100.0/24" {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
