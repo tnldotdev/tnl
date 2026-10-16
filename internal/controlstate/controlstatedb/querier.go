@@ -440,6 +440,7 @@ type Querier interface {
 	RotateControlTLSCacheEntry(ctx context.Context, arg RotateControlTLSCacheEntryParams) error
 	RotateRelayCertificateOrderPrivateKey(ctx context.Context, arg RotateRelayCertificateOrderPrivateKeyParams) error
 	RotateRelayServicePrivateKey(ctx context.Context, arg RotateRelayServicePrivateKeyParams) error
+	SSHVisitorGrant(ctx context.Context, arg SSHVisitorGrantParams) (SSHVisitorGrantRow, error)
 	SaveACMEAuthorizationWork(ctx context.Context, arg SaveACMEAuthorizationWorkParams) (ControlAcmeAuthorization, error)
 	SaveACMEOrderWork(ctx context.Context, arg SaveACMEOrderWorkParams) (ControlAcmeOrder, error)
 	SaveDNSAuthorityWork(ctx context.Context, arg SaveDNSAuthorityWorkParams) (ControlDnsAuthority, error)

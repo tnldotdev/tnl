@@ -3,8 +3,8 @@ info:
   title: tnl control API
   version: 1.0.0
   license:
-    name: MIT
-    identifier: MIT
+    name: BSD-3-Clause
+    identifier: BSD-3-Clause
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
@@ -67,6 +67,26 @@ paths:
       responses:
         "201":
           description: Exact URL grant for current team members
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VisitorGrant" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/public-urls/{public_url_id}/visitor-identity-grants:
+    post:
+      operationId: createIdentityVisitorGrant
+      summary: Create an explicit identity grant, including for the current identity
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PublicURLID" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateIdentityVisitorGrantRequest" }
+      responses:
+        "201":
+          description: Exact URL and identity grant
           content:
             application/json:
               schema: { $ref: "#/components/schemas/VisitorGrant" }
@@ -202,18 +222,22 @@ paths:
                 publish_run_number: { type: integer, format: int64, minimum: 1 }
                 certificate: { type: string, maxLength: 16384 }
                 source_ip: { type: string, maxLength: 64 }
+                ssh_user:
+                  $ref: "#/components/schemas/SSHUser"
+                  description: For SSH only. Omit for a connection-level check of any explicit SSH grant; supply to check this exact account.
       responses:
         "200":
-          description: Current permission for this new connection
+          description: Current permission for this new connection. SSH always requires a URL-bound identity certificate and an explicit SSH grant, in addition to the IP filter. SSH returns identity_id, and ssh_user when an account was checked.
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: false
-                required: [public_url_id]
+                required: [public_url_id, valid_until]
                 properties:
                   identity_id: { $ref: "#/components/schemas/IdentityID" }
                   public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+                  ssh_user: { $ref: "#/components/schemas/SSHUser" }
                   valid_until: { type: string, format: date-time }
         default: { $ref: "#/components/responses/Problem" }
   /v1/guest-demo/publisher:
@@ -1628,11 +1652,31 @@ components:
         identity_id: { type: string }
         display_name: { type: string }
         valid_until: { type: string, format: date-time }
+    SSHUser:
+      type: string
+      minLength: 1
+      maxLength: 32
+      pattern: "^[a-z_][a-z0-9_-]{0,31}$"
+      description: Exact nonroot local account. The root account is forbidden; SSH grants require this field and HTTP/database grants forbid it.
+    SSHHostKey:
+      type: string
+      minLength: 1
+      maxLength: 1024
+      description: Registered Ed25519 SSH host public key in authorized-key format, without options or certificates. Required and immutable for managed SSH URLs; forbidden for other protocols. The private key stays with the publisher.
     CreateTeamVisitorGrantRequest:
       type: object
       additionalProperties: false
       properties:
         expires_at: { type: string, format: date-time }
+        ssh_user: { $ref: "#/components/schemas/SSHUser" }
+    CreateIdentityVisitorGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [identity_id]
+      properties:
+        identity_id: { $ref: "#/components/schemas/IdentityID" }
+        expires_at: { type: string, format: date-time }
+        ssh_user: { $ref: "#/components/schemas/SSHUser" }
     VisitorGrant:
       type: object
       additionalProperties: false
@@ -1642,6 +1686,7 @@ components:
         public_url_id: { $ref: "#/components/schemas/PublicURLID" }
         kind: { type: string, enum: [team, identity] }
         identity_id: { type: string }
+        ssh_user: { $ref: "#/components/schemas/SSHUser" }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         revoked_at: { type: string, format: date-time }
@@ -1653,6 +1698,7 @@ components:
         email: { type: string, maxLength: 320 }
         token_digest: { type: string, pattern: "^[0-9a-f]{64}$" }
         expires_at: { type: string, format: date-time }
+        ssh_user: { $ref: "#/components/schemas/SSHUser" }
     VisitorInvitation:
       type: object
       additionalProperties: false
@@ -1663,6 +1709,7 @@ components:
         email: { type: string }
         expires_at: { type: string, format: date-time }
         accepted_identity_id: { type: string }
+        ssh_user: { $ref: "#/components/schemas/SSHUser" }
         revoked_at: { type: string, format: date-time }
     AvailablePublicURLPage:
       type: object
@@ -1683,8 +1730,9 @@ components:
         team_id: { type: string }
         team_name: { type: string }
         canonical_hostname: { type: string }
-        service_protocol: { type: string, pattern: "^(http|postgres|mysql|redis)$" }
+        service_protocol: { type: string, pattern: "^(http|postgres|mysql|redis|ssh)$" }
         public_port: { type: integer, format: int32, minimum: 1024, maximum: 65535 }
+        ssh_host_key: { $ref: "#/components/schemas/SSHHostKey" }
         visitor_access: { type: string, enum: [owner, preview_team, team_grant, identity_grant] }
     VisitorCertificate:
       type: object
@@ -2014,9 +2062,11 @@ components:
         target:
           type: string
           pattern: "^$|^https?://"
-          description: Empty when the publisher supplies the target locally.
+          description: Empty when the publisher supplies the target locally. Always empty for managed SSH, which has no private target or target TLS.
         service_protocol:
           $ref: "#/components/schemas/PublicURLServiceProtocol"
+        ssh_host_key:
+          $ref: "#/components/schemas/SSHHostKey"
         public_port:
           type: integer
           minimum: 1024
@@ -2224,9 +2274,11 @@ components:
         target:
           type: string
           pattern: "^$|^https?://"
-          description: Leave empty when the publisher supplies the target locally.
+          description: Leave empty when the publisher supplies the target locally. Managed SSH requires an empty target, restricted access, a registered ssh_host_key, and a saved public TCP port.
         service_protocol:
           $ref: "#/components/schemas/PublicURLServiceProtocol"
+        ssh_host_key:
+          $ref: "#/components/schemas/SSHHostKey"
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:

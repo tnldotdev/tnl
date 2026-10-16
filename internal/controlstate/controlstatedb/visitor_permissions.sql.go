@@ -95,9 +95,9 @@ func (q *Queries) CleanupVisitorSessions(ctx context.Context, now pgtype.Timesta
 
 const createVisitorGrant = `-- name: CreateVisitorGrant :one
 INSERT INTO control.visitor_grants(id, public_url_id, team_id, kind, identity_id, created_by_identity_id,
-    idempotency_key, request_digest, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $9, $5, $6, $7, $8, $10)
-ON CONFLICT (created_by_identity_id, kind, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, public_url_id, team_id, kind, identity_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
+    idempotency_key, request_digest, created_at, expires_at, ssh_user)
+VALUES ($1, $2, $3, $4, $9, $5, $6, $7, $8, $10, $11)
+ON CONFLICT (created_by_identity_id, kind, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, public_url_id, team_id, kind, identity_id, ssh_user, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
 `
 
 type CreateVisitorGrantParams struct {
@@ -111,6 +111,7 @@ type CreateVisitorGrantParams struct {
 	CreatedAt           pgtype.Timestamptz
 	IdentityID          pgtype.Text
 	ExpiresAt           pgtype.Timestamptz
+	SSHUser             pgtype.Text
 }
 
 func (q *Queries) CreateVisitorGrant(ctx context.Context, arg CreateVisitorGrantParams) (ControlVisitorGrant, error) {
@@ -125,6 +126,7 @@ func (q *Queries) CreateVisitorGrant(ctx context.Context, arg CreateVisitorGrant
 		arg.CreatedAt,
 		arg.IdentityID,
 		arg.ExpiresAt,
+		arg.SSHUser,
 	)
 	var i ControlVisitorGrant
 	err := row.Scan(
@@ -133,6 +135,7 @@ func (q *Queries) CreateVisitorGrant(ctx context.Context, arg CreateVisitorGrant
 		&i.TeamID,
 		&i.Kind,
 		&i.IdentityID,
+		&i.SSHUser,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -171,9 +174,9 @@ func (q *Queries) CreateVisitorIPGrant(ctx context.Context, arg CreateVisitorIPG
 
 const createVisitorInvitation = `-- name: CreateVisitorInvitation :one
 INSERT INTO control.visitor_invitations(id, public_url_id, team_id, normalized_email, token_digest, created_by_identity_id,
-    idempotency_key, request_digest, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-ON CONFLICT (created_by_identity_id, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, public_url_id, team_id, normalized_email, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at
+    idempotency_key, request_digest, created_at, expires_at, ssh_user)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+ON CONFLICT (created_by_identity_id, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, public_url_id, team_id, normalized_email, token_digest, ssh_user, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at
 `
 
 type CreateVisitorInvitationParams struct {
@@ -187,6 +190,7 @@ type CreateVisitorInvitationParams struct {
 	RequestDigest       []byte
 	CreatedAt           pgtype.Timestamptz
 	ExpiresAt           pgtype.Timestamptz
+	SSHUser             pgtype.Text
 }
 
 func (q *Queries) CreateVisitorInvitation(ctx context.Context, arg CreateVisitorInvitationParams) (ControlVisitorInvitation, error) {
@@ -201,6 +205,7 @@ func (q *Queries) CreateVisitorInvitation(ctx context.Context, arg CreateVisitor
 		arg.RequestDigest,
 		arg.CreatedAt,
 		arg.ExpiresAt,
+		arg.SSHUser,
 	)
 	var i ControlVisitorInvitation
 	err := row.Scan(
@@ -209,6 +214,7 @@ func (q *Queries) CreateVisitorInvitation(ctx context.Context, arg CreateVisitor
 		&i.TeamID,
 		&i.NormalizedEmail,
 		&i.TokenDigest,
+		&i.SSHUser,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -261,7 +267,7 @@ func (q *Queries) ExpiringVisitorIPURLs(ctx context.Context, expiresAt pgtype.Ti
 }
 
 const getVisitorGrant = `-- name: GetVisitorGrant :one
-SELECT id, public_url_id, team_id, kind, identity_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE id = $1
+SELECT id, public_url_id, team_id, kind, identity_id, ssh_user, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE id = $1
 `
 
 func (q *Queries) GetVisitorGrant(ctx context.Context, id string) (ControlVisitorGrant, error) {
@@ -273,6 +279,7 @@ func (q *Queries) GetVisitorGrant(ctx context.Context, id string) (ControlVisito
 		&i.TeamID,
 		&i.Kind,
 		&i.IdentityID,
+		&i.SSHUser,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -284,7 +291,7 @@ func (q *Queries) GetVisitorGrant(ctx context.Context, id string) (ControlVisito
 }
 
 const getVisitorInvitation = `-- name: GetVisitorInvitation :one
-SELECT id, public_url_id, team_id, normalized_email, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at FROM control.visitor_invitations WHERE id = $1
+SELECT id, public_url_id, team_id, normalized_email, token_digest, ssh_user, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at FROM control.visitor_invitations WHERE id = $1
 `
 
 func (q *Queries) GetVisitorInvitation(ctx context.Context, id string) (ControlVisitorInvitation, error) {
@@ -296,6 +303,7 @@ func (q *Queries) GetVisitorInvitation(ctx context.Context, id string) (ControlV
 		&i.TeamID,
 		&i.NormalizedEmail,
 		&i.TokenDigest,
+		&i.SSHUser,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -349,7 +357,7 @@ func (q *Queries) HasVisitorIPSet(ctx context.Context, publicUrlID string) (bool
 }
 
 const listVisitorGrants = `-- name: ListVisitorGrants :many
-SELECT id, public_url_id, team_id, kind, identity_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE public_url_id = $1 ORDER BY id
+SELECT id, public_url_id, team_id, kind, identity_id, ssh_user, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE public_url_id = $1 ORDER BY id
 `
 
 func (q *Queries) ListVisitorGrants(ctx context.Context, publicUrlID string) ([]ControlVisitorGrant, error) {
@@ -367,6 +375,7 @@ func (q *Queries) ListVisitorGrants(ctx context.Context, publicUrlID string) ([]
 			&i.TeamID,
 			&i.Kind,
 			&i.IdentityID,
+			&i.SSHUser,
 			&i.CreatedByIdentityID,
 			&i.IdempotencyKey,
 			&i.RequestDigest,
@@ -417,7 +426,7 @@ func (q *Queries) ListVisitorIPGrants(ctx context.Context, publicUrlID string) (
 }
 
 const listVisitorInventory = `-- name: ListVisitorInventory :many
-SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol, u.public_port,
+SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol, u.public_port, u.ssh_host_key,
     permission.reason::text AS visitor_access
 FROM control.public_urls u JOIN control.teams t ON t.id = u.team_id
 CROSS JOIN LATERAL control.visitor_permission(u.id, $1::text,
@@ -442,6 +451,7 @@ type ListVisitorInventoryRow struct {
 	CanonicalHostname string
 	ServiceProtocol   string
 	PublicPort        pgtype.Int4
+	SSHHostKey        pgtype.Text
 	VisitorAccess     string
 }
 
@@ -466,6 +476,7 @@ func (q *Queries) ListVisitorInventory(ctx context.Context, arg ListVisitorInven
 			&i.CanonicalHostname,
 			&i.ServiceProtocol,
 			&i.PublicPort,
+			&i.SSHHostKey,
 			&i.VisitorAccess,
 		); err != nil {
 			return nil, err
@@ -479,7 +490,7 @@ func (q *Queries) ListVisitorInventory(ctx context.Context, arg ListVisitorInven
 }
 
 const listVisitorInvitations = `-- name: ListVisitorInvitations :many
-SELECT id, public_url_id, team_id, normalized_email, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at FROM control.visitor_invitations WHERE public_url_id = $1 ORDER BY id
+SELECT id, public_url_id, team_id, normalized_email, token_digest, ssh_user, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at FROM control.visitor_invitations WHERE public_url_id = $1 ORDER BY id
 `
 
 func (q *Queries) ListVisitorInvitations(ctx context.Context, publicUrlID string) ([]ControlVisitorInvitation, error) {
@@ -497,6 +508,7 @@ func (q *Queries) ListVisitorInvitations(ctx context.Context, publicUrlID string
 			&i.TeamID,
 			&i.NormalizedEmail,
 			&i.TokenDigest,
+			&i.SSHUser,
 			&i.CreatedByIdentityID,
 			&i.IdempotencyKey,
 			&i.RequestDigest,
@@ -569,7 +581,7 @@ func (q *Queries) LockVisitorIdentity(ctx context.Context, id string) (ControlId
 }
 
 const lockVisitorInvitation = `-- name: LockVisitorInvitation :one
-SELECT id, public_url_id, team_id, normalized_email, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at FROM control.visitor_invitations WHERE id = $1 FOR UPDATE
+SELECT id, public_url_id, team_id, normalized_email, token_digest, ssh_user, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at FROM control.visitor_invitations WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockVisitorInvitation(ctx context.Context, id string) (ControlVisitorInvitation, error) {
@@ -581,6 +593,7 @@ func (q *Queries) LockVisitorInvitation(ctx context.Context, id string) (Control
 		&i.TeamID,
 		&i.NormalizedEmail,
 		&i.TokenDigest,
+		&i.SSHUser,
 		&i.CreatedByIdentityID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
@@ -702,6 +715,48 @@ type RevokeVisitorInvitationParams struct {
 func (q *Queries) RevokeVisitorInvitation(ctx context.Context, arg RevokeVisitorInvitationParams) error {
 	_, err := q.db.Exec(ctx, revokeVisitorInvitation, arg.ID, arg.RevokedAt)
 	return err
+}
+
+const sSHVisitorGrant = `-- name: SSHVisitorGrant :one
+SELECT COALESCE(g.ssh_user, '')::text AS ssh_user, g.expires_at,
+    CASE g.kind WHEN 'team' THEN 'team_grant' ELSE 'identity_grant' END::text AS reason
+FROM control.visitor_grants g
+JOIN control.public_urls u ON u.id = g.public_url_id AND u.team_id = g.team_id
+JOIN control.teams t ON t.id = u.team_id AND t.deleted_at IS NULL
+JOIN control.identities i ON i.id = $1::text AND i.disabled_at IS NULL
+WHERE u.id = $2::text AND u.lifecycle_state = 'enabled' AND u.purpose = 'app'
+  AND u.service_protocol = 'ssh' AND u.access_mode = 'restricted'
+  AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > $3::timestamptz)
+  AND g.ssh_user IS NOT NULL AND ($4::text = '' OR g.ssh_user = $4)
+  AND ((g.kind = 'identity' AND g.identity_id = i.id) OR (g.kind = 'team' AND EXISTS (
+    SELECT 1 FROM control.team_memberships m WHERE m.team_id = u.team_id AND m.identity_id = i.id AND m.removed_at IS NULL)))
+ORDER BY g.expires_at DESC NULLS FIRST, g.id LIMIT 1
+FOR SHARE OF g
+`
+
+type SSHVisitorGrantParams struct {
+	IdentityID  string
+	PublicURLID string
+	Now         pgtype.Timestamptz
+	SSHUser     string
+}
+
+type SSHVisitorGrantRow struct {
+	SSHUser   string
+	ExpiresAt pgtype.Timestamptz
+	Reason    string
+}
+
+func (q *Queries) SSHVisitorGrant(ctx context.Context, arg SSHVisitorGrantParams) (SSHVisitorGrantRow, error) {
+	row := q.db.QueryRow(ctx, sSHVisitorGrant,
+		arg.IdentityID,
+		arg.PublicURLID,
+		arg.Now,
+		arg.SSHUser,
+	)
+	var i SSHVisitorGrantRow
+	err := row.Scan(&i.SSHUser, &i.ExpiresAt, &i.Reason)
+	return i, err
 }
 
 const saveVisitorIPPolicy = `-- name: SaveVisitorIPPolicy :execrows

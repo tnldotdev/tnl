@@ -61,8 +61,49 @@ func TestIntegrationDatabasePublicURLClaimsPortWithCreation(t *testing.T) {
 	}
 	ssh := request
 	ssh.IdempotencyKey, ssh.CanonicalHostname, ssh.ServiceProtocol = "ssh-endpoint", "ssh."+request.CanonicalHostname, PublicURLServiceSSH
+	ssh.SSHHostKey = testSSHHostKey(t, 1)
 	sshURL, err := database.CreatePublicURL(t.Context(), ssh, now.Add(4*time.Hour))
-	if err != nil || sshURL.ServiceProtocol != PublicURLServiceSSH || sshURL.Target != "" || sshURL.PublicPort == nil || *sshURL.PublicPort != 2222 {
+	if err != nil || sshURL.ServiceProtocol != PublicURLServiceSSH || sshURL.Target != "" || sshURL.PublicPort == nil || *sshURL.PublicPort != 2222 || sshURL.SSHHostKey != ssh.SSHHostKey || sshURL.AccessMode != VisitorAccessRestricted {
 		t.Fatalf("saved SSH address = %#v, %v", sshURL, err)
+	}
+	retriedSSH, err := database.CreatePublicURL(t.Context(), ssh, now.Add(4*time.Hour+time.Minute))
+	if err != nil || retriedSSH.ID != sshURL.ID || retriedSSH.SSHHostKey != ssh.SSHHostKey || retriedSSH.PublicPort == nil || *retriedSSH.PublicPort != 2222 {
+		t.Fatalf("idempotent SSH address = %#v, %v", retriedSSH, err)
+	}
+	ssh.SSHHostKey = testSSHHostKey(t, 2)
+	if _, err := database.CreatePublicURL(t.Context(), ssh, now.Add(4*time.Hour+2*time.Minute)); !errors.Is(err, ErrPublicURLIdempotency) {
+		t.Fatalf("idempotent SSH key replacement = %v", err)
+	}
+	loadedSSH, err := database.GetPublicURL(t.Context(), ssh.ActingIdentityID, sshURL.ID)
+	if err != nil || loadedSSH.SSHHostKey != sshURL.SSHHostKey {
+		t.Fatalf("loaded SSH key = %q, %v", loadedSSH.SSHHostKey, err)
+	}
+	page, err := database.ListAuthorizedPublicURLs(t.Context(), ssh.TeamID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, url := range page.PublicURLs {
+		if url.ID == sshURL.ID {
+			found = true
+			if url.SSHHostKey != sshURL.SSHHostKey {
+				t.Fatal("listed SSH host key changed")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("SSH public URL missing from list")
+	}
+	update := AuthorizedPublicURLUpdateRequest{
+		PublicURLID: sshURL.ID, TeamID: sshURL.TeamID, ActingIdentityID: ssh.ActingIdentityID,
+		AllowedIPPrefixes: []string{}, PolicyRevision: uint64(sshURL.PolicyRevision), ExpectedMutationRevision: sshURL.MutationRevision,
+	}
+	updatedSSH, err := database.UpdateAuthorizedPublicURL(t.Context(), update, now.Add(5*time.Hour))
+	if err != nil || updatedSSH.Target != "" || updatedSSH.SSHHostKey != sshURL.SSHHostKey {
+		t.Fatalf("updated SSH shape = %#v, %v", updatedSSH, err)
+	}
+	update.Target, update.ExpectedMutationRevision = "http://127.0.0.1:22", updatedSSH.MutationRevision
+	if _, err := database.UpdateAuthorizedPublicURL(t.Context(), update, now.Add(5*time.Hour+time.Minute)); !errors.Is(err, ErrPublicURLInvalid) {
+		t.Fatalf("SSH private target mutation = %v", err)
 	}
 }

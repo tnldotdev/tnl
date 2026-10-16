@@ -19,7 +19,7 @@ func (protocol PublicURLServiceProtocol) Valid() bool {
 
 // ValidCreateTarget checks how a public URL receives its local target.
 func (protocol PublicURLServiceProtocol) ValidCreateTarget(purpose PublicURLPurpose, target string, ephemeral bool) bool {
-	if !protocol.Valid() || protocol != PublicURLServiceHTTP && (purpose != PublicURLPurposeApp || target != "") ||
+	if !protocol.Valid() || protocol == PublicURLServiceSSH && ephemeral || protocol != PublicURLServiceHTTP && (purpose != PublicURLPurposeApp || target != "") ||
 		target == "" && (purpose != PublicURLPurposeApp || ephemeral && protocol == PublicURLServiceHTTP) {
 		return false
 	}

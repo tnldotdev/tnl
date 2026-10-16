@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -28,6 +29,12 @@ func (c *Client) ListAvailablePublicURLs(ctx context.Context, teamID, cursor str
 func (c *Client) CreateTeamVisitorGrant(ctx context.Context, id, key string, body controlv1.CreateTeamVisitorGrantRequest) (controlv1.VisitorGrant, error) {
 	return requestWithAccess[controlv1.VisitorGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreateTeamVisitorGrant(ctx, id, &controlv1.CreateTeamVisitorGrantParams{IdempotencyKey: key}, body, e...)
+	})
+}
+
+func (c *Client) CreateIdentityVisitorGrant(ctx context.Context, id, key string, body controlv1.CreateIdentityVisitorGrantRequest) (controlv1.VisitorGrant, error) {
+	return requestWithAccess[controlv1.VisitorGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreateIdentityVisitorGrant(ctx, id, &controlv1.CreateIdentityVisitorGrantParams{IdempotencyKey: key}, body, e...)
 	})
 }
 
@@ -91,29 +98,68 @@ func (c *Client) AuthorizeVisitorCertificate(ctx context.Context, scope VisitorC
 // AuthorizeVisitorCertificateDecision returns the current decision's hard
 // deadline for subsequent connections with the same scoped proof.
 func (c *Client) AuthorizeVisitorCertificateDecision(ctx context.Context, scope VisitorCertificateScope, state tls.ConnectionState) (time.Time, error) {
-	if !state.HandshakeComplete || len(state.PeerCertificates) > 4 || scope.PublicURLID == "" || scope.PublishRunID == "" || scope.PublishRunNumber == 0 || scope.PublishRunNumber > 1<<63-1 || scope.PublishRunToken == "" || !scope.SourceIP.IsValid() || scope.SourceIP.Zone() != "" {
-		return time.Time{}, errors.New("visitor certificate proof is missing")
-	}
-	body := controlv1.AuthorizeVisitorCertificateJSONRequestBody{PublishRunNumber: int64(scope.PublishRunNumber), SourceIp: scope.SourceIP.Unmap().String()}
-	if len(state.PeerCertificates) > 0 {
-		encoded := base64.StdEncoding.EncodeToString(state.PeerCertificates[0].Raw)
-		body.Certificate = &encoded
-	}
-	result, err := request[struct {
-		IdentityID  string     `json:"identity_id,omitempty"`
-		PublicURLID string     `json:"public_url_id"`
-		ValidUntil  *time.Time `json:"valid_until,omitempty"`
-	}](ctx, c, scope.PublishRunToken.String(), func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.AuthorizeVisitorCertificate(ctx, scope.PublishRunID, body, e...)
-	})
+	result, err := c.authorizeVisitorCertificate(ctx, scope, state, nil)
 	if err != nil {
 		return time.Time{}, err
-	}
-	if result.PublicURLID != scope.PublicURLID || body.Certificate != nil && result.IdentityID == "" {
-		return time.Time{}, errors.New("visitor certificate decision has a different scope")
 	}
 	if result.ValidUntil != nil {
 		return *result.ValidUntil, nil
 	}
 	return time.Time{}, nil
+}
+
+// SSHVisitorDecision is a current identity and optional exact-account decision.
+// an empty SSHUser permits only proceeding to account authentication.
+type SSHVisitorDecision struct {
+	IdentityID, PublicURLID, SSHUser string
+	ValidUntil                       time.Time
+}
+
+// AuthorizeSSHVisitor requires a visitor certificate even for an allowed IP.
+// an empty username checks for any explicit SSH grant, never shell access.
+func (c *Client) AuthorizeSSHVisitor(ctx context.Context, scope VisitorCertificateScope, state tls.ConnectionState, username string) (SSHVisitorDecision, error) {
+	if len(state.PeerCertificates) == 0 || username != "" && !authorization.SSHUserValid(username) {
+		return SSHVisitorDecision{}, errors.New("SSH visitor certificate and valid account are required")
+	}
+	var user *string
+	if username != "" {
+		user = &username
+	}
+	result, err := c.authorizeVisitorCertificate(ctx, scope, state, user)
+	if err != nil {
+		return SSHVisitorDecision{}, err
+	}
+	if result.IdentityID == "" || result.SSHUser != username || result.ValidUntil == nil ||
+		!result.ValidUntil.After(time.Now()) || result.ValidUntil.After(state.PeerCertificates[0].NotAfter) {
+		return SSHVisitorDecision{}, errors.New("SSH visitor decision has an invalid scope or deadline")
+	}
+	return SSHVisitorDecision{IdentityID: result.IdentityID, PublicURLID: result.PublicURLID, SSHUser: result.SSHUser, ValidUntil: *result.ValidUntil}, nil
+}
+
+type visitorCertificateDecision struct {
+	IdentityID  string     `json:"identity_id,omitempty"`
+	PublicURLID string     `json:"public_url_id"`
+	SSHUser     string     `json:"ssh_user,omitempty"`
+	ValidUntil  *time.Time `json:"valid_until,omitempty"`
+}
+
+func (c *Client) authorizeVisitorCertificate(ctx context.Context, scope VisitorCertificateScope, state tls.ConnectionState, username *string) (visitorCertificateDecision, error) {
+	if !state.HandshakeComplete || len(state.PeerCertificates) > 4 || len(state.PeerCertificates) > 0 && state.PeerCertificates[0] == nil || scope.PublicURLID == "" || scope.PublishRunID == "" || scope.PublishRunNumber == 0 || scope.PublishRunNumber > 1<<63-1 || scope.PublishRunToken == "" || !scope.SourceIP.IsValid() || scope.SourceIP.Zone() != "" {
+		return visitorCertificateDecision{}, errors.New("visitor certificate proof is missing")
+	}
+	body := controlv1.AuthorizeVisitorCertificateJSONRequestBody{PublishRunNumber: int64(scope.PublishRunNumber), SourceIp: scope.SourceIP.Unmap().String(), SshUser: username}
+	if len(state.PeerCertificates) > 0 {
+		encoded := base64.StdEncoding.EncodeToString(state.PeerCertificates[0].Raw)
+		body.Certificate = &encoded
+	}
+	result, err := request[visitorCertificateDecision](ctx, c, scope.PublishRunToken.String(), func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.AuthorizeVisitorCertificate(ctx, scope.PublishRunID, body, e...)
+	})
+	if err != nil {
+		return visitorCertificateDecision{}, err
+	}
+	if result.PublicURLID != scope.PublicURLID || body.Certificate != nil && result.IdentityID == "" {
+		return visitorCertificateDecision{}, errors.New("visitor certificate decision has a different scope")
+	}
+	return result, nil
 }

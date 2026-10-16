@@ -41,6 +41,9 @@ func publicURLResponse(route controlstate.PublicURL) controlv1.PublicURL {
 		port := int(*route.PublicPort)
 		result.PublicPort = &port
 	}
+	if route.SSHHostKey != "" {
+		result.SshHostKey = &route.SSHHostKey
+	}
 	return result
 }
 

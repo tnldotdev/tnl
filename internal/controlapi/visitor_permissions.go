@@ -21,10 +21,11 @@ import (
 
 type VisitorStore interface {
 	HTTPVisitorPermission(context.Context, controlstate.PublishRunAuthentication, controlstate.HTTPVisitorRequest, time.Time) (controlstate.VisitorPermission, error)
-	CreateTeamVisitorGrant(context.Context, string, string, string, *time.Time, time.Time) (controlstate.VisitorGrant, error)
+	CreateTeamVisitorGrant(context.Context, string, string, string, *time.Time, time.Time, ...string) (controlstate.VisitorGrant, error)
+	CreateIdentityVisitorGrant(context.Context, string, string, string, string, *time.Time, time.Time, ...string) (controlstate.VisitorGrant, error)
 	ListVisitorGrants(context.Context, string, string) ([]controlstate.VisitorGrant, error)
 	RevokeVisitorGrant(context.Context, string, string, string, time.Time) error
-	CreateVisitorInvitation(context.Context, string, string, string, string, [32]byte, time.Time, time.Time) (controlstate.VisitorInvitation, error)
+	CreateVisitorInvitation(context.Context, string, string, string, string, [32]byte, time.Time, time.Time, ...string) (controlstate.VisitorInvitation, error)
 	ListVisitorInvitations(context.Context, string, string) ([]controlstate.VisitorInvitation, error)
 	RevokeVisitorInvitation(context.Context, string, string, string, time.Time) error
 	AcceptVisitorInvitation(context.Context, string, string, time.Time) (controlstate.VisitorGrant, error)
@@ -32,6 +33,7 @@ type VisitorStore interface {
 	ReplaceVisitorAccess(context.Context, string, string, controlstate.VisitorAccessMode, []string, uint64, time.Time) (controlstate.PublicURL, error)
 	IssueVisitorCertificateScope(context.Context, credentials.AccessToken, string, time.Time, func(string, string, time.Time) ([]byte, error)) ([]byte, time.Time, error)
 	DatabaseVisitorPermission(context.Context, controlstate.PublishRunAuthentication, string, string, time.Time) (controlstate.VisitorPermission, error)
+	SSHVisitorPermission(context.Context, controlstate.PublishRunAuthentication, string, string, string, time.Time) (controlstate.VisitorPermission, error)
 }
 
 func (h *handler) AuthorizeHTTPVisitor(w http.ResponseWriter, r *http.Request, runID controlv1.PublishRunID) {
@@ -146,12 +148,33 @@ func (h *handler) CreateTeamVisitorGrant(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	var body controlv1.CreateTeamVisitorGrantRequest
-	if decodeJSON(w, r, &body) != nil {
+	if decodeJSON(w, r, &body) != nil || body.SshUser != nil && !authorization.SSHUserValid(*body.SshUser) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor grant")
 		return
 	}
-	result, err := h.visitorState.CreateTeamVisitorGrant(r.Context(), id, actor, p.IdempotencyKey, body.ExpiresAt, time.Now())
+	result, err := h.visitorState.CreateTeamVisitorGrant(r.Context(), id, actor, p.IdempotencyKey, body.ExpiresAt, time.Now(), visitorSSHUsers(body.SshUser)...)
 	visitorResult(w, "create team visitor grant", result, err, 201)
+}
+
+func (h *handler) CreateIdentityVisitorGrant(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, p controlv1.CreateIdentityVisitorGrantParams) {
+	actor, ok := h.visitorActor(w, r)
+	if !ok {
+		return
+	}
+	var body controlv1.CreateIdentityVisitorGrantRequest
+	if decodeJSON(w, r, &body) != nil || body.IdentityId == "" || body.SshUser != nil && !authorization.SSHUserValid(*body.SshUser) {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor grant")
+		return
+	}
+	result, err := h.visitorState.CreateIdentityVisitorGrant(r.Context(), id, actor, p.IdempotencyKey, body.IdentityId, body.ExpiresAt, time.Now(), visitorSSHUsers(body.SshUser)...)
+	visitorResult(w, "create identity visitor grant", result, err, 201)
+}
+
+func visitorSSHUsers(user *string) []string {
+	if user == nil {
+		return nil
+	}
+	return []string{*user}
 }
 
 func (h *handler) ListVisitorGrants(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
@@ -176,7 +199,7 @@ func (h *handler) CreateVisitorInvitation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var body controlv1.CreateVisitorInvitationRequest
-	if decodeJSON(w, r, &body) != nil {
+	if decodeJSON(w, r, &body) != nil || body.SshUser != nil && !authorization.SSHUserValid(*body.SshUser) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor invitation")
 		return
 	}
@@ -187,7 +210,7 @@ func (h *handler) CreateVisitorInvitation(w http.ResponseWriter, r *http.Request
 	}
 	var digest [32]byte
 	copy(digest[:], raw)
-	result, err := h.visitorState.CreateVisitorInvitation(r.Context(), id, actor, p.IdempotencyKey, body.Email, digest, body.ExpiresAt, time.Now())
+	result, err := h.visitorState.CreateVisitorInvitation(r.Context(), id, actor, p.IdempotencyKey, body.Email, digest, body.ExpiresAt, time.Now(), visitorSSHUsers(body.SshUser)...)
 	visitorResult(w, "create visitor invitation", result, err, 201)
 }
 func (h *handler) ListVisitorInvitations(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
@@ -290,8 +313,23 @@ func (h *handler) AuthorizeVisitorCertificate(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	url, err := h.store.GetPublicURLForAuthorization(r.Context(), auth.PublicURLID)
+	if err != nil {
+		writeControlStateProblem(w, "read visitor public URL", err)
+		return
+	}
+	ssh := url.ServiceProtocol == controlstate.PublicURLServiceSSH
+	if body.SshUser != nil && (!ssh || !authorization.SSHUserValid(*body.SshUser)) {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid SSH account")
+		return
+	}
+	if ssh && body.Certificate == nil {
+		writeProblem(w, 403, controlv1.Forbidden, "SSH requires a visitor identity certificate")
+		return
+	}
 	now := time.Now()
 	identity := ""
+	var certificateExpiry time.Time
 	if body.Certificate != nil {
 		if h.visitorIssuer == nil {
 			writeProblem(w, 503, controlv1.Unavailable, "visitor certificate issuer is unavailable")
@@ -312,19 +350,38 @@ func (h *handler) AuthorizeVisitorCertificate(w http.ResponseWriter, r *http.Req
 			writeProblem(w, 403, controlv1.Forbidden, "invalid visitor certificate scope")
 			return
 		}
+		certificateExpiry = leaf.NotAfter
 	}
-	permission, err := h.visitorState.DatabaseVisitorPermission(r.Context(), auth, identity, body.SourceIp, now)
+	var permission controlstate.VisitorPermission
+	if ssh {
+		permission, err = h.visitorState.SSHVisitorPermission(r.Context(), auth, identity, body.SourceIp, optionalFeedbackString(body.SshUser), now)
+	} else {
+		permission, err = h.visitorState.DatabaseVisitorPermission(r.Context(), auth, identity, body.SourceIp, now)
+	}
 	if err != nil {
-		visitorResult(w, "authorize database visitor", nil, err, 200)
+		visitorResult(w, "authorize certificate visitor", nil, err, 200)
 		return
 	}
-	if !permission.VisitAllowed {
+	if !permission.VisitAllowed || ssh && (identity == "" || permission.IdentityID != identity || body.SshUser != nil && permission.SSHUser != *body.SshUser) {
 		writeProblem(w, 403, controlv1.Forbidden, "visitor access denied")
 		return
 	}
+	if permission.ExpiresAt == nil || !permission.ExpiresAt.After(now) {
+		writeProblem(w, 403, controlv1.Forbidden, "visitor permission has expired")
+		return
+	}
+	validUntil := *permission.ExpiresAt
+	if !certificateExpiry.IsZero() && certificateExpiry.Before(validUntil) {
+		validUntil = certificateExpiry
+	}
+	sshUser := ""
+	if ssh && body.SshUser != nil {
+		sshUser = permission.SSHUser
+	}
 	writeJSON(w, 200, struct {
-		IdentityID  string     `json:"identity_id,omitempty"`
-		PublicURLID string     `json:"public_url_id"`
-		ValidUntil  *time.Time `json:"valid_until,omitempty"`
-	}{identity, auth.PublicURLID, permission.ExpiresAt})
+		IdentityID  string    `json:"identity_id,omitempty"`
+		PublicURLID string    `json:"public_url_id"`
+		SSHUser     string    `json:"ssh_user,omitempty"`
+		ValidUntil  time.Time `json:"valid_until"`
+	}{identity, auth.PublicURLID, sshUser, validUntil})
 }

@@ -56,12 +56,13 @@ const project = parseJSON(
       `import json,sys,tomllib
 with open(sys.argv[1], "rb") as source:
   value = tomllib.load(source)["project"]
-print(json.dumps({key: value[key] for key in ("name", "requires-python", "dependencies")}))`,
+print(json.dumps({key: value[key] for key in ("name", "license", "requires-python", "dependencies")}))`,
       path.join(root, "packages/py/pyproject.toml"),
     ])
   ).stdout,
   z.object({
     name: z.literal("tnldotdev-tnl"),
+    license: z.literal("BSD-3-Clause"),
     "requires-python": z.string(),
     dependencies: z.array(z.string()),
   }),
@@ -159,7 +160,7 @@ try {
         "Name: tnldotdev-tnl",
         `Version: ${version}`,
         "Summary: public URLs for Python ASGI applications",
-        "License-Expression: MIT",
+        `License-Expression: ${project.license}`,
         "Description-Content-Type: text/markdown",
         ...legalFiles.map((name) => `License-File: ${name}`),
         `Requires-Python: ${project["requires-python"]}`,

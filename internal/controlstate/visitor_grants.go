@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
@@ -20,6 +21,7 @@ type VisitorGrant struct {
 	PublicURLID string     `json:"public_url_id"`
 	Kind        string     `json:"kind"`
 	IdentityID  string     `json:"identity_id,omitempty"`
+	SSHUser     *string    `json:"ssh_user,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
@@ -43,10 +45,46 @@ func visitorManager(ctx context.Context, q *controlstatedb.Queries, url controls
 
 func visitorGrantFromRow(row controlstatedb.ControlVisitorGrant) VisitorGrant {
 	return VisitorGrant{ID: row.ID, PublicURLID: row.PublicURLID, Kind: row.Kind, IdentityID: row.IdentityID.String,
-		CreatedAt: row.CreatedAt.Time, ExpiresAt: optionalTime(row.ExpiresAt), RevokedAt: optionalTime(row.RevokedAt)}
+		SSHUser: visitorSSHUser(row.SSHUser.String), CreatedAt: row.CreatedAt.Time, ExpiresAt: optionalTime(row.ExpiresAt), RevokedAt: optionalTime(row.RevokedAt)}
 }
 
-func (d *Database) CreateTeamVisitorGrant(ctx context.Context, urlID, actorID, key string, expires *time.Time, now time.Time) (result VisitorGrant, retErr error) {
+func visitorSSHUser(user string) *string {
+	if user == "" {
+		return nil
+	}
+	return &user
+}
+
+func visitorGrantUser(protocol string, users []string) (string, error) {
+	if len(users) > 1 {
+		return "", ErrShareInvalid
+	}
+	user := ""
+	if len(users) == 1 {
+		user = users[0]
+	}
+	if protocol == "ssh" {
+		if !authorization.SSHUserValid(user) {
+			return "", ErrShareInvalid
+		}
+	} else if len(users) != 0 {
+		return "", ErrShareInvalid
+	}
+	return user, nil
+}
+
+func (d *Database) CreateTeamVisitorGrant(ctx context.Context, urlID, actorID, key string, expires *time.Time, now time.Time, sshUser ...string) (VisitorGrant, error) {
+	return d.createVisitorGrant(ctx, urlID, actorID, key, "", expires, now, sshUser...)
+}
+
+func (d *Database) CreateIdentityVisitorGrant(ctx context.Context, urlID, actorID, key, identityID string, expires *time.Time, now time.Time, sshUser ...string) (VisitorGrant, error) {
+	if identityID == "" {
+		return VisitorGrant{}, ErrShareInvalid
+	}
+	return d.createVisitorGrant(ctx, urlID, actorID, key, identityID, expires, now, sshUser...)
+}
+
+func (d *Database) createVisitorGrant(ctx context.Context, urlID, actorID, key, identityID string, expires *time.Time, now time.Time, sshUser ...string) (result VisitorGrant, retErr error) {
 	if !validFeedbackKey(key) || expires != nil && !expires.After(now) {
 		return result, ErrShareInvalid
 	}
@@ -60,23 +98,36 @@ func (d *Database) CreateTeamVisitorGrant(ctx context.Context, urlID, actorID, k
 	if err != nil {
 		return result, err
 	}
-	if url.Purpose != "app" || url.ServiceProtocol != "http" && !databaseProtocol(url.ServiceProtocol) {
+	if url.Purpose != "app" || url.ServiceProtocol != "http" && !databaseProtocol(url.ServiceProtocol) && url.ServiceProtocol != "ssh" {
 		return result, ErrShareInvalid
+	}
+	user, err := visitorGrantUser(url.ServiceProtocol, sshUser)
+	if err != nil {
+		return result, err
 	}
 	if err = visitorManager(ctx, q, url, actorID); err != nil {
 		return result, err
+	}
+	kind := "team"
+	if identityID != "" {
+		kind = "identity"
+		if _, err = q.LockVisitorIdentity(ctx, identityID); errors.Is(err, pgx.ErrNoRows) {
+			return result, ErrShareInvalid
+		} else if err != nil {
+			return result, err
+		}
 	}
 	id, err := opaqueid.New(opaqueid.SharePrefix)
 	if err != nil {
 		return result, err
 	}
 	encoded, _ := json.Marshal(struct {
-		URL     string
-		Expires *time.Time
-	}{urlID, expires})
+		URL, Identity, SSHUser string
+		Expires                *time.Time
+	}{urlID, identityID, user, expires})
 	digest := sha256.Sum256(encoded)
 	row, err := q.CreateVisitorGrant(ctx, controlstatedb.CreateVisitorGrantParams{ID: id, PublicURLID: urlID, TeamID: url.TeamID,
-		Kind: "team", CreatedByIdentityID: actorID, IdempotencyKey: key, RequestDigest: digest[:], CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
+		Kind: kind, IdentityID: nullableText(identityID), SSHUser: nullableText(user), CreatedByIdentityID: actorID, IdempotencyKey: key, RequestDigest: digest[:], CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
 	if err != nil {
 		return result, err
 	}
@@ -145,6 +196,7 @@ type VisitorInvitation struct {
 	ID                 string     `json:"id"`
 	PublicURLID        string     `json:"public_url_id"`
 	Email              string     `json:"email"`
+	SSHUser            *string    `json:"ssh_user,omitempty"`
 	ExpiresAt          time.Time  `json:"expires_at"`
 	AcceptedIdentityID string     `json:"accepted_identity_id,omitempty"`
 	RevokedAt          *time.Time `json:"revoked_at,omitempty"`
@@ -152,11 +204,11 @@ type VisitorInvitation struct {
 
 func visitorInvitationFromRow(row controlstatedb.ControlVisitorInvitation) VisitorInvitation {
 	return VisitorInvitation{ID: row.ID, PublicURLID: row.PublicURLID, Email: row.NormalizedEmail, ExpiresAt: row.ExpiresAt.Time,
-		AcceptedIdentityID: row.AcceptedIdentityID.String, RevokedAt: optionalTime(row.RevokedAt)}
+		SSHUser: visitorSSHUser(row.SSHUser.String), AcceptedIdentityID: row.AcceptedIdentityID.String, RevokedAt: optionalTime(row.RevokedAt)}
 }
 
 // the client generates the secret; control stores only its digest.
-func (d *Database) CreateVisitorInvitation(ctx context.Context, urlID, actorID, key, email string, tokenDigest [32]byte, expires, now time.Time) (result VisitorInvitation, retErr error) {
+func (d *Database) CreateVisitorInvitation(ctx context.Context, urlID, actorID, key, email string, tokenDigest [32]byte, expires, now time.Time, sshUser ...string) (result VisitorInvitation, retErr error) {
 	email, err := normalizeEmailRestriction(email)
 	if err != nil || email == "" || tokenDigest == ([32]byte{}) || !validFeedbackKey(key) || !expires.After(now) || expires.After(now.Add(maximumShareLifetime)) {
 		return result, ErrShareInvalid
@@ -171,8 +223,12 @@ func (d *Database) CreateVisitorInvitation(ctx context.Context, urlID, actorID, 
 	if err != nil {
 		return result, err
 	}
-	if url.Purpose != "app" || url.ServiceProtocol != "http" && !databaseProtocol(url.ServiceProtocol) {
+	if url.Purpose != "app" || url.ServiceProtocol != "http" && !databaseProtocol(url.ServiceProtocol) && url.ServiceProtocol != "ssh" {
 		return result, ErrShareInvalid
+	}
+	user, err := visitorGrantUser(url.ServiceProtocol, sshUser)
+	if err != nil {
+		return result, err
 	}
 	if err = visitorManager(ctx, q, url, actorID); err != nil {
 		return result, err
@@ -182,13 +238,13 @@ func (d *Database) CreateVisitorInvitation(ctx context.Context, urlID, actorID, 
 		return result, err
 	}
 	encoded, _ := json.Marshal(struct {
-		URL, Email string
-		Digest     [32]byte
-		Expires    time.Time
-	}{urlID, email, tokenDigest, expires})
+		URL, Email, SSHUser string
+		Digest              [32]byte
+		Expires             time.Time
+	}{urlID, email, user, tokenDigest, expires})
 	digest := sha256.Sum256(encoded)
 	row, err := q.CreateVisitorInvitation(ctx, controlstatedb.CreateVisitorInvitationParams{ID: id, PublicURLID: urlID, TeamID: url.TeamID,
-		NormalizedEmail: email, TokenDigest: tokenDigest[:], CreatedByIdentityID: actorID, IdempotencyKey: key, RequestDigest: digest[:], CreatedAt: timestamptz(now), ExpiresAt: timestamptz(expires)})
+		NormalizedEmail: email, SSHUser: nullableText(user), TokenDigest: tokenDigest[:], CreatedByIdentityID: actorID, IdempotencyKey: key, RequestDigest: digest[:], CreatedAt: timestamptz(now), ExpiresAt: timestamptz(expires)})
 	if err != nil {
 		return result, err
 	}
@@ -225,7 +281,7 @@ func (d *Database) AcceptVisitorInvitation(ctx context.Context, identityID, secr
 	if err != nil {
 		return result, err
 	}
-	if url.Purpose != "app" || url.ServiceProtocol != "http" && !databaseProtocol(url.ServiceProtocol) {
+	if url.Purpose != "app" || url.ServiceProtocol != "http" && !databaseProtocol(url.ServiceProtocol) && url.ServiceProtocol != "ssh" {
 		return result, ErrShareNotFound
 	}
 	row, err := q.LockVisitorInvitation(ctx, id)
@@ -233,6 +289,13 @@ func (d *Database) AcceptVisitorInvitation(ctx context.Context, identityID, secr
 		return result, err
 	}
 	if row.RevokedAt.Valid || row.AcceptedAt.Valid || !row.ExpiresAt.Time.After(now) || subtle.ConstantTimeCompare(row.TokenDigest, digest[:]) != 1 {
+		return result, ErrShareNotFound
+	}
+	var users []string
+	if row.SSHUser.Valid {
+		users = []string{row.SSHUser.String}
+	}
+	if _, err = visitorGrantUser(url.ServiceProtocol, users); err != nil {
 		return result, ErrShareNotFound
 	}
 	identity, err := q.LockVisitorIdentity(ctx, identityID)
@@ -249,11 +312,11 @@ func (d *Database) AcceptVisitorInvitation(ctx context.Context, identityID, secr
 		return result, err
 	}
 	grant, err := q.CreateVisitorGrant(ctx, controlstatedb.CreateVisitorGrantParams{ID: id, PublicURLID: url.ID, TeamID: url.TeamID, Kind: "identity", IdentityID: nullableText(identityID),
-		CreatedByIdentityID: row.CreatedByIdentityID, IdempotencyKey: "invitation/" + id, RequestDigest: row.RequestDigest, CreatedAt: timestamptz(now), ExpiresAt: row.ExpiresAt})
+		SSHUser: row.SSHUser, CreatedByIdentityID: row.CreatedByIdentityID, IdempotencyKey: "invitation/" + id, RequestDigest: row.RequestDigest, CreatedAt: timestamptz(now), ExpiresAt: row.ExpiresAt})
 	if err != nil {
 		return result, err
 	}
-	if grant.ID != id || grant.Kind != "identity" || grant.IdentityID.String != identityID || grant.PublicURLID != url.ID || subtle.ConstantTimeCompare(grant.RequestDigest, row.RequestDigest) != 1 {
+	if grant.ID != id || grant.Kind != "identity" || grant.IdentityID.String != identityID || grant.PublicURLID != url.ID || grant.SSHUser != row.SSHUser || subtle.ConstantTimeCompare(grant.RequestDigest, row.RequestDigest) != 1 {
 		return result, ErrShareIdempotency
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -325,6 +388,7 @@ type AvailablePublicURL struct {
 	TeamName          string `json:"team_name"`
 	CanonicalHostname string `json:"canonical_hostname"`
 	ServiceProtocol   string `json:"service_protocol"`
+	SSHHostKey        string `json:"ssh_host_key,omitempty"`
 	PublicPort        *int32 `json:"public_port,omitempty"`
 	VisitorAccess     string `json:"visitor_access"`
 }
@@ -340,7 +404,7 @@ func (d *Database) ListAvailablePublicURLs(ctx context.Context, identityID, team
 	}
 	page := AvailablePublicURLPage{PublicURLs: make([]AvailablePublicURL, min(len(rows), 100))}
 	for i, row := range rows[:len(page.PublicURLs)] {
-		item := AvailablePublicURL{ID: row.ID, TeamID: row.TeamID, TeamName: row.TeamName, CanonicalHostname: row.CanonicalHostname, ServiceProtocol: row.ServiceProtocol, VisitorAccess: row.VisitorAccess}
+		item := AvailablePublicURL{ID: row.ID, TeamID: row.TeamID, TeamName: row.TeamName, CanonicalHostname: row.CanonicalHostname, ServiceProtocol: row.ServiceProtocol, SSHHostKey: row.SSHHostKey.String, VisitorAccess: row.VisitorAccess}
 		if row.PublicPort.Valid {
 			item.PublicPort = &row.PublicPort.Int32
 		}

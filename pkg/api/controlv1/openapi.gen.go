@@ -982,13 +982,16 @@ type AuthenticationFactsMethods string
 
 // AvailablePublicURL defines model for AvailablePublicURL.
 type AvailablePublicURL struct {
-	CanonicalHostname string                          `json:"canonical_hostname"`
-	Id                string                          `json:"id"`
-	PublicPort        *int32                          `json:"public_port,omitempty"`
-	ServiceProtocol   string                          `json:"service_protocol"`
-	TeamId            string                          `json:"team_id"`
-	TeamName          string                          `json:"team_name"`
-	VisitorAccess     AvailablePublicURLVisitorAccess `json:"visitor_access"`
+	CanonicalHostname string `json:"canonical_hostname"`
+	Id                string `json:"id"`
+	PublicPort        *int32 `json:"public_port,omitempty"`
+	ServiceProtocol   string `json:"service_protocol"`
+
+	// SshHostKey Registered Ed25519 SSH host public key in authorized-key format, without options or certificates. Required and immutable for managed SSH URLs; forbidden for other protocols. The private key stays with the publisher.
+	SshHostKey    *SSHHostKey                     `json:"ssh_host_key,omitempty"`
+	TeamId        string                          `json:"team_id"`
+	TeamName      string                          `json:"team_name"`
+	VisitorAccess AvailablePublicURLVisitorAccess `json:"visitor_access"`
 }
 
 // AvailablePublicURLVisitorAccess defines model for AvailablePublicURL.VisitorAccess.
@@ -1147,6 +1150,15 @@ type CreateFeedbackReportRequest struct {
 	SourceAtReport SourceState `json:"source_at_report"`
 }
 
+// CreateIdentityVisitorGrantRequest defines model for CreateIdentityVisitorGrantRequest.
+type CreateIdentityVisitorGrantRequest struct {
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	IdentityId IdentityID `json:"identity_id"`
+
+	// SshUser Exact nonroot local account. The root account is forbidden; SSH grants require this field and HTTP/database grants forbid it.
+	SshUser *SSHUser `json:"ssh_user,omitempty"`
+}
+
 // CreatePreviewRequest defines model for CreatePreviewRequest.
 type CreatePreviewRequest struct {
 	TeamId TeamID `json:"team_id"`
@@ -1164,7 +1176,10 @@ type CreatePublicURLRequest struct {
 	Purpose           PublicURLPurpose          `json:"purpose"`
 	ServiceProtocol   *PublicURLServiceProtocol `json:"service_protocol,omitempty"`
 
-	// Target Leave empty when the publisher supplies the target locally.
+	// SshHostKey Registered Ed25519 SSH host public key in authorized-key format, without options or certificates. Required and immutable for managed SSH URLs; forbidden for other protocols. The private key stays with the publisher.
+	SshHostKey *SSHHostKey `json:"ssh_host_key,omitempty"`
+
+	// Target Leave empty when the publisher supplies the target locally. Managed SSH requires an empty target, restricted access, a registered ssh_host_key, and a saved public TCP port.
 	Target string `json:"target"`
 	TeamId TeamID `json:"team_id"`
 }
@@ -1206,13 +1221,19 @@ type CreateShareRequest struct {
 // CreateTeamVisitorGrantRequest defines model for CreateTeamVisitorGrantRequest.
 type CreateTeamVisitorGrantRequest struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+
+	// SshUser Exact nonroot local account. The root account is forbidden; SSH grants require this field and HTTP/database grants forbid it.
+	SshUser *SSHUser `json:"ssh_user,omitempty"`
 }
 
 // CreateVisitorInvitationRequest defines model for CreateVisitorInvitationRequest.
 type CreateVisitorInvitationRequest struct {
-	Email       string    `json:"email"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	TokenDigest string    `json:"token_digest"`
+	Email     string    `json:"email"`
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// SshUser Exact nonroot local account. The root account is forbidden; SSH grants require this field and HTTP/database grants forbid it.
+	SshUser     *SSHUser `json:"ssh_user,omitempty"`
+	TokenDigest string   `json:"token_digest"`
 }
 
 // DomainID defines model for DomainID.
@@ -1552,7 +1573,10 @@ type PublicURL struct {
 	Purpose         PublicURLPurpose         `json:"purpose"`
 	ServiceProtocol PublicURLServiceProtocol `json:"service_protocol"`
 
-	// Target Empty when the publisher supplies the target locally.
+	// SshHostKey Registered Ed25519 SSH host public key in authorized-key format, without options or certificates. Required and immutable for managed SSH URLs; forbidden for other protocols. The private key stays with the publisher.
+	SshHostKey *SSHHostKey `json:"ssh_host_key,omitempty"`
+
+	// Target Empty when the publisher supplies the target locally. Always empty for managed SSH, which has no private target or target TLS.
 	Target    string    `json:"target"`
 	TeamId    TeamID    `json:"team_id"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -1783,6 +1807,12 @@ type ReviewerFeedbackReadRequest struct {
 	PublishRunNumber int64                  `json:"publish_run_number"`
 }
 
+// SSHHostKey Registered Ed25519 SSH host public key in authorized-key format, without options or certificates. Required and immutable for managed SSH URLs; forbidden for other protocols. The private key stays with the publisher.
+type SSHHostKey = string
+
+// SSHUser Exact nonroot local account. The root account is forbidden; SSH grants require this field and HTTP/database grants forbid it.
+type SSHUser = string
+
 // SetMaintenanceControlRequest defines model for SetMaintenanceControlRequest.
 type SetMaintenanceControlRequest struct {
 	Allowed bool `json:"allowed"`
@@ -1939,6 +1969,9 @@ type VisitorGrant struct {
 	Kind        VisitorGrantKind `json:"kind"`
 	PublicUrlId PublicURLID      `json:"public_url_id"`
 	RevokedAt   *time.Time       `json:"revoked_at,omitempty"`
+
+	// SshUser Exact nonroot local account. The root account is forbidden; SSH grants require this field and HTTP/database grants forbid it.
+	SshUser *SSHUser `json:"ssh_user,omitempty"`
 }
 
 // VisitorGrantKind defines model for VisitorGrant.Kind.
@@ -1952,6 +1985,9 @@ type VisitorInvitation struct {
 	Id                 string      `json:"id"`
 	PublicUrlId        PublicURLID `json:"public_url_id"`
 	RevokedAt          *time.Time  `json:"revoked_at,omitempty"`
+
+	// SshUser Exact nonroot local account. The root account is forbidden; SSH grants require this field and HTTP/database grants forbid it.
+	SshUser *SSHUser `json:"ssh_user,omitempty"`
 }
 
 // WebhookProvider defines model for WebhookProvider.
@@ -2085,6 +2121,11 @@ type CreateTeamVisitorGrantParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// CreateIdentityVisitorGrantParams defines parameters for CreateIdentityVisitorGrant.
+type CreateIdentityVisitorGrantParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
 // CreateVisitorInvitationParams defines parameters for CreateVisitorInvitation.
 type CreateVisitorInvitationParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
@@ -2110,6 +2151,9 @@ type AuthorizeVisitorCertificateJSONBody struct {
 	Certificate      *string `json:"certificate,omitempty"`
 	PublishRunNumber int64   `json:"publish_run_number"`
 	SourceIp         string  `json:"source_ip"`
+
+	// SshUser For SSH only. Omit for a connection-level check of any explicit SSH grant; supply to check this exact account.
+	SshUser *SSHUser `json:"ssh_user,omitempty"`
 }
 
 // ListPublisherIdentitiesParams defines parameters for ListPublisherIdentities.
@@ -2191,6 +2235,9 @@ type IssueVisitorCertificateJSONRequestBody IssueVisitorCertificateJSONBody
 
 // CreateTeamVisitorGrantJSONRequestBody defines body for CreateTeamVisitorGrant for application/json ContentType.
 type CreateTeamVisitorGrantJSONRequestBody = CreateTeamVisitorGrantRequest
+
+// CreateIdentityVisitorGrantJSONRequestBody defines body for CreateIdentityVisitorGrant for application/json ContentType.
+type CreateIdentityVisitorGrantJSONRequestBody = CreateIdentityVisitorGrantRequest
 
 // CreateVisitorInvitationJSONRequestBody defines body for CreateVisitorInvitation for application/json ContentType.
 type CreateVisitorInvitationJSONRequestBody = CreateVisitorInvitationRequest
@@ -2693,6 +2740,20 @@ type ClientInterface interface {
 
 	// RevokeVisitorGrant performs a DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId) request.
 	RevokeVisitorGrant(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateIdentityVisitorGrantWithBody Create an explicit identity grant, including for the current identity
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
+	CreateIdentityVisitorGrantWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateIdentityVisitorGrant Create an explicit identity grant, including for the current identity
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
+	CreateIdentityVisitorGrant(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, body CreateIdentityVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListVisitorInvitations performs a GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId) request.
 	ListVisitorInvitations(ctx context.Context, publicUrlId PublicURLID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3871,6 +3932,40 @@ func (c *Client) CreateTeamVisitorGrant(ctx context.Context, publicUrlId PublicU
 // RevokeVisitorGrant performs a DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id} (the `RevokeVisitorGrant` operationId) request.
 func (c *Client) RevokeVisitorGrant(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeVisitorGrantRequest(c.Server, publicUrlId, grantId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateIdentityVisitorGrantWithBody Create an explicit identity grant, including for the current identity
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
+func (c *Client) CreateIdentityVisitorGrantWithBody(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateIdentityVisitorGrantRequestWithBody(c.Server, publicUrlId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateIdentityVisitorGrant Create an explicit identity grant, including for the current identity
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
+func (c *Client) CreateIdentityVisitorGrant(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, body CreateIdentityVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateIdentityVisitorGrantRequest(c.Server, publicUrlId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6613,6 +6708,66 @@ func NewRevokeVisitorGrantRequest(server string, publicUrlId PublicURLID, grantI
 	return req, nil
 }
 
+// NewCreateIdentityVisitorGrantRequest calls the generic CreateIdentityVisitorGrant builder with application/json body
+func NewCreateIdentityVisitorGrantRequest(server string, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, body CreateIdentityVisitorGrantJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateIdentityVisitorGrantRequestWithBody(server, publicUrlId, params, "application/json", bodyReader)
+}
+
+// NewCreateIdentityVisitorGrantRequestWithBody constructs an http.Request for the CreateIdentityVisitorGrant method, with any body, and a specified content type
+func NewCreateIdentityVisitorGrantRequestWithBody(server string, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "public_url_id", publicUrlId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/public-urls/%s/visitor-identity-grants", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewListVisitorInvitationsRequest constructs an http.Request for the ListVisitorInvitations method
 func NewListVisitorInvitationsRequest(server string, publicUrlId PublicURLID) (*http.Request, error) {
 	var err error
@@ -8800,6 +8955,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RevokeVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, grantId string, reqEditors ...RequestEditorFn) (*RevokeVisitorGrantResponse, error)
+
+	// CreateIdentityVisitorGrantWithBodyWithResponse Create an explicit identity grant, including for the current identity
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
+	CreateIdentityVisitorGrantWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateIdentityVisitorGrantResponse, error)
+
+	// CreateIdentityVisitorGrantWithResponse Create an explicit identity grant, including for the current identity
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
+	CreateIdentityVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, body CreateIdentityVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateIdentityVisitorGrantResponse, error)
 
 	// ListVisitorInvitationsWithResponse performs a GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId) request.
 	//
@@ -11008,6 +11177,54 @@ func (r RevokeVisitorGrantResponse) ContentType() string {
 	return ""
 }
 
+type CreateIdentityVisitorGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *VisitorGrant
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateIdentityVisitorGrantResponse) GetJSON201() *VisitorGrant {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateIdentityVisitorGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateIdentityVisitorGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateIdentityVisitorGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateIdentityVisitorGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateIdentityVisitorGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListVisitorInvitationsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -11995,7 +12212,10 @@ type AuthorizeVisitorCertificateResponse struct {
 	JSON200 *struct {
 		IdentityId  *IdentityID `json:"identity_id,omitempty"`
 		PublicUrlId PublicURLID `json:"public_url_id"`
-		ValidUntil  *time.Time  `json:"valid_until,omitempty"`
+
+		// SshUser Exact nonroot local account. The root account is forbidden; SSH grants require this field and HTTP/database grants forbid it.
+		SshUser    *SSHUser  `json:"ssh_user,omitempty"`
+		ValidUntil time.Time `json:"valid_until"`
 	}
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
@@ -12005,7 +12225,10 @@ type AuthorizeVisitorCertificateResponse struct {
 func (r AuthorizeVisitorCertificateResponse) GetJSON200() *struct {
 	IdentityId  *IdentityID `json:"identity_id,omitempty"`
 	PublicUrlId PublicURLID `json:"public_url_id"`
-	ValidUntil  *time.Time  `json:"valid_until,omitempty"`
+
+	// SshUser Exact nonroot local account. The root account is forbidden; SSH grants require this field and HTTP/database grants forbid it.
+	SshUser    *SSHUser  `json:"ssh_user,omitempty"`
+	ValidUntil time.Time `json:"valid_until"`
 } {
 	return r.JSON200
 }
@@ -13464,6 +13687,32 @@ func (c *ClientWithResponses) RevokeVisitorGrantWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseRevokeVisitorGrantResponse(rsp)
+}
+
+// CreateIdentityVisitorGrantWithBodyWithResponse Create an explicit identity grant, including for the current identity
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
+func (c *ClientWithResponses) CreateIdentityVisitorGrantWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateIdentityVisitorGrantResponse, error) {
+	rsp, err := c.CreateIdentityVisitorGrantWithBody(ctx, publicUrlId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateIdentityVisitorGrantResponse(rsp)
+}
+
+// CreateIdentityVisitorGrantWithResponse Create an explicit identity grant, including for the current identity
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/public-urls/{public_url_id}/visitor-identity-grants (the `CreateIdentityVisitorGrant` operationId).
+func (c *ClientWithResponses) CreateIdentityVisitorGrantWithResponse(ctx context.Context, publicUrlId PublicURLID, params *CreateIdentityVisitorGrantParams, body CreateIdentityVisitorGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateIdentityVisitorGrantResponse, error) {
+	rsp, err := c.CreateIdentityVisitorGrant(ctx, publicUrlId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateIdentityVisitorGrantResponse(rsp)
 }
 
 // ListVisitorInvitationsWithResponse performs a GET /v1/public-urls/{public_url_id}/visitor-invitations (the `ListVisitorInvitations` operationId) request.
@@ -15486,6 +15735,39 @@ func ParseRevokeVisitorGrantResponse(rsp *http.Response) (*RevokeVisitorGrantRes
 	return response, nil
 }
 
+// ParseCreateIdentityVisitorGrantResponse parses an HTTP response from a CreateIdentityVisitorGrantWithResponse call
+func ParseCreateIdentityVisitorGrantResponse(rsp *http.Response) (*CreateIdentityVisitorGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateIdentityVisitorGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest VisitorGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListVisitorInvitationsResponse parses an HTTP response from a ListVisitorInvitationsWithResponse call
 func ParseListVisitorInvitationsResponse(rsp *http.Response) (*ListVisitorInvitationsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -16181,7 +16463,10 @@ func ParseAuthorizeVisitorCertificateResponse(rsp *http.Response) (*AuthorizeVis
 		var dest struct {
 			IdentityId  *IdentityID `json:"identity_id,omitempty"`
 			PublicUrlId PublicURLID `json:"public_url_id"`
-			ValidUntil  *time.Time  `json:"valid_until,omitempty"`
+
+			// SshUser Exact nonroot local account. The root account is forbidden; SSH grants require this field and HTTP/database grants forbid it.
+			SshUser    *SSHUser  `json:"ssh_user,omitempty"`
+			ValidUntil time.Time `json:"valid_until"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -16862,6 +17147,9 @@ type ServerInterface interface {
 
 	// (DELETE /v1/public-urls/{public_url_id}/visitor-grants/{grant_id})
 	RevokeVisitorGrant(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, grantId string)
+	// CreateIdentityVisitorGrant Create an explicit identity grant, including for the current identity
+	// (POST /v1/public-urls/{public_url_id}/visitor-identity-grants)
+	CreateIdentityVisitorGrant(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID, params CreateIdentityVisitorGrantParams)
 
 	// (GET /v1/public-urls/{public_url_id}/visitor-invitations)
 	ListVisitorInvitations(w http.ResponseWriter, r *http.Request, publicUrlId PublicURLID)
@@ -18239,6 +18527,60 @@ func (siw *ServerInterfaceWrapper) RevokeVisitorGrant(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// CreateIdentityVisitorGrant operation middleware
+func (siw *ServerInterfaceWrapper) CreateIdentityVisitorGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "public_url_id" -------------
+	var publicUrlId PublicURLID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "public_url_id", r.PathValue("public_url_id"), &publicUrlId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "public_url_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateIdentityVisitorGrantParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateIdentityVisitorGrant(w, r, publicUrlId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListVisitorInvitations operation middleware
 func (siw *ServerInterfaceWrapper) ListVisitorInvitations(w http.ResponseWriter, r *http.Request) {
 
@@ -19559,6 +19901,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/visitor/public-urls", wrapper.ListAvailablePublicURLs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.ListVisitorGrants)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.CreateTeamVisitorGrant)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-identity-grants", wrapper.CreateIdentityVisitorGrant)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants/{grant_id}", wrapper.RevokeVisitorGrant)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-invitations", wrapper.ListVisitorInvitations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-invitations", wrapper.CreateVisitorInvitation)

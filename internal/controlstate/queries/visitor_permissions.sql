@@ -12,7 +12,7 @@ SELECT * FROM control.control_sessions WHERE access_token_id = $1 FOR SHARE;
 SELECT * FROM control.control_sessions WHERE id = $1 FOR SHARE;
 
 -- name: ListVisitorInventory :many
-SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol, u.public_port,
+SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol, u.public_port, u.ssh_host_key,
     permission.reason::text AS visitor_access
 FROM control.public_urls u JOIN control.teams t ON t.id = u.team_id
 CROSS JOIN LATERAL control.visitor_permission(u.id, sqlc.arg(identity_id)::text,
@@ -24,8 +24,8 @@ ORDER BY u.id LIMIT 101;
 
 -- name: CreateVisitorGrant :one
 INSERT INTO control.visitor_grants(id, public_url_id, team_id, kind, identity_id, created_by_identity_id,
-    idempotency_key, request_digest, created_at, expires_at)
-VALUES ($1, $2, $3, $4, sqlc.narg(identity_id), $5, $6, $7, $8, sqlc.narg(expires_at))
+    idempotency_key, request_digest, created_at, expires_at, ssh_user)
+VALUES ($1, $2, $3, $4, sqlc.narg(identity_id), $5, $6, $7, $8, sqlc.narg(expires_at), sqlc.narg(ssh_user))
 ON CONFLICT (created_by_identity_id, kind, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING *;
 
 -- name: ListVisitorGrants :many
@@ -39,8 +39,8 @@ UPDATE control.visitor_grants SET revoked_at = COALESCE(revoked_at, $2) WHERE id
 
 -- name: CreateVisitorInvitation :one
 INSERT INTO control.visitor_invitations(id, public_url_id, team_id, normalized_email, token_digest, created_by_identity_id,
-    idempotency_key, request_digest, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    idempotency_key, request_digest, created_at, expires_at, ssh_user)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, sqlc.narg(ssh_user))
 ON CONFLICT (created_by_identity_id, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING *;
 
 -- name: GetVisitorInvitation :one
@@ -66,6 +66,22 @@ UPDATE control.teams SET feedback_authors = $2 WHERE id = $1;
 
 -- name: VisitorCurrentMembership :one
 SELECT id FROM control.team_memberships WHERE team_id = $1 AND identity_id = $2 AND removed_at IS NULL;
+
+-- name: SSHVisitorGrant :one
+SELECT COALESCE(g.ssh_user, '')::text AS ssh_user, g.expires_at,
+    CASE g.kind WHEN 'team' THEN 'team_grant' ELSE 'identity_grant' END::text AS reason
+FROM control.visitor_grants g
+JOIN control.public_urls u ON u.id = g.public_url_id AND u.team_id = g.team_id
+JOIN control.teams t ON t.id = u.team_id AND t.deleted_at IS NULL
+JOIN control.identities i ON i.id = sqlc.arg(identity_id)::text AND i.disabled_at IS NULL
+WHERE u.id = sqlc.arg(public_url_id)::text AND u.lifecycle_state = 'enabled' AND u.purpose = 'app'
+  AND u.service_protocol = 'ssh' AND u.access_mode = 'restricted'
+  AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > sqlc.arg(now)::timestamptz)
+  AND g.ssh_user IS NOT NULL AND (sqlc.arg(ssh_user)::text = '' OR g.ssh_user = sqlc.arg(ssh_user))
+  AND ((g.kind = 'identity' AND g.identity_id = i.id) OR (g.kind = 'team' AND EXISTS (
+    SELECT 1 FROM control.team_memberships m WHERE m.team_id = u.team_id AND m.identity_id = i.id AND m.removed_at IS NULL)))
+ORDER BY g.expires_at DESC NULLS FIRST, g.id LIMIT 1
+FOR SHARE OF g;
 
 -- name: ReadyBrowserHosts :many
 SELECT u.id AS public_url_id, u.canonical_hostname, r.id AS publish_run_id
