@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -16,8 +17,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/tcptarget"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -35,6 +34,13 @@ func LoadDocument(path string) (Document, error) {
 	var document Document
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".json":
+		var raw any
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return Document{}, fmt.Errorf("load config %s: %w", path, err)
+		}
+		if err := RejectNullValues(raw); err != nil {
+			return Document{}, fmt.Errorf("load config %s: %w", path, err)
+		}
 		if err := json.Unmarshal(data, &document, json.RejectUnknownMembers(true)); err != nil {
 			return Document{}, fmt.Errorf("load config %s: %w", path, err)
 		}
@@ -75,6 +81,12 @@ func validateYAMLTags(data []byte) error {
 	if err := rejectCustomYAMLTags(&document); err != nil {
 		return err
 	}
+	if len(document.Content) == 0 {
+		return errors.New("configuration document is required")
+	}
+	if err := validateYAMLValueTypes(document.Content[0], reflect.TypeOf(Document{}), map[*yaml.Node]bool{}); err != nil {
+		return err
+	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
@@ -86,19 +98,28 @@ func validateYAMLTags(data []byte) error {
 }
 
 func rejectCustomYAMLTags(node *yaml.Node) error {
+	return checkYAMLTags(node, map[*yaml.Node]bool{})
+}
+
+func checkYAMLTags(node *yaml.Node, active map[*yaml.Node]bool) error {
 	if node == nil {
 		return nil
 	}
+	if active[node] {
+		return errors.New("recursive YAML aliases are not supported")
+	}
+	active[node] = true
+	defer delete(active, node)
 	switch node.Tag {
 	case "", "!!null", "!!bool", "!!str", "!!int", "!!float", "!!timestamp", "!!seq", "!!map", "!!binary", "!!merge":
 	default:
 		return fmt.Errorf("custom YAML tag %q is not supported", node.Tag)
 	}
-	if err := rejectCustomYAMLTags(node.Alias); err != nil {
+	if err := checkYAMLTags(node.Alias, active); err != nil {
 		return err
 	}
 	for _, child := range node.Content {
-		if err := rejectCustomYAMLTags(child); err != nil {
+		if err := checkYAMLTags(child, active); err != nil {
 			return err
 		}
 	}
@@ -137,19 +158,19 @@ func ValidateDocument(document Document) error {
 }
 
 func ValidateTNL(config TNL) error {
-	if err := validateReadiness(config.Readiness); err != nil {
-		return err
-	}
 	if err := ValidateInspection(config.Inspection); err != nil {
 		return fmt.Errorf("inspection: %w", err)
 	}
 	if err := validateServerAndTeam(config.Server, config.Team); err != nil {
 		return err
 	}
-	if err := validateServiceValues(config.Tunnel, config.Publish); err != nil {
+	if err := validateTunnel(config.Tunnel); err != nil {
 		return err
 	}
-	if err := validateRatePair(config.Tunnel, nil); err != nil {
+	if err := validateLimits(tunnelLimits(config.Tunnel), nil, ""); err != nil {
+		return err
+	}
+	if err := validatePublisher(config); err != nil {
 		return err
 	}
 	if len(config.Services) != 0 && config.Tunnel != nil {
@@ -171,71 +192,72 @@ func ValidateTNL(config TNL) error {
 		names = append(names, name)
 	}
 	slices.Sort(names)
+	privateNames := make(map[string]string)
 	for _, name := range names {
 		service := config.Services[name]
-		effectivePublish := MergePublish(config.Publish, service.Publish)
-		if err := validateReadiness(service.Readiness); err != nil {
+		if !naming.ValidServiceName(name) {
+			return fmt.Errorf("service name %q must be one lowercase DNS label beginning with a letter", name)
+		}
+		if err := validateTarget(service); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
+		}
+		if Protocol(service) == "tcp" {
+			if service.Tunnel != nil {
+				return fmt.Errorf("services.%s: tcp cannot use public tunnel settings", name)
+			}
+			privateName := PrivateServiceName(name, service)
+			if !naming.ValidServiceName(privateName) {
+				return fmt.Errorf("services.%s: private.name must be one lowercase DNS label beginning with a letter", name)
+			}
+			if existing := privateNames[privateName]; existing != "" {
+				return fmt.Errorf("services.%s: private name %q is already used by services.%s", name, privateName, existing)
+			}
+			privateNames[privateName] = name
+		} else if service.Private != nil {
+			return fmt.Errorf("services.%s: private requires protocol tcp", name)
+		}
+		if service.HTTP != nil && Protocol(service) != "http" {
+			return fmt.Errorf("services.%s: http settings require protocol http", name)
+		}
+		if service.HTTP != nil {
+			if err := validateReadiness(service.HTTP.Readiness); err != nil {
+				return fmt.Errorf("services.%s: %w", name, err)
+			}
 		}
 		if err := ValidateInspection(service.Inspection); err != nil {
 			return fmt.Errorf("services.%s.inspection: %w", name, err)
 		}
-		if !naming.ValidServiceName(name) {
-			return fmt.Errorf("service name %q must be one lowercase DNS label beginning with a letter", name)
-		}
-		if err := validateServiceDirectory(service.Directory); err != nil {
-			return fmt.Errorf("services.%s.directory: %w", name, err)
-		}
-		if err := validateServiceValues(service.Tunnel, effectivePublish); err != nil {
+		if err := validateTunnel(service.Tunnel); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
-		protocol := ServiceProtocol(effectivePublish)
+		protocol := Protocol(service)
 		if protocol != "http" {
-			if service.Readiness != nil || config.Readiness != nil || len(service.Paths) != 0 ||
-				service.Tunnel != nil && service.Tunnel.Open != nil && *service.Tunnel.Open ||
-				config.Tunnel != nil && config.Tunnel.Open != nil && *config.Tunnel.Open {
-				return fmt.Errorf("services.%s: TCP services cannot use HTTP readiness, path mounts, or browser opening", name)
-			}
 			selected := MergeInspection(config.Inspection, service.Inspection)
 			if protocol == "ssh" && selected != nil && selected.Mode != nil && *selected.Mode != InspectionNone {
 				return fmt.Errorf("services.%s: SSH inspection supports none only", name)
 			}
-			for _, definition := range config.Webhooks {
-				if definition.Service == name {
-					return fmt.Errorf("services.%s: TCP services cannot receive HTTP webhooks", name)
-				}
-			}
-			for _, definition := range config.Aliases {
-				if definition.Service == name {
-					return fmt.Errorf("services.%s: TCP services cannot serve HTTP aliases", name)
-				}
-			}
-			for _, sibling := range config.Services {
-				for _, mount := range sibling.Paths {
-					if mount.Service == name {
-						return fmt.Errorf("services.%s: TCP services cannot be used as HTTP path mounts", name)
-					}
-				}
+		}
+		if protocol != "tcp" {
+			if err := validateLimits(tunnelLimits(service.Tunnel), tunnelLimits(config.Tunnel), protocol); err != nil {
+				return fmt.Errorf("services.%s: %w", name, err)
 			}
 		}
-		if err := validateRatePair(service.Tunnel, config.Tunnel); err != nil {
-			return fmt.Errorf("services.%s: %w", name, err)
+		paths := ServicePaths(service)
+		if len(paths) > 32 {
+			return fmt.Errorf("services.%s.http.paths may contain at most 32 mounts", name)
 		}
-		if len(service.Paths) > 32 {
-			return fmt.Errorf("services.%s.paths may contain at most 32 mounts", name)
-		}
-		prefixes := make([]string, 0, len(service.Paths))
-		for prefix := range service.Paths {
+		prefixes := make([]string, 0, len(paths))
+		for prefix := range paths {
 			prefixes = append(prefixes, prefix)
 		}
 		slices.Sort(prefixes)
 		for _, prefix := range prefixes {
-			mount := service.Paths[prefix]
+			mount := paths[prefix]
 			if !localproxy.ValidMountPrefix(prefix) {
-				return fmt.Errorf("services.%s.paths: %q must be a clean absolute path outside /__tnl/", name, prefix)
+				return fmt.Errorf("services.%s.http.paths: %q must be a clean absolute path outside /__tnl/", name, prefix)
 			}
-			if _, found := config.Services[mount.Service]; !found || mount.Service == name {
-				return fmt.Errorf("services.%s.paths[%q]: service %q must name another configured service", name, prefix, mount.Service)
+			if destination, found := config.Services[mount.Service]; !found || mount.Service == name || Protocol(destination) != "http" {
+				return fmt.Errorf("services.%s.http.paths[%q]: service %q must name another configured HTTP service", name, prefix, mount.Service)
 			}
 		}
 	}
@@ -267,16 +289,8 @@ func validateServerAndTeam(server, team *string) error {
 	return nil
 }
 
-func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
+func validateTunnel(tunnel *Tunnel) error {
 	if tunnel != nil {
-		if limits := tunnel.Limits; limits != nil {
-			if limits.Requests != nil && *limits.Requests <= 0 || limits.Concurrency != nil && *limits.Concurrency <= 0 {
-				return errors.New("tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero")
-			}
-			if limits.Rate != nil && (limits.Rate.Requests != nil && *limits.Rate.Requests <= 0 || limits.Rate.Per != nil && limits.Rate.Per.Value() <= 0) {
-				return errors.New("tunnel.limits.rate requests and per must be positive")
-			}
-		}
 		if tunnel.Name != nil && tunnel.PublicURL != nil {
 			return errors.New("tunnel.name and tunnel.public_url are mutually exclusive")
 		}
@@ -312,57 +326,6 @@ func validateServiceValues(tunnel *Tunnel, publish *Publish) error {
 			seen[canonical[0]] = struct{}{}
 		}
 	}
-	if publish != nil {
-		protocol := ServiceProtocol(publish)
-		if !controlv1.PublicURLServiceProtocol(protocol).Valid() {
-			return errors.New("publish.protocol must be a supported service protocol")
-		}
-		if publish.TargetTLS != nil && protocol == "http" {
-			return errors.New("publish.target_tls requires a TCP service protocol")
-		}
-		if publish.Target != nil {
-			target := string(*publish.Target)
-			if protocol == "http" {
-				if _, err := localproxy.NormalizeTarget(target); err != nil {
-					return fmt.Errorf("publish.target: %w", err)
-				}
-			} else if _, err := tcptarget.Normalize(target); err != nil {
-				return fmt.Errorf("publish.target: %w", err)
-			}
-		}
-		if publish.TargetTLSName != nil {
-			if protocol == "http" || *publish.TargetTLSName == "" || strings.TrimSpace(*publish.TargetTLSName) != *publish.TargetTLSName {
-				return errors.New("publish.target_tls_name requires a TCP service protocol and a hostname")
-			}
-		}
-		if protocol != "http" && (publish.TargetTLSName != nil || publish.TargetCAFile != nil) &&
-			(publish.TargetTLS == nil || !*publish.TargetTLS) {
-			return errors.New("publish.target_tls must be true when target TLS settings are supplied")
-		}
-		if publish.TargetCAFile != nil && (strings.TrimSpace(*publish.TargetCAFile) != *publish.TargetCAFile || *publish.TargetCAFile == "") {
-			return errors.New("publish.target_ca_file must be a nonempty path without surrounding whitespace")
-		}
-	}
-	return nil
-}
-
-func validateRatePair(tunnel, base *Tunnel) error {
-	if tunnel == nil || tunnel.Limits == nil || tunnel.Limits.Rate == nil {
-		return nil
-	}
-	rate := tunnel.Limits.Rate
-	requests, per := rate.Requests, rate.Per
-	if base != nil && base.Limits != nil && base.Limits.Rate != nil {
-		if requests == nil {
-			requests = base.Limits.Rate.Requests
-		}
-		if per == nil {
-			per = base.Limits.Rate.Per
-		}
-	}
-	if requests == nil || per == nil {
-		return errors.New("tunnel.limits.rate requires positive requests and per")
-	}
 	return nil
 }
 
@@ -377,24 +340,21 @@ func canonicalIPText(value string) bool {
 	return prefix.Masked().String() == value
 }
 
-func validateServiceDirectory(directory *string) error {
-	if directory == nil {
-		return nil
-	}
-	if *directory == "" || strings.ContainsRune(*directory, '\x00') {
+func validateRelativeFilePath(value string) error {
+	if value == "" || strings.ContainsRune(value, '\x00') {
 		return errors.New("must not be empty or contain NUL")
 	}
-	if filepath.IsAbs(*directory) {
+	if filepath.IsAbs(value) {
 		return errors.New("must be relative to the project configuration")
 	}
-	for _, part := range strings.FieldsFunc(*directory, func(character rune) bool {
+	for _, part := range strings.FieldsFunc(value, func(character rune) bool {
 		return character == '/' || character == '\\'
 	}) {
 		if part == ".." {
 			return errors.New("must not contain a parent-directory traversal")
 		}
 	}
-	clean := filepath.Clean(*directory)
+	clean := filepath.Clean(value)
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return errors.New("must not contain a parent-directory traversal")
 	}

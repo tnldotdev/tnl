@@ -212,6 +212,93 @@ func (e PublicURLScope) Valid() bool {
 	}
 }
 
+// Defines values for PublisherEnrollmentResultKind.
+const (
+	Namespace      PublisherEnrollmentResultKind = "namespace"
+	PrivateService PublisherEnrollmentResultKind = "private_service"
+	SavedUrl       PublisherEnrollmentResultKind = "saved_url"
+)
+
+// Valid indicates whether the value is a known member of the PublisherEnrollmentResultKind enum.
+func (e PublisherEnrollmentResultKind) Valid() bool {
+	switch e {
+	case Namespace:
+		return true
+	case PrivateService:
+		return true
+	case SavedUrl:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherTokenRequestClientAssertionType.
+const (
+	UrnIetfParamsOauthClientAssertionTypeJwtBearer PublisherTokenRequestClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+)
+
+// Valid indicates whether the value is a known member of the PublisherTokenRequestClientAssertionType enum.
+func (e PublisherTokenRequestClientAssertionType) Valid() bool {
+	switch e {
+	case UrnIetfParamsOauthClientAssertionTypeJwtBearer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherTokenRequestGrantType.
+const (
+	ClientCredentials PublisherTokenRequestGrantType = "client_credentials"
+)
+
+// Valid indicates whether the value is a known member of the PublisherTokenRequestGrantType enum.
+func (e PublisherTokenRequestGrantType) Valid() bool {
+	switch e {
+	case ClientCredentials:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherTokenResponseTokenType.
+const (
+	Bearer PublisherTokenResponseTokenType = "Bearer"
+)
+
+// Valid indicates whether the value is a known member of the PublisherTokenResponseTokenType enum.
+func (e PublisherTokenResponseTokenType) Valid() bool {
+	switch e {
+	case Bearer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TeamFeedbackPolicyAuthors.
+const (
+	Anyone      TeamFeedbackPolicyAuthors = "anyone"
+	SignedIn    TeamFeedbackPolicyAuthors = "signed_in"
+	TeamMembers TeamFeedbackPolicyAuthors = "team_members"
+)
+
+// Valid indicates whether the value is a known member of the TeamFeedbackPolicyAuthors enum.
+func (e TeamFeedbackPolicyAuthors) Valid() bool {
+	switch e {
+	case Anyone:
+		return true
+	case SignedIn:
+		return true
+	case TeamMembers:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TeamKind.
 const (
 	Organization TeamKind = "organization"
@@ -444,6 +531,9 @@ type OIDCTokenExchangeRequest struct {
 	IdToken string `json:"id_token"`
 }
 
+// PrivateServiceID defines model for PrivateServiceID.
+type PrivateServiceID = string
+
 // Problem defines model for Problem.
 type Problem struct {
 	Code      ProblemCode             `json:"code"`
@@ -465,6 +555,56 @@ type PublicURLID = ResourceID
 // PublicURLScope defines model for PublicURLScope.
 type PublicURLScope string
 
+// PublisherEnrollmentResult defines model for PublisherEnrollmentResult.
+type PublisherEnrollmentResult struct {
+	ClientId         string                        `json:"client_id"`
+	DomainId         *string                       `json:"domain_id,omitempty"`
+	GrantId          string                        `json:"grant_id"`
+	KeyId            string                        `json:"key_id"`
+	Kind             PublisherEnrollmentResultKind `json:"kind"`
+	Namespace        *string                       `json:"namespace,omitempty"`
+	PrivateServiceId *PrivateServiceID             `json:"private_service_id,omitempty"`
+	PublicUrlId      *string                       `json:"public_url_id,omitempty"`
+	TeamId           string                        `json:"team_id"`
+}
+
+// PublisherEnrollmentResultKind defines model for PublisherEnrollmentResult.Kind.
+type PublisherEnrollmentResultKind string
+
+// PublisherTokenRequest defines model for PublisherTokenRequest.
+type PublisherTokenRequest struct {
+	ClientAssertion     string                                   `json:"client_assertion"`
+	ClientAssertionType PublisherTokenRequestClientAssertionType `json:"client_assertion_type"`
+	ClientId            string                                   `json:"client_id"`
+	GrantId             string                                   `json:"grant_id"`
+	GrantType           PublisherTokenRequestGrantType           `json:"grant_type"`
+}
+
+// PublisherTokenRequestClientAssertionType defines model for PublisherTokenRequest.ClientAssertionType.
+type PublisherTokenRequestClientAssertionType string
+
+// PublisherTokenRequestGrantType defines model for PublisherTokenRequest.GrantType.
+type PublisherTokenRequestGrantType string
+
+// PublisherTokenResponse defines model for PublisherTokenResponse.
+type PublisherTokenResponse struct {
+	AccessToken string                          `json:"access_token"`
+	ExpiresIn   int                             `json:"expires_in"`
+	GrantId     string                          `json:"grant_id"`
+	TokenType   PublisherTokenResponseTokenType `json:"token_type"`
+}
+
+// PublisherTokenResponseTokenType defines model for PublisherTokenResponse.TokenType.
+type PublisherTokenResponseTokenType string
+
+// RedeemPublisherEnrollmentRequest defines model for RedeemPublisherEnrollmentRequest.
+type RedeemPublisherEnrollmentRequest struct {
+	EnrollmentKey string `json:"enrollment_key"`
+
+	// PublicKey Base64url unpadded Ed25519 public key
+	PublicKey string `json:"public_key"`
+}
+
 // RefreshControlSessionRequest defines model for RefreshControlSessionRequest.
 type RefreshControlSessionRequest struct {
 	RefreshToken string `json:"refresh_token"`
@@ -472,6 +612,15 @@ type RefreshControlSessionRequest struct {
 
 // ResourceID defines model for ResourceID.
 type ResourceID = string
+
+// RotatePublisherKeyRequest defines model for RotatePublisherKeyRequest.
+type RotatePublisherKeyRequest struct {
+	// CurrentProof Current-key assertion whose audience binds the replacement key ID and public key
+	CurrentProof string `json:"current_proof"`
+	KeyId        string `json:"key_id"`
+	Proof        string `json:"proof"`
+	PublicKey    string `json:"public_key"`
+}
 
 // ServiceIdentity defines model for ServiceIdentity.
 type ServiceIdentity struct {
@@ -503,6 +652,14 @@ type Team struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
+// TeamFeedbackPolicy defines model for TeamFeedbackPolicy.
+type TeamFeedbackPolicy struct {
+	Authors TeamFeedbackPolicyAuthors `json:"authors"`
+}
+
+// TeamFeedbackPolicyAuthors defines model for TeamFeedbackPolicy.Authors.
+type TeamFeedbackPolicyAuthors string
+
 // TeamID defines model for TeamID.
 type TeamID = ResourceID
 
@@ -531,6 +688,12 @@ type IdempotencyKey = string
 // BearerProblem defines model for BearerProblem.
 type BearerProblem = Problem
 
+// IssueAdminBrowserHandoffJSONBody defines parameters for IssueAdminBrowserHandoff.
+type IssueAdminBrowserHandoffJSONBody struct {
+	PublicUrlId  string `json:"public_url_id"`
+	RefreshToken string `json:"refresh_token"`
+}
+
 // CreateTeamParams defines parameters for CreateTeam.
 type CreateTeamParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
@@ -549,6 +712,9 @@ type CreateTeamInvitationParams struct {
 // ExchangeBrowserOIDCTokenJSONRequestBody defines body for ExchangeBrowserOIDCToken for application/json ContentType.
 type ExchangeBrowserOIDCTokenJSONRequestBody = OIDCTokenExchangeRequest
 
+// IssueAdminBrowserHandoffJSONRequestBody defines body for IssueAdminBrowserHandoff for application/json ContentType.
+type IssueAdminBrowserHandoffJSONRequestBody IssueAdminBrowserHandoffJSONBody
+
 // ExchangeOIDCTokenJSONRequestBody defines body for ExchangeOIDCToken for application/json ContentType.
 type ExchangeOIDCTokenJSONRequestBody = OIDCTokenExchangeRequest
 
@@ -560,6 +726,15 @@ type ExchangeLoginTokenJSONRequestBody = LoginTokenExchangeRequest
 
 // AcceptInvitationJSONRequestBody defines body for AcceptInvitation for application/json ContentType.
 type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
+
+// RedeemPublisherEnrollmentJSONRequestBody defines body for RedeemPublisherEnrollment for application/json ContentType.
+type RedeemPublisherEnrollmentJSONRequestBody = RedeemPublisherEnrollmentRequest
+
+// RotatePublisherKeyJSONRequestBody defines body for RotatePublisherKey for application/json ContentType.
+type RotatePublisherKeyJSONRequestBody = RotatePublisherKeyRequest
+
+// ExchangePublisherAssertionJSONRequestBody defines body for ExchangePublisherAssertion for application/json ContentType.
+type ExchangePublisherAssertionJSONRequestBody = PublisherTokenRequest
 
 // ResolveServiceIdentityJSONRequestBody defines body for ResolveServiceIdentity for application/json ContentType.
 type ResolveServiceIdentityJSONRequestBody = ServiceIdentity
@@ -575,6 +750,9 @@ type CreateTeamJSONRequestBody = CreateTeamRequest
 
 // ClaimTeamDomainJSONRequestBody defines body for ClaimTeamDomain for application/json ContentType.
 type ClaimTeamDomainJSONRequestBody = ClaimDomainRequest
+
+// SetTeamFeedbackPolicyJSONRequestBody defines body for SetTeamFeedbackPolicy for application/json ContentType.
+type SetTeamFeedbackPolicyJSONRequestBody = TeamFeedbackPolicy
 
 // CreateTeamInvitationJSONRequestBody defines body for CreateTeamInvitation for application/json ContentType.
 type CreateTeamInvitationJSONRequestBody = CreateInvitationRequest
@@ -670,6 +848,14 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
 	ExchangeBrowserOIDCToken(ctx context.Context, body ExchangeBrowserOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// IssueAdminBrowserHandoffWithBody performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request,
+	// with any type of body and a specified content type.
+	IssueAdminBrowserHandoffWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IssueAdminBrowserHandoff performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request.
+	// Takes a body of the `application/json` content type.
+	IssueAdminBrowserHandoff(ctx context.Context, body IssueAdminBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// LogoutControlSession Revoke the authenticated control session
 	//
 	// Corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
@@ -735,6 +921,30 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemPublisherEnrollmentWithBody performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request,
+	// with any type of body and a specified content type.
+	RedeemPublisherEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemPublisherEnrollment performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request.
+	// Takes a body of the `application/json` content type.
+	RedeemPublisherEnrollment(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotatePublisherKeyWithBody performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request,
+	// with any type of body and a specified content type.
+	RotatePublisherKeyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotatePublisherKey performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request.
+	// Takes a body of the `application/json` content type.
+	RotatePublisherKey(ctx context.Context, body RotatePublisherKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangePublisherAssertionWithBody performs a POST /v1/publisher-token (the `ExchangePublisherAssertion` operationId) request,
+	// with any type of body and a specified content type.
+	ExchangePublisherAssertionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangePublisherAssertion performs a POST /v1/publisher-token (the `ExchangePublisherAssertion` operationId) request.
+	// Takes a body of the `application/json` content type.
+	ExchangePublisherAssertion(ctx context.Context, body ExchangePublisherAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ResolveServiceIdentityWithBody Read current memberships for the signed-in website identity
 	//
@@ -831,6 +1041,17 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
 	SetTeamDefaultDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetTeamFeedbackPolicy performs a GET /v1/teams/{team_id}/feedback-policy (the `GetTeamFeedbackPolicy` operationId) request.
+	GetTeamFeedbackPolicy(ctx context.Context, teamId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetTeamFeedbackPolicyWithBody performs a PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId) request,
+	// with any type of body and a specified content type.
+	SetTeamFeedbackPolicyWithBody(ctx context.Context, teamId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetTeamFeedbackPolicy performs a PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId) request.
+	// Takes a body of the `application/json` content type.
+	SetTeamFeedbackPolicy(ctx context.Context, teamId string, body SetTeamFeedbackPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListTeamInvitations List team invitations
 	//
 	// Corresponds with GET /v1/teams/{team_id}/invitations (the `ListTeamInvitations` operationId).
@@ -904,6 +1125,34 @@ func (c *Client) ExchangeBrowserOIDCTokenWithBody(ctx context.Context, contentTy
 // Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
 func (c *Client) ExchangeBrowserOIDCToken(ctx context.Context, body ExchangeBrowserOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExchangeBrowserOIDCTokenRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IssueAdminBrowserHandoffWithBody performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) IssueAdminBrowserHandoffWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueAdminBrowserHandoffRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IssueAdminBrowserHandoff performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) IssueAdminBrowserHandoff(ctx context.Context, body IssueAdminBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueAdminBrowserHandoffRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1070,6 +1319,90 @@ func (c *Client) AcceptInvitationWithBody(ctx context.Context, contentType strin
 // Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 func (c *Client) AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcceptInvitationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemPublisherEnrollmentWithBody performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) RedeemPublisherEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemPublisherEnrollmentRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemPublisherEnrollment performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) RedeemPublisherEnrollment(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemPublisherEnrollmentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotatePublisherKeyWithBody performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) RotatePublisherKeyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotatePublisherKeyRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotatePublisherKey performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) RotatePublisherKey(ctx context.Context, body RotatePublisherKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotatePublisherKeyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangePublisherAssertionWithBody performs a POST /v1/publisher-token (the `ExchangePublisherAssertion` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) ExchangePublisherAssertionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangePublisherAssertionRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangePublisherAssertion performs a POST /v1/publisher-token (the `ExchangePublisherAssertion` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) ExchangePublisherAssertion(ctx context.Context, body ExchangePublisherAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangePublisherAssertionRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1325,6 +1658,47 @@ func (c *Client) SetTeamDefaultDomain(ctx context.Context, teamId TeamID, domain
 	return c.Client.Do(req)
 }
 
+// GetTeamFeedbackPolicy performs a GET /v1/teams/{team_id}/feedback-policy (the `GetTeamFeedbackPolicy` operationId) request.
+func (c *Client) GetTeamFeedbackPolicy(ctx context.Context, teamId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTeamFeedbackPolicyRequest(c.Server, teamId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetTeamFeedbackPolicyWithBody performs a PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) SetTeamFeedbackPolicyWithBody(ctx context.Context, teamId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetTeamFeedbackPolicyRequestWithBody(c.Server, teamId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetTeamFeedbackPolicy performs a PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) SetTeamFeedbackPolicy(ctx context.Context, teamId string, body SetTeamFeedbackPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetTeamFeedbackPolicyRequest(c.Server, teamId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListTeamInvitations List team invitations
 //
 // Corresponds with GET /v1/teams/{team_id}/invitations (the `ListTeamInvitations` operationId).
@@ -1474,6 +1848,46 @@ func NewExchangeBrowserOIDCTokenRequestWithBody(server string, contentType strin
 	}
 
 	operationPath := fmt.Sprintf("/v1/auth/browser")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewIssueAdminBrowserHandoffRequest calls the generic IssueAdminBrowserHandoff builder with application/json body
+func NewIssueAdminBrowserHandoffRequest(server string, body IssueAdminBrowserHandoffJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIssueAdminBrowserHandoffRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewIssueAdminBrowserHandoffRequestWithBody constructs an http.Request for the IssueAdminBrowserHandoff method, with any body, and a specified content type
+func NewIssueAdminBrowserHandoffRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/browser-handoff")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1688,6 +2102,126 @@ func NewAcceptInvitationRequestWithBody(server string, contentType string, body 
 	}
 
 	operationPath := fmt.Sprintf("/v1/invitations/accept")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRedeemPublisherEnrollmentRequest calls the generic RedeemPublisherEnrollment builder with application/json body
+func NewRedeemPublisherEnrollmentRequest(server string, body RedeemPublisherEnrollmentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRedeemPublisherEnrollmentRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRedeemPublisherEnrollmentRequestWithBody constructs an http.Request for the RedeemPublisherEnrollment method, with any body, and a specified content type
+func NewRedeemPublisherEnrollmentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher-enrollments/redeem")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRotatePublisherKeyRequest calls the generic RotatePublisherKey builder with application/json body
+func NewRotatePublisherKeyRequest(server string, body RotatePublisherKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRotatePublisherKeyRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRotatePublisherKeyRequestWithBody constructs an http.Request for the RotatePublisherKey method, with any body, and a specified content type
+func NewRotatePublisherKeyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher-keys/rotate")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewExchangePublisherAssertionRequest calls the generic ExchangePublisherAssertion builder with application/json body
+func NewExchangePublisherAssertionRequest(server string, body ExchangePublisherAssertionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExchangePublisherAssertionRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewExchangePublisherAssertionRequestWithBody constructs an http.Request for the ExchangePublisherAssertion method, with any body, and a specified content type
+func NewExchangePublisherAssertionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher-token")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2117,6 +2651,87 @@ func NewSetTeamDefaultDomainRequest(server string, teamId TeamID, domainId Domai
 	return req, nil
 }
 
+// NewGetTeamFeedbackPolicyRequest constructs an http.Request for the GetTeamFeedbackPolicy method
+func NewGetTeamFeedbackPolicyRequest(server string, teamId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/feedback-policy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetTeamFeedbackPolicyRequest calls the generic SetTeamFeedbackPolicy builder with application/json body
+func NewSetTeamFeedbackPolicyRequest(server string, teamId string, body SetTeamFeedbackPolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetTeamFeedbackPolicyRequestWithBody(server, teamId, "application/json", bodyReader)
+}
+
+// NewSetTeamFeedbackPolicyRequestWithBody constructs an http.Request for the SetTeamFeedbackPolicy method, with any body, and a specified content type
+func NewSetTeamFeedbackPolicyRequestWithBody(server string, teamId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/feedback-policy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListTeamInvitationsRequest constructs an http.Request for the ListTeamInvitations method
 func NewListTeamInvitationsRequest(server string, teamId TeamID) (*http.Request, error) {
 	var err error
@@ -2439,6 +3054,16 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
 	ExchangeBrowserOIDCTokenWithResponse(ctx context.Context, body ExchangeBrowserOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeBrowserOIDCTokenResponse, error)
 
+	// IssueAdminBrowserHandoffWithBodyWithResponse performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	IssueAdminBrowserHandoffWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueAdminBrowserHandoffResponse, error)
+
+	// IssueAdminBrowserHandoffWithResponse performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	IssueAdminBrowserHandoffWithResponse(ctx context.Context, body IssueAdminBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueAdminBrowserHandoffResponse, error)
+
 	// LogoutControlSessionWithResponse Revoke the authenticated control session
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -2508,6 +3133,36 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithResponse(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error)
+
+	// RedeemPublisherEnrollmentWithBodyWithResponse performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RedeemPublisherEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherEnrollmentResponse, error)
+
+	// RedeemPublisherEnrollmentWithResponse performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	RedeemPublisherEnrollmentWithResponse(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherEnrollmentResponse, error)
+
+	// RotatePublisherKeyWithBodyWithResponse performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RotatePublisherKeyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotatePublisherKeyResponse, error)
+
+	// RotatePublisherKeyWithResponse performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	RotatePublisherKeyWithResponse(ctx context.Context, body RotatePublisherKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*RotatePublisherKeyResponse, error)
+
+	// ExchangePublisherAssertionWithBodyWithResponse performs a POST /v1/publisher-token (the `ExchangePublisherAssertion` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ExchangePublisherAssertionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangePublisherAssertionResponse, error)
+
+	// ExchangePublisherAssertionWithResponse performs a POST /v1/publisher-token (the `ExchangePublisherAssertion` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	ExchangePublisherAssertionWithResponse(ctx context.Context, body ExchangePublisherAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangePublisherAssertionResponse, error)
 
 	// ResolveServiceIdentityWithBodyWithResponse Read current memberships for the signed-in website identity
 	//
@@ -2614,6 +3269,21 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/teams/{team_id}/domains/{domain_id}/default (the `SetTeamDefaultDomain` operationId).
 	SetTeamDefaultDomainWithResponse(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*SetTeamDefaultDomainResponse, error)
 
+	// GetTeamFeedbackPolicyWithResponse performs a GET /v1/teams/{team_id}/feedback-policy (the `GetTeamFeedbackPolicy` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetTeamFeedbackPolicyWithResponse(ctx context.Context, teamId string, reqEditors ...RequestEditorFn) (*GetTeamFeedbackPolicyResponse, error)
+
+	// SetTeamFeedbackPolicyWithBodyWithResponse performs a PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	SetTeamFeedbackPolicyWithBodyWithResponse(ctx context.Context, teamId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetTeamFeedbackPolicyResponse, error)
+
+	// SetTeamFeedbackPolicyWithResponse performs a PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	SetTeamFeedbackPolicyWithResponse(ctx context.Context, teamId string, body SetTeamFeedbackPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*SetTeamFeedbackPolicyResponse, error)
+
 	// ListTeamInvitationsWithResponse List team invitations
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -2713,6 +3383,58 @@ func (r ExchangeBrowserOIDCTokenResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ExchangeBrowserOIDCTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type IssueAdminBrowserHandoffResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *struct {
+		Url string `json:"url"`
+	}
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r IssueAdminBrowserHandoffResponse) GetJSON201() *struct {
+	Url string `json:"url"`
+} {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r IssueAdminBrowserHandoffResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r IssueAdminBrowserHandoffResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IssueAdminBrowserHandoffResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IssueAdminBrowserHandoffResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IssueAdminBrowserHandoffResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3008,6 +3730,143 @@ func (r AcceptInvitationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AcceptInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RedeemPublisherEnrollmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherEnrollmentResult
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RedeemPublisherEnrollmentResponse) GetJSON200() *PublisherEnrollmentResult {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RedeemPublisherEnrollmentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RedeemPublisherEnrollmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RedeemPublisherEnrollmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RedeemPublisherEnrollmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RedeemPublisherEnrollmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RotatePublisherKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RotatePublisherKeyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RotatePublisherKeyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RotatePublisherKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RotatePublisherKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RotatePublisherKeyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExchangePublisherAssertionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherTokenResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExchangePublisherAssertionResponse) GetJSON200() *PublisherTokenResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExchangePublisherAssertionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExchangePublisherAssertionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExchangePublisherAssertionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExchangePublisherAssertionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExchangePublisherAssertionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3494,6 +4353,102 @@ func (r SetTeamDefaultDomainResponse) ContentType() string {
 	return ""
 }
 
+type GetTeamFeedbackPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TeamFeedbackPolicy
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTeamFeedbackPolicyResponse) GetJSON200() *TeamFeedbackPolicy {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetTeamFeedbackPolicyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTeamFeedbackPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTeamFeedbackPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTeamFeedbackPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTeamFeedbackPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetTeamFeedbackPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TeamFeedbackPolicy
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetTeamFeedbackPolicyResponse) GetJSON200() *TeamFeedbackPolicy {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetTeamFeedbackPolicyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetTeamFeedbackPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetTeamFeedbackPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetTeamFeedbackPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetTeamFeedbackPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListTeamInvitationsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3794,6 +4749,28 @@ func (c *ClientWithResponses) ExchangeBrowserOIDCTokenWithResponse(ctx context.C
 	return ParseExchangeBrowserOIDCTokenResponse(rsp)
 }
 
+// IssueAdminBrowserHandoffWithBodyWithResponse performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) IssueAdminBrowserHandoffWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueAdminBrowserHandoffResponse, error) {
+	rsp, err := c.IssueAdminBrowserHandoffWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueAdminBrowserHandoffResponse(rsp)
+}
+
+// IssueAdminBrowserHandoffWithResponse performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) IssueAdminBrowserHandoffWithResponse(ctx context.Context, body IssueAdminBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueAdminBrowserHandoffResponse, error) {
+	rsp, err := c.IssueAdminBrowserHandoff(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueAdminBrowserHandoffResponse(rsp)
+}
+
 // LogoutControlSessionWithResponse Revoke the authenticated control session
 //
 // Returns a wrapper object for the known response body format(s).
@@ -3922,6 +4899,72 @@ func (c *ClientWithResponses) AcceptInvitationWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseAcceptInvitationResponse(rsp)
+}
+
+// RedeemPublisherEnrollmentWithBodyWithResponse performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RedeemPublisherEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemPublisherEnrollmentResponse, error) {
+	rsp, err := c.RedeemPublisherEnrollmentWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemPublisherEnrollmentResponse(rsp)
+}
+
+// RedeemPublisherEnrollmentWithResponse performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RedeemPublisherEnrollmentWithResponse(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherEnrollmentResponse, error) {
+	rsp, err := c.RedeemPublisherEnrollment(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemPublisherEnrollmentResponse(rsp)
+}
+
+// RotatePublisherKeyWithBodyWithResponse performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RotatePublisherKeyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotatePublisherKeyResponse, error) {
+	rsp, err := c.RotatePublisherKeyWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotatePublisherKeyResponse(rsp)
+}
+
+// RotatePublisherKeyWithResponse performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RotatePublisherKeyWithResponse(ctx context.Context, body RotatePublisherKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*RotatePublisherKeyResponse, error) {
+	rsp, err := c.RotatePublisherKey(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotatePublisherKeyResponse(rsp)
+}
+
+// ExchangePublisherAssertionWithBodyWithResponse performs a POST /v1/publisher-token (the `ExchangePublisherAssertion` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ExchangePublisherAssertionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangePublisherAssertionResponse, error) {
+	rsp, err := c.ExchangePublisherAssertionWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangePublisherAssertionResponse(rsp)
+}
+
+// ExchangePublisherAssertionWithResponse performs a POST /v1/publisher-token (the `ExchangePublisherAssertion` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ExchangePublisherAssertionWithResponse(ctx context.Context, body ExchangePublisherAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangePublisherAssertionResponse, error) {
+	rsp, err := c.ExchangePublisherAssertion(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangePublisherAssertionResponse(rsp)
 }
 
 // ResolveServiceIdentityWithBodyWithResponse Read current memberships for the signed-in website identity
@@ -4119,6 +5162,39 @@ func (c *ClientWithResponses) SetTeamDefaultDomainWithResponse(ctx context.Conte
 	return ParseSetTeamDefaultDomainResponse(rsp)
 }
 
+// GetTeamFeedbackPolicyWithResponse performs a GET /v1/teams/{team_id}/feedback-policy (the `GetTeamFeedbackPolicy` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetTeamFeedbackPolicyWithResponse(ctx context.Context, teamId string, reqEditors ...RequestEditorFn) (*GetTeamFeedbackPolicyResponse, error) {
+	rsp, err := c.GetTeamFeedbackPolicy(ctx, teamId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTeamFeedbackPolicyResponse(rsp)
+}
+
+// SetTeamFeedbackPolicyWithBodyWithResponse performs a PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SetTeamFeedbackPolicyWithBodyWithResponse(ctx context.Context, teamId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetTeamFeedbackPolicyResponse, error) {
+	rsp, err := c.SetTeamFeedbackPolicyWithBody(ctx, teamId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetTeamFeedbackPolicyResponse(rsp)
+}
+
+// SetTeamFeedbackPolicyWithResponse performs a PUT /v1/teams/{team_id}/feedback-policy (the `SetTeamFeedbackPolicy` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SetTeamFeedbackPolicyWithResponse(ctx context.Context, teamId string, body SetTeamFeedbackPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*SetTeamFeedbackPolicyResponse, error) {
+	rsp, err := c.SetTeamFeedbackPolicy(ctx, teamId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetTeamFeedbackPolicyResponse(rsp)
+}
+
 // ListTeamInvitationsWithResponse List team invitations
 //
 // Returns a wrapper object for the known response body format(s).
@@ -4243,6 +5319,41 @@ func ParseExchangeBrowserOIDCTokenResponse(rsp *http.Response) (*ExchangeBrowser
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIssueAdminBrowserHandoffResponse parses an HTTP response from a IssueAdminBrowserHandoffWithResponse call
+func ParseIssueAdminBrowserHandoffResponse(rsp *http.Response) (*IssueAdminBrowserHandoffResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IssueAdminBrowserHandoffResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Url string `json:"url"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -4459,6 +5570,101 @@ func ParseAcceptInvitationResponse(rsp *http.Response) (*AcceptInvitationRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Membership
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRedeemPublisherEnrollmentResponse parses an HTTP response from a RedeemPublisherEnrollmentWithResponse call
+func ParseRedeemPublisherEnrollmentResponse(rsp *http.Response) (*RedeemPublisherEnrollmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RedeemPublisherEnrollmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherEnrollmentResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRotatePublisherKeyResponse parses an HTTP response from a RotatePublisherKeyWithResponse call
+func ParseRotatePublisherKeyResponse(rsp *http.Response) (*RotatePublisherKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RotatePublisherKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExchangePublisherAssertionResponse parses an HTTP response from a ExchangePublisherAssertionWithResponse call
+func ParseExchangePublisherAssertionResponse(rsp *http.Response) (*ExchangePublisherAssertionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExchangePublisherAssertionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherTokenResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -4815,6 +6021,72 @@ func ParseSetTeamDefaultDomainResponse(rsp *http.Response) (*SetTeamDefaultDomai
 	return response, nil
 }
 
+// ParseGetTeamFeedbackPolicyResponse parses an HTTP response from a GetTeamFeedbackPolicyWithResponse call
+func ParseGetTeamFeedbackPolicyResponse(rsp *http.Response) (*GetTeamFeedbackPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTeamFeedbackPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TeamFeedbackPolicy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetTeamFeedbackPolicyResponse parses an HTTP response from a SetTeamFeedbackPolicyWithResponse call
+func ParseSetTeamFeedbackPolicyResponse(rsp *http.Response) (*SetTeamFeedbackPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetTeamFeedbackPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TeamFeedbackPolicy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListTeamInvitationsResponse parses an HTTP response from a ListTeamInvitationsWithResponse call
 func ParseListTeamInvitationsResponse(rsp *http.Response) (*ListTeamInvitationsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5010,6 +6282,9 @@ type ServerInterface interface {
 	// ExchangeBrowserOIDCToken Exchange a browser OIDC ID token for a control session
 	// (POST /v1/auth/browser)
 	ExchangeBrowserOIDCToken(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/auth/browser-handoff)
+	IssueAdminBrowserHandoff(w http.ResponseWriter, r *http.Request)
 	// LogoutControlSession Revoke the authenticated control session
 	// (POST /v1/auth/logout)
 	LogoutControlSession(w http.ResponseWriter, r *http.Request)
@@ -5028,6 +6303,15 @@ type ServerInterface interface {
 	// AcceptInvitation Accept an invitation with its secret
 	// (POST /v1/invitations/accept)
 	AcceptInvitation(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/publisher-enrollments/redeem)
+	RedeemPublisherEnrollment(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/publisher-keys/rotate)
+	RotatePublisherKey(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/publisher-token)
+	ExchangePublisherAssertion(w http.ResponseWriter, r *http.Request)
 	// ResolveServiceIdentity Read current memberships for the signed-in website identity
 	// (POST /v1/service/identity-context)
 	ResolveServiceIdentity(w http.ResponseWriter, r *http.Request)
@@ -5058,6 +6342,12 @@ type ServerInterface interface {
 	// SetTeamDefaultDomain Select a ready default domain
 	// (POST /v1/teams/{team_id}/domains/{domain_id}/default)
 	SetTeamDefaultDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, domainId DomainID)
+
+	// (GET /v1/teams/{team_id}/feedback-policy)
+	GetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, teamId string)
+
+	// (PUT /v1/teams/{team_id}/feedback-policy)
+	SetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, teamId string)
 	// ListTeamInvitations List team invitations
 	// (GET /v1/teams/{team_id}/invitations)
 	ListTeamInvitations(w http.ResponseWriter, r *http.Request, teamId TeamID)
@@ -5092,6 +6382,20 @@ func (siw *ServerInterfaceWrapper) ExchangeBrowserOIDCToken(w http.ResponseWrite
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ExchangeBrowserOIDCToken(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// IssueAdminBrowserHandoff operation middleware
+func (siw *ServerInterfaceWrapper) IssueAdminBrowserHandoff(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.IssueAdminBrowserHandoff(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5176,6 +6480,48 @@ func (siw *ServerInterfaceWrapper) AcceptInvitation(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AcceptInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RedeemPublisherEnrollment operation middleware
+func (siw *ServerInterfaceWrapper) RedeemPublisherEnrollment(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RedeemPublisherEnrollment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RotatePublisherKey operation middleware
+func (siw *ServerInterfaceWrapper) RotatePublisherKey(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RotatePublisherKey(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExchangePublisherAssertion operation middleware
+func (siw *ServerInterfaceWrapper) ExchangePublisherAssertion(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExchangePublisherAssertion(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5453,6 +6799,58 @@ func (siw *ServerInterfaceWrapper) SetTeamDefaultDomain(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetTeamDefaultDomain(w, r, teamId, domainId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetTeamFeedbackPolicy operation middleware
+func (siw *ServerInterfaceWrapper) GetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTeamFeedbackPolicy(w, r, teamId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetTeamFeedbackPolicy operation middleware
+func (siw *ServerInterfaceWrapper) SetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetTeamFeedbackPolicy(w, r, teamId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5793,6 +7191,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/feedback-policy", wrapper.GetTeamFeedbackPolicy)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/teams/{team_id}/feedback-policy", wrapper.SetTeamFeedbackPolicy)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/browser-handoff", wrapper.IssueAdminBrowserHandoff)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-enrollments/redeem", wrapper.RedeemPublisherEnrollment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-token", wrapper.ExchangePublisherAssertion)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-keys/rotate", wrapper.RotatePublisherKey)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/identity-context", wrapper.ResolveServiceIdentity)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/invitations/preview", wrapper.PreviewServiceInvitation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/invitations/accept", wrapper.AcceptServiceInvitation)

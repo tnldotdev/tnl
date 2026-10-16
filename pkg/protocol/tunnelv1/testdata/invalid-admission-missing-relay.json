@@ -1,0 +1,12 @@
+{
+  "protocol_version": 1,
+  "kind": "ingress_admission",
+  "visitor_connection_id": "v",
+  "public_url_id": "u",
+  "publish_run_id": "r",
+  "publish_run_number": 2,
+  "publisher_connection_id": "p",
+  "connection_slot": 1,
+  "connection_assignment_revision": 3,
+  "relay_service_id": "s"
+}

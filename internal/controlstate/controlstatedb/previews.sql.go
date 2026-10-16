@@ -148,7 +148,7 @@ func (q *Queries) ListPreviewPublicURLs(ctx context.Context, previewID string) (
 }
 
 const lockPreviewForTeamAccess = `-- name: LockPreviewForTeamAccess :one
-SELECT id, team_id, created_by_identity_id, team_access_enabled
+SELECT id, team_id, created_by_identity_id, team_access_enabled, demo_publish_run_id
 FROM control.previews WHERE id = $1 FOR NO KEY UPDATE
 `
 
@@ -157,6 +157,7 @@ type LockPreviewForTeamAccessRow struct {
 	TeamID              string
 	CreatedByIdentityID string
 	TeamAccessEnabled   bool
+	DemoPublishRunID    pgtype.Text
 }
 
 func (q *Queries) LockPreviewForTeamAccess(ctx context.Context, id string) (LockPreviewForTeamAccessRow, error) {
@@ -167,6 +168,7 @@ func (q *Queries) LockPreviewForTeamAccess(ctx context.Context, id string) (Lock
 		&i.TeamID,
 		&i.CreatedByIdentityID,
 		&i.TeamAccessEnabled,
+		&i.DemoPublishRunID,
 	)
 	return i, err
 }

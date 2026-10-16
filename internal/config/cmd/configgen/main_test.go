@@ -2,6 +2,8 @@ package main
 
 import (
 	"reflect"
+	"regexp"
+	"slices"
 	"testing"
 
 	"github.com/invopop/jsonschema"
@@ -28,11 +30,12 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 		services.PropertyNames.Pattern == "" || services.AdditionalProperties == nil {
 		t.Fatalf("services schema = %#v", services)
 	}
-	serviceSchema := services.AdditionalProperties
-	if _, found := serviceSchema.Properties.Get("directory"); !found {
-		t.Fatal("service directory property is missing")
+	serviceSchema := services.AdditionalProperties.OneOf[0]
+	if _, found := serviceSchema.Properties.Get("directory"); found {
+		t.Fatal("removed service directory is still exposed")
 	}
-	if paths, found := serviceSchema.Properties.Get("paths"); !found || paths.AdditionalProperties == nil || len(paths.AdditionalProperties.OneOf) != 2 {
+	http, _ := serviceSchema.Properties.Get("http")
+	if paths, found := http.Properties.Get("paths"); !found || paths.AdditionalProperties == nil || len(paths.AdditionalProperties.OneOf) != 2 {
 		t.Fatalf("service path mount schema = %#v", paths)
 	}
 	for _, property := range []string{"server", "team"} {
@@ -46,7 +49,9 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	}
 	if limits, found := tunnel.Properties.Get("limits"); !found || limits.Properties == nil {
 		t.Fatalf("tunnel limits schema = %#v", limits)
-	} else if concurrency, found := limits.Properties.Get("concurrency"); !found || concurrency.Minimum != "1" || concurrency.Default != 500 {
+	} else if http, found := limits.Properties.Get("http"); !found || http.Properties == nil {
+		t.Fatal("HTTP limits are missing")
+	} else if concurrency, found := http.Properties.Get("concurrency"); !found || concurrency.Minimum != "1" || concurrency.Maximum != "9007199254740991" {
 		t.Fatalf("tunnel concurrency schema = %#v", concurrency)
 	}
 	if _, found := tunnel.Properties.Get("allow_providers"); found {
@@ -70,5 +75,168 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	duration := schemaForType(reflect.TypeOf(config.Duration(0)))
 	if duration.Pattern != config.DurationPattern {
 		t.Fatalf("duration pattern = %q", duration.Pattern)
+	}
+}
+
+func TestServiceSchemaKeepsPrivateTCPSeparateFromPublicURLs(t *testing.T) {
+	variants := servicesSchema().AdditionalProperties.OneOf
+	if len(variants) != 3 {
+		t.Fatalf("service variants: %d", len(variants))
+	}
+	private := variants[1]
+	if slices.Contains(private.Required, "private") || !slices.Contains(private.Required, "target") {
+		t.Fatalf("private tcp fields: %v", private.Required)
+	}
+	if tunnel, found := private.Properties.Get("tunnel"); !found || tunnel != jsonschema.FalseSchema {
+		t.Fatal("private tcp permits public URL tunnel")
+	}
+	if override, found := private.Properties.Get("private"); !found || slices.Contains(override.Required, "name") {
+		t.Fatal("private tcp override is not optional")
+	} else if name, found := override.Properties.Get("name"); !found || name.Pattern == "" {
+		t.Fatal("explicit private name must be validated")
+	}
+	for _, variant := range []*jsonschema.Schema{variants[0], variants[2]} {
+		if field, found := variant.Properties.Get("private"); !found || field != jsonschema.FalseSchema {
+			t.Fatal("public service permits private identity")
+		}
+	}
+}
+
+func TestSchemaHasDisjointTargetsAndNoRetiredPublicFields(t *testing.T) {
+	reflector := &jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}
+	schema := reflector.Reflect(config.Document{})
+	for _, key := range []string{"publish", "readiness"} {
+		if _, found := schema.Definitions["TNL"].Properties.Get(key); found {
+			t.Fatalf("retired root %s is generated", key)
+		}
+	}
+	service := servicesSchema().AdditionalProperties.OneOf[0]
+	for _, key := range []string{"publish", "readiness", "paths", "directory"} {
+		if _, found := service.Properties.Get(key); found {
+			t.Fatalf("retired service %s is generated", key)
+		}
+	}
+	target, _ := service.Properties.Get("target")
+	if len(target.OneOf) != 4 {
+		t.Fatal("target variants are not disjoint")
+	}
+	for _, variant := range target.OneOf {
+		kind, _ := variant.Properties.Get("type")
+		if kind.Const == "compose" && (slices.Contains(variant.Required, "project") || slices.Contains(variant.Required, "file") || !slices.Contains(variant.Required, "service") || !slices.Contains(variant.Required, "port")) {
+			t.Fatalf("Compose target required fields = %v", variant.Required)
+		}
+		if kind.Const == "app" {
+			for _, field := range []string{"address", "project", "file", "service", "port", "container", "tls"} {
+				if value, found := variant.Properties.Get(field); !found || value != jsonschema.FalseSchema {
+					t.Fatalf("app target permits %s", field)
+				}
+			}
+		}
+		if kind.Const == "compose" || kind.Const == "docker" {
+			port, found := variant.Properties.Get("port")
+			if !found || port.Minimum != "1" || port.Maximum != "65535" {
+				t.Fatal("private port bounds missing")
+			}
+		}
+	}
+	if _, found := tunnelSchema().Properties.Get("open"); found {
+		t.Fatal("browser opening is still a tunnel field")
+	}
+	limits, _ := tunnelSchema().Properties.Get("limits")
+	for _, key := range []string{"http", "tcp", "traffic"} {
+		if _, found := limits.Properties.Get(key); !found {
+			t.Fatalf("missing %s limits", key)
+		}
+	}
+	traffic, _ := limits.Properties.Get("traffic")
+	for _, key := range []string{"connections", "rate", "rate_per", "burst", "upload_bytes", "download_bytes", "total_connections", "total_upload_bytes", "total_download_bytes"} {
+		if _, found := traffic.Properties.Get(key); !found {
+			t.Fatalf("traffic field %s is missing", key)
+		}
+	}
+	for _, key := range []string{"total_bytes", "burst_bytes"} {
+		if _, found := traffic.Properties.Get(key); found {
+			t.Fatalf("combined traffic field %s is exposed", key)
+		}
+	}
+	pattern := regexp.MustCompile(schemaForType(reflect.TypeOf(config.ByteSize(0))).Pattern)
+	for _, size := range []string{"1MiB", "1024KiB", "1024MiB", "1048576KiB", "1GiB"} {
+		if !pattern.MatchString(size) {
+			t.Fatalf("schema rejected %s", size)
+		}
+	}
+	for _, size := range []string{"1023KiB", "1048577KiB", "1025MiB", "2GiB", "1MB", "+1MiB", "1.5MiB"} {
+		if pattern.MatchString(size) {
+			t.Fatalf("schema accepted %s", size)
+		}
+	}
+}
+
+func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
+	variants := servicesSchema().AdditionalProperties.OneOf
+	if len(variants) != 3 {
+		t.Fatal("services must have HTTP, private TCP, and SSH union members")
+	}
+	for i, service := range variants {
+		protocol, _ := service.Properties.Get("protocol")
+		target, _ := service.Properties.Get("target")
+		http, _ := service.Properties.Get("http")
+		if i == 0 {
+			if !reflect.DeepEqual(protocol.Enum, []any{"http"}) || slices.Contains(service.Required, "protocol") || len(target.OneOf) != 4 || http == jsonschema.FalseSchema {
+				t.Fatal("HTTP service lost inference or HTTP settings")
+			}
+		} else {
+			wantProtocol := "tcp"
+			if i == 2 {
+				wantProtocol = "ssh"
+			}
+			if !reflect.DeepEqual(protocol.Enum, []any{wantProtocol}) || !slices.Contains(service.Required, "protocol") || !slices.Contains(service.Required, "target") || len(target.OneOf) != 3 || http != jsonschema.FalseSchema {
+				t.Fatal("non-HTTP service does not require its protocol and non-app target or forbids HTTP settings")
+			}
+		}
+		for _, variant := range target.OneOf {
+			kind, _ := variant.Properties.Get("type")
+			if i != 0 && kind.Const == "app" {
+				t.Fatal("non-HTTP service accepts an app target")
+			}
+			if kind.Const != "app" {
+				tls, _ := variant.Properties.Get("tls")
+				if i == 2 {
+					if tls != jsonschema.FalseSchema {
+						t.Fatal("SSH service accepts target TLS")
+					}
+				} else {
+					mode, _ := tls.Properties.Get("mode")
+					want := []any{"direct"}
+					if i == 1 {
+						want = []any{"direct", "postgres", "mysql"}
+					}
+					if !slices.Contains(tls.Required, "mode") || !reflect.DeepEqual(mode.Enum, want) {
+						t.Fatalf("%s target TLS modes = %v", kind.Const, mode.Enum)
+					}
+				}
+			}
+			for _, field := range []string{"address", "project", "file", "service", "port", "container", "tls"} {
+				value, found := variant.Properties.Get(field)
+				if !found {
+					t.Fatalf("%s target needs an explicit allowed or forbidden %s field", kind.Const, field)
+				}
+				if field == "container" && kind.Const != "docker" && value != jsonschema.FalseSchema {
+					t.Fatal("non-Docker target permits container")
+				}
+				if field == "address" && kind.Const != "address" && value != jsonschema.FalseSchema {
+					t.Fatal("non-address target permits address")
+				}
+			}
+		}
+	}
+	compose := publisherSchema().OneOf[1]
+	if !reflect.DeepEqual(compose.Required, []string{"type", "service"}) {
+		t.Fatalf("Compose publisher required fields = %v", compose.Required)
+	}
+	for _, field := range []string{"port", "project_root", "app_endpoints"} {
+		if _, found := compose.Properties.Get(field); found {
+			t.Fatalf("removed publisher field %s is exposed", field)
+		}
 	}
 }

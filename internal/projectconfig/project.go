@@ -2,6 +2,7 @@ package projectconfig
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,16 +14,14 @@ import (
 
 // Project is a selected and resolved project configuration.
 type Project struct {
-	Selection                  Selection
-	Config                     config.TNL
-	Worktree                   Worktree
-	Root                       string
-	ServiceDirectories         map[string]string
-	RelativeServiceDirectories map[string]string
+	Selection Selection
+	Config    config.TNL
+	Worktree  Worktree
+	Root      string
 }
 
 // Resolve loads a selected project configuration and resolves its worktree and
-// configured service directories. an empty selection still resolves cwd as a
+// configuration. an empty selection still resolves cwd as a
 // project so commands without a configuration file share the same identity.
 func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte) (Project, error) {
 	worktree, err := ResolveWorktree(ctx, cwd)
@@ -30,11 +29,9 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 		return Project{}, fmt.Errorf("resolve project worktree: %w", err)
 	}
 	project := Project{
-		Selection:                  selection,
-		Worktree:                   ApplyWorktreeHashSalt(worktree, worktree.Root, salt),
-		Root:                       worktree.Root,
-		ServiceDirectories:         make(map[string]string),
-		RelativeServiceDirectories: make(map[string]string),
+		Selection: selection,
+		Worktree:  ApplyWorktreeHashSalt(worktree, worktree.Root, salt),
+		Root:      worktree.Root,
 	}
 	if selection.Path == "" {
 		return project, nil
@@ -66,12 +63,33 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 	}
 	slices.Sort(names)
 	for _, name := range names {
-		directory, relative, resolveErr := project.ServiceDirectory(name)
-		if resolveErr != nil {
-			return Project{}, fmt.Errorf("service %q: %w", name, resolveErr)
+		if target := project.Config.Services[name].Target; target != nil && target.Type == "compose" {
+			file, resolveErr := project.ComposeFile(name)
+			if resolveErr != nil {
+				return Project{}, resolveErr
+			}
+			if target.File == nil || target.Project == nil {
+				service := project.Config.Services[name]
+				resolved := *target
+				if resolved.File == nil {
+					root, err := filepath.EvalSymlinks(project.Root)
+					if err != nil {
+						return Project{}, err
+					}
+					relative, err := filepath.Rel(root, file)
+					if err != nil {
+						return Project{}, err
+					}
+					resolved.File = &relative
+				}
+				if resolved.Project == nil {
+					label := project.Worktree.Label.FullLabel
+					resolved.Project = &label
+				}
+				service.Target = &resolved
+				project.Config.Services[name] = service
+			}
 		}
-		project.ServiceDirectories[name] = directory
-		project.RelativeServiceDirectories[name] = relative
 	}
 	return project, nil
 }
@@ -79,56 +97,50 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 // Found reports whether the project has a selected configuration file.
 func (p Project) Found() bool { return p.Selection.Path != "" }
 
-// ServiceDirectory resolves a service's existing directory and rejects
-// symlink traversal outside the project root.
-func (p Project) ServiceDirectory(name string) (string, string, error) {
+// AppService selects a configured app target. cwd identifies the project only;
+// when more than one app is configured, the caller must select one by name.
+func (p Project) AppService(cwd, selected string) (string, error) {
 	if err := config.ValidateTNL(p.Config); err != nil {
-		return "", "", err
+		return "", err
 	}
-	value := "."
-	if name != "" {
-		service, found := p.Config.Services[name]
-		if !found {
-			return "", "", fmt.Errorf("service %q is not configured", name)
+	directory, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolve app directory: %w", err)
+	}
+	root, err := filepath.EvalSymlinks(p.Root)
+	if err != nil || !pathWithin(directory, root) {
+		return "", errors.New("app directory must be inside the project")
+	}
+	if selected != "" {
+		service, found := p.Config.Services[selected]
+		if !found || config.TargetType(service) != "app" {
+			return "", fmt.Errorf("service %q is not an app service", selected)
 		}
-		if service.Directory != nil {
-			value = *service.Directory
+		return selected, nil
+	}
+	name := ""
+	for candidate, service := range p.Config.Services {
+		if config.TargetType(service) != "app" {
+			continue
 		}
+		if name != "" {
+			return "", errors.New("select an app service explicitly when more than one is configured")
+		}
+		name = candidate
 	}
-	root, err := filepath.Abs(p.Root)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve project root: %w", err)
+	if name == "" {
+		return "", errors.New("no configured app service")
 	}
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve project root: %w", err)
-	}
-	relative := filepath.Clean(value)
-	path := filepath.Join(root, relative)
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve service directory %q: %w", value, err)
-	}
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return "", "", fmt.Errorf("inspect service directory %q: %w", value, err)
-	}
-	if !info.IsDir() {
-		return "", "", fmt.Errorf("service directory %q is not a directory", value)
-	}
-	inside, err := filepath.Rel(resolvedRoot, resolved)
-	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
-		return "", "", fmt.Errorf("service directory %q resolves outside the project root", value)
-	}
-	return filepath.Clean(path), filepath.ToSlash(relative), nil
+	return name, nil
 }
 
 // EffectiveService merges one named service over the root defaults.
 func (p Project) EffectiveService(name string) (config.TNL, error) {
 	base := p.Config
 	result := config.TNL{
-		Server: base.Server, Team: base.Team, Inspection: config.MergeInspection(base.Inspection, nil), Readiness: base.Readiness,
-		Webhooks: base.Webhooks, Tunnel: cloneTunnel(base.Tunnel), Publish: config.MergePublish(base.Publish, nil),
+		Server: base.Server, Team: base.Team, Feedback: base.Feedback, OAuth: base.OAuth, Publisher: base.Publisher,
+		Inspection: config.MergeInspection(base.Inspection, nil),
+		Webhooks:   base.Webhooks, Tunnel: cloneTunnel(base.Tunnel), Publish: config.ServicePublish(config.Service{}),
 	}
 	if name == "" {
 		return result, nil
@@ -138,10 +150,46 @@ func (p Project) EffectiveService(name string) (config.TNL, error) {
 		return config.TNL{}, fmt.Errorf("service %q is not configured", name)
 	}
 	result.Inspection = config.MergeInspection(result.Inspection, service.Inspection)
-	result.Tunnel = mergeTunnel(result.Tunnel, service.Tunnel)
-	result.Publish = config.MergePublish(result.Publish, service.Publish)
-	if service.Readiness != nil {
-		result.Readiness = service.Readiness
+	if config.Protocol(service) == "tcp" {
+		if service.Tunnel != nil {
+			return config.TNL{}, fmt.Errorf("service %q: private tcp cannot use public tunnel settings", name)
+		}
+		// private services never inherit public URL policy, even when the
+		// project also publishes HTTP or SSH services.
+		result.Tunnel = nil
+	} else {
+		result.Tunnel = mergeTunnel(result.Tunnel, service.Tunnel)
+	}
+	result.Publish = config.ServicePublish(service)
+	if service.HTTP != nil {
+		result.Readiness = service.HTTP.Readiness
+		if service.HTTP.Open != nil {
+			if result.Tunnel == nil {
+				result.Tunnel = &config.Tunnel{}
+			}
+			result.Tunnel.Open = service.HTTP.Open
+		}
+	}
+	return result, nil
+}
+
+// ResolvePublish finishes private discovery and resolves a relative target CA
+// path against the selected configuration's directory, independent of cwd.
+func (p Project) ResolvePublish(name, discovered string) (*config.Publish, error) {
+	service, found := p.Config.Services[name]
+	if !found {
+		return nil, fmt.Errorf("service %q is not configured", name)
+	}
+	result, err := config.ResolveServiceTarget(service, discovered)
+	if err != nil {
+		return nil, err
+	}
+	if result.TargetCAFile != nil && !filepath.IsAbs(*result.TargetCAFile) {
+		path, err := filepath.Abs(filepath.Join(p.Root, *result.TargetCAFile))
+		if err != nil {
+			return nil, err
+		}
+		result.TargetCAFile = &path
 	}
 	return result, nil
 }
@@ -179,28 +227,7 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 	if override.Ephemeral != nil {
 		result.Ephemeral = override.Ephemeral
 	}
-	if override.Limits != nil {
-		if result.Limits == nil {
-			result.Limits = &config.Limits{}
-		}
-		if override.Limits.Requests != nil {
-			result.Limits.Requests = override.Limits.Requests
-		}
-		if override.Limits.Concurrency != nil {
-			result.Limits.Concurrency = override.Limits.Concurrency
-		}
-		if override.Limits.Rate != nil {
-			if result.Limits.Rate == nil {
-				result.Limits.Rate = &config.Rate{}
-			}
-			if override.Limits.Rate.Requests != nil {
-				result.Limits.Rate.Requests = override.Limits.Rate.Requests
-			}
-			if override.Limits.Rate.Per != nil {
-				result.Limits.Rate.Per = override.Limits.Rate.Per
-			}
-		}
-	}
+	result.Limits = config.MergeLimits(result.Limits, override.Limits)
 	return result
 }
 
@@ -210,13 +237,74 @@ func cloneTunnel(value *config.Tunnel) *config.Tunnel {
 	}
 	result := *value
 	result.AllowIP = slices.Clone(value.AllowIP)
-	if value.Limits != nil {
-		limits := *value.Limits
-		if limits.Rate != nil {
-			rate := *limits.Rate
-			limits.Rate = &rate
-		}
-		result.Limits = &limits
-	}
+	result.Limits = config.MergeLimits(value.Limits, nil)
 	return &result
+}
+
+// ComposeProject derives a worktree-specific Compose project name unless the
+// target explicitly selects an existing project.
+func (p Project) ComposeProject(name string) (string, error) {
+	service, found := p.Config.Services[name]
+	if !found || service.Target == nil || service.Target.Type != "compose" {
+		return "", fmt.Errorf("service %q has no compose target", name)
+	}
+	if service.Target.Project != nil {
+		return *service.Target.Project, nil
+	}
+	return p.Worktree.Label.FullLabel, nil
+}
+
+// PublisherComposeFile resolves the selected project's Compose file.
+func (p Project) PublisherComposeFile() (string, error) {
+	if p.Config.Publisher == nil || p.Config.Publisher.Type != "compose" {
+		return "", errors.New("publisher has no compose placement")
+	}
+	return p.resolveComposeFile(p.Config.Publisher.File)
+}
+
+// ComposeFile resolves a configured Compose file and rejects symlink escapes.
+// the runtime receives an absolute file path for its explicit project command.
+func (p Project) ComposeFile(name string) (string, error) {
+	service, found := p.Config.Services[name]
+	if !found || service.Target == nil || service.Target.Type != "compose" {
+		return "", fmt.Errorf("service %q has no compose target", name)
+	}
+	if err := config.ValidateTNL(p.Config); err != nil {
+		return "", err
+	}
+	return p.resolveComposeFile(service.Target.File)
+}
+
+func (p Project) resolveComposeFile(selected *string) (string, error) {
+	root, err := filepath.EvalSymlinks(p.Root)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root: %w", err)
+	}
+	relativeFile := ""
+	if selected != nil {
+		relativeFile = *selected
+	} else {
+		for _, candidate := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
+			if _, err := os.Lstat(filepath.Join(root, candidate)); err == nil {
+				relativeFile = candidate
+				break
+			}
+		}
+		if relativeFile == "" {
+			return "", errors.New("compose file is missing; add compose.yaml or select file explicitly")
+		}
+	}
+	file, err := filepath.EvalSymlinks(filepath.Join(root, relativeFile))
+	if err != nil {
+		return "", fmt.Errorf("resolve compose file: %w", err)
+	}
+	relative, err := filepath.Rel(root, file)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", errors.New("compose file resolves outside project")
+	}
+	info, err := os.Stat(file)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", errors.New("compose file must be a regular file")
+	}
+	return file, nil
 }

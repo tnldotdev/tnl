@@ -117,15 +117,27 @@ and cleanup without a deployed server.
 Edit the source, then run `mise exec -- task generate` and
 `mise exec -- task format`. Do not edit committed generated files by hand.
 
-The client uses `client-v2.db` in its state directory. A future incompatible
-SQLite schema can use a new filename such as `client-v3.db`; `tnl` starts that
-file without reading or importing the old one. Goose versions within one file
-still track compatible migrations. The server's current PostgreSQL baseline
-requires a fresh database rather than an upgrade from an older schema.
+The client uses `v1.db` in its state directory, without reading or importing
+older client databases. Its one Goose migration creates the fresh baseline;
+future compatible migrations may advance that version. The server's PostgreSQL
+baseline requires a fresh database, and control checks both its exact migration
+version and baseline identity before serving.
+
+The fresh public URL contract uses `http` and `ssh`. ssh uses an assigned port;
+its publish runs need two ready publisher connections, DNS, and that port, but
+no visitor certificate plan or ACME order. A `tcp` service instead uses its
+project service key as the saved private name, with optional `private.name`
+override, and is selected by `tnl connect` through the authenticated
+control API. It has no public URL, service-specific DNS, WebPKI certificate or
+public port. `target.tls.mode` selects `direct`, `postgres`, or `mysql` for a
+private target; omitting `tls` leaves a Docker or Compose tcp target plaintext.
+Target TLS verifies the target server name and may add a project-relative CA
+file. See [private service boundaries](docs/maintainers/private-services.md).
+This baseline does not import old database-specific public URLs.
 
 | Source                                                                                    | Generated output                                                                          |
 | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Six HTTP OpenAPI contracts under `api/*/v1`                                               | `pkg/api/*`; publisher browser validators under `internal/publisherapi`                   |
+| Seven HTTP OpenAPI contracts under `api/*/v1`                                             | `pkg/api/*`; publisher browser validators under `internal/publisherapi`                   |
 | PostgreSQL migrations and queries under `internal/controlstate`                           | `internal/controlstate/controlstatedb`                                                    |
 | SQLite migrations and queries under `internal/clientstate`                                | `internal/clientstate/clientstatedb`                                                      |
 | `internal/config`, project configuration mappings, and `scripts/generate-config-types.ts` | `schema/v1.json`, `internal/projectconfig/keys.gen.json`, `packages/ts/src/config.gen.ts` |

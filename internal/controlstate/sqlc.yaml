@@ -11,6 +11,9 @@ sql:
         rename:
           public_url_id: PublicURLID
           public_url_scope: PublicURLScope
+          ssh_host_key: SSHHostKey
+          ssh_user: SSHUser
           enabled_public_urls: EnabledPublicURLs
           suspended_public_urls: SuspendedPublicURLs
+          last_http_status: LastHTTPStatus
         emit_interface: true

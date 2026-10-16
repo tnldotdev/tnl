@@ -18,7 +18,7 @@ SET state = 'canceled',
 WHERE public_url_id = $2
   AND publish_run_number = $3
   AND state = 'open'
-RETURNING id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, observed_seconds
+RETURNING id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, recovery_seconds
 `
 
 type CancelOpenPublicURLRecoveryEpisodeParams struct {
@@ -38,7 +38,7 @@ func (q *Queries) CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg Ca
 		&i.OpenedAt,
 		&i.ObservedAt,
 		&i.CanceledAt,
-		&i.ObservedSeconds,
+		&i.RecoverySeconds,
 	)
 	return i, err
 }
@@ -99,7 +99,7 @@ func (q *Queries) ExpirePublisherConnection(ctx context.Context, arg ExpirePubli
 }
 
 const getOpenPublicURLRecoveryEpisode = `-- name: GetOpenPublicURLRecoveryEpisode :one
-SELECT id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, observed_seconds
+SELECT id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, recovery_seconds
 FROM control.public_url_recovery_episodes
 WHERE public_url_id = $1
   AND publish_run_number = $2
@@ -122,13 +122,13 @@ func (q *Queries) GetOpenPublicURLRecoveryEpisode(ctx context.Context, arg GetOp
 		&i.OpenedAt,
 		&i.ObservedAt,
 		&i.CanceledAt,
-		&i.ObservedSeconds,
+		&i.RecoverySeconds,
 	)
 	return i, err
 }
 
 const getPublishRun = `-- name: GetPublishRun :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, request_digest_ciphertext, request_digest_storage_key_id, share_capable
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE id = $1
 `
@@ -144,6 +144,9 @@ func (q *Queries) GetPublishRun(ctx context.Context, publishRunID string) (Contr
 		&i.ActingIdentityID,
 		&i.PublishRunNumber,
 		&i.IdempotencyKey,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
+		&i.ShareCapable,
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
@@ -152,6 +155,7 @@ func (q *Queries) GetPublishRun(ctx context.Context, publishRunID string) (Contr
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
 		&i.CertificateChallengeMethod,
+		&i.TrafficLimits,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -163,9 +167,6 @@ func (q *Queries) GetPublishRun(ctx context.Context, publishRunID string) (Contr
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
-		&i.RequestDigestCiphertext,
-		&i.RequestDigestStorageKeyID,
-		&i.ShareCapable,
 	)
 	return i, err
 }
@@ -179,7 +180,7 @@ WHERE id = $3
   AND publish_run_number = $5
   AND closed_at IS NULL
   AND publisher_expires_at > $1
-RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, request_digest_ciphertext, request_digest_storage_key_id, share_capable
+RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 `
 
 type HeartbeatPublishRunParams struct {
@@ -207,6 +208,9 @@ func (q *Queries) HeartbeatPublishRun(ctx context.Context, arg HeartbeatPublishR
 		&i.ActingIdentityID,
 		&i.PublishRunNumber,
 		&i.IdempotencyKey,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
+		&i.ShareCapable,
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
@@ -215,6 +219,7 @@ func (q *Queries) HeartbeatPublishRun(ctx context.Context, arg HeartbeatPublishR
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
 		&i.CertificateChallengeMethod,
+		&i.TrafficLimits,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -226,9 +231,6 @@ func (q *Queries) HeartbeatPublishRun(ctx context.Context, arg HeartbeatPublishR
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
-		&i.RequestDigestCiphertext,
-		&i.RequestDigestStorageKeyID,
-		&i.ShareCapable,
 	)
 	return i, err
 }
@@ -387,7 +389,7 @@ func (q *Queries) LockInvalidReadyPublisherConnections(ctx context.Context, now 
 }
 
 const lockPublicURLRecoveryEpisode = `-- name: LockPublicURLRecoveryEpisode :one
-SELECT id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, observed_seconds
+SELECT id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, recovery_seconds
 FROM control.public_url_recovery_episodes
 WHERE id = $1
 FOR UPDATE
@@ -404,13 +406,13 @@ func (q *Queries) LockPublicURLRecoveryEpisode(ctx context.Context, recoveryEpis
 		&i.OpenedAt,
 		&i.ObservedAt,
 		&i.CanceledAt,
-		&i.ObservedSeconds,
+		&i.RecoverySeconds,
 	)
 	return i, err
 }
 
 const lockPublishRun = `-- name: LockPublishRun :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, request_digest_ciphertext, request_digest_storage_key_id, share_capable
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE id = $1
 FOR UPDATE
@@ -427,6 +429,9 @@ func (q *Queries) LockPublishRun(ctx context.Context, publishRunID string) (Cont
 		&i.ActingIdentityID,
 		&i.PublishRunNumber,
 		&i.IdempotencyKey,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
+		&i.ShareCapable,
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
@@ -435,6 +440,7 @@ func (q *Queries) LockPublishRun(ctx context.Context, publishRunID string) (Cont
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
 		&i.CertificateChallengeMethod,
+		&i.TrafficLimits,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -446,9 +452,6 @@ func (q *Queries) LockPublishRun(ctx context.Context, publishRunID string) (Cont
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
-		&i.RequestDigestCiphertext,
-		&i.RequestDigestStorageKeyID,
-		&i.ShareCapable,
 	)
 	return i, err
 }
@@ -465,7 +468,8 @@ WHERE id = $4
   AND public_url_id = $5
   AND publish_run_number = $6
   AND closed_at IS NULL
-RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, request_digest_ciphertext, request_digest_storage_key_id, share_capable
+  AND certificate_cache_key IS NOT NULL
+RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 `
 
 type MarkPublishRunCertificateInstalledParams struct {
@@ -495,6 +499,9 @@ func (q *Queries) MarkPublishRunCertificateInstalled(ctx context.Context, arg Ma
 		&i.ActingIdentityID,
 		&i.PublishRunNumber,
 		&i.IdempotencyKey,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
+		&i.ShareCapable,
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
@@ -503,6 +510,7 @@ func (q *Queries) MarkPublishRunCertificateInstalled(ctx context.Context, arg Ma
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
 		&i.CertificateChallengeMethod,
+		&i.TrafficLimits,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -514,9 +522,6 @@ func (q *Queries) MarkPublishRunCertificateInstalled(ctx context.Context, arg Ma
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
-		&i.RequestDigestCiphertext,
-		&i.RequestDigestStorageKeyID,
-		&i.ShareCapable,
 	)
 	return i, err
 }
@@ -529,14 +534,18 @@ WHERE sessions.id = $2
   AND sessions.public_url_id = $3
   AND sessions.publish_run_number = $4
   AND sessions.closed_at IS NULL
-  AND sessions.certificate_installed_at IS NOT NULL
+  AND (sessions.certificate_installed_at IS NOT NULL OR
+       (sessions.certificate_cache_key IS NULL AND EXISTS (
+           SELECT 1 FROM control.public_urls AS url
+           WHERE url.id = sessions.public_url_id AND url.service_protocol = 'ssh'
+               AND url.lifecycle_state = 'enabled' AND url.dns_state = 'published' AND url.public_port IS NOT NULL)))
   AND (
       SELECT count(*)
       FROM control.publish_run_connection_slots AS connections
       WHERE connections.publish_run_id = $2
         AND connections.state = 'ready'
   ) = 2
-RETURNING sessions.id, sessions.public_url_id, sessions.team_id, sessions.membership_id, sessions.acting_identity_id, sessions.publish_run_number, sessions.idempotency_key, sessions.publish_run_token_id, sessions.publish_run_token_digest, sessions.policy_revision, sessions.policy_denials, sessions.certificate_cache_key, sessions.certificate_scope, sessions.certificate_identifiers, sessions.certificate_challenge_method, sessions.state, sessions.created_at, sessions.last_heartbeat_at, sessions.publisher_expires_at, sessions.certificate_installed_at, sessions.certificate_issuance_id, sessions.certificate_not_after, sessions.ready_at, sessions.closed_at, sessions.close_reason, sessions.assignments_open, sessions.request_digest_ciphertext, sessions.request_digest_storage_key_id, sessions.share_capable
+RETURNING sessions.id, sessions.public_url_id, sessions.team_id, sessions.membership_id, sessions.acting_identity_id, sessions.publish_run_number, sessions.idempotency_key, sessions.request_digest_ciphertext, sessions.request_digest_storage_key_id, sessions.share_capable, sessions.publish_run_token_id, sessions.publish_run_token_digest, sessions.policy_revision, sessions.policy_denials, sessions.certificate_cache_key, sessions.certificate_scope, sessions.certificate_identifiers, sessions.certificate_challenge_method, sessions.traffic_limits, sessions.state, sessions.created_at, sessions.last_heartbeat_at, sessions.publisher_expires_at, sessions.certificate_installed_at, sessions.certificate_issuance_id, sessions.certificate_not_after, sessions.ready_at, sessions.closed_at, sessions.close_reason, sessions.assignments_open
 `
 
 type MarkPublishRunReadyParams struct {
@@ -562,6 +571,9 @@ func (q *Queries) MarkPublishRunReady(ctx context.Context, arg MarkPublishRunRea
 		&i.ActingIdentityID,
 		&i.PublishRunNumber,
 		&i.IdempotencyKey,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
+		&i.ShareCapable,
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
@@ -570,6 +582,7 @@ func (q *Queries) MarkPublishRunReady(ctx context.Context, arg MarkPublishRunRea
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
 		&i.CertificateChallengeMethod,
+		&i.TrafficLimits,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -581,9 +594,6 @@ func (q *Queries) MarkPublishRunReady(ctx context.Context, arg MarkPublishRunRea
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
-		&i.RequestDigestCiphertext,
-		&i.RequestDigestStorageKeyID,
-		&i.ShareCapable,
 	)
 	return i, err
 }
@@ -592,12 +602,12 @@ const observePublicURLRecoveryEpisode = `-- name: ObservePublicURLRecoveryEpisod
 UPDATE control.public_url_recovery_episodes
 SET state = 'observed',
     observed_at = $1,
-    observed_seconds = $2
+    recovery_seconds = $2
 WHERE id = $3
   AND public_url_id = $4
   AND publish_run_number = $5
   AND state = 'open'
-RETURNING id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, observed_seconds
+RETURNING id, public_url_id, publish_run_number, state, opened_at, observed_at, canceled_at, recovery_seconds
 `
 
 type ObservePublicURLRecoveryEpisodeParams struct {
@@ -625,7 +635,7 @@ func (q *Queries) ObservePublicURLRecoveryEpisode(ctx context.Context, arg Obser
 		&i.OpenedAt,
 		&i.ObservedAt,
 		&i.CanceledAt,
-		&i.ObservedSeconds,
+		&i.RecoverySeconds,
 	)
 	return i, err
 }

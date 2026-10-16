@@ -249,15 +249,20 @@ type ProjectContext struct {
 }
 
 var typeScriptKeyMappings = map[string]string{
-	"allow_ip":        "allowIP",
-	"source_ips":      "sourceIPs",
-	"allow_all_ips":   "allowAllIPs",
-	"startup_timeout": "startupTimeout",
-	"target_ca_file":  "targetCAFile",
-	"target_tls":      "targetTLS",
-	"target_tls_name": "targetTLSName",
-	"strip_prefix":    "stripPrefix",
-	"public_url":      "publicURL",
+	"allow_ip":             "allowIP",
+	"source_ips":           "sourceIPs",
+	"allow_all_ips":        "allowAllIPs",
+	"server_name":          "serverName",
+	"ca_file":              "caFile",
+	"max_bytes":            "maxBytes",
+	"rate_per":             "ratePer",
+	"upload_bytes":         "uploadBytes",
+	"download_bytes":       "downloadBytes",
+	"total_connections":    "totalConnections",
+	"total_upload_bytes":   "totalUploadBytes",
+	"total_download_bytes": "totalDownloadBytes",
+	"strip_prefix":         "stripPrefix",
+	"public_url":           "publicURL",
 }
 
 // TypeScriptKeyMappings returns the static-to-TypeScript property mappings
@@ -273,6 +278,9 @@ func TypeScriptKeyMappings() map[string]string {
 func unmarshalTypeScriptTNL(data []byte) (config.TNL, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
+		return config.TNL{}, err
+	}
+	if err := config.RejectNullValues(raw); err != nil {
 		return config.TNL{}, err
 	}
 	if err := normalizeTypeScriptObject(raw, reflect.TypeOf(config.TNL{})); err != nil {

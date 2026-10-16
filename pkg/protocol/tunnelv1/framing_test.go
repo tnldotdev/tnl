@@ -10,10 +10,12 @@ import (
 	"testing"
 )
 
-func readControl(r io.Reader) error    { _, err := ReadControl(r); return err }
-func readVisitor(r io.Reader) error    { _, err := ReadVisitorStreamHeader(r); return err }
-func readForwarding(r io.Reader) error { _, err := ReadInternalForwardingHeader(r); return err }
-func readResponse(r io.Reader) error   { _, err := ReadStreamResponse(r); return err }
+func readControl(r io.Reader) error         { _, err := ReadControl(r); return err }
+func readVisitor(r io.Reader) error         { _, err := ReadVisitorStreamHeader(r); return err }
+func readForwarding(r io.Reader) error      { _, err := ReadInternalForwardingHeader(r); return err }
+func readResponse(r io.Reader) error        { _, err := ReadStreamResponse(r); return err }
+func readAdmission(r io.Reader) error       { _, err := ReadAdmissionHeader(r); return err }
+func readAdmissionResult(r io.Reader) error { _, err := ReadAdmissionResult(r); return err }
 
 var frameReaders = []struct {
 	name  string
@@ -24,6 +26,9 @@ var frameReaders = []struct {
 	{"visitor-stream-header", MaxHeaderBytes, readVisitor},
 	{"internal-forwarding-header", MaxHeaderBytes, readForwarding},
 	{"stream-response", MaxHeaderBytes, readResponse},
+	{"publisher-admission-header", MaxHeaderBytes, readAdmission},
+	{"ingress-admission-header", MaxHeaderBytes, readAdmission},
+	{"admission-result", MaxHeaderBytes, readAdmissionResult},
 }
 
 func frame(payload string) io.Reader {
@@ -134,6 +139,11 @@ func TestFrameWritersPropagateErrorsAndShortWrites(t *testing.T) {
 			return WriteInternalForwardingHeader(w, h)
 		}},
 		{"response", func(w io.Writer) error { return WriteStreamResponse(w, StreamResponse{Type: StreamAccepted}) }},
+		{"admission", func(w io.Writer) error {
+			h, _ := ReadAdmissionHeader(bytes.NewReader(goldenWire(t, "ingress-admission-header")))
+			return WriteAdmissionHeader(w, h)
+		}},
+		{"admission-result", func(w io.Writer) error { return WriteAdmissionResult(w, AdmissionResult{Type: StreamAccepted}) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var complete bytes.Buffer

@@ -4,6 +4,9 @@ import type { TnlProjectMetadata } from "./index.js";
 
 type TnlRateSegment = `${number}${"ns" | "us" | "µs" | "ms" | "s" | "m" | "h"}`;
 
+/** whole binary byte units; tnl checks the 1MiB–1GiB bound at runtime. */
+export type TnlByteSize = `${bigint}${"KiB" | "MiB" | "GiB"}`;
+
 /** a Go duration with one to four numeric unit segments; tnl checks positivity at runtime. */
 export type TnlRatePeriod =
   | TnlRateSegment
@@ -42,26 +45,39 @@ export interface TnlConfig {
      */
     name?: string;
     /**
-     * Open the public URL in a browser once ready.
-     */
-    open?: boolean;
-    /**
      * Remove the public URL when this tunnel stops.
      */
     ephemeral?: boolean;
     limits?: {
-      /**
-       * Total admitted application requests for this tunnel.
-       */
-      requests?: number;
-      rate?: {
-        requests: number;
-        per: TnlRatePeriod;
+      http?: {
+        total?: number;
+        concurrency?: number;
+        rate?: {
+          count?: number;
+          per?: TnlRatePeriod;
+          burst?: number;
+        };
       };
-      /**
-       * Maximum simultaneous application requests, streams, and upgrades.
-       */
-      concurrency?: number;
+      tcp?: {
+        total?: number;
+        concurrency?: number;
+        rate?: {
+          count?: number;
+          per?: TnlRatePeriod;
+          burst?: number;
+        };
+      };
+      traffic?: {
+        connections?: number;
+        rate?: number;
+        burst?: number;
+        downloadBytes?: number;
+        ratePer?: TnlRatePeriod;
+        totalConnections?: number;
+        totalDownloadBytes?: number;
+        totalUploadBytes?: number;
+        uploadBytes?: number;
+      };
     };
     /**
      * Allow visitors from every IP address.
@@ -76,18 +92,21 @@ export interface TnlConfig {
      */
     publicURL?: string;
   };
-  publish?: Publish;
-  readiness?: Readiness;
+  publisher?:
+    | {
+        type: "host";
+      }
+    | {
+        type: "compose";
+        service: string;
+        file?: string;
+      };
   /**
-   * Named local services with optional tunnel, publish, readiness overrides, and path mounts.
+   * Named services, private targets, and public tunnel settings.
    */
   services?: {
     [k: string]:
       | {
-          /**
-           * Service directory relative to the project configuration.
-           */
-          directory?: string;
           inspection?: Inspection1;
           /**
            * PublicURL and tunnel overrides for this service.
@@ -102,26 +121,31 @@ export interface TnlConfig {
              */
             name?: string;
             /**
-             * Open the public URL in a browser once ready.
-             */
-            open?: boolean;
-            /**
              * Remove the public URL when this tunnel stops.
              */
             ephemeral?: boolean;
             limits?: {
-              /**
-               * Total admitted application requests for this tunnel.
-               */
-              requests?: number;
-              rate?: {
-                requests: number;
-                per: TnlRatePeriod;
+              http?: {
+                total?: number;
+                concurrency?: number;
+                rate?: {
+                  count?: number;
+                  per?: TnlRatePeriod;
+                  burst?: number;
+                };
               };
-              /**
-               * Maximum simultaneous application requests, streams, and upgrades.
-               */
-              concurrency?: number;
+              tcp?: never;
+              traffic?: {
+                connections?: number;
+                rate?: number;
+                burst?: number;
+                downloadBytes?: number;
+                ratePer?: TnlRatePeriod;
+                totalConnections?: number;
+                totalDownloadBytes?: number;
+                totalUploadBytes?: number;
+                uploadBytes?: number;
+              };
             };
             /**
              * Allow visitors from every IP address.
@@ -136,20 +160,220 @@ export interface TnlConfig {
              */
             publicURL?: string;
           };
-          publish?: Publish;
-          readiness?: Readiness;
-          /**
-           * Mount another configured service at a path on this service's public URL.
-           */
-          paths?: {
-            [k: string]:
-              | string
-              | {
-                  service: string;
-                  stripPrefix?: boolean;
-                }
-              | undefined;
+          private?: never;
+          protocol?: "http";
+          target?:
+            | {
+                type: "app";
+                address?: never;
+                project?: never;
+                file?: never;
+                service?: never;
+                port?: never;
+                container?: never;
+                tls?: never;
+              }
+            | {
+                type: "address";
+                address: string | number;
+                tls?: {
+                  mode: "direct";
+                  caFile?: string;
+                  serverName?: string;
+                };
+                project?: never;
+                file?: never;
+                service?: never;
+                port?: never;
+                container?: never;
+              }
+            | {
+                type: "compose";
+                project?: string;
+                file?: string;
+                service: string;
+                port: number;
+                tls?: {
+                  mode: "direct";
+                  caFile?: string;
+                  serverName?: string;
+                };
+                address?: never;
+                container?: never;
+              }
+            | {
+                type: "docker";
+                container: string;
+                port: number;
+                tls?: {
+                  mode: "direct";
+                  caFile?: string;
+                  serverName?: string;
+                };
+                address?: never;
+                project?: never;
+                file?: never;
+                service?: never;
+              };
+          http?: {
+            readiness?: {
+              path: string;
+            };
+            open?: boolean;
+            /**
+             * Mount another configured service at a path on this service's public URL.
+             */
+            paths?: {
+              [k: string]:
+                | string
+                | {
+                    service: string;
+                    stripPrefix?: boolean;
+                  }
+                | undefined;
+            };
           };
+        }
+      | {
+          inspection?: Inspection1;
+          tunnel?: never;
+          private?: {
+            name?: string;
+          };
+          protocol: "tcp";
+          target:
+            | {
+                type: "address";
+                address: string | number;
+                tls?: {
+                  mode: "direct" | "postgres" | "mysql";
+                  caFile?: string;
+                  serverName?: string;
+                };
+                project?: never;
+                file?: never;
+                service?: never;
+                port?: never;
+                container?: never;
+              }
+            | {
+                type: "compose";
+                project?: string;
+                file?: string;
+                service: string;
+                port: number;
+                tls?: {
+                  mode: "direct" | "postgres" | "mysql";
+                  caFile?: string;
+                  serverName?: string;
+                };
+                address?: never;
+                container?: never;
+              }
+            | {
+                type: "docker";
+                container: string;
+                port: number;
+                tls?: {
+                  mode: "direct" | "postgres" | "mysql";
+                  caFile?: string;
+                  serverName?: string;
+                };
+                address?: never;
+                project?: never;
+                file?: never;
+                service?: never;
+              };
+          http?: never;
+        }
+      | {
+          inspection?: Inspection1;
+          /**
+           * PublicURL and tunnel overrides for this service.
+           */
+          tunnel?: {
+            /**
+             * Ready team domain used for generated public URL hostnames.
+             */
+            domain?: string;
+            /**
+             * One DNS label beneath the member namespace.
+             */
+            name?: string;
+            /**
+             * Remove the public URL when this tunnel stops.
+             */
+            ephemeral?: boolean;
+            limits?: {
+              http?: never;
+              tcp?: {
+                total?: number;
+                concurrency?: number;
+                rate?: {
+                  count?: number;
+                  per?: TnlRatePeriod;
+                  burst?: number;
+                };
+              };
+              traffic?: {
+                connections?: number;
+                rate?: number;
+                burst?: number;
+                downloadBytes?: number;
+                ratePer?: TnlRatePeriod;
+                totalConnections?: number;
+                totalDownloadBytes?: number;
+                totalUploadBytes?: number;
+                uploadBytes?: number;
+              };
+            };
+            /**
+             * Allow visitors from every IP address.
+             */
+            allowAllIPs?: boolean;
+            /**
+             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
+             */
+            allowIP?: string[];
+            /**
+             * Exact public URL hostname or HTTPS origin to publish.
+             */
+            publicURL?: string;
+          };
+          private?: never;
+          protocol: "ssh";
+          target:
+            | {
+                type: "address";
+                address: string | number;
+                tls?: never;
+                project?: never;
+                file?: never;
+                service?: never;
+                port?: never;
+                container?: never;
+              }
+            | {
+                type: "compose";
+                project?: string;
+                file?: string;
+                service: string;
+                port: number;
+                tls?: never;
+                address?: never;
+                container?: never;
+              }
+            | {
+                type: "docker";
+                container: string;
+                port: number;
+                tls?: never;
+                address?: never;
+                project?: never;
+                file?: never;
+                service?: never;
+              };
+          http?: never;
         }
       | undefined;
   };
@@ -239,34 +463,13 @@ export interface TnlConfig {
  */
 export interface Inspection {
   mode?: "none" | "summary";
-}
-export interface Publish {
-  /**
-   * Service protocol for the public URL; defaults to http.
-   */
-  protocol?: "http" | "postgres" | "mysql" | "redis" | "ssh";
-  /**
-   * HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher.
-   */
-  target?: string | number;
-  /**
-   * Additional PEM certificate authorities for the target; relative paths are resolved from the project root.
-   */
-  targetCAFile?: string;
-  /**
-   * Use verified TLS for the TCP target.
-   */
-  targetTLS?: boolean;
-  /**
-   * Hostname expected in the target's TLS certificate; defaults to the target host.
-   */
-  targetTLSName?: string;
-}
-export interface Readiness {
-  path: string;
+  retention?: TnlRatePeriod;
+  maxBytes?: TnlByteSize;
 }
 export interface Inspection1 {
   mode?: "none" | "summary";
+  retention?: TnlRatePeriod;
+  maxBytes?: TnlByteSize;
 }
 
 /** The Git worktree or project directory that contains tnl.config.ts. */

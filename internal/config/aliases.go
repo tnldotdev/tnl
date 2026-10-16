@@ -69,11 +69,14 @@ func ValidateAliases(config TNL) error {
 		if !found {
 			return fmt.Errorf("aliases.%s: service %q is not configured", key, alias.Service)
 		}
+		if Protocol(service) != "http" {
+			return fmt.Errorf("aliases.%s: service must use protocol http", key)
+		}
 		if alias.Name != nil && alias.PublicURL != nil {
 			return fmt.Errorf("aliases.%s: name and public_url are mutually exclusive", key)
 		}
 		// ordinary tunnel validation owns domain, exact URL, and IP policy rules.
-		if err := validateServiceValues(&Tunnel{Domain: alias.Domain, PublicURL: alias.PublicURL, AllowIP: alias.AllowIP, AllowAllIPs: alias.AllowAllIPs}, nil); err != nil {
+		if err := validateTunnel(&Tunnel{Domain: alias.Domain, PublicURL: alias.PublicURL, AllowIP: alias.AllowIP, AllowAllIPs: alias.AllowAllIPs}); err != nil {
 			return fmt.Errorf("aliases.%s: %w", key, err)
 		}
 		identity := ""

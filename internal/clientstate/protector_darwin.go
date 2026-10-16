@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -16,7 +17,7 @@ import (
 )
 
 const (
-	keychainService = "dev.tnl.client-state"
+	keychainService = "dev.tnl.client-state.v1"
 	wrappingKeySize = 32
 )
 
@@ -46,9 +47,13 @@ type keychainSecretProtector struct {
 	key []byte
 }
 
-func newSecretProtector(account, lockPath string) secretProtector {
+func newSecretProtector(account, lockPath, _ string) secretProtector {
 	return &keychainSecretProtector{account: account, lockPath: lockPath, keyring: systemKeyring{}}
 }
+
+func preparePlatformProtection(context.Context, string, bool) error { return nil }
+
+func verifyPlatformProtection(context.Context, string, *sql.DB, bool) error { return nil }
 
 func (p *keychainSecretProtector) Seal(ctx context.Context, secretContext string, plaintext []byte) ([]byte, error) {
 	key, err := p.wrappingKey(ctx, true)

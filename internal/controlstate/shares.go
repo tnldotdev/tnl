@@ -177,7 +177,7 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	stored, err := queries.CreateShare(ctx, controlstatedb.CreateShareParams{
 		ID: id, PreviewID: preview.ID, TeamID: request.TeamID,
 		CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
-		RequestDigest: digest[:], SecretFingerprint: request.SecretFingerprint[:],
+		RequestDigest: digest[:], SecretDigest: request.SecretFingerprint[:],
 		CreatedAt: timestamptz(now), ExpiresAt: timestamptz(request.ExpiresAt),
 	})
 	if err != nil {

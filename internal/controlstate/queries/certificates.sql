@@ -46,12 +46,12 @@ RETURNING *;
 
 -- name: GetControlTLSCacheEntry :one
 SELECT cache_ciphertext, cache_storage_key_id
-FROM control.control_tls_cache
+FROM control.control_tls_certificate_cache
 WHERE directory_url = sqlc.arg(directory_url)
   AND cache_key = sqlc.arg(cache_key);
 
 -- name: PutControlTLSCacheEntry :exec
-INSERT INTO control.control_tls_cache (
+INSERT INTO control.control_tls_certificate_cache (
     directory_url,
     cache_key,
     cache_ciphertext,
@@ -70,7 +70,7 @@ ON CONFLICT (directory_url, cache_key) DO UPDATE SET
     updated_at = EXCLUDED.updated_at;
 
 -- name: RotateControlTLSCacheEntry :exec
-UPDATE control.control_tls_cache
+UPDATE control.control_tls_certificate_cache
 SET cache_ciphertext = sqlc.arg(cache_ciphertext),
     cache_storage_key_id = sqlc.arg(cache_storage_key_id),
     updated_at = sqlc.arg(updated_at)
@@ -80,7 +80,7 @@ WHERE directory_url = sqlc.arg(directory_url)
   AND cache_ciphertext = sqlc.arg(previous_ciphertext);
 
 -- name: DeleteControlTLSCacheEntry :exec
-DELETE FROM control.control_tls_cache
+DELETE FROM control.control_tls_certificate_cache
 WHERE directory_url = sqlc.arg(directory_url)
   AND cache_key = sqlc.arg(cache_key);
 
@@ -98,7 +98,7 @@ WHERE publish_run_id = sqlc.arg(publish_run_id)
 -- name: LockCertificateIssuanceControl :one
 SELECT allowed
 FROM control.maintenance_controls
-WHERE control_name = 'certificate_issuance'
+WHERE operation = 'certificate_issuance'
 FOR SHARE;
 
 -- name: InsertACMEOrder :one
@@ -120,7 +120,7 @@ INSERT INTO control.acme_orders (
     available_at,
     created_at,
     updated_at
-) VALUES (
+) SELECT
     sqlc.arg(id),
     sqlc.arg(account_id),
     sqlc.arg(publish_run_id),
@@ -138,7 +138,11 @@ INSERT INTO control.acme_orders (
     sqlc.arg(created_at),
     sqlc.arg(created_at),
     sqlc.arg(created_at)
-)
+FROM control.publish_runs AS run
+JOIN control.public_urls AS url ON url.id = run.public_url_id
+WHERE run.id = sqlc.arg(publish_run_id) AND run.public_url_id = sqlc.arg(public_url_id)
+  AND run.publish_run_number = sqlc.arg(publish_run_number) AND run.closed_at IS NULL
+  AND run.certificate_cache_key IS NOT NULL AND url.service_protocol IN ('http', 'tcp')
 RETURNING *;
 
 -- name: GetCertificateOrderDomainKind :one

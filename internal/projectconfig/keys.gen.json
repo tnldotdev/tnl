@@ -1,10 +1,16 @@
 {
   "allow_all_ips": "allowAllIPs",
   "allow_ip": "allowIP",
+  "ca_file": "caFile",
+  "download_bytes": "downloadBytes",
+  "max_bytes": "maxBytes",
   "public_url": "publicURL",
+  "rate_per": "ratePer",
+  "server_name": "serverName",
   "source_ips": "sourceIPs",
   "strip_prefix": "stripPrefix",
-  "target_ca_file": "targetCAFile",
-  "target_tls": "targetTLS",
-  "target_tls_name": "targetTLSName"
+  "total_connections": "totalConnections",
+  "total_download_bytes": "totalDownloadBytes",
+  "total_upload_bytes": "totalUploadBytes",
+  "upload_bytes": "uploadBytes"
 }

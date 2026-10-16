@@ -1,11 +1,11 @@
 -- name: NextInspectionNumber :one
-INSERT INTO local_inspection_counters (primary_checkout_root, last_number)
+INSERT INTO inspection_number_counters (primary_checkout_root, last_number)
 VALUES (sqlc.arg(primary_checkout_root), 1)
 ON CONFLICT (primary_checkout_root) DO UPDATE SET last_number = last_number + 1
 RETURNING last_number;
 
 -- name: InsertInspection :exec
-INSERT INTO local_inspections (
+INSERT INTO inspections (
     number, primary_checkout_root, tunnel_id, project_root, shared_project_root,
     service, service_protocol, received_at, expires_at, stored_bytes,
     method, path, status, duration_ms, origin,
@@ -20,4 +20,4 @@ INSERT INTO local_inspections (
 );
 
 -- name: DeleteExpiredInspections :exec
-DELETE FROM local_inspections WHERE expires_at <= sqlc.arg(now);
+DELETE FROM inspections WHERE expires_at <= sqlc.arg(now);

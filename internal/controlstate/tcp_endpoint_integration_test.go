@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
@@ -87,8 +88,9 @@ func TestIntegrationDatabasePublicURLClaimsPortWithCreation(t *testing.T) {
 	}
 	ssh := request
 	ssh.IdempotencyKey, ssh.CanonicalHostname, ssh.ServiceProtocol = "ssh-endpoint", "ssh."+request.CanonicalHostname, PublicURLServiceSSH
-	sshURL, err := database.CreatePublicURL(t.Context(), ssh, now.Add(4*time.Hour))
-	if err != nil || sshURL.ServiceProtocol != PublicURLServiceSSH || sshURL.Target != "" || sshURL.PublicPort == nil || *sshURL.PublicPort != 2222 {
-		t.Fatalf("saved SSH address = %#v, %v", sshURL, err)
+	_, err = database.CreatePublicURL(t.Context(), ssh, now.Add(4*time.Hour))
+	var constraint *pgconn.PgError
+	if !errors.As(err, &constraint) || constraint.Code != "23514" || constraint.ConstraintName != "public_urls_managed_ssh_check" {
+		t.Fatalf("SSH creation without a registered host key = %v", err)
 	}
 }

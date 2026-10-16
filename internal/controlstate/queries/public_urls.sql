@@ -21,7 +21,7 @@ WHERE r.created_by_identity_id = sqlc.arg(identity_id)
 -- name: LockPublicURLCreationControl :one
 SELECT allowed
 FROM control.maintenance_controls
-WHERE control_name = 'public_url_creation'
+WHERE operation = 'public_url_creation'
 FOR SHARE;
 
 -- name: GetPublicURLCreationContext :one
@@ -81,6 +81,7 @@ INSERT INTO control.public_urls (
     public_url_scope,
     purpose,
     service_protocol,
+    ssh_host_key,
     ingress_pool_id,
     policy_revision,
     ip_policy,
@@ -111,6 +112,7 @@ INSERT INTO control.public_urls (
     sqlc.arg(public_url_scope),
     sqlc.arg(purpose),
     sqlc.arg(service_protocol),
+    sqlc.narg(ssh_host_key),
     sqlc.arg(ingress_pool_id),
     sqlc.arg(policy_revision),
     sqlc.arg(ip_policy),

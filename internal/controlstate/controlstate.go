@@ -24,13 +24,11 @@ import (
 )
 
 const (
-	// schemaVersion is the newest embedded migration; update it when adding a migration.
-	schemaVersion int64 = 28
-	// minimumSchemaVersion is the oldest schema this runtime can serve safely.
-	// advance it only when runtime reads or writes require a newer migration.
-	minimumSchemaVersion int64 = 26
-	versionTable               = "control.goose_db_version"
-	bootstrapRetryDelay        = 25 * time.Millisecond
+	// the coordinated baseline requires the exact migration and identity.
+	schemaVersion       int64 = 1
+	baselineID                = "tnl-control-fresh-v1-private-connectors"
+	versionTable              = "control.goose_db_version"
+	bootstrapRetryDelay       = 25 * time.Millisecond
 )
 
 //go:embed migrations/*.sql
@@ -114,6 +112,12 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 	if current > target {
 		return fmt.Errorf("controlstate: migrate: database schema version %d is newer than supported version %d", current, target)
 	}
+	if current != 0 {
+		var stored string
+		if err := lockTx.QueryRowContext(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id = 1`).Scan(&stored); err != nil || stored != baselineID {
+			return errors.New("controlstate: incompatible database baseline; use a fresh PostgreSQL database")
+		}
+	}
 	if _, err := provider.Up(ctx); err != nil {
 		return fmt.Errorf("controlstate: migrate database: %w", err)
 	}
@@ -123,6 +127,10 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 	}
 	if current != target || current != schemaVersion {
 		return fmt.Errorf("controlstate: migrate: database schema version %d does not match supported version %d", current, schemaVersion)
+	}
+	var stored string
+	if err := lockTx.QueryRowContext(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id = 1`).Scan(&stored); err != nil || stored != baselineID {
+		return errors.New("controlstate: incompatible database baseline; use a fresh PostgreSQL database")
 	}
 	if err := lockTx.Commit(); err != nil {
 		return fmt.Errorf("controlstate: migrate: release lock: %w", err)
@@ -210,14 +218,18 @@ func (d *Database) Readiness(ctx context.Context) error {
 	return checkSchemaVersion(ctx, d.pool)
 }
 
-// migrations must remain compatible with processes still serving traffic.
+// serving roles use exactly the coordinated migration and baseline identity.
 func checkSchemaVersion(ctx context.Context, database schemaVersionQuerier) error {
 	version, err := readSchemaVersion(ctx, database)
 	if err != nil {
 		return err
 	}
-	if version < minimumSchemaVersion {
-		return fmt.Errorf("controlstate: incompatible database schema version %d; minimum supported version is %d", version, minimumSchemaVersion)
+	if version != schemaVersion {
+		return fmt.Errorf("controlstate: incompatible database schema version %d; required version is %d", version, schemaVersion)
+	}
+	var stored string
+	if err := database.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id = 1`).Scan(&stored); err != nil || stored != baselineID {
+		return errors.New("controlstate: incompatible database baseline; use a fresh PostgreSQL database")
 	}
 	return nil
 }

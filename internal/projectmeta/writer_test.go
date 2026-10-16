@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,15 +20,16 @@ func TestRenderProducesSortedLiteralPublicShape(t *testing.T) {
 		Worktree: &Worktree{Label: projectconfig.WorktreeLabel{Project: "tnl", ID: "bb4eff", FullLabel: "tnl-bb4eff"}},
 		Services: map[string]Service{
 			"web": {
+				Protocol:  "http",
 				Namespace: "ecstatic-penguin.tnl.dev", Hostname: "web-tnl-bb4eff.ecstatic-penguin.tnl.dev",
 				URL: "https://web-tnl-bb4eff.ecstatic-penguin.tnl.dev",
 			},
 			"api": {
+				Protocol:  "http",
 				Namespace: "ecstatic-penguin.tnl.dev", Hostname: "api-tnl-bb4eff.ecstatic-penguin.tnl.dev",
 				URL: "https://api-tnl-bb4eff.ecstatic-penguin.tnl.dev",
 			},
 		},
-		ServiceDirectories: map[string]string{"web": "apps/web", "api": "apps/api"},
 	}
 	jsonData, declarations, err := Render(metadata)
 	if err != nil {
@@ -66,7 +68,7 @@ func TestRenderProducesSortedLiteralPublicShape(t *testing.T) {
 }
 
 func TestRenderWorktreeLabelLiteralComponents(t *testing.T) {
-	metadata := Metadata{Version: Version, Namespace: "member.example", Services: map[string]Service{}, ServiceDirectories: map[string]string{},
+	metadata := Metadata{Version: Version, Namespace: "member.example", Services: map[string]Service{},
 		Worktree: &Worktree{Label: projectconfig.WorktreeLabel{Project: "shop", Checkout: "perf", ID: "k7n2p9", FullLabel: "shop-perf-k7n2p9"}}}
 	_, declarations, err := Render(metadata)
 	if err != nil {
@@ -96,11 +98,10 @@ func TestRenderIncludesMountedServicePathsWithoutLocalTargets(t *testing.T) {
 	metadata := Metadata{
 		Version: Version, Namespace: "member.example.test",
 		Services: map[string]Service{
-			"web": {Namespace: "member.example.test", Hostname: "web.member.example.test", URL: "https://web.member.example.test",
+			"web": {Protocol: "http", Namespace: "member.example.test", Hostname: "web.member.example.test", URL: "https://web.member.example.test",
 				Paths: map[string]Path{"/api": {Service: "api", URL: "https://web.member.example.test/api", StripPrefix: true}}},
-			"api": {Namespace: "member.example.test", Hostname: "api.member.example.test", URL: "https://api.member.example.test"},
+			"api": {Protocol: "http", Namespace: "member.example.test", Hostname: "api.member.example.test", URL: "https://api.member.example.test"},
 		},
-		ServiceDirectories: map[string]string{"web": "apps/web", "api": "apps/api"},
 	}
 	jsonData, declarations, err := Render(metadata)
 	if err != nil {
@@ -113,7 +114,6 @@ func TestRenderIncludesMountedServicePathsWithoutLocalTargets(t *testing.T) {
 	}
 	invalid := metadata
 	invalid.Services = map[string]Service{"web": metadata.Services["web"]}
-	invalid.ServiceDirectories = map[string]string{"web": "apps/web"}
 	if err := invalid.Validate(); err == nil {
 		t.Fatal("mounting an unknown service was accepted")
 	}
@@ -125,11 +125,11 @@ func TestWriteRejectsInvalidMetadataWithoutChangingFiles(t *testing.T) {
 		Version: Version, Namespace: "ecstatic-penguin.tnl.dev",
 		Services: map[string]Service{
 			"api": {
+				Protocol:  "http",
 				Namespace: "ecstatic-penguin.tnl.dev", Hostname: "api.ecstatic-penguin.tnl.dev",
 				URL: "https://api.ecstatic-penguin.tnl.dev",
 			},
 		},
-		ServiceDirectories: map[string]string{"api": "."},
 	}
 	if err := Write(t.Context(), root, metadata); err != nil {
 		t.Fatal(err)
@@ -199,12 +199,11 @@ func TestStagedWriteRollbackReportsRestoreFailure(t *testing.T) {
 
 func TestWriteReplacesBothGeneratedFiles(t *testing.T) {
 	root := t.TempDir()
-	metadata := Metadata{Version: Version, Namespace: "member.example", Services: map[string]Service{}, ServiceDirectories: map[string]string{}}
+	metadata := Metadata{Version: Version, Namespace: "member.example", Services: map[string]Service{}}
 	if err := Write(t.Context(), root, metadata); err != nil {
 		t.Fatal(err)
 	}
-	metadata.Services["api"] = Service{Namespace: "member.example", Hostname: "api.member.example", URL: "https://api.member.example"}
-	metadata.ServiceDirectories["api"] = "."
+	metadata.Services["api"] = Service{Protocol: "http", Namespace: "member.example", Hostname: "api.member.example", URL: "https://api.member.example"}
 	if err := Write(t.Context(), root, metadata); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +234,7 @@ func TestWriteLockWaitHonorsCancellation(t *testing.T) {
 	cancel()
 	metadata := Metadata{
 		Version: Version, Namespace: "member.example",
-		Services: map[string]Service{}, ServiceDirectories: map[string]string{},
+		Services: map[string]Service{},
 	}
 	if err := Write(ctx, root, metadata); !errors.Is(err, context.Canceled) {
 		t.Fatalf("write = %v", err)
@@ -243,14 +242,19 @@ func TestWriteLockWaitHonorsCancellation(t *testing.T) {
 }
 
 func TestRenderRejectsOversizedMetadata(t *testing.T) {
-	metadata := Metadata{
-		Version: Version, Namespace: "member.example",
-		Services: map[string]Service{
-			"api": {
-				Namespace: "member.example", Hostname: "api.member.example", URL: "https://api.member.example",
-			},
-		},
-		ServiceDirectories: map[string]string{"api": strings.Repeat("a", MaxFileBytes)},
+	metadata := Metadata{Version: Version, Namespace: "member.example", Services: map[string]Service{}}
+	for index := range 8 {
+		name := fmt.Sprintf("app%d", index)
+		url := "https://" + name + ".member.example"
+		service := Service{Protocol: "http", Namespace: "member.example", Hostname: name + ".member.example", URL: url, Paths: map[string]Path{}}
+		for pathIndex := range 32 {
+			prefix := fmt.Sprintf("/p%d-%s", pathIndex, strings.Repeat("x", 230))
+			service.Paths[prefix] = Path{Service: "app0", URL: url + prefix}
+			if index == 0 {
+				service.Paths[prefix] = Path{Service: "app1", URL: url + prefix}
+			}
+		}
+		metadata.Services[name] = service
 	}
 	if _, _, err := Render(metadata); err == nil || !strings.Contains(err.Error(), "exceeds 65536 bytes") {
 		t.Fatalf("oversized metadata error = %v", err)
@@ -262,11 +266,11 @@ func TestRenderBroadensNamespaceWhenServicesDiffer(t *testing.T) {
 		Version: Version, Namespace: "member.example",
 		Services: map[string]Service{
 			"api": {
+				Protocol:  "http",
 				Namespace: "member.other.example", Hostname: "api.member.other.example",
 				URL: "https://api.member.other.example",
 			},
 		},
-		ServiceDirectories: map[string]string{"api": "."},
 	}
 	_, declarations, err := Render(metadata)
 	if err != nil {

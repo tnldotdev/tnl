@@ -27,7 +27,7 @@ func TestIntegrationControlTLSCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	var ciphertext []byte
-	if err := database.pool.QueryRow(t.Context(), `SELECT cache_ciphertext FROM control.control_tls_cache
+	if err := database.pool.QueryRow(t.Context(), `SELECT cache_ciphertext FROM control.control_tls_certificate_cache
 		WHERE directory_url = $1 AND cache_key = $2`, cache.directoryURL, "control.example.test").Scan(&ciphertext); err != nil {
 		t.Fatal(err)
 	}
