@@ -2,8 +2,9 @@ package managedssh
 
 import (
 	"bytes"
-	"golang.org/x/crypto/ssh"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 )
 
 func TestHostKeyRoundTrip(t *testing.T) {

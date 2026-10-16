@@ -40,6 +40,8 @@ type PublicURLServerConfig struct {
 	Target                      string
 	ResolveTarget               func(context.Context) (string, string, error)
 	ServiceProtocol             controlv1.PublicURLServiceProtocol
+	SSH                         *SSHConfig
+	AuthorizeSSHVisitor         AuthorizeSSHVisitor
 	Purpose                     controlv1.PublicURLPurpose
 	AccessMode                  controlv1.VisitorAccessMode
 	PublicPort                  uint16
@@ -804,21 +806,12 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied, session: session}
 	if r.tcp != nil {
 		if header.Destination.Port() == r.tcp.publicPort {
-			if !denied || r.tcp.protocol != controlv1.Ssh {
-				select {
-				case <-r.admission.completed:
-					return
-				default:
-				}
-				// ssh has no visitor TLS handshake, so check the same installed
-				// certificate that gates publish-run readiness before forwarding.
-				if r.tcp.protocol == controlv1.Ssh {
-					if err := r.withValidCertificate(func() error { return nil }); err != nil {
-						return
-					}
-				}
-				r.tcp.forward(metadata, r.tls, session)
+			select {
+			case <-r.admission.completed:
+				return
+			default:
 			}
+			r.tcp.forward(metadata, r.tls, session)
 			return
 		}
 		// certificate challenges still arrive on HTTPS port 443.

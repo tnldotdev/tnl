@@ -20,6 +20,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/pkg/sftp"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/unix"
 )
 
@@ -36,6 +37,9 @@ func validateSetup(s childSetup) error {
 		if c < 33 || c > 126 {
 			return errChildSetup
 		}
+	}
+	if !validTerminalModes(r.Modes) || r.Term == "" && len(r.Modes) != 0 {
+		return errChildSetup
 	}
 	switch r.Kind {
 	case "shell":
@@ -175,35 +179,52 @@ func (r *Runner) Run(ctx context.Context, req Request, streams Streams) (int, er
 	defer p.status.Close()
 	defer p.resize.Close()
 	done := make(chan struct{})
-	defer close(done)
-	if req.Term != "" && streams.Resize != nil {
-		go func() {
+	var controls sync.WaitGroup
+	defer func() { close(done); _ = p.resize.Close(); controls.Wait() }()
+	if req.Term != "" && streams.Resize != nil || streams.Signals != nil {
+		controls.Go(func() {
 			enc := json.NewEncoder(p.resize)
+			windows, signals := streams.Resize, streams.Signals
 			for {
 				select {
 				case <-done:
 					return
-				case w, ok := <-streams.Resize:
+				case w, ok := <-windows:
 					if !ok {
-						return
+						windows = nil
+						continue
 					}
 					if validWindow(w) {
-						if enc.Encode(w) != nil {
+						if enc.Encode(childControl{Window: &w}) != nil {
 							return
 						}
 					}
+				case signal, ok := <-signals:
+					if !ok {
+						signals = nil
+						continue
+					}
+					if validSignal(signal) && enc.Encode(childControl{Signal: signal}) != nil {
+						return
+					}
 				}
 			}
-		}()
+		})
 	}
 	var result childStatus
 	statusErr := p.decoder.Decode(&result)
+	if streams.CloseInput != nil {
+		streams.CloseInput()
+	}
 	waitErr := p.cmd.Wait()
 	if ctx.Err() != nil {
 		return 0, ctx.Err()
 	}
 	if statusErr != nil || result.Failed || waitErr != nil {
 		return 0, errChildSetup
+	}
+	if result.Signal != "" && streams.ExitSignal != nil {
+		streams.ExitSignal(result.Signal)
 	}
 	return result.ExitCode, nil
 }
@@ -273,8 +294,16 @@ func RunChild(ctx context.Context) error { return runChild(ctx, false) }
 func runChild(ctx context.Context, sameUID bool) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer stop()
+	if !sameUID && (os.Getuid() != 0 || os.Geteuid() != 0) {
+		return errRootRequired
+	}
 	config := os.NewFile(3, "ssh-child-setup")
 	status := os.NewFile(4, "ssh-child-status")
+	// register the inherited control pipe with go's poller so Close joins its
+	// reader instead of leaving a blocking read behind at shell exit.
+	if unix.SetNonblock(5, true) != nil {
+		return errChildSetup
+	}
 	resize := os.NewFile(5, "ssh-child-resize")
 	defer config.Close()
 	defer status.Close()
@@ -404,28 +433,41 @@ func childShell(ctx context.Context, a account, req Request, resize *os.File, st
 		if w.Height == 0 {
 			w.Height = 24
 		}
-		terminal, err = pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(w.Width), Rows: uint16(w.Height)})
+		var slave *os.File
+		terminal, slave, err = pty.Open()
+		if err == nil {
+			err = pty.Setsize(terminal, &pty.Winsize{Cols: uint16(w.Width), Rows: uint16(w.Height)})
+		}
+		if err == nil {
+			err = applyTerminalModes(slave, req.Modes)
+		}
+		if err == nil {
+			cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+			err = cmd.Start()
+		}
+		if slave != nil {
+			_ = slave.Close()
+		}
+		if err != nil && terminal != nil {
+			_ = terminal.Close()
+		}
 		if err == nil {
 			defer func() { terminalMu.Lock(); defer terminalMu.Unlock(); terminal.Close() }()
 			outputDone = make(chan struct{})
 			go func() { defer close(outputDone); _, _ = io.Copy(os.Stdout, terminal) }()
 			go func() {
 				_, _ = io.Copy(terminal, os.Stdin)
-				// one eof releases an unfinished canonical line; the next ends input.
-				_, _ = terminal.Write([]byte{4, 4})
-			}()
-			go func() {
-				dec := json.NewDecoder(resize)
-				for {
-					var w Window
-					if dec.Decode(&w) != nil {
-						return
-					}
-					if validWindow(w) {
-						terminalMu.Lock()
-						_ = pty.Setsize(terminal, &pty.Winsize{Cols: uint16(w.Width), Rows: uint16(w.Height)})
-						terminalMu.Unlock()
-					}
+				// canonical EOF respects the negotiated control character.
+				if canonical, set := req.Modes[ssh.ICANON]; set && canonical == 0 {
+					return
+				}
+				eof := uint32(4)
+				if value, ok := req.Modes[ssh.VEOF]; ok {
+					eof = value
+				}
+				if eof != 255 && eof != disabledCharacter {
+					_, _ = terminal.Write([]byte{byte(eof), byte(eof)})
 				}
 			}()
 		}
@@ -438,18 +480,55 @@ func childShell(ctx context.Context, a account, req Request, resize *os.File, st
 		_ = status.Encode(childStatus{Failed: true})
 		return errChildSetup
 	}
-	killShell := func() {
+	var processMu sync.Mutex
+	active := true
+	signalShell := func(sig syscall.Signal) {
+		processMu.Lock()
+		defer processMu.Unlock()
+		if !active {
+			return
+		}
 		if terminal != nil {
 			terminalMu.Lock()
 			foreground, err := unix.IoctlGetInt(int(terminal.Fd()), unix.TIOCGPGRP)
 			terminalMu.Unlock()
-			if err == nil && foreground > 0 && foreground != syscall.Getpgrp() {
-				_ = syscall.Kill(-foreground, syscall.SIGKILL)
+			if err == nil && foreground > 0 && foreground != syscall.Getpgrp() && foreground != cmd.Process.Pid {
+				_ = syscall.Kill(-foreground, sig)
 			}
 		}
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = syscall.Kill(-cmd.Process.Pid, sig)
 	}
-	defer killShell()
+	killShell := func() { signalShell(syscall.SIGKILL) }
+	defer func() { processMu.Lock(); active = false; processMu.Unlock() }()
+	controlDone := make(chan struct{})
+	go func() {
+		defer close(controlDone)
+		dec := json.NewDecoder(resize)
+		for {
+			var control childControl
+			if dec.Decode(&control) != nil {
+				return
+			}
+			if control.Window != nil && validWindow(*control.Window) && terminal != nil {
+				terminalMu.Lock()
+				current, e := pty.GetsizeFull(terminal)
+				if e == nil {
+					if control.Window.Width != 0 {
+						current.Cols = uint16(control.Window.Width)
+					}
+					if control.Window.Height != 0 {
+						current.Rows = uint16(control.Window.Height)
+					}
+					_ = pty.Setsize(terminal, current)
+				}
+				terminalMu.Unlock()
+			}
+			if sig, ok := unixSignals[control.Signal]; ok {
+				signalShell(sig)
+			}
+		}
+	}()
+	defer func() { _ = resize.Close(); <-controlDone }()
 	stop := context.AfterFunc(ctx, killShell)
 	defer stop()
 	if status.Encode(childStatus{Ready: true}) != nil {
@@ -464,6 +543,7 @@ func childShell(ctx context.Context, a account, req Request, resize *os.File, st
 		<-outputDone
 	}
 	code := 0
+	exitSignal := ""
 	if err != nil {
 		var exit *exec.ExitError
 		if !errors.As(err, &exit) {
@@ -471,10 +551,12 @@ func childShell(ctx context.Context, a account, req Request, resize *os.File, st
 		}
 		code = exit.ExitCode()
 		if code < 0 {
-			code = 128 + int(cmd.ProcessState.Sys().(syscall.WaitStatus).Signal())
+			sig := cmd.ProcessState.Sys().(syscall.WaitStatus).Signal()
+			code = 128 + int(sig)
+			exitSignal = signalName(sig)
 		}
 	}
-	return status.Encode(childStatus{ExitCode: code})
+	return status.Encode(childStatus{ExitCode: code, Signal: exitSignal})
 }
 
 func closeInheritedDescriptors() error {

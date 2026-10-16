@@ -184,6 +184,18 @@ func runSession(
 	var material clientstate.Material
 	identity := PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, Number: version}
 	authorizeVisitor := config.AuthorizeVisitorCertificate
+	var authorizeSSH AuthorizeSSHVisitor
+	if config.ServiceProtocol == controlv1.Ssh {
+		var candidate any = config.Control
+		if config.VisitorControl != nil {
+			candidate = config.VisitorControl
+		}
+		client, ok := candidate.(SSHVisitorAuthorizer)
+		if !ok {
+			return errors.New("managed SSH requires current visitor authorization")
+		}
+		authorizeSSH = sshVisitorAuthorization(client, controlclient.VisitorCertificateScope{PublishRunID: setup.PublishRun.Id, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version, PublishRunToken: publishRunToken})
+	}
 	revalidateVisitor := config.RevalidateVisitorCertificate
 	if revalidateVisitor == nil {
 		var candidate any = config.Control
@@ -209,6 +221,7 @@ func runSession(
 		return err
 	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
+		SSH: config.SSH, AuthorizeSSHVisitor: authorizeSSH,
 		RevalidateVisitorCertificate: revalidateVisitor,
 
 		BrowserAccess:         browserAccessForRun(config, setup, publishRunToken, shareRuntime),

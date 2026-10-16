@@ -25,7 +25,10 @@ this is not a filesystem or network sandbox.
 Arguments identify only the hidden entry point. A bounded, validated JSON
 message on inherited fd 3 carries the account, operation, command, terminal,
 and optional forwarding address. Fd 4 reports readiness or a generic setup
-failure separately from the command's exit code. Fd 5 carries terminal sizes.
+failure separately from the command's exit code and exit signal. Fd 5 carries
+bounded terminal sizes and validated RFC 4254 signal names. The parent starts
+the child with only a fixed `PATH` environment and exactly these three extra
+descriptors, never its own signing state or ambient credential environment.
 No setup field selects an environment, executable, credential, or privilege
 exception. Unknown fields, extra JSON values, invalid sizes, and oversized
 messages are rejected. Raw setup and target errors are not sent to the SSH
@@ -46,9 +49,17 @@ argument to that account's shell with `-c`, after the credential change.
 
 ## lifecycle
 
-A terminal request starts the shell on a PTY and applies initial and subsequent
-window sizes. Input EOF sends the terminal EOF character; output is drained
-after shell exit. Nonterminal sessions preserve standard-input EOF directly.
+A terminal request opens a PTY and installs the requested terminal modes and
+initial size before starting the shell. Zero resize dimensions retain the
+current dimension. Canonical input EOF sends the negotiated EOF character;
+raw input does not receive synthetic EOF bytes. Output is drained after shell
+exit. Nonterminal sessions preserve standard-input EOF directly. Session input
+uses a caller-owned pipe so a child exit can stop its input copy without
+waiting for a visitor that keeps stdin open; channel closure joins the reader.
+Signal requests travel over fd 5 and are delivered to the shell and terminal
+foreground process groups after the privilege change. Their names are checked
+at both the SSH request and child control boundaries. A signal-killed command
+retains its signal name separately from a normal exit status.
 Cancellation signals the child's process group; the child kills its shell
 process group and the terminal's foreground process group, then waits for the
 shell. The parent waits for the child before returning.

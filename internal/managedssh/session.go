@@ -11,6 +11,10 @@ import (
 const maxCommandBytes = 64 << 10
 
 func (s *Server) serveSession(ctx context.Context, conn *ssh.ServerConn, incoming ssh.NewChannel) {
+	if len(incoming.ExtraData()) != 0 {
+		_ = incoming.Reject(ssh.Prohibited, "invalid session channel")
+		return
+	}
 	channel, requests, err := incoming.Accept()
 	if err != nil {
 		return
@@ -23,18 +27,32 @@ func (s *Server) serveSession(ctx context.Context, conn *ssh.ServerConn, incomin
 	request := Request{Username: conn.User()}
 	resize := make(chan Window, 1)
 	defer close(resize)
+	signals := make(chan string, 16)
+	defer close(signals)
 	type outcome struct {
-		code int
-		err  error
+		code   int
+		err    error
+		signal string
 	}
 	var finished chan outcome
+	var inputDone chan struct{}
 	// cancellation closes channel I/O before joining the child runner.
 	defer func() {
+		// keep the SSH mux draining while joining the stdin reader. a client may
+		// send no-reply requests after exit; filling its request queue otherwise
+		// prevents the mux from processing close acknowledgments or disconnects.
+		requestsDone := make(chan struct{})
+		go func() { ssh.DiscardRequests(requests); close(requestsDone) }()
+		_ = channel.Close()
 		if finished != nil {
 			cancel()
 			_ = channel.Close()
 			<-finished
 		}
+		if inputDone != nil {
+			<-inputDone
+		}
+		<-requestsDone
 	}()
 	for {
 		select {
@@ -47,7 +65,15 @@ func (s *Server) serveSession(ctx context.Context, conn *ssh.ServerConn, incomin
 				_, _ = io.WriteString(channel.Stderr(), "SSH session could not run\n")
 			}
 			_ = channel.CloseWrite()
-			_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{uint32(result.code)}))
+			if result.signal != "" {
+				_, _ = channel.SendRequest("exit-signal", false, ssh.Marshal(struct {
+					Signal            string
+					CoreDumped        bool
+					Message, Language string
+				}{Signal: result.signal}))
+			} else {
+				_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{uint32(result.code)}))
+			}
 			return
 		case msg, ok := <-requests:
 			if !ok {
@@ -63,9 +89,11 @@ func (s *Server) serveSession(ctx context.Context, conn *ssh.ServerConn, incomin
 						Modes                                  string
 					}
 					if len(msg.Payload) <= 4096 && ssh.Unmarshal(msg.Payload, &p) == nil && validTerm(p.Term) && p.Width <= 65535 && p.Height <= 65535 {
-						request.Term = p.Term
-						request.Window = Window{Width: int(p.Width), Height: int(p.Height)}
-						accepted = true
+						if modes, ok := parseTerminalModes(p.Modes); ok {
+							request.Term, request.Modes = p.Term, modes
+							request.Window = Window{Width: int(p.Width), Height: int(p.Height)}
+							accepted = true
+						}
 					}
 				}
 			case "window-change":
@@ -76,36 +104,63 @@ func (s *Server) serveSession(ctx context.Context, conn *ssh.ServerConn, incomin
 					case <-resize:
 					default:
 					}
-					resize <- Window{Width: int(p.Width), Height: int(p.Height)}
+					if p.Width != 0 {
+						request.Window.Width = int(p.Width)
+					}
+					if p.Height != 0 {
+						request.Window.Height = int(p.Height)
+					}
+					resize <- request.Window
 					accepted = true
 				}
 			case "shell", "exec", "subsystem":
-				if finished == nil {
+				if finished == nil && canStartWork(life) {
+					candidate := request
 					var value struct{ Value string }
 					valid := len(msg.Payload) <= maxCommandBytes+4
 					if msg.Type == "shell" {
 						valid = len(msg.Payload) == 0
-						request.Kind = "shell"
+						candidate.Kind, candidate.Command = "shell", ""
 					} else {
 						valid = valid && ssh.Unmarshal(msg.Payload, &value) == nil && !strings.ContainsRune(value.Value, 0)
-						request.Kind, request.Command = "command", value.Value
+						candidate.Kind, candidate.Command = "command", value.Value
 						if msg.Type == "subsystem" {
 							valid = valid && value.Value == "sftp" && request.Term == ""
-							request.Kind, request.Command = "sftp", ""
+							candidate.Kind, candidate.Command = "sftp", ""
 						}
 					}
 					if valid {
-						accepted = true
+						request = candidate
+						if msg.Reply(true, nil) != nil {
+							return
+						}
 						finished = make(chan outcome, 1)
+						input, inputWriter := io.Pipe()
+						inputDone = make(chan struct{})
+						go func() { defer close(inputDone); _, _ = io.Copy(inputWriter, channel); _ = inputWriter.Close() }()
 						go func(req Request, done chan<- outcome) {
-							code, runErr := s.runner.Run(life, req, Streams{Stdin: channel, Stdout: channel, Stderr: channel.Stderr(), Resize: resize})
-							done <- outcome{code, runErr}
+							defer input.Close()
+							var signal string
+							code, runErr := s.runner.Run(life, req, Streams{Stdin: input, CloseInput: func() { _ = inputWriter.Close() }, Stdout: channel, Stderr: channel.Stderr(), Resize: resize, Signals: signals, ExitSignal: func(name string) { signal = name }})
+							done <- outcome{code: code, err: runErr, signal: signal}
 						}(request, finished)
+						continue
+					}
+				}
+			case "signal":
+				var payload struct{ Signal string }
+				if finished != nil && request.Kind != "sftp" && len(msg.Payload) <= 32 && ssh.Unmarshal(msg.Payload, &payload) == nil && validSignal(payload.Signal) {
+					select {
+					case signals <- payload.Signal:
+						accepted = true
+					default:
 					}
 				}
 			}
-			// no env, agent, X11, signal, or arbitrary subsystem requests.
-			_ = msg.Reply(accepted, nil)
+			// no env, agent, X11, or arbitrary subsystem requests.
+			if msg.Reply(accepted, nil) != nil {
+				return
+			}
 		}
 	}
 }

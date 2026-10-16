@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,10 +17,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/filelock"
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/managedssh"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"golang.org/x/crypto/ssh"
 )
 
 type ClientFactory func(Job) (nativeauth.NativeControl, nativeauth.EnrollmentAuthority, error)
@@ -44,12 +47,9 @@ func Clients(job Job) (nativeauth.NativeControl, nativeauth.EnrollmentAuthority,
 }
 
 type Engine struct {
-	Registry *Registry
-	Clients  ClientFactory
-	Publish  func(context.Context, publisher.Config) error
-	// ConfigureSSH installs the managed SSH runtime using the job's protected
-	// host key and allowed users. SSH jobs fail closed when no hook is supplied.
-	ConfigureSSH func(Job, *publisher.Config) error
+	Registry     *Registry
+	Clients      ClientFactory
+	Publish      func(context.Context, publisher.Config) error
 	PollInterval time.Duration
 	RetryMin     time.Duration
 	RetryMax     time.Duration
@@ -250,14 +250,6 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64) (bool, er
 		return false, err
 	}
 	cfg.Control, cfg.State, cfg.DrainTime = native, profile, e.DrainTime
-	if job.Protocol == "ssh" {
-		if e.ConfigureSSH == nil {
-			return false, ErrScope
-		}
-		if err := e.ConfigureSSH(job, &cfg); err != nil {
-			return false, err
-		}
-	}
 	transportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	cfg.QUICConnector = muxsession.QUICConnector{TLSConfig: transportTLS}
 	cfg.TCPConnector = muxsession.TLSYamuxConnector{TLSConfig: transportTLS}
@@ -307,6 +299,13 @@ func publicationConfig(job Job, publicURL controlv1.PublicURL) (publisher.Config
 	}
 	cfg := publisher.Config{ControlURL: job.Server, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, Hostname: publicURL.CanonicalHostname, Target: job.Target, ServiceProtocol: job.Protocol, TargetTLS: job.TargetTLS, TargetTLSName: job.TargetTLSName, TargetOptions: localproxy.TargetOptions{RootCAs: roots}, PreserveSavedURLTarget: publicURL.Target == "", InspectionMode: inspection.Mode("none")}
 	cfg.Limits = job.Limits
+	if job.Protocol == controlv1.Ssh {
+		signer, err := managedssh.ParseHostKey(job.SSHHostKey)
+		if err != nil || publicURL.AccessMode != controlv1.Restricted || publicURL.SshHostKey == nil || *publicURL.SshHostKey != strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))) {
+			return publisher.Config{}, ErrScope
+		}
+		cfg.SSH = &publisher.SSHConfig{HostKey: signer, Users: slices.Clone(job.SSHUsers)}
+	}
 	if publicURL.MembershipId != nil {
 		cfg.MembershipID = *publicURL.MembershipId
 	}

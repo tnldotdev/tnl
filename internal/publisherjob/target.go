@@ -20,7 +20,7 @@ func validateTarget(job *Job) error {
 		if len(job.SSHUsers) == 0 {
 			return ErrScope
 		}
-		if err := managedssh.ValidateUsers(job.SSHUsers); err != nil {
+		if err := managedssh.ValidateUserNames(job.SSHUsers); err != nil {
 			return ErrScope
 		}
 		if len(job.SSHHostKey) == 0 || len(job.SSHHostKey) > 16<<10 {

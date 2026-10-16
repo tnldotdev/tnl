@@ -179,6 +179,22 @@ type result struct {
 	err      error
 }
 
+// beginCheck transfers cancellation ownership to the run loop. the worker also
+// releases its timer after returning; the run loop always joins it on shutdown.
+func beginCheck(parent context.Context, check Check) (chan result, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(parent, checkTimeout)
+	reply := make(chan result, 1)
+	go func() {
+		defer cancel()
+		decision, err := check(ctx)
+		if err == nil {
+			err = ctx.Err()
+		}
+		reply <- result{decision, err}
+	}()
+	return reply, cancel
+}
+
 func (g *Group) run(e *entry, check Check) {
 	defer close(e.finished)
 	refresh := time.NewTimer(0)
@@ -211,17 +227,7 @@ func (g *Group) run(e *entry, check Check) {
 			e.refreshing = true
 			g.mu.Unlock()
 			requested = time.Now()
-			var ctx context.Context
-			ctx, cancel = context.WithTimeout(e.ctx, checkTimeout)
-			response = make(chan result, 1)
-			reply := response
-			go func() {
-				decision, err := check(ctx)
-				if err == nil {
-					err = ctx.Err()
-				}
-				reply <- result{decision, err}
-			}()
+			response, cancel = beginCheck(e.ctx, check)
 		case r := <-response:
 			cancel()
 			cancel, response = nil, nil

@@ -25,22 +25,30 @@ before constructing `Identity`. An SSH username never establishes an identity.
 The `Authorize` callback receives that trusted identity, the exact SSH username,
 and a context derived from the `ServeConn` context. The caller can carry its
 validated certificate and publish-run authorization scope in that context.
-The callback must honor context cancellation.
+The callback must honor context cancellation. Wrap an explicit denial with
+`livevisitor.ErrDenied`; other errors retain their transient meaning.
 
 Return a `Decision` with matching `IdentityID`, `PublicURLID`, and `SSHUser`,
-and a future `ValidUntil`. The host job allowlist is checked independently
-before the callback. The runtime uses SSH's `none` authentication method inside
+and a future `ValidUntil`. The host job allowlist and the current named,
+non-root host account are checked independently before every callback. The
+runtime uses SSH's `none` authentication method inside
 the authenticated TLS connection; passwords and SSH user keys do not grant
-access. It refreshes successful decisions every 30 seconds by default and
-closes on denial, callback failure, or the last decision's expiry. Cancellation
-closes the visitor connection and joins child work.
+access. It refreshes successful decisions every 30 seconds by default, sooner
+for a short decision. Explicit denial, removal of the host account, or expiry
+closes the connection. A transient failure retains existing work only until
+the last successful deadline, bounded to two minutes. While a decision is
+unknown or refreshing, new channels and new session commands are rejected.
+Cancellation closes the visitor connection and joins child work.
 
 Only session channels and `direct-tcpip` channels are accepted. The latter
 covers OpenSSH local (`-L`) and dynamic (`-D`) forwarding. Its destination is
 dialed in a separate dropped-user child. Reverse, agent, Unix-socket, and X11
-forwarding are rejected. Client environment requests are rejected. PTY sizes,
-shell requests, raw command strings, and the `sftp` subsystem are supported;
-terminal mode negotiation and SSH signal requests are not implemented yet.
+forwarding are rejected. Client environment requests are rejected. PTY sizes
+and terminal modes, shell requests, raw command strings, RFC 4254 signals,
+and the `sftp` subsystem are supported. Terminal modes are installed before
+the shell starts. Signals are delivered by the dropped-user child, and a
+signal termination is reported with SSH's `exit-signal` request. The default
+active channel limit is 32; configuration may select at most 256.
 
 ## installed child dispatch
 
@@ -55,7 +63,7 @@ command can be selected through `Runner.Args`.
 line. `ParseHostKey` reads the private PEM. Keep the private value in
 `Job.SSHHostKey`; bind only the public key to the saved public URL.
 
-## publisher job handoff
+## publisher job boundary
 
 `publisherjob.Engine.ConfigureSSH func(Job, *publisher.Config) error` receives
 the validated job and its protected host key before publication. SSH jobs fail
@@ -64,10 +72,34 @@ handler; an SSH job has no target or target TLS options. `Job` JSON includes
 the private key for the existing encrypted whole-job snapshot, so CLI and API
 adapters must continue selecting approved fields rather than serializing jobs.
 
-This rough pass supplies the runtime and job hook. Publisher mTLS dispatch,
-control-client adaptation, public host-key binding, hidden CLI dispatch, and
-replacement of the old raw SSH publisher path belong to the integrating
-caller. Real root-to-user credential changes still need isolated Linux
-integration coverage; routine tests inject the same-uid child privately.
+Publisher mTLS dispatch, the control-client adapter, public host-key binding,
+and hidden CLI dispatch belong to their integrating callers. Routine tests
+inject a same-uid child privately. The opt-in disposable Linux test exercises
+the production child entry point, real root-to-user credential changes,
+and the root serving process's unchanged credentials.
 See [the child boundary](runtime.md) for account, descriptor, environment, and
 process-group behavior, including the direct-setuid/PAM distinction.
+
+## isolated root verification
+
+Compile the package's Linux test binary outside the checkout, then build the
+account fixture from its digest-pinned project base image. Set `GOARCH` to the
+Docker host's architecture, and use an absolute path for the mounted binary:
+
+```sh
+mise exec -- env GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c \
+  -o "$TMPDIR/managedssh-root.test" ./internal/managedssh
+mise exec -- docker build -f internal/managedssh/testdata/root.Dockerfile \
+  -t tnl-managedssh-root-test internal/managedssh/testdata
+image=$(mise exec -- docker image inspect tnl-managedssh-root-test --format '{{.Id}}')
+mise exec -- docker run --rm --network none --security-opt=no-new-privileges \
+  --pids-limit=128 --memory=512m \
+  --mount "type=bind,source=$TMPDIR/managedssh-root.test,target=/managedssh.test,readonly" \
+  "$image"
+```
+
+Only the readonly test binary is mounted. The fixture creates and removes its
+accounts inside the disposable container. Its test entry point explicitly
+selects the integration tier and named fixture user; the test refuses to run
+without the container marker and `NoNewPrivileges`. No host account, service,
+signing key, client state, or Docker socket is shared with the container.

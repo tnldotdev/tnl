@@ -20,10 +20,12 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/managedssh"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"golang.org/x/crypto/ssh"
 )
 
 func sshFixture(t *testing.T) (Job, authorityv1.PublisherEnrollmentResult, ed25519.PrivateKey) {
@@ -72,7 +74,6 @@ func TestManagedSSHValidation(t *testing.T) {
 		"duplicate users":   func(j *Job) { j.SSHUsers = []string{job.SSHUsers[0], job.SSHUsers[0]} },
 		"root user":         func(j *Job) { j.SSHUsers = []string{"root"} },
 		"numeric user":      func(j *Job) { j.SSHUsers = []string{"0"} },
-		"unknown user":      func(j *Job) { j.SSHUsers = []string{"tnl-no-such-ssh-user-9d86"} },
 		"missing host key":  func(j *Job) { j.SSHHostKey = nil },
 		"invalid host key":  func(j *Job) { j.SSHHostKey = []byte("host-private-secret") },
 		"oversize host key": func(j *Job) { j.SSHHostKey = bytes.Repeat([]byte("x"), (16<<10)+1) },
@@ -90,6 +91,28 @@ func TestManagedSSHValidation(t *testing.T) {
 				t.Fatal("host key entered validation error")
 			}
 		})
+	}
+}
+
+func TestMissingSSHAccountDoesNotPoisonRegistry(t *testing.T) {
+	r := testRegistry(t)
+	job, identity, private := sshFixture(t)
+	if err := r.Install(t.Context(), job, identity, private); err != nil {
+		t.Fatal(err)
+	}
+	// model a locally deleted account without changing the developer's OS.
+	job.SSHUsers = []string{"tnl-missing-account"}
+	if err := r.update(t.Context(), func(jobs *[]Job) error { (*jobs)[0].SSHUsers = job.SSHUsers; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.List(t.Context()); err != nil {
+		t.Fatalf("deleted account made registry unreadable: %v", err)
+	}
+	if err := r.Stop(t.Context(), job.ID); err != nil {
+		t.Fatalf("cannot stop deleted account job: %v", err)
+	}
+	if err := r.Install(t.Context(), job, identity, private); !errors.Is(err, ErrScope) {
+		t.Fatalf("installation accepted missing account: %v", err)
 	}
 }
 
@@ -194,35 +217,30 @@ func TestManagedSSHRuntimeHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	control, authority := jobBoundary(job, identity, private)
+	signer, err := managedssh.ParseHostKey(job.SSHHostKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))
+	control.publicURL.SshHostKey, control.publicURL.AccessMode = &pin, controlv1.Restricted
 	engine := Engine{Registry: r, Clients: func(Job) (nativeauth.NativeControl, nativeauth.EnrollmentAuthority, error) {
 		return control, authority, nil
 	}}
 	published := false
 	engine.Publish = func(_ context.Context, cfg publisher.Config) error {
 		published = true
-		if cfg.Target != "" || cfg.ServiceProtocol != "ssh" {
+		if cfg.Target != "" || cfg.ServiceProtocol != "ssh" || cfg.SSH == nil || !slices.Equal(cfg.SSH.Users, job.SSHUsers) || !bytes.Equal(cfg.SSH.HostKey.PublicKey().Marshal(), signer.PublicKey().Marshal()) {
 			t.Fatal("managed SSH became target forwarding")
 		}
 		return nil
 	}
-	if _, err := engine.attempt(t.Context(), job, 1); !errors.Is(err, ErrScope) || published {
-		t.Fatal("SSH publication proceeded without a managed runtime")
-	}
-	configured := false
-	engine.ConfigureSSH = func(loaded Job, _ *publisher.Config) error {
-		configured = true
-		if !bytes.Equal(loaded.SSHHostKey, job.SSHHostKey) || !slices.Equal(loaded.SSHUsers, job.SSHUsers) {
-			t.Fatal("runtime hook did not receive protected SSH settings")
-		}
-		return nil
-	}
-	if _, err := engine.attempt(t.Context(), job, 1); err != nil || !configured || !published {
+	if _, err := engine.attempt(t.Context(), job, 1); err != nil || !published {
 		t.Fatalf("managed SSH runtime was not invoked: %v", err)
 	}
 	published = false
-	engine.ConfigureSSH = func(Job, *publisher.Config) error { return ErrScope }
+	control.publicURL.SshHostKey = nil
 	if _, err := engine.attempt(t.Context(), job, 1); !errors.Is(err, ErrScope) || published {
-		t.Fatal("runtime setup failure reached publication")
+		t.Fatal("missing registered host key reached publication")
 	}
 	control.publicURL.Target = "localhost:22"
 	if _, err := publicationConfig(job, control.publicURL); !errors.Is(err, ErrScope) {

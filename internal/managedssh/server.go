@@ -4,6 +4,7 @@ package managedssh
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"slices"
@@ -11,12 +12,13 @@ import (
 	"time"
 
 	gliderssh "github.com/tailscale/gliderssh"
+	"github.com/tnldotdev/tnl/internal/livevisitor"
 	"golang.org/x/crypto/ssh"
 )
 
 var (
 	ErrConfiguration = errors.New("managed SSH configuration is invalid")
-	ErrUnauthorized  = errors.New("managed SSH access is denied")
+	ErrUnauthorized  = fmt.Errorf("managed SSH access is denied: %w", livevisitor.ErrDenied)
 	ErrUnavailable   = errors.New("managed SSH child is unavailable")
 )
 
@@ -42,7 +44,8 @@ type Config struct {
 	Authorize func(context.Context, Identity, string) (Decision, error)
 	Runner    *Runner
 	// positive decisions are refreshed at this interval, or earlier at expiry.
-	// zero selects 30 seconds. a failed refresh closes the connection.
+	// zero selects 30 seconds. unknown decisions reject new work while existing
+	// work retains only its last successful deadline; explicit denials close it.
 	RecheckInterval time.Duration
 	MaxChannels     int
 }
@@ -53,17 +56,21 @@ type childRunner interface {
 }
 
 type Server struct {
-	config Config
-	runner childRunner
+	config        Config
+	runner        childRunner
+	validateUsers func([]string) error
 }
 
 func New(config Config) (*Server, error) {
+	if os.Getuid() != 0 {
+		return nil, ErrConfiguration
+	}
 	return newServer(config, os.Geteuid(), ValidateUsers)
 }
 
 // validation injection is private to safe same-uid protocol tests.
 func newServer(config Config, euid int, validate func([]string) error) (*Server, error) {
-	if euid != 0 || config.HostKey == nil || config.Authorize == nil || validate(config.Users) != nil || config.RecheckInterval < 0 || config.MaxChannels < 0 {
+	if euid != 0 || config.HostKey == nil || config.Authorize == nil || ValidateUserNames(config.Users) != nil || validate == nil || config.RecheckInterval < 0 || config.MaxChannels < 0 || config.MaxChannels > 256 {
 		return nil, ErrConfiguration
 	}
 	if config.RecheckInterval == 0 {
@@ -76,7 +83,7 @@ func newServer(config Config, euid int, validate func([]string) error) (*Server,
 	if config.Runner == nil {
 		config.Runner = &Runner{}
 	}
-	return &Server{config: config, runner: config.Runner}, nil
+	return &Server{config: config, runner: config.Runner, validateUsers: validate}, nil
 }
 
 // ServeConn takes ownership of conn and joins all child work before returning.
@@ -91,6 +98,8 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn, identity Identity
 	}
 	life, cancel := context.WithCancel(ctx)
 	defer cancel()
+	permission := &connectionPermission{}
+	life = context.WithValue(life, permissionKey{}, permission)
 	stopClose := context.AfterFunc(life, func() { _ = conn.Close() })
 	defer stopClose()
 	work := &connectionWork{limit: s.config.MaxChannels}
@@ -116,8 +125,9 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn, identity Identity
 					if err != nil {
 						return nil, ErrUnauthorized
 					}
+					permission.set(decision, true)
 					authDone.Go(func() {
-						s.renew(life, identity, username, decision, cancel)
+						s.renew(life, identity, username, decision, permission, cancel)
 					})
 					return nil, nil
 				},
@@ -127,6 +137,10 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn, identity Identity
 	}
 	wrap := func(handle func(context.Context, *ssh.ServerConn, ssh.NewChannel)) gliderssh.ChannelHandler {
 		return func(_ *gliderssh.Server, sshConn *ssh.ServerConn, channel ssh.NewChannel, _ gliderssh.Context) {
+			if !permission.current() {
+				_ = channel.Reject(ssh.Prohibited, "SSH authorization is unavailable")
+				return
+			}
 			if !work.start() {
 				_ = channel.Reject(ssh.ResourceShortage, "channel limit reached")
 				return
@@ -148,19 +162,27 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn, identity Identity
 }
 
 func (s *Server) authorize(ctx context.Context, identity Identity, username string) (Decision, error) {
-	if !slices.Contains(s.config.Users, username) {
+	if !slices.Contains(s.config.Users, username) || s.validateUsers([]string{username}) != nil {
 		return Decision{}, ErrUnauthorized
 	}
+	requested := time.Now()
 	decision, err := s.config.Authorize(ctx, identity, username)
-	if err != nil || decision.IdentityID != identity.IdentityID || decision.PublicURLID != identity.PublicURLID || decision.SSHUser != username || !time.Now().Before(decision.ValidUntil) {
+	if err != nil {
+		return Decision{}, err
+	}
+	if ctx.Err() != nil {
+		return Decision{}, ctx.Err()
+	}
+	if decision.IdentityID != identity.IdentityID || decision.PublicURLID != identity.PublicURLID || decision.SSHUser != username || !time.Now().Before(decision.ValidUntil) {
 		return Decision{}, ErrUnauthorized
 	}
+	decision.ValidUntil = minTime(decision.ValidUntil, requested.Add(livevisitor.MaxLifetime))
 	return decision, nil
 }
 
-func (s *Server) renew(ctx context.Context, identity Identity, username string, decision Decision, cancel context.CancelFunc) {
+func (s *Server) renew(ctx context.Context, identity Identity, username string, decision Decision, permission *connectionPermission, cancel context.CancelFunc) {
 	for {
-		delay := min(s.config.RecheckInterval, time.Until(decision.ValidUntil))
+		delay := min(s.config.RecheckInterval, max(time.Millisecond, time.Until(decision.ValidUntil)/2))
 		timer := time.NewTimer(max(delay, 0))
 		expires := time.AfterFunc(max(time.Until(decision.ValidUntil), 0), cancel)
 		select {
@@ -170,17 +192,50 @@ func (s *Server) renew(ctx context.Context, identity Identity, username string, 
 			return
 		case <-timer.C:
 		}
+		permission.set(decision, false)
 		// the last decision is a hard deadline even if control stops answering.
-		checkCtx, stop := context.WithDeadline(ctx, decision.ValidUntil)
+		checkCtx, stop := context.WithDeadline(ctx, minTime(time.Now().Add(5*time.Second), decision.ValidUntil))
 		next, err := s.authorize(checkCtx, identity, username)
 		stop()
 		expires.Stop()
-		if err != nil || ctx.Err() != nil || !time.Now().Before(decision.ValidUntil) {
+		if errors.Is(err, livevisitor.ErrDenied) || errors.Is(err, livevisitor.ErrExpired) || ctx.Err() != nil || !time.Now().Before(decision.ValidUntil) {
 			cancel()
 			return
 		}
-		decision = next
+		if err == nil {
+			decision = next
+			permission.set(decision, true)
+		}
 	}
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+type permissionKey struct{}
+type connectionPermission struct {
+	mu    sync.Mutex
+	known bool
+	until time.Time
+}
+
+func (p *connectionPermission) set(decision Decision, known bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.known, p.until = known, decision.ValidUntil
+}
+func (p *connectionPermission) current() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.known && time.Now().Before(p.until)
+}
+func canStartWork(ctx context.Context) bool {
+	p, ok := ctx.Value(permissionKey{}).(*connectionPermission)
+	return ok && ctx.Err() == nil && p.current()
 }
 
 // gliderssh starts channel handlers in goroutines. closing the start gate before

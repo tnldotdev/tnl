@@ -5,6 +5,8 @@ import (
 	"os/user"
 	"strconv"
 	"strings"
+
+	"github.com/tnldotdev/tnl/internal/authorization"
 )
 
 type account struct {
@@ -13,17 +15,28 @@ type account struct {
 	groups            []int
 }
 
-// ValidateUsers checks the explicitly allowed, existing non-root accounts.
-func ValidateUsers(users []string) error {
-	if len(users) == 0 {
+// ValidateUserNames validates stored account policy without resolving mutable OS
+// state. deleting an account must not make the whole job registry unreadable.
+func ValidateUserNames(users []string) error {
+	if len(users) == 0 || len(users) > 64 {
 		return errors.New("at least one ssh user is required")
 	}
 	seen := make(map[string]bool, len(users))
 	for _, name := range users {
-		if seen[name] {
+		if seen[name] || !authorization.SSHUserValid(name) {
 			return errors.New("duplicate ssh user")
 		}
 		seen[name] = true
+	}
+	return nil
+}
+
+// ValidateUsers resolves existing non-root accounts at installation or login.
+func ValidateUsers(users []string) error {
+	if err := ValidateUserNames(users); err != nil {
+		return err
+	}
+	for _, name := range users {
 		if _, err := lookupAccount(name); err != nil {
 			return err
 		}

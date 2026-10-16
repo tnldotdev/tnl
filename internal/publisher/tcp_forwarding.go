@@ -28,6 +28,8 @@ const mysqlClientSSL = 1 << 11
 
 type tcpForwarding struct {
 	protocol        controlv1.PublicURLServiceProtocol
+	ssh             *SSHConfig
+	authorizeSSH    AuthorizeSSHVisitor
 	admission       *applicationAdmission
 	publicPort      uint16
 	target          string
@@ -49,6 +51,15 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 			return nil, errors.New("publisher: HTTP public URL cannot configure TCP forwarding")
 		}
 		return nil, nil
+	}
+	if config.ServiceProtocol == controlv1.Ssh {
+		if err := validateManagedSSH(config.SSH, config.Target, config.TargetTLS, config.TargetTLSName, config.TargetOptions); err != nil {
+			return nil, err
+		}
+		if config.AccessMode != controlv1.Restricted || config.AuthorizeSSHVisitor == nil || !tcpport.Valid(int(config.PublicPort)) || config.Handler != nil || len(config.Mounts) != 0 || config.ResolveTarget != nil {
+			return nil, errors.New("managed SSH requires restricted, account-authorized publication")
+		}
+		return &tcpForwarding{protocol: controlv1.Ssh, publicPort: config.PublicPort, ssh: config.SSH, authorizeSSH: config.AuthorizeSSHVisitor}, nil
 	}
 	host, err := validateTCPForwarding(config)
 	if err != nil {
@@ -84,7 +95,7 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 }
 
 func supportsTCPForwarding(protocol controlv1.PublicURLServiceProtocol) bool {
-	return protocol == controlv1.Postgres || protocol == controlv1.Mysql || protocol == controlv1.Redis || protocol == controlv1.Ssh
+	return protocol == controlv1.Postgres || protocol == controlv1.Mysql || protocol == controlv1.Redis
 }
 
 func validateTCPForwarding(config PublicURLServerConfig) (string, error) {
@@ -109,6 +120,10 @@ func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config, session
 	}
 	ctx, cancel := context.WithTimeout(base, 10*time.Second)
 	defer cancel()
+	if d.protocol == controlv1.Ssh {
+		_ = d.serveSSH(ctx, visitor, publicTLS, session)
+		return
+	}
 	target := d.target
 	if d.resolveTarget != nil {
 		var identity string
@@ -142,25 +157,7 @@ func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config, session
 		_ = d.mysql(ctx, visitor, backend, visitorTLS, session)
 	case controlv1.Redis:
 		_ = d.redis(ctx, visitor, backend, visitorTLS, session)
-	case controlv1.Ssh:
-		_ = d.ssh(ctx, visitor, backend, session)
 	}
-}
-
-func (d *tcpForwarding) ssh(ctx context.Context, visitor, backend net.Conn, session *visitorSession) error {
-	if d.backendTLS != nil {
-		secured, err := d.connectTargetTLS(backend)
-		if err != nil {
-			return err
-		}
-		backend = secured
-	}
-	release, err := d.admit(ctx, session)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return copyTCPConnections(visitor, visitor, backend)
 }
 
 func (d *tcpForwarding) redis(ctx context.Context, visitor, backend net.Conn, publicTLS *tls.Config, session *visitorSession) error {
