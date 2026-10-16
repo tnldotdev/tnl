@@ -6,6 +6,7 @@ import { useViewSignal } from "./queries.ts";
 import type { AnchorTarget } from "./anchors.ts";
 import { boundedText } from "./evidence.ts";
 import { EvidenceView } from "./evidence-view.tsx";
+import { FeedbackSignIn } from "./sign-in.tsx";
 import type { Action, Evidence, ReportInput, Thread } from "./model.ts";
 
 export function ReportForm({
@@ -80,6 +81,7 @@ export function ReportForm({
       )}
       {!target && <small>on this page</small>}
       {send.error && <p role="alert">{safeFeedbackMessage(send.error)}</p>}
+      <FeedbackSignIn error={send.error} path={path} />
       <form
         onSubmit={(event) => {
           event.preventDefault();

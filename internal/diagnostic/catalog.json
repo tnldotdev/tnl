@@ -401,6 +401,29 @@
       }
     },
     {
+      "code": "TNL_VISITOR_ACCESS_DENIED",
+      "slug": "visitor-access-denied",
+      "category": "visitor access",
+      "title": "visitor access denied",
+      "summary": "this public URL requires a current visitor credential. sign in or ask its owner for a link.",
+      "description": "tnl could not authorize this visitor for the current public URL and publish run.",
+      "diagram_label": "visitor permission denied before the local service",
+      "surfaces": ["browser", "cli"],
+      "http_status": 403,
+      "flow": [
+        { "label": "visitor" },
+        { "label": "tnl", "detail": "visitor access denied", "failure": true },
+        { "label": "local service (not contacted)" }
+      ],
+      "causes": [
+        "the visitor's sign-in, link, certificate, or token is missing, expired, or revoked"
+      ],
+      "actions": {
+        "visitor": ["sign in or ask the public URL owner for a visitor link"],
+        "publisher": ["check visitor grants and the saved access policy"]
+      }
+    },
+    {
       "code": "TNL_AUTHENTICATION_TIMEOUT",
       "slug": "authentication-timeout",
       "category": "authentication",

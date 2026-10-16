@@ -94,14 +94,17 @@ func TestDatabaseForwardingRequiresVisitorAndTargetTLS(t *testing.T) {
 			if err := secured.Handshake(); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := secured.Write([]byte("startup!")); err != nil {
+			if protocol == controlv1.Mysql {
+				completeTestMySQLLogin(t, secured)
+			}
+			if _, err := secured.Write([]byte("\x00\x00\x00\x08\x00\x03\x00\x00")); err != nil {
 				t.Fatal(err)
 			}
 			var response [5]byte
 			if _, err := io.ReadFull(secured, response[:]); err != nil || string(response[:]) != "ready" {
 				t.Fatalf("database response = %q, %v", response, err)
 			}
-			if got := awaitPublisherTest(t, received); got != "startup!" {
+			if got := awaitPublisherTest(t, received); got != "\x00\x00\x00\x08\x00\x03\x00\x00" {
 				t.Fatalf("private target received %q", got)
 			}
 			_ = secured.Close()
@@ -189,12 +192,12 @@ func TestDatabaseForwardingRejectsWrongTargetCertificate(t *testing.T) {
 	}
 }
 
-func TestVisitorTLSPassthroughKeepsTargetCertificateWithoutTargetTLSFlag(t *testing.T) {
+func TestVisitorTLSAlwaysUsesPublisherCertificate(t *testing.T) {
 	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql} {
 		t.Run(string(protocol), func(t *testing.T) {
 			backendCertificate := publicURLTestCertificate(t, "route.example")
 			publicCertificate := publicURLTestCertificate(t, "route.example")
-			roots := rootsForCertificate(t, backendCertificate)
+			roots := rootsForCertificate(t, publicCertificate)
 			port := uint16(5432)
 			if protocol == controlv1.Mysql {
 				port = 3306
@@ -202,7 +205,7 @@ func TestVisitorTLSPassthroughKeepsTargetCertificateWithoutTargetTLSFlag(t *test
 			address, received := startDatabaseTarget(t, protocol, backendCertificate)
 			route, err := NewPublicURLServer(PublicURLServerConfig{
 				Hostname: "route.example", ServiceProtocol: protocol, PublicPort: port,
-				Target: address, VisitorTLSPassthrough: true, Certificate: publicCertificate,
+				Target: address, TargetTLS: true, TargetOptions: localproxy.TargetOptions{RootCAs: rootsForCertificate(t, backendCertificate)}, TargetTLSName: "route.example", Certificate: publicCertificate,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -226,14 +229,20 @@ func TestVisitorTLSPassthroughKeepsTargetCertificateWithoutTargetTLSFlag(t *test
 			if err := secured.Handshake(); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := secured.Write([]byte("startup!")); err != nil {
+			if protocol == controlv1.Mysql {
+				completeTestMySQLLogin(t, secured)
+			}
+			if !bytes.Equal(secured.ConnectionState().PeerCertificates[0].Raw, publicCertificate.Certificate[0]) {
+				t.Fatal("visitor received private target certificate")
+			}
+			if _, err := secured.Write([]byte("\x00\x00\x00\x08\x00\x03\x00\x00")); err != nil {
 				t.Fatal(err)
 			}
 			var response [5]byte
 			if _, err := io.ReadFull(secured, response[:]); err != nil || string(response[:]) != "ready" {
-				t.Fatalf("passthrough response = %q, %v", response, err)
+				t.Fatalf("terminated TLS response = %q, %v", response, err)
 			}
-			if got := awaitPublisherTest(t, received); got != "startup!" {
+			if got := awaitPublisherTest(t, received); got != "\x00\x00\x00\x08\x00\x03\x00\x00" {
 				t.Fatalf("private target received %q", got)
 			}
 			_ = secured.Close()
@@ -241,12 +250,12 @@ func TestVisitorTLSPassthroughKeepsTargetCertificateWithoutTargetTLSFlag(t *test
 	}
 }
 
-func TestVisitorTLSPassthroughRejectsWrongSNI(t *testing.T) {
+func TestDatabaseVisitorTLSRejectsWrongSNI(t *testing.T) {
 	backendCertificate := publicURLTestCertificate(t, "route.example")
-	address, _ := startDatabaseTarget(t, controlv1.Postgres, backendCertificate, true)
+	address, _ := startDatabaseTarget(t, controlv1.Postgres, backendCertificate)
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Hostname: "route.example", ServiceProtocol: controlv1.Postgres, PublicPort: 5432,
-		Target: address, VisitorTLSPassthrough: true, Certificate: publicURLTestCertificate(t, "route.example"),
+		Target: address, TargetTLS: true, TargetTLSName: "route.example", TargetOptions: localproxy.TargetOptions{RootCAs: rootsForCertificate(t, backendCertificate)}, Certificate: publicURLTestCertificate(t, "route.example"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -290,14 +299,14 @@ func TestDatabaseVisitorCountsTowardApplicationLimits(t *testing.T) {
 	if err := secured.Handshake(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := secured.Write([]byte("startup!")); err != nil {
+	if _, err := secured.Write([]byte("\x00\x00\x00\x08\x00\x03\x00\x00")); err != nil {
 		t.Fatal(err)
 	}
 	var response [5]byte
 	if _, err := io.ReadFull(secured, response[:]); err != nil || string(response[:]) != "ready" {
 		t.Fatalf("first database response = %q, %v", response, err)
 	}
-	if got := awaitPublisherTest(t, received); got != "startup!" {
+	if got := awaitPublisherTest(t, received); got != "\x00\x00\x00\x08\x00\x03\x00\x00" {
 		t.Fatalf("first database request = %q", got)
 	}
 	_ = secured.Close()
@@ -361,8 +370,21 @@ func startDatabaseTarget(t *testing.T, protocol controlv1.PublicURLServiceProtoc
 			t.Error("publisher accepted a mismatched private target certificate")
 			return
 		}
+		if protocol == controlv1.Mysql {
+			if _, err := readMySQLPacket(secured, 1024); err != nil {
+				t.Error(err)
+				return
+			}
+			if _, err := secured.Write(mysqlTestPacket(3, []byte{0, 0, 0, 0, 0, 0, 0})); err != nil {
+				t.Error(err)
+				return
+			}
+		}
 		var startup [8]byte
 		if _, err := io.ReadFull(secured, startup[:]); err != nil {
+			if err == io.EOF {
+				return
+			}
 			t.Error(err)
 			return
 		}
@@ -372,6 +394,16 @@ func startDatabaseTarget(t *testing.T, protocol controlv1.PublicURLServiceProtoc
 		}
 	}()
 	return listener.Addr().String(), received
+}
+
+func completeTestMySQLLogin(t *testing.T, c net.Conn) {
+	t.Helper()
+	if _, err := c.Write(mysqlTestPacket(2, []byte{0, 8, 0, 0})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readMySQLPacket(c, 1024); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func openDatabaseVisitor(t *testing.T, route *PublicURLServer, port uint16) net.Conn {

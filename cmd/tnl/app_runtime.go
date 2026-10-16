@@ -157,7 +157,7 @@ func runRuntimeAddress(ctx context.Context, options runtimeOptions, output io.Wr
 type appPreparation struct {
 	assignment privateprotocol.Assignment
 	services   publisherServices
-	policy     resolvedIPPolicy
+	policy     resolvedVisitorAccess
 	flags      tunnelFlags
 	framework  privateprotocol.Framework
 	project    projectConfiguration
@@ -377,7 +377,7 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 	if err != nil {
 		return privateprotocol.Assignment{}, err
 	}
-	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
+	policy, err := resolveVisitorAccess(ctx, authenticated.Control, flags.access, flags.Anonymous, flags.IP)
 	if err != nil {
 		return privateprotocol.Assignment{}, err
 	}
@@ -567,6 +567,9 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 		return err
 	}
 	configuration := services.config(service.Target, preparation.policy.prefixes, flags.limits())
+	if preparation.policy.explicit {
+		configuration.AccessMode = preparation.policy.access
+	}
 	effective, err := project.EffectiveService(service.Name)
 	if err != nil {
 		return err

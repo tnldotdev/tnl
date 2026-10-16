@@ -618,7 +618,7 @@ func (q *Queries) MarkVisitorIPSet(ctx context.Context, publicUrlID string) erro
 const readyBrowserHosts = `-- name: ReadyBrowserHosts :many
 SELECT u.id AS public_url_id, u.canonical_hostname, r.id AS publish_run_id
 FROM control.public_urls u JOIN control.publish_runs r ON r.public_url_id = u.id
-WHERE u.lifecycle_state = 'enabled' AND u.purpose = 'app' AND u.service_protocol = 'http'
+WHERE u.lifecycle_state = 'enabled' AND u.purpose IN ('app', 'alias') AND u.service_protocol = 'http'
   AND r.state = 'ready' AND r.publisher_expires_at > $1 AND r.closed_at IS NULL
   AND (u.id = $2 OR EXISTS (SELECT 1 FROM control.preview_public_urls included
        WHERE included.preview_id = $3::text AND included.public_url_id = u.id))
@@ -718,17 +718,17 @@ func (q *Queries) RevokeVisitorInvitation(ctx context.Context, arg RevokeVisitor
 }
 
 const saveVisitorIPPolicy = `-- name: SaveVisitorIPPolicy :execrows
-UPDATE control.public_urls SET ip_policy = 'allowlist',
-    allowed_ip_policy_ciphertext = $1, allowed_ip_policy_storage_key_id = $2,
-    allowed_ip_hashes = $3, allowed_ip_hash_key_id = $4, updated_at = $5,
+UPDATE control.public_urls SET ip_policy = CASE WHEN $1::bytea IS NULL THEN 'allow_all' ELSE 'allowlist' END,
+    allowed_ip_policy_ciphertext = $2, allowed_ip_policy_storage_key_id = $3,
+    allowed_ip_hashes = $1, allowed_ip_hash_key_id = $4, updated_at = $5,
     mutation_revision = mutation_revision + CASE WHEN $6::boolean THEN 1 ELSE 0 END
 WHERE id = $7 AND (mutation_revision < 9223372036854775807 OR NOT $6)
 `
 
 type SaveVisitorIPPolicyParams struct {
+	Hashes          []byte
 	Ciphertext      []byte
 	StorageKeyID    pgtype.Text
-	Hashes          []byte
 	HashKeyID       pgtype.Text
 	Now             pgtype.Timestamptz
 	AdvanceMutation bool
@@ -737,13 +737,40 @@ type SaveVisitorIPPolicyParams struct {
 
 func (q *Queries) SaveVisitorIPPolicy(ctx context.Context, arg SaveVisitorIPPolicyParams) (int64, error) {
 	result, err := q.db.Exec(ctx, saveVisitorIPPolicy,
+		arg.Hashes,
 		arg.Ciphertext,
 		arg.StorageKeyID,
-		arg.Hashes,
 		arg.HashKeyID,
 		arg.Now,
 		arg.AdvanceMutation,
 		arg.PublicURLID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setPublicURLAccessMode = `-- name: SetPublicURLAccessMode :execrows
+UPDATE control.public_urls SET access_mode = $1, mutation_revision = mutation_revision + 1,
+    updated_at = $2
+WHERE id = $3 AND lifecycle_state = 'enabled'
+  AND mutation_revision = $4 AND mutation_revision < 9223372036854775807
+`
+
+type SetPublicURLAccessModeParams struct {
+	AccessMode       string
+	Now              pgtype.Timestamptz
+	PublicURLID      string
+	ExpectedRevision int64
+}
+
+func (q *Queries) SetPublicURLAccessMode(ctx context.Context, arg SetPublicURLAccessModeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setPublicURLAccessMode,
+		arg.AccessMode,
+		arg.Now,
+		arg.PublicURLID,
+		arg.ExpectedRevision,
 	)
 	if err != nil {
 		return 0, err

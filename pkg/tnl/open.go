@@ -33,13 +33,13 @@ type Limits struct {
 }
 
 type Options struct {
-	Credential  string
-	ServerURL   string
-	StateDir    string
-	HTTPClient  *http.Client
-	AllowIP     []string
-	AllowAllIPs bool
-	Limits      Limits
+	Credential string
+	ServerURL  string
+	StateDir   string
+	HTTPClient *http.Client
+	AccessMode controlv1.VisitorAccessMode
+	IP         []string
+	Limits     Limits
 }
 
 // Tunnel owns its local listener, publish run, and temporary public URL.
@@ -125,8 +125,7 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 		result := adhoc.Run(runCtx, adhoc.Options{
 			ControlURL: serverURL, HTTPClient: options.HTTPClient, State: profile,
 			Credential: credentials.EphemeralCredential(credential), InvocationID: invocationID,
-			Target: "http://" + listener.Addr().String(), AllowIP: slices.Clone(options.AllowIP),
-			AllowAllIPs: options.AllowAllIPs, Limits: limits,
+			Target: "http://" + listener.Addr().String(), AccessMode: options.AccessMode, IP: slices.Clone(options.IP), Limits: limits,
 			OnAllocated: func(route controlv1.PublicURL) error {
 				tunnel.mu.Lock()
 				tunnel.id, tunnel.url = route.Id, "https://"+route.CanonicalHostname

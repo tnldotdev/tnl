@@ -101,7 +101,7 @@ func validInspectionRecord(record InspectionRecord) bool {
 			record.Operation == "" && record.Result == "" && record.RedisCommand == "" && record.SQLState == "" &&
 			record.Rows == 0 && record.ResultSets == 0 && record.MySQLErrorCode == 0
 	}
-	if record.Protocol == controlv1.Redis {
+	if record.Protocol == controlv1.PublicURLServiceProtocol("redis") {
 		if record.Operation != "" || !record.Result.Valid() || record.Method != "" || record.Path != "" || record.Status != 0 ||
 			record.SQLState != "" || record.Rows != 0 || record.ResultSets != 0 || record.MySQLErrorCode != 0 || record.Origin != "tnl" ||
 			len(record.RedisCommand) == 0 || len(record.RedisCommand) > 64 {
@@ -118,10 +118,10 @@ func validInspectionRecord(record InspectionRecord) bool {
 		}
 		return true
 	}
-	if record.Protocol != controlv1.Postgres && record.Protocol != controlv1.Mysql ||
+	if record.Protocol != controlv1.PublicURLServiceProtocol("postgres") && record.Protocol != controlv1.PublicURLServiceProtocol("mysql") ||
 		!record.Operation.Valid() || !record.Result.Valid() || record.RedisCommand != "" || record.Method != "" || record.Path != "" || record.Status != 0 ||
-		record.MySQLErrorCode != 0 && record.Protocol != controlv1.Mysql ||
-		record.ResultSets != 0 && record.Protocol != controlv1.Mysql {
+		record.MySQLErrorCode != 0 && record.Protocol != controlv1.PublicURLServiceProtocol("mysql") ||
+		record.ResultSets != 0 && record.Protocol != controlv1.PublicURLServiceProtocol("mysql") {
 		return false
 	}
 	return true
@@ -214,7 +214,7 @@ type InspectionFilter struct {
 func (d *Database) ListInspections(ctx context.Context, filter InspectionFilter) ([]InspectionRecord, error) {
 	if filter.Project == "" || filter.SharedProject == "" || filter.Limit < 1 || filter.Limit > 500 ||
 		filter.Result != "" && !filter.Result.Valid() ||
-		filter.Protocol != "" && filter.Protocol != controlv1.Http && filter.Protocol != controlv1.Postgres && filter.Protocol != controlv1.Mysql && filter.Protocol != controlv1.Redis ||
+		filter.Protocol != "" && filter.Protocol != controlv1.Http && filter.Protocol != controlv1.PublicURLServiceProtocol("postgres") && filter.Protocol != controlv1.PublicURLServiceProtocol("mysql") && filter.Protocol != controlv1.PublicURLServiceProtocol("redis") ||
 		filter.Protocol != "" && filter.Protocol != controlv1.Http && (filter.Method != "" || filter.Status != 0) {
 		return nil, errors.New("clientstate: invalid inspection filter")
 	}

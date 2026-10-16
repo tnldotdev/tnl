@@ -216,6 +216,7 @@ type IngressRoutingTableProjection struct {
 	PublicPort           *uint16                                  `json:"public_port,omitempty"`
 	Traffic              *trafficlimits.Limits                    `json:"traffic,omitempty"`
 	PolicyRevision       uint64                                   `json:"policy_revision"`
+	AccessMode           VisitorAccessMode                        `json:"access_mode"`
 	IPPolicy             IPPolicy                                 `json:"ip_policy"`
 	AllowedIPHashes      []ippolicy.Entry                         `json:"allowed_ip_hashes,omitempty"`
 	IPPolicyKeyID        string                                   `json:"ip_policy_key_id,omitempty"`
@@ -270,9 +271,9 @@ func (d *Database) MarkPublicURLCertificateInstalled(
 	}
 	alreadyInstalled := session.CertificateInstalledAt.Valid
 	order, err := queries.LockACMEOrderForInstall(ctx, controlstatedb.LockACMEOrderForInstallParams{
-		IssuanceID: issuanceID, TeamID: session.TeamID, CertificateCacheKey: session.CertificateCacheKey,
-		CertificateScope: session.CertificateScope, CertificateIdentifiers: session.CertificateIdentifiers,
-		ChallengeMethod: session.CertificateChallengeMethod,
+		IssuanceID: issuanceID, TeamID: session.TeamID, CertificateCacheKey: session.CertificateCacheKey.String,
+		CertificateScope: session.CertificateScope.String, CertificateIdentifiers: session.CertificateIdentifiers,
+		ChallengeMethod: session.CertificateChallengeMethod.String,
 		NotAfter:        timestamptz(notAfter), InstalledAt: timestamptz(now),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -812,6 +813,7 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 		PublishRunID: session.ID, PublicURLID: route.ID, PublishRunNumber: uint64(session.PublishRunNumber),
 		CanonicalHostname: route.CanonicalHostname, PolicyRevision: uint64(route.PolicyRevision),
 		IngressPoolID: route.IngressPoolID, ServiceProtocol: PublicURLServiceProtocol(route.ServiceProtocol),
+		AccessMode:           VisitorAccessMode(route.AccessMode),
 		IPPolicy:             policy,
 		PublicUrlExpiresAt:   projectionExpiresAt,
 		PublisherConnections: make([]IngressRoutingTablePublisherConnection, 0, len(connections)),

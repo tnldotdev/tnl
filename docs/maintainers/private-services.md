@@ -51,6 +51,8 @@ enrolled public key under the run lock. a retry must use the same preparation,
 signature and TLS public key; it can rotate only the run token. control stores
 the TLS public key and the identity signature, never the TLS private key.
 the publisher alone holds that private key and discards it when the run ends.
+control encrypts a separate assignment-credential seed so a retry can rotate
+only the run token without changing the two relay credentials or TLS pin.
 
 for **each visitor stream**, the connector requests a new one-use ticket through
 the authenticated control API, passing its claimed mux session ID. control
@@ -84,9 +86,19 @@ ingress and relays carry encrypted bytes but never receive the signing key.
 private service visitor policy consists of current owner/admin access or an
 exact team/identity grant; there is no separate private-service IP allowlist.
 the visitor inventory lists saved services with current grants even while the
-publisher is offline. run ID and number appear only when a run and both
-publisher connections are ready. inventory alone never permits a connection;
-each ticket still needs a ready run and two ready slots at issuance.
+publisher is offline. first readiness needs two ready connections on different
+relay services. afterward one surviving ready connection keeps the run
+available and accepts new visitors while the other slot is replaced. inventory
+alone never permits a connection; each ticket still needs a ready run and at
+least one live ready slot at issuance and claim. at zero live slots control
+demotes the run and publishes a tombstone. control never expires a surviving
+slot simply because the other is missing; that slot's active visitor streams
+continue.
+each projected relay has its own lease deadline. a routing event expires at the
+earlier of the run deadline and the last live relay deadline; ingress excludes
+an expired relay without waiting for the other slot or replaying visitor bytes.
+the first ready timestamp remains recorded if a zero-relay outage demotes the
+run, so one reconnected relay can restore it.
 the source IP binding on each ticket limits replay across hosts, but does not
 grant access. invitations are bound to a verified email and become exact
 identity grants, not team memberships. publisher grants similarly select one
@@ -95,9 +107,49 @@ invalidates assignments and tickets. publish a tombstone for a disabled
 service or closed run; ingress uses only projections from a current lease and
 never receives publisher TLS private keys.
 
+creating a private-service invitation returns its one-use secret exactly once;
+the creator must give it to the intended recipient. listing invitations never
+returns secrets. accepting the secret requires a signed-in identity with the
+same verified email. retrying creation with a used idempotency key returns a
+conflict because control cannot recover the already-issued secret.
+
 the SQL baseline, HTTP shapes and framed protocol are source contracts.
-control, ingress, relay, `tnl connect` and the publisher still need runtime
-implementations of these boundaries before private connections can be used.
+controlstate stores saved services, exact grants and invitations, offline
+inventory, signed run bindings, relay assignments, and one-use connector
+sessions and tickets. controlapi, ingressapi, and relayapi expose their
+private-service authority endpoints. private connections cannot be used until
+the remaining generated browser identity and SSH handlers compile, and the
+relay adapter, `tnl connect`, and publisher runtime use these endpoints.
+
+ingress recognizes the shared infrastructure hostname only on public port 443.
+it requires the `tnl-private/1` TLS ALPN, an explicit TLS config with the
+WebPKI certificate for that hostname, a current ingress lease, and an
+authenticated private relay forwarder. the control-managed ingress certificate
+and relay adapter are not yet provided by `tnld` runtime wiring; leave the
+private connector unconfigured until both are available. a configured shared
+hostname without the connector handler closes instead of falling through to
+public URL or HTTP routing. ingress authenticates the outer hello before
+starting yamux and bounds pending stream frames to 2 KiB, 10 seconds by
+default, and a capped per-session yamux window. the relay adapter must
+acknowledge the private forwarding sideband and bind the exact assignment
+before ingress writes PROXY v2 once and releases visitor bytes. ingress may
+try another relay before the first visitor byte; after that, it closes the
+stream on failure rather than replaying it.
+
+after promotion, ingress rechecks each active visitor against the exact
+consumed ticket's session, visitor connection ID, identity, trusted source,
+current grant, run and ingress lease about every 30 seconds. the consumed
+ticket may expire without ending the stream; it cannot be reused. a denied
+recheck closes both ends. control supplies `valid_until` on the initial claim
+and each successful live recheck: the earliest applicable grant, publisher
+grant, run, ingress or live relay deadline, capped at two minutes. if control
+is unavailable, ingress closes by that deadline even when it is sooner than
+two minutes, and joins the stream copy before releasing capacity. a revoked
+grant, disabled identity, or closed run is denied on the next check. the
+connector-session credential's expiry stops **new** streams on that mux, not
+already admitted streams. `tnl connect` must start a fresh authenticated mux
+session for later streams without replaying or migrating the existing ones.
+this private-stream guard does not replace public-URL admission.
 
 ## connector handoff
 

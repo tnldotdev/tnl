@@ -18,13 +18,13 @@ tnl:
   team: Root Team
   tunnel:
     domain: routes.example.test
-    allow_ip: [192.0.2.0/24]
+    access: {ip: [192.0.2.0/24]}
     ephemeral: true
   services:
     web:
       tunnel:
         name: web
-        allow_all_ips: true
+        access: anonymous
       target: {type: address, address: 4000}
       http:
         open: true
@@ -47,7 +47,7 @@ tnl:
 		effective.Tunnel == nil || effective.Tunnel.Name == nil || *effective.Tunnel.Name != "web" ||
 		effective.Tunnel.Domain == nil || *effective.Tunnel.Domain != "routes.example.test" ||
 		effective.Tunnel.Open == nil || !*effective.Tunnel.Open ||
-		effective.Tunnel.AllowAllIPs == nil || !*effective.Tunnel.AllowAllIPs || effective.Tunnel.AllowIP != nil ||
+		effective.Tunnel.Access == nil || effective.Tunnel.Access.VisitorMode() != "anonymous" || len(effective.Tunnel.Access.IP) != 0 ||
 		effective.Tunnel.Ephemeral == nil || !*effective.Tunnel.Ephemeral ||
 		effective.Publish == nil || effective.Publish.Target == nil || string(*effective.Publish.Target) != "4000" ||
 		effective.Readiness == nil || effective.Readiness.Path != "/status" {
@@ -58,13 +58,39 @@ tnl:
 	}
 }
 
+func TestServiceAccessPolicyReplacesProjectDefault(t *testing.T) {
+	project := Project{Config: config.TNL{
+		Tunnel: &config.Tunnel{Access: &config.Access{IP: []string{"192.0.2.1"}}},
+		Services: config.Services{
+			"api":    {Tunnel: &config.Tunnel{Access: &config.Access{IP: []string{"198.51.100.1"}}}},
+			"none":   {Tunnel: &config.Tunnel{Access: &config.Access{Mode: "restricted"}}},
+			"public": {Tunnel: &config.Tunnel{Access: &config.Access{Mode: "anonymous"}}},
+		},
+	}}
+	for _, test := range []struct {
+		name string
+		want []string
+		mode string
+	}{
+		{"api", []string{"198.51.100.1"}, "restricted"},
+		{"none", nil, "restricted"},
+		{"public", nil, "anonymous"},
+	} {
+		effective, err := project.EffectiveService(test.name)
+		if err != nil || effective.Tunnel == nil || effective.Tunnel.Access == nil || !slices.Equal(effective.Tunnel.Access.IP, test.want) ||
+			effective.Tunnel.Access.VisitorMode() != test.mode {
+			t.Fatalf("service %s: tunnel = %#v, error = %v", test.name, effective.Tunnel, err)
+		}
+	}
+}
+
 func TestMixedPublicDefaultsNeverReachPrivateTCPService(t *testing.T) {
-	all, ephemeral := true, true
+	ephemeral := true
 	domain, dbTarget, sshTarget := "member.example", config.Target("db.internal:5432"), config.Target("22")
 	tcp, ssh := "tcp", "ssh"
 	connections := 4
 	project := Project{Config: config.TNL{
-		Tunnel: &config.Tunnel{Domain: &domain, AllowAllIPs: &all, Ephemeral: &ephemeral,
+		Tunnel: &config.Tunnel{Domain: &domain, Access: &config.Access{Mode: "anonymous"}, Ephemeral: &ephemeral,
 			Limits: &config.Limits{Traffic: &config.TrafficLimits{Connections: &connections}}},
 		Services: config.Services{
 			"web":    {},
@@ -77,7 +103,7 @@ func TestMixedPublicDefaultsNeverReachPrivateTCPService(t *testing.T) {
 	}
 	for _, name := range []string{"web", "shell"} {
 		service, err := project.EffectiveService(name)
-		if err != nil || service.Tunnel == nil || service.Tunnel.AllowAllIPs == nil || !*service.Tunnel.AllowAllIPs ||
+		if err != nil || service.Tunnel == nil || service.Tunnel.Access == nil || service.Tunnel.Access.VisitorMode() != "anonymous" ||
 			service.Tunnel.Domain == nil || *service.Tunnel.Domain != domain || service.Tunnel.Limits == nil ||
 			service.Tunnel.Limits.Traffic == nil || service.Tunnel.Limits.Traffic.Connections == nil ||
 			*service.Tunnel.Limits.Traffic.Connections != connections {
@@ -89,42 +115,14 @@ func TestMixedPublicDefaultsNeverReachPrivateTCPService(t *testing.T) {
 		private.Publish.Target != &dbTarget || config.PrivateServiceName("orders", project.Config.Services["orders"]) != "orders" {
 		t.Fatalf("private orders inherited public access or lost target: %+v: %v", private, err)
 	}
-	if project.Config.Tunnel.AllowAllIPs == nil || !*project.Config.Tunnel.AllowAllIPs {
+	if project.Config.Tunnel.Access == nil || project.Config.Tunnel.Access.VisitorMode() != "anonymous" {
 		t.Fatal("resolving private service mutated public defaults")
 	}
 	orders := project.Config.Services["orders"]
-	orders.Tunnel = &config.Tunnel{AllowAllIPs: &all}
+	orders.Tunnel = &config.Tunnel{Access: &config.Access{Mode: "anonymous"}}
 	project.Config.Services["orders"] = orders
 	if _, err := project.EffectiveService("orders"); err == nil {
 		t.Fatal("private TCP service accepted per-service public access")
-	}
-}
-
-func TestServiceIPOverridesAndAllowAllIPs(t *testing.T) {
-	all := true
-	project := Project{Config: config.TNL{
-		Tunnel: &config.Tunnel{AllowIP: []string{"192.0.2.1"}},
-		Services: config.Services{
-			"api":    {Tunnel: &config.Tunnel{AllowIP: []string{"198.51.100.1"}}},
-			"none":   {Tunnel: &config.Tunnel{AllowIP: []string{}}},
-			"public": {Tunnel: &config.Tunnel{AllowAllIPs: &all}},
-		},
-	}}
-	for _, test := range []struct {
-		name string
-		want []string
-		all  bool
-	}{
-		{"api", []string{"198.51.100.1"}, false},
-		{"none", []string{}, false},
-		{"public", nil, true},
-	} {
-		effective, err := project.EffectiveService(test.name)
-		if err != nil || effective.Tunnel == nil || !slices.Equal(effective.Tunnel.AllowIP, test.want) ||
-			(effective.Tunnel.AllowIP == nil) != (test.want == nil) ||
-			(effective.Tunnel.AllowAllIPs != nil && *effective.Tunnel.AllowAllIPs) != test.all {
-			t.Fatalf("service %s: tunnel = %#v, error = %v", test.name, effective.Tunnel, err)
-		}
 	}
 }
 

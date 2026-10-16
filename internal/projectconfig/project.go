@@ -214,15 +214,10 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 	if override.Open != nil {
 		result.Open = override.Open
 	}
-	if override.AllowIP != nil {
-		result.AllowIP = slices.Clone(override.AllowIP)
-		result.AllowAllIPs = nil
-	}
-	if override.AllowAllIPs != nil {
-		result.AllowAllIPs = override.AllowAllIPs
-		if *override.AllowAllIPs {
-			result.AllowIP = nil
-		}
+	if override.Access != nil {
+		access := *override.Access
+		access.IP = slices.Clone(access.IP)
+		result.Access = &access
 	}
 	if override.Ephemeral != nil {
 		result.Ephemeral = override.Ephemeral
@@ -236,7 +231,11 @@ func cloneTunnel(value *config.Tunnel) *config.Tunnel {
 		return nil
 	}
 	result := *value
-	result.AllowIP = slices.Clone(value.AllowIP)
+	if value.Access != nil {
+		access := *value.Access
+		access.IP = slices.Clone(access.IP)
+		result.Access = &access
+	}
 	result.Limits = config.MergeLimits(value.Limits, nil)
 	return &result
 }

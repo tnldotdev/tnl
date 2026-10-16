@@ -14,7 +14,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"go.yaml.in/yaml/v3"
@@ -311,19 +310,10 @@ func validateTunnel(tunnel *Tunnel) error {
 				return errors.New("tunnel.public_url must be a canonical hostname or HTTPS public URL without a port, path, query, or fragment")
 			}
 		}
-		if tunnel.AllowAllIPs != nil && *tunnel.AllowAllIPs && tunnel.AllowIP != nil {
-			return errors.New("tunnel.allow_all_ips cannot be combined with tunnel.allow_ip")
-		}
-		seen := make(map[string]struct{}, len(tunnel.AllowIP))
-		for _, value := range tunnel.AllowIP {
-			canonical, err := authorization.CanonicalizeIPPrefixes([]string{value})
-			if err != nil || len(canonical) != 1 || !canonicalIPText(value) {
-				return fmt.Errorf("tunnel.allow_ip value %q must be a canonical IP address or prefix", value)
+		if tunnel.Access != nil {
+			if err := tunnel.Access.Validate(); err != nil {
+				return fmt.Errorf("tunnel.access: %w", err)
 			}
-			if _, found := seen[canonical[0]]; found {
-				return fmt.Errorf("tunnel.allow_ip value %q is duplicated", value)
-			}
-			seen[canonical[0]] = struct{}{}
 		}
 	}
 	return nil

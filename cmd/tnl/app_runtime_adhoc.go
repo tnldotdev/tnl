@@ -45,7 +45,7 @@ func (a *appRuntime) publishAdHoc(ctx context.Context, request privateprotocol.A
 	return adhoc.Run(ctx, adhoc.Options{
 		ControlURL: serverURL, State: profile, Credential: credentials.EphemeralCredential(request.Credential),
 		InvocationID: request.RegistrationID, Target: request.Target,
-		AllowIP: request.AllowIP, AllowAllIPs: request.AllowAllIPs, Limits: limits,
+		AccessMode: controlv1.VisitorAccessMode(request.AccessMode), IP: request.IP, Limits: limits,
 		OnAllocated: func(route controlv1.PublicURL) error {
 			status.State, status.PublicURLID, status.PublicURL = privateprotocol.AdHocPublishing, route.Id, "https://"+route.CanonicalHostname
 			update(status)

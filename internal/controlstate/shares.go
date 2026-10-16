@@ -32,6 +32,8 @@ type Share struct {
 	ID                  string
 	PreviewID           string
 	TeamID              string
+	Scope               string
+	Label               string
 	PublicURLIDs        []string
 	CreatedByIdentityID string
 	CreatedAt           time.Time
@@ -52,6 +54,7 @@ type AuthorizedSharePublicURL struct {
 type CreateShareRequest struct {
 	PreviewID         string
 	TeamID            string
+	Label             string
 	ActingIdentityID  string
 	IdempotencyKey    string
 	SecretFingerprint [32]byte
@@ -63,10 +66,11 @@ type CreateShareRequest struct {
 func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, now time.Time) (result Share, retErr error) {
 	now = now.UTC().Truncate(time.Microsecond)
 	request.ExpiresAt = request.ExpiresAt.UTC().Truncate(time.Microsecond)
-	if !opaqueid.Valid(request.PreviewID, opaqueid.PreviewPrefix) || request.TeamID == "" || request.ActingIdentityID == "" ||
+	if request.PreviewID != "" && !opaqueid.Valid(request.PreviewID, opaqueid.PreviewPrefix) || request.TeamID == "" || request.ActingIdentityID == "" ||
+		len(request.Label) > 128 ||
 		request.IdempotencyKey == "" || len(request.IdempotencyKey) > 128 || request.PolicyRevision == 0 ||
 		!request.ExpiresAt.After(now) || request.ExpiresAt.After(now.Add(maximumShareLifetime)) ||
-		len(request.PublicURLs) < 1 || len(request.PublicURLs) > 32 {
+		len(request.PublicURLs) < 1 || len(request.PublicURLs) > 32 || request.PreviewID == "" && len(request.PublicURLs) != 1 {
 		return Share{}, ErrShareInvalid
 	}
 	urls := slices.Clone(request.PublicURLs)
@@ -84,10 +88,11 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	digestInput, err := json.Marshal(struct {
 		PreviewID    string   `json:"preview_id"`
 		TeamID       string   `json:"team_id"`
+		Label        string   `json:"label"`
 		PublicURLIDs []string `json:"public_url_ids"`
 		Fingerprint  string   `json:"secret_fingerprint"`
 		ExpiresAt    string   `json:"expires_at"`
-	}{request.PreviewID, request.TeamID, ids, hex.EncodeToString(request.SecretFingerprint[:]), request.ExpiresAt.UTC().Format(time.RFC3339Nano)})
+	}{request.PreviewID, request.TeamID, request.Label, ids, hex.EncodeToString(request.SecretFingerprint[:]), request.ExpiresAt.UTC().Format(time.RFC3339Nano)})
 	if err != nil {
 		return Share{}, fmt.Errorf("controlstate: encode share request: %w", err)
 	}
@@ -101,23 +106,25 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	}
 	defer rollback(ctx, tx, "create share", &retErr)()
 	queries := controlstatedb.New(tx)
-	preview, err := queries.GetPreview(ctx, request.PreviewID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Share{}, ErrPreviewNotFound
-	}
-	if err != nil {
-		return Share{}, fmt.Errorf("controlstate: create share: read preview: %w", err)
-	}
-	if preview.TeamID != request.TeamID || preview.CreatedByIdentityID != request.ActingIdentityID {
-		return Share{}, ErrPreviewAccess
-	}
-	previewURLs, err := queries.ListPreviewPublicURLs(ctx, preview.ID)
-	if err != nil {
-		return Share{}, fmt.Errorf("controlstate: create share: read preview public URLs: %w", err)
-	}
-	for _, id := range ids {
-		if _, found := slices.BinarySearch(previewURLs, id); !found {
-			return Share{}, ErrShareStale
+	if request.PreviewID != "" {
+		preview, err := queries.GetPreview(ctx, request.PreviewID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Share{}, ErrPreviewNotFound
+		}
+		if err != nil {
+			return Share{}, fmt.Errorf("controlstate: create share: read preview: %w", err)
+		}
+		if preview.TeamID != request.TeamID || preview.CreatedByIdentityID != request.ActingIdentityID || preview.DemoPublishRunID.Valid {
+			return Share{}, ErrPreviewAccess
+		}
+		previewURLs, err := queries.ListPreviewPublicURLs(ctx, preview.ID)
+		if err != nil {
+			return Share{}, fmt.Errorf("controlstate: create share: read preview public URLs: %w", err)
+		}
+		for _, id := range ids {
+			if _, found := slices.BinarySearch(previewURLs, id); !found {
+				return Share{}, ErrShareStale
+			}
 		}
 	}
 	policyRevision := positive(request.PolicyRevision)
@@ -152,6 +159,7 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 			return Share{}, fmt.Errorf("controlstate: create share: lock public URL: %w", err)
 		}
 		if route.TeamID != request.TeamID || route.LifecycleState != string(PublicURLLifecycleEnabled) ||
+			(route.Purpose != "app" && (request.PreviewID != "" || route.Purpose != "alias" && route.Purpose != "demo")) || route.ServiceProtocol != "http" ||
 			route.MutationRevision != int64(authorized.ExpectedMutationRevision) || route.PolicyRevision > policyRevision {
 			return Share{}, ErrShareStale
 		}
@@ -174,8 +182,12 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	if err != nil {
 		return Share{}, fmt.Errorf("controlstate: create share ID: %w", err)
 	}
+	scope := "url"
+	if request.PreviewID != "" {
+		scope = "preview"
+	}
 	stored, err := queries.CreateShare(ctx, controlstatedb.CreateShareParams{
-		ID: id, PreviewID: preview.ID, TeamID: request.TeamID,
+		ID: id, PreviewID: nullableText(request.PreviewID), TeamID: request.TeamID, Scope: scope, Label: request.Label,
 		CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
 		RequestDigest: digest[:], SecretDigest: request.SecretFingerprint[:],
 		CreatedAt: timestamptz(now), ExpiresAt: timestamptz(request.ExpiresAt),
@@ -183,7 +195,7 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	if err != nil {
 		return Share{}, fmt.Errorf("controlstate: create share: save share: %w", err)
 	}
-	if stored.PreviewID != preview.ID || stored.RevokedAt.Valid || subtle.ConstantTimeCompare(stored.RequestDigest, digest[:]) != 1 {
+	if stored.PreviewID.String != request.PreviewID || stored.Scope != scope || stored.RevokedAt.Valid || subtle.ConstantTimeCompare(stored.RequestDigest, digest[:]) != 1 {
 		return Share{}, ErrShareIdempotency
 	}
 	for _, publicURLID := range ids {
@@ -199,6 +211,67 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 		return Share{}, fmt.Errorf("controlstate: create share: commit: %w", err)
 	}
 	return shareFromModel(stored, ids), nil
+}
+
+// CreateGuestShare saves the same share capability used by regular URLs, but
+// ties it to the live guest trial and its single demo URL.
+func (d *Database) CreateGuestShare(ctx context.Context, guestID, publicURLID, key, label string, fingerprint [32]byte, expiresAt, now time.Time) (result Share, retErr error) {
+	now = now.UTC().Truncate(time.Microsecond)
+	expiresAt = expiresAt.UTC().Truncate(time.Microsecond)
+	if guestID == "" || !opaqueid.Valid(publicURLID, opaqueid.PublicURLPrefix) || key == "" || len(key) > 128 || len(label) > 128 ||
+		!expiresAt.After(now) || expiresAt.After(now.Add(maximumShareLifetime)) {
+		return Share{}, ErrShareInvalid
+	}
+	if err := d.requireOpen(); err != nil {
+		return Share{}, err
+	}
+	digest := sha256.Sum256([]byte(guestID + ":" + publicURLID + ":" + hex.EncodeToString(fingerprint[:]) + ":" + expiresAt.Format(time.RFC3339Nano) + ":" + label))
+	id, err := opaqueid.New(opaqueid.SharePrefix)
+	if err != nil {
+		return Share{}, err
+	}
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return Share{}, fmt.Errorf("controlstate: create guest share: begin transaction: %w", err)
+	}
+	defer rollback(ctx, tx, "create guest share", &retErr)()
+	q := controlstatedb.New(tx)
+	route, err := q.LockPublicURLForRun(ctx, publicURLID)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (route.Purpose != "demo" || route.LifecycleState != "enabled") {
+		return Share{}, ErrShareStale
+	}
+	if err != nil {
+		return Share{}, fmt.Errorf("controlstate: create guest share: lock public URL: %w", err)
+	}
+	count, err := q.CountActiveSharesForPublicURL(ctx, controlstatedb.CountActiveSharesForPublicURLParams{PublicURLID: publicURLID, Now: timestamptz(now)})
+	if err != nil {
+		return Share{}, fmt.Errorf("controlstate: create guest share: count active shares: %w", err)
+	}
+	if count >= 256 {
+		return Share{}, ErrShareLimit
+	}
+	stored, err := q.CreateGuestShare(ctx, controlstatedb.CreateGuestShareParams{
+		ID: id, GuestID: guestID, PublicURLID: publicURLID, IdempotencyKey: key, Label: label,
+		RequestDigest: digest[:], SecretDigest: fingerprint[:], ExpiresAt: timestamptz(expiresAt), Now: timestamptz(now),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Share{}, ErrShareStale
+	}
+	if err != nil {
+		return Share{}, fmt.Errorf("controlstate: create guest share: save share: %w", err)
+	}
+	if stored.GuestID.String != guestID || stored.Scope != "guest" || stored.RevokedAt.Valid || subtle.ConstantTimeCompare(stored.RequestDigest, digest[:]) != 1 {
+		return Share{}, ErrShareIdempotency
+	}
+	if _, err = q.AddGuestSharePublicURL(ctx, controlstatedb.AddGuestSharePublicURLParams{ShareID: stored.ID, PublicURLID: publicURLID}); errors.Is(err, pgx.ErrNoRows) {
+		return Share{}, ErrShareStale
+	} else if err != nil {
+		return Share{}, fmt.Errorf("controlstate: create guest share: save public URL snapshot: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Share{}, fmt.Errorf("controlstate: create guest share: commit: %w", err)
+	}
+	return shareFromModel(stored, []string{publicURLID}), nil
 }
 
 func (d *Database) GetShare(ctx context.Context, id string) (Share, error) {
@@ -227,7 +300,7 @@ func (d *Database) ListShares(ctx context.Context, previewID, cursor string) (Sh
 		return SharePage{}, err
 	}
 	queries := controlstatedb.New(d.pool)
-	rows, err := queries.ListShares(ctx, controlstatedb.ListSharesParams{PreviewID: previewID, AfterID: cursor})
+	rows, err := queries.ListShares(ctx, controlstatedb.ListSharesParams{PreviewID: text(previewID), AfterID: cursor})
 	if err != nil {
 		return SharePage{}, fmt.Errorf("controlstate: list shares: %w", err)
 	}
@@ -267,14 +340,37 @@ func sharePageFromRows(ctx context.Context, queries *controlstatedb.Queries, row
 	return page, nil
 }
 
-func (d *Database) RevokeShare(ctx context.Context, id, identityID string, now time.Time) (Share, error) {
+func (d *Database) RevokeShare(ctx context.Context, id, identityID string, now time.Time) (result Share, retErr error) {
 	if !opaqueid.Valid(id, opaqueid.SharePrefix) || identityID == "" {
 		return Share{}, ErrShareInvalid
 	}
 	if err := d.requireOpen(); err != nil {
 		return Share{}, err
 	}
-	queries := controlstatedb.New(d.pool)
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return Share{}, err
+	}
+	defer rollback(ctx, tx, "revoke anonymous share", &retErr)()
+	queries := controlstatedb.New(tx)
+	candidate, err := queries.GetShare(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Share{}, ErrShareNotFound
+	}
+	if err != nil {
+		return Share{}, err
+	}
+	if candidate.CreatedByIdentityID != identityID {
+		return Share{}, ErrShareNotFound
+	}
+	if _, err = queries.LockLocalTeamForMutation(ctx, candidate.TeamID); err != nil {
+		return Share{}, err
+	}
+	if _, err = queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{TeamID: candidate.TeamID, IdentityID: identityID}); errors.Is(err, pgx.ErrNoRows) {
+		return Share{}, ErrPreviewAccess
+	} else if err != nil {
+		return Share{}, err
+	}
 	row, err := queries.RevokeShare(ctx, controlstatedb.RevokeShareParams{
 		ShareID: id, IdentityID: identityID,
 		RevokedAt: timestamptz(now), RevokedByIdentityID: identityID,
@@ -285,7 +381,11 @@ func (d *Database) RevokeShare(ctx context.Context, id, identityID string, now t
 	if err != nil {
 		return Share{}, fmt.Errorf("controlstate: revoke share: %w", err)
 	}
-	return shareWithURLs(ctx, queries, row)
+	result, err = shareWithURLs(ctx, queries, row)
+	if err != nil {
+		return Share{}, err
+	}
+	return result, tx.Commit(ctx)
 }
 
 func shareWithURLs(ctx context.Context, queries *controlstatedb.Queries, row controlstatedb.ControlShare) (Share, error) {
@@ -302,7 +402,7 @@ func shareFromModel(row controlstatedb.ControlShare, ids []string) Share {
 	}
 	return Share{
 		SchemaVersion: int(row.SchemaVersion),
-		ID:            row.ID, PreviewID: row.PreviewID, TeamID: row.TeamID,
+		ID:            row.ID, PreviewID: row.PreviewID.String, TeamID: row.TeamID, Scope: row.Scope, Label: row.Label,
 		CreatedByIdentityID: row.CreatedByIdentityID, PublicURLIDs: ids,
 		CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time, RevokedAt: optionalTime(row.RevokedAt),
 	}

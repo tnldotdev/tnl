@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/controltls"
-	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
@@ -94,9 +93,13 @@ func serveWithRelayClientTLS(
 		metrics.SetCapacityLimit("challenge_connections", int64(cfg.ChallengeConnectionLimit))
 		metrics.SetCapacityLimit("challenge_hostname_connections", int64(cfg.ChallengeHostnameConnectionLimit))
 		metrics.SetCapacityLimit("public_connections", cfg.VisitorConnectionLimit)
-		metrics.SetCapacityLimit("public_url_connections", max(1, cfg.VisitorConnectionLimit/2))
-		metrics.SetCapacityLimit("denied_connections", int64(ingress.DefaultDeniedConnectionLimit))
-		metrics.SetCapacityLimit("denied_public_url_connections", int64(max(1, ingress.DefaultDeniedConnectionLimit/2)))
+		metrics.SetCapacityLimit("public_url_connections", int64(cfg.TrafficDefaults().Connections))
+		pending, err := cfg.IngressPending().Resolve()
+		if err != nil {
+			return err
+		}
+		metrics.SetCapacityLimit("denied_connections", int64(pending.Connections))
+		metrics.SetCapacityLimit("denied_public_url_connections", int64(pending.PublicURLConnections))
 	}
 	if cfg.Role.RunsRelay() {
 		relayCount := int64(1)
@@ -115,6 +118,7 @@ func serveWithRelayClientTLS(
 		if err := d.startControlWorkers(ctx, lifetime, cfg, acmeHTTPClient, metrics); err != nil {
 			return err
 		}
+		d.startVisitorPermissionWorkers(lifetime)
 	}
 
 	controlHandler := http.Handler(nil)
@@ -123,7 +127,7 @@ func serveWithRelayClientTLS(
 		if d.route53Credentials != nil {
 			route53Readiness = d.checkRoute53Credentials
 		}
-		controlHandler, err = newPublicAPIHandler(cfg, d.startedAt, d.serviceHTTP, d.database, metrics, d, route53Readiness)
+		controlHandler, err = newPublicAPIHandler(cfg, d.startedAt, d.serviceHTTP, d.database, metrics, d, route53Readiness, cfg.VisitorIssuerSeed)
 		if err != nil {
 			return err
 		}

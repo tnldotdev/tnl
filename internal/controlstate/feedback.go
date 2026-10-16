@@ -60,6 +60,8 @@ const (
 )
 
 type FeedbackActor struct {
+	SourceIP                 string
+	PublishRunAuthentication *PublishRunAuthentication
 	Kind                     string
 	IdentityID               string
 	DisplayName              string
@@ -67,7 +69,8 @@ type FeedbackActor struct {
 	TeamMember               bool
 	ShareID                  string
 	CookieSecret             []byte
-	AllowedIP                bool
+	ShareSecret              []byte
+	VisitAllowed             bool
 	PolicyRevision           uint64
 	ExpectedMutationRevision uint64
 }
@@ -177,28 +180,18 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 	if err := d.requireOpen(); err != nil {
 		return FeedbackThread{}, err
 	}
-	if request.Actor.IdentityID != "" {
-		request.AuthorDisplayName = request.Actor.DisplayName
-	}
-	digestInput, err := json.Marshal(struct {
-		PreviewID, Service, PagePath, PageTitle, ReportText, AuthorDisplayName, AuthorIdentityID string
-		Anchor, Evidence, SourceAtReport                                                         json.RawMessage
-	}{request.PreviewID, request.Service, request.PagePath, request.PageTitle, request.ReportText, request.AuthorDisplayName,
-		request.Actor.IdentityID,
-		request.Anchor, request.Evidence, request.SourceAtReport})
-	if err != nil {
-		return FeedbackThread{}, ErrFeedbackInvalid
-	}
-	digest := sha256.Sum256(digestInput)
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return FeedbackThread{}, fmt.Errorf("controlstate: create feedback: begin transaction: %w", err)
 	}
 	defer rollback(ctx, tx, "create feedback", &retErr)()
 	queries := controlstatedb.New(tx)
-	// follow public URL -> publish run -> thread order during demo cleanup.
-	if _, err := queries.LockPublicURLForRun(ctx, auth.PublicURLID); err != nil {
-		return FeedbackThread{}, ErrFeedbackAccess
+	publicURL, err := lockVisitorURL(ctx, queries, auth.PublicURLID)
+	if err != nil {
+		return FeedbackThread{}, err
+	}
+	if _, err = d.lockAuthenticatedRun(ctx, queries, auth, now); err != nil {
+		return FeedbackThread{}, err
 	}
 	scope, err := queries.FeedbackRunScope(ctx, controlstatedb.FeedbackRunScopeParams{
 		PublishRunID: auth.PublishRunID, PreviewID: request.PreviewID,
@@ -210,10 +203,26 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 	if err != nil {
 		return FeedbackThread{}, fmt.Errorf("controlstate: resolve report publish run: %w", err)
 	}
-	actorRef, err := reviewerReference(ctx, queries, scope.PublicURLID, scope.PreviewID, request.Actor, now)
+	var actorRef string
+	request.Actor, actorRef, err = d.currentReviewer(ctx, queries, publicURL, scope.PreviewID, request.Actor, now)
 	if err != nil {
 		return FeedbackThread{}, err
 	}
+	if err := requireFeedbackAuthorForURL(ctx, queries, scope.TeamID, scope.PublicURLID, request.Actor); err != nil {
+		return FeedbackThread{}, err
+	}
+	if request.Actor.IdentityID != "" {
+		request.AuthorDisplayName = request.Actor.DisplayName
+	}
+	digestInput, err := json.Marshal(struct {
+		PreviewID, Service, PagePath, PageTitle, ReportText, AuthorDisplayName, AuthorIdentityID string
+		Anchor, Evidence, SourceAtReport                                                         json.RawMessage
+	}{request.PreviewID, request.Service, request.PagePath, request.PageTitle, request.ReportText, request.AuthorDisplayName,
+		request.Actor.IdentityID, request.Anchor, request.Evidence, request.SourceAtReport})
+	if err != nil {
+		return FeedbackThread{}, ErrFeedbackInvalid
+	}
+	digest := sha256.Sum256(digestInput)
 	id, err := opaqueid.New(opaqueid.FeedbackPrefix)
 	if err != nil {
 		return FeedbackThread{}, fmt.Errorf("controlstate: create feedback ID: %w", err)
@@ -304,12 +313,36 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 		return FeedbackEvent{}, err
 	}
 	if request.Actor.Kind == "reviewer" {
-		if _, err := queries.LockPublicURLForRun(ctx, candidate.PublicURLID); err != nil {
+		publicURL, err := lockVisitorURL(ctx, queries, candidate.PublicURLID)
+		if err != nil {
+			return FeedbackEvent{}, err
+		}
+		if request.Actor.PublishRunAuthentication == nil || request.Actor.PublishRunAuthentication.PublicURLID != candidate.PublicURLID {
 			return FeedbackEvent{}, ErrFeedbackAccess
+		}
+		if _, err = d.lockAuthenticatedRun(ctx, queries, *request.Actor.PublishRunAuthentication, now); err != nil {
+			return FeedbackEvent{}, err
+		}
+		request.Actor, _, err = d.currentReviewer(ctx, queries, publicURL, candidate.PreviewID, request.Actor, now)
+		if err != nil {
+			return FeedbackEvent{}, err
 		}
 	}
 	actorRef, err := d.authorizeFeedbackActor(ctx, queries, candidate, request.Actor, now)
 	if err != nil {
+		return FeedbackEvent{}, err
+	}
+	if request.Actor.Kind == "implementer" {
+		identity, err := queries.LockVisitorIdentity(ctx, request.Actor.IdentityID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return FeedbackEvent{}, ErrVisitorSignIn
+		}
+		if err != nil {
+			return FeedbackEvent{}, err
+		}
+		request.Actor.DisplayName = identity.DisplayName
+	}
+	if err := requireFeedbackAuthorForURL(ctx, queries, candidate.TeamID, candidate.PublicURLID, request.Actor); err != nil {
 		return FeedbackEvent{}, err
 	}
 	thread, err := queries.LockFeedbackThread(ctx, request.FeedbackID)
@@ -379,7 +412,13 @@ func verifiedFeedbackAuthorID(actor FeedbackActor) string {
 
 func (d *Database) authorizeFeedbackActor(ctx context.Context, queries *controlstatedb.Queries, thread controlstatedb.ControlFeedbackThread, actor FeedbackActor, now time.Time) (string, error) {
 	if actor.Kind == "reviewer" {
-		return reviewerReference(ctx, queries, thread.PublicURLID, thread.PreviewID, actor, now)
+		if actor.IdentityID != "" {
+			return "identity:" + actor.IdentityID, nil
+		}
+		if actor.ShareID != "" {
+			return actor.ShareID, nil
+		}
+		return "anonymous", nil
 	}
 	if actor.Kind != "implementer" || actor.IdentityID == "" || actor.PolicyRevision == 0 || actor.ExpectedMutationRevision == 0 {
 		return "", ErrFeedbackAccess
@@ -408,59 +447,7 @@ func (d *Database) authorizeFeedbackActor(ctx context.Context, queries *controls
 	return actor.IdentityID, nil
 }
 
-func reviewerReference(ctx context.Context, queries *controlstatedb.Queries, publicURLID, previewID string, actor FeedbackActor, now time.Time) (string, error) {
-	if actor.Kind != "reviewer" {
-		return "", ErrFeedbackAccess
-	}
-	identity := ""
-	if len(actor.BrowserCookieSecret) != 0 {
-		if actor.IdentityID == "" || !validFeedbackText(actor.DisplayName, 256) || len(actor.BrowserCookieSecret) != 32 {
-			return "", ErrFeedbackAccess
-		}
-		digest := sha256.Sum256(actor.BrowserCookieSecret)
-		session, err := queries.GetBrowserAccessSession(ctx, digest[:])
-		if err != nil || session.IdentityID != actor.IdentityID || session.PreviewID != previewID ||
-			session.RevokedAt.Valid || !session.ExpiresAt.Time.After(now) {
-			return "", ErrFeedbackAccess
-		}
-		if _, err := queries.BrowserSessionPublicURLIncluded(ctx, controlstatedb.BrowserSessionPublicURLIncludedParams{
-			TokenDigest: digest[:], PublicURLID: publicURLID,
-		}); err != nil {
-			return "", ErrFeedbackAccess
-		}
-		identity = actor.IdentityID
-	} else if actor.IdentityID != "" || actor.TeamMember {
-		return "", ErrFeedbackAccess
-	}
-	if actor.AllowedIP {
-		if identity != "" {
-			return "identity:" + identity, nil
-		}
-		return "allowed_ip", nil
-	}
-	if opaqueid.Valid(actor.ShareID, opaqueid.SharePrefix) && len(actor.CookieSecret) == 32 {
-		digest := sha256.Sum256(actor.CookieSecret)
-		if _, err := queries.ReviewerShareCookieValid(ctx, controlstatedb.ReviewerShareCookieValidParams{
-			ShareID: actor.ShareID, PublicURLID: publicURLID,
-			TokenDigest: digest[:], Now: timestamptz(now),
-		}); err == nil {
-			if identity != "" {
-				return "identity:" + identity, nil
-			}
-			return actor.ShareID, nil
-		}
-	}
-	if !actor.TeamMember || identity == "" {
-		return "", ErrFeedbackAccess
-	}
-	preview, err := queries.GetPreview(ctx, previewID)
-	if err != nil || !preview.TeamAccessEnabled {
-		return "", ErrFeedbackAccess
-	}
-	return "identity:" + identity, nil
-}
-
-func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth PublishRunAuthentication, previewID string, actor FeedbackActor, now time.Time) (string, string, error) {
+func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth PublishRunAuthentication, previewID string, actor FeedbackActor, now time.Time) (teamID, publicURLID string, retErr error) {
 	if err := validatePublishRunAuthentication(auth); err != nil {
 		return "", "", err
 	}
@@ -470,7 +457,19 @@ func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth PublishRunAut
 	if err := d.requireOpen(); err != nil {
 		return "", "", err
 	}
-	queries := controlstatedb.New(d.pool)
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	defer rollback(ctx, tx, "read current reviewer scope", &retErr)()
+	queries := controlstatedb.New(tx)
+	publicURL, err := lockVisitorURL(ctx, queries, auth.PublicURLID)
+	if err != nil {
+		return "", "", err
+	}
+	if _, err = d.lockAuthenticatedRun(ctx, queries, auth, now); err != nil {
+		return "", "", err
+	}
 	scope, err := queries.FeedbackRunScope(ctx, controlstatedb.FeedbackRunScopeParams{
 		PublishRunID: auth.PublishRunID, PreviewID: previewID,
 		PublishRunNumber: int64(auth.PublishRunNumber), Now: timestamptz(now),
@@ -481,10 +480,13 @@ func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth PublishRunAut
 	if err != nil {
 		return "", "", fmt.Errorf("controlstate: read reviewer preview: %w", err)
 	}
-	if _, err := reviewerReference(ctx, queries, scope.PublicURLID, previewID, actor, now); err != nil {
+	if scope.PublicURLID != publicURL.ID {
+		return "", "", ErrFeedbackAccess
+	}
+	if _, _, err := d.currentReviewer(ctx, queries, publicURL, previewID, actor, now); err != nil {
 		return "", "", err
 	}
-	return scope.TeamID, scope.PublicURLID, nil
+	return scope.TeamID, scope.PublicURLID, tx.Commit(ctx)
 }
 
 func nextFeedbackState(state FeedbackThreadState, event FeedbackEventType, actorKind string) (FeedbackThreadState, error) {

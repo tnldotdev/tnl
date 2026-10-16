@@ -44,7 +44,7 @@ func TestSharedSDKGoldenAssignments(t *testing.T) {
 	values := map[string]any{
 		"prepare":    Prepare{Version: 1, Directory: "/project", Service: "web", Framework: "node", Owner: "0123456789abcdef0123456789abcdef", PID: 123},
 		"register":   Registration{Version: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Owner: "0123456789abcdef0123456789abcdef", Target: "http://127.0.0.1:1234"},
-		"assignment": Assignment{Version: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Service: "web", Hostname: "web.member.example", PublicURL: "https://web.member.example", Project: projectmeta.PublicMetadata{Namespace: "member.example", Services: map[string]projectmeta.Service{"web": {Namespace: "member.example", Hostname: "web.member.example", URL: "https://web.member.example"}}, Dev: true}},
+		"assignment": Assignment{Version: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Service: "web", Hostname: "web.member.example", PublicURL: "https://web.member.example", Project: projectmeta.PublicMetadata{Namespace: "member.example", Services: map[string]projectmeta.Service{"web": {Protocol: "http", Namespace: "member.example", Hostname: "web.member.example", URL: "https://web.member.example"}}, Dev: true}},
 	}
 	for name, value := range values {
 		actual, err := json.Marshal(value)
@@ -74,7 +74,7 @@ func TestAdHocSocketContractGolden(t *testing.T) {
 	values := map[string]any{
 		"register": AdHocRegister{Version: 1, RegistrationID: id, Owner: owner, PID: 123,
 			Target: "http://127.0.0.1:3000", ServerURL: "https://control.example.test",
-			Credential: "tnl_eph_test-credential", AllowIP: []string{"198.51.100.9/32"},
+			Credential: "tnl_eph_test-credential", AccessMode: "restricted", IP: []string{"198.51.100.9/32"},
 			Limits: &AdHocLimits{Requests: 20, Rate: &AdHocRateLimit{Requests: 5, Per: "1m"}, Concurrency: 3}},
 		"ready": AdHocStatus{Version: 1, RegistrationID: id, State: "routable", PublicURLID: "url_allocated",
 			PublicURL: "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test", PublishRunNumber: 1},

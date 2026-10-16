@@ -190,11 +190,14 @@ func tunnelSchema() *jsonschema.Schema {
 	properties.Set("domain", &jsonschema.Schema{Type: "string", Description: "Ready team domain used for generated public URL hostnames."})
 	properties.Set("name", &jsonschema.Schema{Type: "string", Description: "One DNS label beneath the member namespace."})
 	properties.Set("public_url", &jsonschema.Schema{Type: "string", Description: "Exact public URL hostname or HTTPS origin to publish."})
-	properties.Set("allow_ip", &jsonschema.Schema{
-		Type: "array", Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true,
-		Description: "Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.",
-	})
-	properties.Set("allow_all_ips", &jsonschema.Schema{Type: "boolean", Description: "Allow visitors from every IP address."})
+	accessProperties := jsonschema.NewProperties()
+	accessProperties.Set("mode", &jsonschema.Schema{Type: "string", Enum: []any{"restricted", "anonymous"}})
+	accessProperties.Set("ip", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), MaxItems: integerPointer(256),
+		Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true})
+	properties.Set("access", &jsonschema.Schema{OneOf: []*jsonschema.Schema{
+		{Type: "string", Enum: []any{"restricted", "anonymous"}},
+		{Type: "object", Properties: accessProperties, AdditionalProperties: jsonschema.FalseSchema},
+	}})
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the public URL when this tunnel stops."})
 	limits := jsonschema.NewProperties()
 	for _, protocol := range []string{"http", "tcp"} {
@@ -211,19 +214,9 @@ func tunnelSchema() *jsonschema.Schema {
 	traffic.Set("rate_per", &jsonschema.Schema{Type: "string", Pattern: config.DurationPattern})
 	limits.Set("traffic", &jsonschema.Schema{Type: "object", Properties: traffic, AdditionalProperties: jsonschema.FalseSchema})
 	properties.Set("limits", &jsonschema.Schema{Type: "object", Properties: limits, AdditionalProperties: jsonschema.FalseSchema})
-	allowAllProperties := jsonschema.NewProperties()
-	allowAllProperties.Set("allow_all_ips", &jsonschema.Schema{Const: true})
 	return &jsonschema.Schema{
 		Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
-		AllOf: []*jsonschema.Schema{
-			{Not: &jsonschema.Schema{Required: []string{"name", "public_url"}}},
-			{
-				If: &jsonschema.Schema{Properties: allowAllProperties, Required: []string{"allow_all_ips"}},
-				Then: &jsonschema.Schema{Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{
-					{Required: []string{"allow_ip"}},
-				}}},
-			},
-		},
+		AllOf: []*jsonschema.Schema{{Not: &jsonschema.Schema{Required: []string{"name", "public_url"}}}},
 	}
 }
 
@@ -315,15 +308,12 @@ func aliasSchema() *jsonschema.Schema {
 	properties.Set("domain", &jsonschema.Schema{Type: "string", Description: "Ready team domain; otherwise inherit the entry service's domain."})
 	properties.Set("public_url", &jsonschema.Schema{Type: "string", Description: "Exact authorized public URL hostname or HTTPS origin; mutually exclusive with name and domain."})
 	tunnel := tunnelSchema()
-	for _, name := range []string{"allow_ip", "allow_all_ips"} {
-		value, _ := tunnel.Properties.Get(name)
-		properties.Set(name, value)
-	}
+	value, _ := tunnel.Properties.Get("access")
+	properties.Set("access", value)
 	return &jsonschema.Schema{Type: "object", Required: []string{"service"}, Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
 		AllOf: []*jsonschema.Schema{
 			{Not: &jsonschema.Schema{Required: []string{"name", "public_url"}}},
 			{Not: &jsonschema.Schema{Required: []string{"domain", "public_url"}}},
-			tunnel.AllOf[1],
 		}}
 }
 

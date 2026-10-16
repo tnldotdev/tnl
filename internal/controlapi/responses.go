@@ -17,8 +17,10 @@ func publicURLResponse(route controlstate.PublicURL) controlv1.PublicURL {
 	result := controlv1.PublicURL{
 		Id: route.ID, TeamId: route.TeamID, DomainId: route.DomainID,
 		CanonicalHostname: route.CanonicalHostname, Target: route.Target,
-		ServiceProtocol: protocol,
-		PublicUrlScope:  controlv1.PublicURLScope(route.PublicURLScope), Purpose: controlv1.PublicURLPurpose(route.Purpose), PolicyRevision: route.PolicyRevision,
+		ServiceProtocol:  protocol,
+		AccessMode:       controlv1.VisitorAccessMode(route.AccessMode),
+		MutationRevision: int64(route.MutationRevision),
+		PublicUrlScope:   controlv1.PublicURLScope(route.PublicURLScope), Purpose: controlv1.PublicURLPurpose(route.Purpose), PolicyRevision: route.PolicyRevision,
 		LifecycleState: controlv1.PublicURLLifecycleState(route.LifecycleState), NextPublishRunNumber: route.NextPublishRunNumber,
 		Ephemeral: route.Ephemeral, ExpiresAt: route.ExpiresAt, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt,
 	}
@@ -49,7 +51,7 @@ func publishRunSetupResponse(
 ) controlv1.PublishRunSetup {
 	return controlv1.PublishRunSetup{
 		PublicUrl: publicURLResponse(route), PublishRun: publishRunResponse(setup),
-		PublishRunToken: setup.PublishRunToken.String(), CertificatePlan: certificatePlan,
+		PublishRunToken: setup.PublishRunToken.String(), CertificatePlan: &certificatePlan,
 		PublisherConnections: connectionAssignmentResponses(setup.PublisherConnections),
 		Traffic:              trafficLimitsResponse(setup.Traffic),
 	}

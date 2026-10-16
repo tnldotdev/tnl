@@ -51,14 +51,16 @@ VALUES (sqlc.arg(id), sqlc.arg(private_service_id), sqlc.arg(team_id), sqlc.arg(
     sqlc.arg(request_digest), sqlc.arg(now), sqlc.arg(expires_at)) RETURNING *;
 
 -- name: AcceptPrivateServiceInvitation :one
--- caller verifies the authenticated identity's email against normalized_email.
+-- a verified exact email is required even when a caller has checked it already.
 UPDATE control.private_service_invitations invitation
 SET accepted_identity_id = sqlc.arg(identity_id), accepted_at = sqlc.arg(now)
 FROM control.private_services service, control.identities person
 WHERE invitation.token_digest = sqlc.arg(token_digest) AND invitation.revoked_at IS NULL
     AND invitation.accepted_at IS NULL AND invitation.expires_at > sqlc.arg(now)
-    AND service.id = invitation.private_service_id AND service.enabled AND service.deleted_at IS NULL
+    AND service.id = invitation.private_service_id AND service.team_id = invitation.team_id
+    AND service.enabled AND service.deleted_at IS NULL
     AND person.id = sqlc.arg(identity_id) AND person.disabled_at IS NULL
+    AND person.email_verified AND person.normalized_email = invitation.normalized_email
 RETURNING invitation.*;
 
 -- name: RevokePrivateServiceInvitation :execrows
@@ -77,9 +79,10 @@ WHERE private_service_id = sqlc.arg(private_service_id) ORDER BY id LIMIT 101;
 
 -- name: ListAvailablePrivateServices :many
 -- visitor inventory includes authorized saved services while the publisher is
--- offline. only project an open, ready run with two ready slots and a live
--- publisher grant. do not include target addresses, tickets or keys.
-SELECT s.id, s.team_id, s.name, r.id AS private_run_id, r.run_number
+-- offline. two live slots are required for the first ready transition; after
+-- that, one surviving slot keeps a ready run available during replacement.
+-- do not include target addresses, tickets or keys.
+SELECT s.id, s.team_id, s.name, s.created_at, r.id AS private_run_id, r.run_number
 FROM control.private_services s
 JOIN control.teams t ON t.id = s.team_id AND t.deleted_at IS NULL
 JOIN control.identities i ON i.id = sqlc.arg(identity_id) AND i.disabled_at IS NULL
@@ -92,8 +95,11 @@ LEFT JOIN control.private_service_runs r ON r.private_service_id = s.id
           AND (pg.expires_at IS NULL OR pg.expires_at > sqlc.arg(now))
           AND p.team_id = s.team_id AND p.revoked_at IS NULL)
     AND EXISTS (SELECT 1 FROM control.private_service_connection_slots slot
-        WHERE slot.private_run_id = r.id AND slot.state = 'ready'
-        GROUP BY slot.private_run_id HAVING count(*) = 2)
+        JOIN control.relay_leases lease ON lease.relay_id = slot.relay_id
+          AND lease.relay_run_id = slot.relay_run_id AND lease.relay_lease_revision = slot.relay_lease_revision
+          AND lease.relay_service_id = slot.relay_service_id
+          AND lease.lease_expires_at > sqlc.arg(now) AND NOT lease.draining
+        WHERE slot.private_run_id = r.id AND slot.state = 'ready' AND slot.session_open)
 WHERE s.deleted_at IS NULL AND s.enabled AND s.id > sqlc.arg(after_id)
     AND (
         EXISTS (SELECT 1 FROM control.team_memberships m
@@ -115,24 +121,25 @@ ORDER BY s.id LIMIT 101;
 -- a retry with the same idempotency key returns the same prepared row.
 INSERT INTO control.private_service_runs(id, private_service_id, team_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
-    request_digest, binding_nonce, binding_expires_at, state, created_at, publisher_expires_at)
+    request_digest, binding_nonce, binding_expires_at, assignment_seed_ciphertext,
+    assignment_seed_storage_key_id, state, created_at, publisher_expires_at)
 VALUES (sqlc.arg(id), sqlc.arg(private_service_id), sqlc.arg(team_id), sqlc.arg(run_number),
     sqlc.arg(publisher_identity_id), sqlc.arg(publisher_grant_id), sqlc.arg(publisher_key_id),
     sqlc.arg(idempotency_key), sqlc.arg(request_digest), sqlc.arg(binding_nonce),
-    sqlc.arg(binding_expires_at), 'prepared', sqlc.arg(now), sqlc.arg(publisher_expires_at)) RETURNING *;
+    sqlc.arg(binding_expires_at), sqlc.arg(assignment_seed_ciphertext),
+    sqlc.arg(assignment_seed_storage_key_id), 'prepared', sqlc.arg(now), sqlc.arg(publisher_expires_at)) RETURNING *;
 
 -- name: LockPrivateServiceRun :one
 SELECT * FROM control.private_service_runs
 WHERE id = sqlc.arg(id) AND private_service_id = sqlc.arg(private_service_id) FOR UPDATE;
 
 -- name: GetPrivateRunBindingIdentityKey :one
--- use this enrolled public key after locking the prepared run and compare the
--- publisherAuth token's identity, grant and key ID with the same locked row.
+-- a prepared run requires a current key before binding. an already bound run
+-- may retry its exact signed binding after key rotation, as with public URLs.
 SELECT publisher_key.public_key FROM control.private_service_runs run
 JOIN control.publisher_identity_keys publisher_key
     ON publisher_key.id = run.publisher_key_id
     AND publisher_key.publisher_identity_id = run.publisher_identity_id
-    AND publisher_key.retired_at IS NULL
 JOIN control.publisher_identities publisher ON publisher.id = run.publisher_identity_id
     AND publisher.revoked_at IS NULL AND publisher.team_id = run.team_id
 JOIN control.publisher_grants grant_record ON grant_record.id = run.publisher_grant_id
@@ -178,8 +185,8 @@ WHERE run.id = sqlc.arg(id) AND run.run_number = sqlc.arg(run_number)
 RETURNING run.*;
 
 -- name: RetryPrivateServiceRunKeyBinding :one
--- the caller re-verifies the SAME signed binding using the enrolled identity
--- and atomically rotates only the run token. the public key is immutable.
+-- the caller re-verifies the SAME signed binding against its enrolled key,
+-- including a retired key for this exact bound run, and rotates only the token.
 UPDATE control.private_service_runs run SET run_token_digest = sqlc.arg(run_token_digest)
 FROM control.publisher_grants grant_record, control.publisher_identities publisher,
     control.publisher_identity_keys publisher_key, control.private_services service
@@ -197,22 +204,31 @@ WHERE run.id = sqlc.arg(id) AND run.run_number = sqlc.arg(run_number)
     AND publisher.id = run.publisher_identity_id AND publisher.revoked_at IS NULL
     AND publisher.team_id = service.team_id
     AND publisher_key.id = run.publisher_key_id AND publisher_key.publisher_identity_id = publisher.id
-    AND publisher_key.retired_at IS NULL
 RETURNING run.*;
 
 -- name: AdvancePrivateServiceRunNumber :one
 UPDATE control.private_services SET next_run_number = next_run_number + 1, updated_at = sqlc.arg(now)
-WHERE id = sqlc.arg(id) AND enabled AND deleted_at IS NULL RETURNING next_run_number - 1 AS run_number;
+WHERE id = sqlc.arg(id) AND enabled AND deleted_at IS NULL RETURNING (next_run_number - 1)::bigint AS run_number;
 
 -- name: ReadyPrivateServiceRun :one
-UPDATE control.private_service_runs run SET state = 'ready', ready_at = sqlc.arg(now)
+UPDATE control.private_service_runs run SET state = 'ready', ready_at = COALESCE(run.ready_at, sqlc.arg(now))
 WHERE run.id = sqlc.arg(id) AND run.run_number = sqlc.arg(run_number)
     AND run.private_service_id = sqlc.arg(private_service_id)
     AND run.state = 'starting' AND run.closed_at IS NULL AND run.publisher_expires_at > sqlc.arg(now)
     AND EXISTS (SELECT 1 FROM control.private_service_connection_slots slot
-        WHERE slot.private_run_id = run.id AND slot.state = 'ready'
-        GROUP BY slot.private_run_id HAVING count(*) = 2)
+        JOIN control.relay_leases lease ON lease.relay_id = slot.relay_id
+          AND lease.relay_run_id = slot.relay_run_id AND lease.relay_lease_revision = slot.relay_lease_revision
+          AND lease.relay_service_id = slot.relay_service_id
+          AND lease.lease_expires_at > sqlc.arg(now) AND NOT lease.draining
+        WHERE slot.private_run_id = run.id AND slot.state = 'ready' AND slot.session_open
+        GROUP BY slot.private_run_id
+        HAVING count(*) >= CASE WHEN run.ready_at IS NULL THEN 2 ELSE 1 END)
 RETURNING run.*;
+
+-- name: DemotePrivateServiceRun :execrows
+UPDATE control.private_service_runs SET state = 'starting'
+WHERE id = sqlc.arg(id) AND private_service_id = sqlc.arg(private_service_id)
+    AND run_number = sqlc.arg(run_number) AND state = 'ready' AND closed_at IS NULL;
 
 -- name: RenewPrivateServiceRun :one
 UPDATE control.private_service_runs run SET publisher_expires_at = sqlc.arg(publisher_expires_at)
@@ -248,6 +264,41 @@ VALUES (sqlc.arg(publisher_connection_id), sqlc.arg(private_run_id), sqlc.arg(pr
     sqlc.arg(relay_service_id), sqlc.arg(relay_address), sqlc.arg(tls_server_name),
     sqlc.arg(credential_digest), sqlc.arg(credential_expires_at), 'assigned') RETURNING *;
 
+-- name: ListPrivateServiceConnectionSlots :many
+SELECT * FROM control.private_service_connection_slots WHERE private_run_id = sqlc.arg(private_run_id)
+ORDER BY connection_slot;
+
+-- name: ListPrivateServiceConnectionSlotsNeedingReplacement :many
+-- never modify a connected or ready slot that still has its matching live
+-- relay lease. its streams and assignment remain owned by that relay.
+SELECT slot.* FROM control.private_service_connection_slots slot
+WHERE slot.private_run_id = sqlc.arg(private_run_id)
+    AND (slot.state = 'closed' OR slot.state = 'assigned' AND slot.credential_expires_at <= sqlc.arg(now)
+        OR slot.state IN ('connected', 'ready') AND NOT EXISTS (
+            SELECT 1 FROM control.relay_leases lease
+            WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
+              AND lease.relay_lease_revision = slot.relay_lease_revision
+              AND lease.relay_service_id = slot.relay_service_id
+              AND lease.lease_expires_at > sqlc.arg(now) AND NOT lease.draining))
+ORDER BY slot.connection_slot;
+
+-- name: ExpirePrivateServiceConnectionSlot :execrows
+UPDATE control.private_service_connection_slots slot SET state = 'closed', relay_id = NULL,
+    relay_run_id = NULL, relay_lease_revision = NULL
+WHERE slot.publisher_connection_id = sqlc.arg(publisher_connection_id)
+    AND slot.private_run_id = sqlc.arg(private_run_id)
+    AND slot.state IN ('connected', 'ready')
+    AND NOT EXISTS (SELECT 1 FROM control.relay_leases lease
+        WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
+          AND lease.relay_lease_revision = slot.relay_lease_revision
+          AND lease.relay_service_id = slot.relay_service_id
+          AND lease.lease_expires_at > sqlc.arg(now) AND NOT lease.draining);
+
+-- name: DeletePrivateServiceConnectionSlot :execrows
+DELETE FROM control.private_service_connection_slots WHERE publisher_connection_id = sqlc.arg(publisher_connection_id)
+    AND private_run_id = sqlc.arg(private_run_id)
+    AND (state = 'closed' OR state = 'assigned' AND credential_expires_at <= sqlc.arg(now));
+
 -- name: ClaimPrivateServiceConnectionSlot :one
 UPDATE control.private_service_connection_slots slot
 SET relay_id = sqlc.arg(relay_id), relay_run_id = sqlc.arg(relay_run_id),
@@ -272,6 +323,7 @@ WHERE slot.publisher_connection_id = sqlc.arg(publisher_connection_id)
     AND run.closed_at IS NULL AND run.publisher_expires_at > sqlc.arg(now)
     AND lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
     AND lease.relay_lease_revision = slot.relay_lease_revision
+    AND lease.relay_service_id = slot.relay_service_id
     AND lease.lease_expires_at > sqlc.arg(now) AND NOT lease.draining
 RETURNING slot.*;
 
@@ -347,11 +399,23 @@ UPDATE control.private_connector_sessions session
 SET bound_at = sqlc.arg(now), source_ip = sqlc.arg(observed_source_ip)::inet,
     ingress_id = sqlc.arg(ingress_id), ingress_run_id = sqlc.arg(ingress_run_id),
     ingress_lease_revision = sqlc.arg(ingress_lease_revision)
-FROM control.ingress_leases ingress, control.identities person
+FROM control.ingress_leases ingress, control.identities person, control.private_services service
 WHERE session.id = sqlc.arg(id) AND session.credential_digest = sqlc.arg(credential_digest)
     AND session.private_service_id = sqlc.arg(private_service_id)
     AND session.bound_at IS NULL AND session.revoked_at IS NULL AND session.expires_at > sqlc.arg(now)
     AND person.id = session.identity_id AND person.disabled_at IS NULL
+    AND service.id = session.private_service_id AND service.enabled AND service.deleted_at IS NULL
+    AND EXISTS (SELECT 1 FROM control.teams team WHERE team.id = service.team_id AND team.deleted_at IS NULL)
+    AND (EXISTS (SELECT 1 FROM control.team_memberships member
+        WHERE member.team_id = service.team_id AND member.identity_id = person.id
+            AND member.removed_at IS NULL AND member.role IN ('owner', 'admin'))
+      OR EXISTS (SELECT 1 FROM control.private_service_grants visitor_grant
+        LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
+            AND member.identity_id = person.id AND member.removed_at IS NULL
+        WHERE visitor_grant.private_service_id = service.id AND visitor_grant.revoked_at IS NULL
+            AND (visitor_grant.expires_at IS NULL OR visitor_grant.expires_at > sqlc.arg(now))
+            AND ((visitor_grant.kind = 'identity' AND visitor_grant.identity_id = person.id)
+                OR (visitor_grant.kind = 'team' AND member.id IS NOT NULL))))
     AND ingress.ingress_id = sqlc.arg(ingress_id) AND ingress.ingress_run_id = sqlc.arg(ingress_run_id)
     AND ingress.ingress_lease_revision = sqlc.arg(ingress_lease_revision)
     AND ingress.lease_expires_at > sqlc.arg(now) AND NOT ingress.draining
@@ -400,8 +464,11 @@ WHERE s.id = sqlc.arg(private_service_id) AND r.id = sqlc.arg(private_run_id)
     AND sqlc.arg(expires_at)::timestamptz > sqlc.arg(now)
     AND sqlc.arg(expires_at)::timestamptz <= sqlc.arg(now)::timestamptz + interval '1 minute'
     AND EXISTS (SELECT 1 FROM control.private_service_connection_slots slot
-        WHERE slot.private_run_id = r.id AND slot.state = 'ready'
-        GROUP BY slot.private_run_id HAVING count(*) = 2)
+        JOIN control.relay_leases lease ON lease.relay_id = slot.relay_id
+          AND lease.relay_run_id = slot.relay_run_id AND lease.relay_lease_revision = slot.relay_lease_revision
+          AND lease.relay_service_id = slot.relay_service_id
+          AND lease.lease_expires_at > sqlc.arg(now) AND NOT lease.draining
+        WHERE slot.private_run_id = r.id AND slot.state = 'ready' AND slot.session_open)
     AND (EXISTS (SELECT 1 FROM control.team_memberships m WHERE m.team_id = s.team_id
         AND m.identity_id = i.id AND m.removed_at IS NULL AND m.role IN ('owner', 'admin'))
       OR EXISTS (SELECT 1 FROM control.private_service_grants g
@@ -437,6 +504,12 @@ WHERE ticket.digest = sqlc.arg(digest) AND ticket.private_service_id = sqlc.arg(
     AND ingress.lease_expires_at > sqlc.arg(now) AND NOT ingress.draining
     AND r.run_number = ticket.run_number AND r.stream_public_key = ticket.stream_public_key
     AND r.closed_at IS NULL AND r.state = 'ready' AND r.publisher_expires_at > sqlc.arg(now)
+    AND EXISTS (SELECT 1 FROM control.private_service_connection_slots slot
+        JOIN control.relay_leases lease ON lease.relay_id = slot.relay_id
+          AND lease.relay_run_id = slot.relay_run_id AND lease.relay_lease_revision = slot.relay_lease_revision
+          AND lease.relay_service_id = slot.relay_service_id
+          AND lease.lease_expires_at > sqlc.arg(now) AND NOT lease.draining
+        WHERE slot.private_run_id = r.id AND slot.state = 'ready' AND slot.session_open)
     AND s.id = ticket.private_service_id AND s.enabled AND s.deleted_at IS NULL
     AND EXISTS (SELECT 1 FROM control.teams team WHERE team.id = s.team_id AND team.deleted_at IS NULL)
     AND EXISTS (SELECT 1 FROM control.publisher_grants pg
@@ -460,3 +533,92 @@ RETURNING ticket.*;
 DELETE FROM control.private_service_tickets WHERE digest IN
     (SELECT expired.digest FROM control.private_service_tickets expired
         WHERE expired.expires_at <= sqlc.arg(now) LIMIT 100);
+
+-- name: RecheckPrivateServiceVisitor :one
+-- use only the ingress-observed source and the visitor ID attached at atomic
+-- ticket consumption. the expired one-use ticket is evidence of admission,
+-- not a reusable credential or a reason to end an otherwise live stream.
+WITH permitted AS (
+    SELECT LEAST(sqlc.arg(now)::timestamptz + interval '2 minutes', run.publisher_expires_at,
+      ingress.lease_expires_at, publisher_grant.expires_at,
+      (SELECT MAX(relay.lease_expires_at) FROM control.private_service_connection_slots slot
+          JOIN control.relay_leases relay ON relay.relay_id = slot.relay_id
+            AND relay.relay_run_id = slot.relay_run_id
+            AND relay.relay_lease_revision = slot.relay_lease_revision
+            AND relay.relay_service_id = slot.relay_service_id
+            AND relay.lease_expires_at > sqlc.arg(now) AND NOT relay.draining
+          WHERE slot.private_run_id = run.id AND slot.state = 'ready' AND slot.session_open),
+      CASE WHEN EXISTS (SELECT 1 FROM control.team_memberships owner_member
+          WHERE owner_member.team_id = service.team_id AND owner_member.identity_id = person.id
+            AND owner_member.removed_at IS NULL AND owner_member.role IN ('owner', 'admin'))
+        OR EXISTS (SELECT 1 FROM control.private_service_grants permanent
+          LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
+            AND member.identity_id = person.id AND member.removed_at IS NULL
+          WHERE permanent.private_service_id = service.id AND permanent.revoked_at IS NULL
+            AND permanent.expires_at IS NULL
+            AND ((permanent.kind = 'identity' AND permanent.identity_id = person.id)
+              OR (permanent.kind = 'team' AND member.id IS NOT NULL)))
+      THEN 'infinity'::timestamptz ELSE
+        (SELECT MAX(limited.expires_at) FROM control.private_service_grants limited
+          LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
+            AND member.identity_id = person.id AND member.removed_at IS NULL
+          WHERE limited.private_service_id = service.id AND limited.revoked_at IS NULL
+            AND limited.expires_at > sqlc.arg(now)
+            AND ((limited.kind = 'identity' AND limited.identity_id = person.id)
+              OR (limited.kind = 'team' AND member.id IS NOT NULL))) END) AS valid_until
+    FROM control.private_service_tickets ticket
+    JOIN control.private_connector_sessions session ON session.id = ticket.connector_session_id
+    JOIN control.private_service_runs run ON run.id = ticket.private_run_id
+    JOIN control.private_services service ON service.id = ticket.private_service_id
+    JOIN control.teams team ON team.id = service.team_id AND team.deleted_at IS NULL
+    JOIN control.identities person ON person.id = ticket.identity_id AND person.disabled_at IS NULL
+    JOIN control.ingress_leases ingress ON ingress.ingress_id = session.ingress_id
+      AND ingress.ingress_run_id = session.ingress_run_id
+      AND ingress.ingress_lease_revision = session.ingress_lease_revision
+    JOIN control.publisher_grants publisher_grant ON publisher_grant.id = run.publisher_grant_id
+    JOIN control.publisher_identities publisher ON publisher.id = run.publisher_identity_id
+    WHERE ticket.private_service_id = sqlc.arg(private_service_id)
+      AND ticket.private_run_id = sqlc.arg(private_run_id)
+      AND ticket.run_number = sqlc.arg(run_number)
+      AND ticket.connector_session_id = sqlc.arg(connector_session_id)
+      AND ticket.identity_id = sqlc.arg(identity_id)
+      AND ticket.visitor_connection_id = sqlc.arg(visitor_connection_id)
+      AND ticket.consumed_at IS NOT NULL
+      AND ticket.source_ip = sqlc.arg(observed_source_ip)::inet
+      AND session.private_service_id = service.id AND session.identity_id = person.id
+      AND session.bound_at IS NOT NULL AND session.revoked_at IS NULL
+      AND session.source_ip = ticket.source_ip
+      AND session.ingress_id = sqlc.arg(ingress_id)
+      AND session.ingress_run_id = sqlc.arg(ingress_run_id)
+      AND session.ingress_lease_revision = sqlc.arg(ingress_lease_revision)
+      AND ingress.lease_expires_at > sqlc.arg(now) AND NOT ingress.draining
+      AND service.enabled AND service.deleted_at IS NULL
+      AND run.private_service_id = service.id AND run.run_number = ticket.run_number
+      AND run.state = 'ready' AND run.closed_at IS NULL AND run.publisher_expires_at > sqlc.arg(now)
+      AND run.stream_public_key = ticket.stream_public_key
+      AND publisher_grant.publisher_identity_id = publisher.id
+      AND publisher_grant.private_service_id = service.id
+      AND publisher_grant.kind = 'private_service' AND publisher_grant.revoked_at IS NULL
+      AND (publisher_grant.expires_at IS NULL OR publisher_grant.expires_at > sqlc.arg(now))
+      AND publisher.team_id = service.team_id AND publisher.revoked_at IS NULL
+      AND EXISTS (SELECT 1 FROM control.private_service_connection_slots slot
+          JOIN control.relay_leases relay ON relay.relay_id = slot.relay_id
+            AND relay.relay_run_id = slot.relay_run_id
+            AND relay.relay_lease_revision = slot.relay_lease_revision
+            AND relay.relay_service_id = slot.relay_service_id
+            AND relay.lease_expires_at > sqlc.arg(now) AND NOT relay.draining
+          WHERE slot.private_run_id = run.id AND slot.state = 'ready' AND slot.session_open)
+      AND (EXISTS (SELECT 1 FROM control.team_memberships member
+          WHERE member.team_id = service.team_id AND member.identity_id = person.id
+            AND member.removed_at IS NULL AND member.role IN ('owner', 'admin'))
+        OR EXISTS (SELECT 1 FROM control.private_service_grants grant_record
+          LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
+            AND member.identity_id = person.id AND member.removed_at IS NULL
+          WHERE grant_record.private_service_id = service.id
+            AND grant_record.revoked_at IS NULL
+            AND (grant_record.expires_at IS NULL OR grant_record.expires_at > sqlc.arg(now))
+            AND ((grant_record.kind = 'identity' AND grant_record.identity_id = person.id)
+              OR (grant_record.kind = 'team' AND member.id IS NOT NULL))))
+)
+SELECT EXISTS (SELECT 1 FROM permitted)::boolean AS allowed,
+    COALESCE((SELECT valid_until FROM permitted LIMIT 1), sqlc.arg(now)::timestamptz)::timestamptz AS valid_until;

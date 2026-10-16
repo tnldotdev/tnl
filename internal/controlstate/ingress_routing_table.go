@@ -226,8 +226,11 @@ func (d *Database) ingressRoutingTableEvent(
 		projection.CanonicalHostname != canonicalHostname {
 		return IngressRoutingTableEvent{}, errors.New("controlstate: ingress routing-table projection identity mismatch")
 	}
+	if projection.Traffic != nil && (!projection.Traffic.Valid() || projection.Traffic.RatePer == 0) {
+		return IngressRoutingTableEvent{}, errors.New("controlstate: ingress routing-table traffic limits are invalid")
+	}
 	if projection.IPPolicy == IPPolicyHashedAllowlist {
-		if projection.IPPolicyKeyID == "" || len(projection.AllowedIPHashes) == 0 {
+		if projection.IPPolicyKeyID == "" {
 			return IngressRoutingTableEvent{}, errors.New("controlstate: hashed IP policy is invalid")
 		}
 		if len(policyCiphertext) != 0 {

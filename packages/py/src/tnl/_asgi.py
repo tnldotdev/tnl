@@ -7,10 +7,11 @@ import os
 import re
 import secrets
 import socket
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import uvicorn
 from starlette.types import ASGIApp
@@ -43,6 +44,38 @@ class Limits:
     requests: int | None = None
     rate: RateLimit | None = None
     concurrency: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AccessPolicy:
+    """a visitor access mode with an optional additional network restriction."""
+
+    mode: Literal["restricted", "anonymous"] = "restricted"
+    ip: tuple[str, ...] = ()
+
+
+def _access_payload(
+    access: Literal["restricted", "anonymous"] | AccessPolicy | None,
+) -> tuple[str | None, list[str] | None]:
+    if access is None:
+        return None, None
+    if isinstance(access, str):
+        if access not in ("restricted", "anonymous"):
+            raise TnlError("sdk.configuration_invalid", "access must be restricted or anonymous")
+        return access, None
+    if (
+        not isinstance(access, AccessPolicy)
+        or access.mode not in ("restricted", "anonymous")
+        or len(access.ip) > 32
+    ):
+        raise TnlError("sdk.configuration_invalid", "invalid visitor access policy")
+    if any(not isinstance(value, str) or not value for value in access.ip) or len(
+        set(access.ip)
+    ) != len(access.ip):
+        raise TnlError(
+            "sdk.configuration_invalid", "visitor IP list contains invalid or duplicate entries"
+        )
+    return access.mode, list(access.ip) if access.ip else None
 
 
 def _limit_payload(value: Limits | None) -> dict[str, object] | None:
@@ -88,8 +121,8 @@ class Tunnel:
         directory: str,
         credential: str,
         server_url: str | None,
-        allow_ip: Sequence[str] | None,
-        allow_all_ips: bool,
+        access_mode: str | None,
+        ip: list[str] | None,
         limits: Limits | None,
     ) -> None:
         self._native = native
@@ -113,10 +146,10 @@ class Tunnel:
         }
         if server_url is not None:
             self._payload["server_url"] = server_url
-        if allow_ip is not None:
-            self._payload["allow_ip"] = list(allow_ip)
-        if allow_all_ips:
-            self._payload["allow_all_ips"] = True
+        if access_mode is not None:
+            self._payload["access_mode"] = access_mode
+        if ip is not None:
+            self._payload["ip"] = ip
         if limits is not None:
             self._payload["limits"] = _limit_payload(limits)
         self._registered = False
@@ -325,8 +358,7 @@ async def open(
     credential: str | None = None,
     server: str | None = None,
     directory: str | Path | None = None,
-    allow_ip: Sequence[str] | None = None,
-    allow_all_ips: bool = False,
+    access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
     limits: Limits | None = None,
 ) -> AsyncIterator[Tunnel]:
     """open an ASGI app after lifespan startup and close its URL on exit."""
@@ -337,8 +369,7 @@ async def open(
         raise CredentialRequired()
     if _credential.fullmatch(selected) is None:
         raise TnlError("sdk.credential_rejected", "invalid ad-hoc credential")
-    if allow_all_ips and allow_ip is not None:
-        raise TnlError("sdk.configuration_invalid", "choose allow_ip or allow_all_ips")
+    access_mode, ip = _access_payload(access)
     _limit_payload(limits)
     root = str(Path(directory or os.getcwd()).resolve())
     asgi_server, task, listener = await _start_asgi(app)
@@ -350,8 +381,8 @@ async def open(
         root,
         selected,
         server,
-        allow_ip,
-        allow_all_ips,
+        access_mode,
+        ip,
         limits,
     )
     try:

@@ -5,6 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import type { FeedbackAPI } from "./api.ts";
 import { Toolbar } from "./toolbar.tsx";
 import type { FeedbackEvent, Summary, Thread } from "./model.ts";
+import { FeedbackError } from "./errors.ts";
 
 const id = "fb_0123456789abcdefghijkl";
 const report: Thread = {
@@ -78,6 +79,43 @@ afterEach(() => {
   document.getSelection()?.removeAllRanges();
   window.history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
+});
+
+test("sign-in failures preserve the report and evidence until a manual retry with the same key", async () => {
+  const api = fixture();
+  vi.mocked(api.report).mockRejectedValueOnce(new FeedbackError("sign_in_required"));
+  const { user } = mount(api);
+  await openDraft(user, appButton());
+  const text = screen.getByRole("textbox", { name: "Feedback", exact: true });
+  await user.type(text, "keep this draft");
+  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  const signIn = await screen.findByRole("link", { name: "sign in in another tab" });
+  expect(signIn.getAttribute("target")).toBe("_blank");
+  expect((text as HTMLTextAreaElement).value).toBe("keep this draft");
+  expect(api.report).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await waitFor(() => expect(api.report).toHaveBeenCalledTimes(2));
+  const calls = vi.mocked(api.report).mock.calls;
+  expect(calls[1]?.[0]).toEqual(calls[0]?.[0]);
+  expect(calls[1]?.[1]).toEqual(calls[0]?.[1]);
+});
+
+test("a rejected reply keeps its text and requires an explicit retry", async () => {
+  const api = fixture([{ ...report, report: { ...report.report }, id }]);
+  vi.mocked(api.append).mockRejectedValueOnce(new FeedbackError("sign_in_required"));
+  const { user } = mount(api);
+  await openThread(user);
+  const text = screen.getByRole("textbox", { name: "Reply" });
+  await user.type(text, "reply draft");
+  await user.click(screen.getByRole("button", { name: "Send reply", exact: true }));
+  await screen.findByRole("link", { name: "sign in in another tab" });
+  expect((text as HTMLTextAreaElement).value).toBe("reply draft");
+  expect(api.append).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Send reply", exact: true }));
+  await waitFor(() => expect(api.append).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(api.append).mock.calls[1]?.slice(0, 4)).toEqual(
+    vi.mocked(api.append).mock.calls[0]?.slice(0, 4),
+  );
 });
 
 test("a signed-in visitor sends feedback under the account name instead of an unverified name", async () => {

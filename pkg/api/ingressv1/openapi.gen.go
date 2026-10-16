@@ -39,6 +39,24 @@ func (e HashedIPPrefixFamily) Valid() bool {
 	}
 }
 
+// Defines values for IngressRoutingTableEntryAccessMode.
+const (
+	Anonymous  IngressRoutingTableEntryAccessMode = "anonymous"
+	Restricted IngressRoutingTableEntryAccessMode = "restricted"
+)
+
+// Valid indicates whether the value is a known member of the IngressRoutingTableEntryAccessMode enum.
+func (e IngressRoutingTableEntryAccessMode) Valid() bool {
+	switch e {
+	case Anonymous:
+		return true
+	case Restricted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for IngressRoutingTableEntryIpPolicy.
 const (
 	AllowAll        IngressRoutingTableEntryIpPolicy = "allow_all"
@@ -254,10 +272,11 @@ type IngressRoutingPublisherConnection struct {
 
 // IngressRoutingTableEntry defines model for IngressRoutingTableEntry.
 type IngressRoutingTableEntry struct {
-	AllowedIpHashes   []HashedIPPrefix                 `json:"allowed_ip_hashes"`
-	CanonicalHostname string                           `json:"canonical_hostname"`
-	IngressPoolId     *Identifier                      `json:"ingress_pool_id,omitempty"`
-	IpPolicy          IngressRoutingTableEntryIpPolicy `json:"ip_policy"`
+	AccessMode        IngressRoutingTableEntryAccessMode `json:"access_mode"`
+	AllowedIpHashes   []HashedIPPrefix                   `json:"allowed_ip_hashes"`
+	CanonicalHostname string                             `json:"canonical_hostname"`
+	IngressPoolId     *Identifier                        `json:"ingress_pool_id,omitempty"`
+	IpPolicy          IngressRoutingTableEntryIpPolicy   `json:"ip_policy"`
 
 	// IpPolicyKey Purpose-specific verifier sent only on the authenticated private API; never persisted with routing events.
 	IpPolicyKey    *[]byte `json:"ip_policy_key,omitempty"`
@@ -276,6 +295,9 @@ type IngressRoutingTableEntry struct {
 	// Traffic Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
 	Traffic *IngressTrafficLimits `json:"traffic,omitempty"`
 }
+
+// IngressRoutingTableEntryAccessMode defines model for IngressRoutingTableEntry.AccessMode.
+type IngressRoutingTableEntryAccessMode string
 
 // IngressRoutingTableEntryIpPolicy defines model for IngressRoutingTableEntry.IpPolicy.
 type IngressRoutingTableEntryIpPolicy string
@@ -405,12 +427,14 @@ type PrivateServiceProjectionKind string
 // PrivateServiceRelay defines model for PrivateServiceRelay.
 type PrivateServiceRelay struct {
 	ConnectionAssignmentRevision int64      `json:"connection_assignment_revision"`
+	ConnectionSlot               int        `json:"connection_slot"`
 	InternalRelayAddress         string     `json:"internal_relay_address"`
 	LeaseExpiresAt               time.Time  `json:"lease_expires_at"`
 	PublisherConnectionId        Identifier `json:"publisher_connection_id"`
 	RelayId                      Identifier `json:"relay_id"`
 	RelayLeaseRevision           int64      `json:"relay_lease_revision"`
 	RelayRunId                   Identifier `json:"relay_run_id"`
+	RelayServiceId               Identifier `json:"relay_service_id"`
 }
 
 // PrivateServiceSnapshot defines model for PrivateServiceSnapshot.
@@ -436,14 +460,43 @@ type PrivateServiceTicketClaim struct {
 
 // PrivateServiceTicketResult defines model for PrivateServiceTicketResult.
 type PrivateServiceTicketResult struct {
-	ConnectorSessionId  PrivateConnectorSessionID `json:"connector_session_id"`
-	ExpiresAt           time.Time                 `json:"expires_at"`
-	IdentityId          Identifier                `json:"identity_id"`
-	ObservedSourceIp    string                    `json:"observed_source_ip"`
-	PrivateRunId        PrivateRunID              `json:"private_run_id"`
-	PrivateServiceId    PrivateServiceID          `json:"private_service_id"`
-	RunNumber           int64                     `json:"run_number"`
-	VisitorConnectionId VisitorConnectionID       `json:"visitor_connection_id"`
+	ConnectorSessionId PrivateConnectorSessionID `json:"connector_session_id"`
+	ExpiresAt          time.Time                 `json:"expires_at"`
+	IdentityId         Identifier                `json:"identity_id"`
+	ObservedSourceIp   string                    `json:"observed_source_ip"`
+	PrivateRunId       PrivateRunID              `json:"private_run_id"`
+	PrivateServiceId   PrivateServiceID          `json:"private_service_id"`
+	RunNumber          int64                     `json:"run_number"`
+
+	// ValidUntil Hard bound for an admitted stream from the current grant, publisher run, ingress and live relay deadlines, and at most two minutes. Connector-session credential expiry applies only to new streams.
+	ValidUntil          time.Time           `json:"valid_until"`
+	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
+}
+
+// PrivateServiceVisitorRecheck defines model for PrivateServiceVisitorRecheck.
+type PrivateServiceVisitorRecheck struct {
+	ConnectorSessionId   PrivateConnectorSessionID `json:"connector_session_id"`
+	IdentityId           Identifier                `json:"identity_id"`
+	IngressLeaseRevision int64                     `json:"ingress_lease_revision"`
+	IngressRunId         Identifier                `json:"ingress_run_id"`
+
+	// ObservedSourceIp Copied from the original ingress-observed mux source; never supplied by a visitor.
+	ObservedSourceIp    string              `json:"observed_source_ip"`
+	PrivateRunId        PrivateRunID        `json:"private_run_id"`
+	PrivateServiceId    PrivateServiceID    `json:"private_service_id"`
+	RunNumber           int64               `json:"run_number"`
+	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
+}
+
+// PrivateServiceVisitorRecheckResult defines model for PrivateServiceVisitorRecheckResult.
+type PrivateServiceVisitorRecheckResult struct {
+	Allowed bool `json:"allowed"`
+
+	// RecheckAt Ingress must check again no later than this time
+	RecheckAt time.Time `json:"recheck_at"`
+
+	// ValidUntil Current hard deadline, including grant and run expiration; never later than two minutes from this decision.
+	ValidUntil time.Time `json:"valid_until"`
 }
 
 // Problem defines model for Problem.
@@ -540,6 +593,9 @@ type ClaimPrivateConnectorSessionJSONRequestBody = PrivateConnectorSessionClaim
 
 // ClaimPrivateServiceTicketJSONRequestBody defines body for ClaimPrivateServiceTicket for application/json ContentType.
 type ClaimPrivateServiceTicketJSONRequestBody = PrivateServiceTicketClaim
+
+// RecheckPrivateServiceVisitorJSONRequestBody defines body for RecheckPrivateServiceVisitor for application/json ContentType.
+type RecheckPrivateServiceVisitorJSONRequestBody = PrivateServiceVisitorRecheck
 
 // ObservePublicURLRecoveryJSONRequestBody defines body for ObservePublicURLRecovery for application/json ContentType.
 type ObservePublicURLRecoveryJSONRequestBody = PublicURLRecoveryObservationRequest
@@ -678,6 +734,18 @@ type ClientInterface interface {
 
 	// GetPrivateServiceEvents performs a GET /internal/v1/ingresses/{ingress_id}/private-services/events (the `GetPrivateServiceEvents` operationId) request.
 	GetPrivateServiceEvents(ctx context.Context, ingressId IngressID, params *GetPrivateServiceEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RecheckPrivateServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+	RecheckPrivateServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RecheckPrivateServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+	RecheckPrivateServiceVisitor(ctx context.Context, ingressId IngressID, body RecheckPrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetPrivateServiceSnapshot performs a GET /internal/v1/ingresses/{ingress_id}/private-services/snapshot (the `GetPrivateServiceSnapshot` operationId) request.
 	//
@@ -872,6 +940,38 @@ func (c *Client) ClaimPrivateServiceTicket(ctx context.Context, ingressId Ingres
 // GetPrivateServiceEvents performs a GET /internal/v1/ingresses/{ingress_id}/private-services/events (the `GetPrivateServiceEvents` operationId) request.
 func (c *Client) GetPrivateServiceEvents(ctx context.Context, ingressId IngressID, params *GetPrivateServiceEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPrivateServiceEventsRequest(c.Server, ingressId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RecheckPrivateServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+//
+// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+func (c *Client) RecheckPrivateServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRecheckPrivateServiceVisitorRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RecheckPrivateServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+func (c *Client) RecheckPrivateServiceVisitor(ctx context.Context, ingressId IngressID, body RecheckPrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRecheckPrivateServiceVisitorRequest(c.Server, ingressId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1279,6 +1379,53 @@ func NewGetPrivateServiceEventsRequest(server string, ingressId IngressID, param
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewRecheckPrivateServiceVisitorRequest calls the generic RecheckPrivateServiceVisitor builder with application/json body
+func NewRecheckPrivateServiceVisitorRequest(server string, ingressId IngressID, body RecheckPrivateServiceVisitorJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRecheckPrivateServiceVisitorRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewRecheckPrivateServiceVisitorRequestWithBody constructs an http.Request for the RecheckPrivateServiceVisitor method, with any body, and a specified content type
+func NewRecheckPrivateServiceVisitorRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/private-services/recheck", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -1763,6 +1910,20 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	GetPrivateServiceEventsWithResponse(ctx context.Context, ingressId IngressID, params *GetPrivateServiceEventsParams, reqEditors ...RequestEditorFn) (*GetPrivateServiceEventsResponse, error)
 
+	// RecheckPrivateServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RecheckPrivateServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecheckPrivateServiceVisitorResponse, error)
+
+	// RecheckPrivateServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+	RecheckPrivateServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body RecheckPrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*RecheckPrivateServiceVisitorResponse, error)
+
 	// GetPrivateServiceSnapshotWithResponse performs a GET /internal/v1/ingresses/{ingress_id}/private-services/snapshot (the `GetPrivateServiceSnapshot` operationId) request.
 	//
 	// ID-keyed private projections for a current ingress lease. These contain no stream key, ticket or service hostname.
@@ -2061,6 +2222,54 @@ func (r GetPrivateServiceEventsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetPrivateServiceEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RecheckPrivateServiceVisitorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServiceVisitorRecheckResult
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RecheckPrivateServiceVisitorResponse) GetJSON200() *PrivateServiceVisitorRecheckResult {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RecheckPrivateServiceVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RecheckPrivateServiceVisitorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RecheckPrivateServiceVisitorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RecheckPrivateServiceVisitorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RecheckPrivateServiceVisitorResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2470,6 +2679,32 @@ func (c *ClientWithResponses) GetPrivateServiceEventsWithResponse(ctx context.Co
 	return ParseGetPrivateServiceEventsResponse(rsp)
 }
 
+// RecheckPrivateServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+//
+// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RecheckPrivateServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecheckPrivateServiceVisitorResponse, error) {
+	rsp, err := c.RecheckPrivateServiceVisitorWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRecheckPrivateServiceVisitorResponse(rsp)
+}
+
+// RecheckPrivateServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+func (c *ClientWithResponses) RecheckPrivateServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body RecheckPrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*RecheckPrivateServiceVisitorResponse, error) {
+	rsp, err := c.RecheckPrivateServiceVisitor(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRecheckPrivateServiceVisitorResponse(rsp)
+}
+
 // GetPrivateServiceSnapshotWithResponse performs a GET /internal/v1/ingresses/{ingress_id}/private-services/snapshot (the `GetPrivateServiceSnapshot` operationId) request.
 //
 // ID-keyed private projections for a current ingress lease. These contain no stream key, ticket or service hostname.
@@ -2752,6 +2987,39 @@ func ParseGetPrivateServiceEventsResponse(rsp *http.Response) (*GetPrivateServic
 	return response, nil
 }
 
+// ParseRecheckPrivateServiceVisitorResponse parses an HTTP response from a RecheckPrivateServiceVisitorWithResponse call
+func ParseRecheckPrivateServiceVisitorResponse(rsp *http.Response) (*RecheckPrivateServiceVisitorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RecheckPrivateServiceVisitorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServiceVisitorRecheckResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetPrivateServiceSnapshotResponse parses an HTTP response from a GetPrivateServiceSnapshotWithResponse call
 func ParseGetPrivateServiceSnapshotResponse(rsp *http.Response) (*GetPrivateServiceSnapshotResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2971,6 +3239,9 @@ type ServerInterface interface {
 	// (GET /internal/v1/ingresses/{ingress_id}/private-services/events)
 	GetPrivateServiceEvents(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetPrivateServiceEventsParams)
 
+	// (POST /internal/v1/ingresses/{ingress_id}/private-services/recheck)
+	RecheckPrivateServiceVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
 	// (GET /internal/v1/ingresses/{ingress_id}/private-services/snapshot)
 	GetPrivateServiceSnapshot(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetPrivateServiceSnapshotParams)
 	// ObservePublicURLRecovery Record the first publisher byte after public URL recovery
@@ -3150,6 +3421,32 @@ func (siw *ServerInterfaceWrapper) GetPrivateServiceEvents(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetPrivateServiceEvents(w, r, ingressId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RecheckPrivateServiceVisitor operation middleware
+func (siw *ServerInterfaceWrapper) RecheckPrivateServiceVisitor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RecheckPrivateServiceVisitor(w, r, ingressId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3574,6 +3871,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/private-services/snapshot", wrapper.GetPrivateServiceSnapshot)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/private-services/events", wrapper.GetPrivateServiceEvents)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/private-services/claim", wrapper.ClaimPrivateServiceTicket)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/private-services/recheck", wrapper.RecheckPrivateServiceVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/register", wrapper.RegisterIngress)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/renew", wrapper.RenewIngress)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/drain", wrapper.DrainIngress)

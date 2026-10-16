@@ -38,6 +38,10 @@ type PublicURL struct {
 	AllowAll          bool
 	Backends          []routebackend.Backend
 	PublicPort        *uint16
+	PublishRunID      string
+	ServiceProtocol   string
+	AccessMode        string
+	Traffic           *TrafficLimits
 }
 
 // LookupFunc returns an empty reason for a current public URL. failure reasons
@@ -77,14 +81,16 @@ type Config struct {
 	RelayHostname                   string
 	HandleRelay                     func(net.Conn) bool
 	HandleRelayChallenge            func(net.Conn) bool
+	PrivateHostname                 string
+	PrivateConnector                *PrivateConnector
 	RequireProxyHeader              bool
 	MaxConnections                  int
-	MaxDeniedConnections            int
 	MaxClientHelloConnections       int
 	MaxChallengeConnections         int
 	MaxHostnameChallengeConnections int
 	MaxControlConnections           int
 	MaxRelayConnections             int
+	MaxPrivateConnections           int
 	OpenTimeout                     time.Duration
 	Metrics                         Metrics
 	Observer                        OperationObserver
@@ -92,6 +98,9 @@ type Config struct {
 	ObserveRecovery                 func(string, uint64, uint64, time.Time)
 	OnError                         func(error)
 	OnForwardingFailure             func(string, uint64, string, ForwardingFailureReason, int)
+	Traffic                         TrafficConfig
+	Pending                         PendingConfig
+	CurrentTrafficRuns              func() (map[TrafficRun]struct{}, bool)
 }
 
 type Server struct {
@@ -100,19 +109,21 @@ type Server struct {
 	openContext context.Context
 	cancelOpens context.CancelFunc
 
-	mu          sync.Mutex
-	connections map[net.Conn]struct{}
-	backends    map[net.Conn]struct{}
-	byPublicURL map[string]int
-	byDenied    map[string]int
-	byChallenge map[string]int
-	pending     int
-	admitted    [connectionKinds]int
-	serving     bool
-	closing     bool
-	done        chan struct{}
-	active      sync.WaitGroup
-	nextBackend atomic.Uint64
+	mu              sync.Mutex
+	connections     map[net.Conn]struct{}
+	backends        map[net.Conn]struct{}
+	byPublicURL     map[string]int
+	byDenied        map[string]int
+	byChallenge     map[string]int
+	pending         int
+	admitted        [connectionKinds]int
+	serving         bool
+	closing         bool
+	done            chan struct{}
+	active          sync.WaitGroup
+	nextBackend     atomic.Uint64
+	traffic         *trafficAdmission
+	pendingVisitors map[string]*visitorAdmission
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
@@ -123,6 +134,15 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		return nil, errors.New("ingress: connection limits must be positive")
 	}
 	if err := admissionDefaults(&config); err != nil {
+		return nil, err
+	}
+	var err error
+	config.Traffic, err = config.Traffic.Resolve()
+	if err != nil {
+		return nil, err
+	}
+	config.Pending, err = config.Pending.Resolve()
+	if err != nil {
 		return nil, err
 	}
 	if config.ServerHostname == "" != (config.HandleControl == nil) {
@@ -137,21 +157,34 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	if config.RelayHostname != "" && config.RelayHostname == config.ServerHostname {
 		return nil, errors.New("ingress: control and relay hostnames must be distinct")
 	}
+	if config.PrivateHostname != "" {
+		host, err := naming.CanonicalizeHostname(config.PrivateHostname)
+		if err != nil || host != config.PrivateHostname || host == config.ServerHostname || host == config.RelayHostname {
+			return nil, errors.New("ingress: private infrastructure hostname is invalid or shared with another handler")
+		}
+	}
+	if config.PrivateConnector != nil && (config.PrivateHostname == "" || config.PrivateConnector.config.Hostname != config.PrivateHostname) {
+		return nil, errors.New("ingress: private connector and infrastructure hostname must match")
+	}
 	if config.OpenTimeout <= 0 {
 		config.OpenTimeout = defaultOpenTimeout
 	}
 	openContext, cancelOpens := context.WithCancel(context.Background())
+	traffic := newTrafficAdmission(config.Traffic, config.Pending)
+	traffic.currentRuns = config.CurrentTrafficRuns
 	return &Server{
-		listener:    listener,
-		config:      config,
-		openContext: openContext,
-		cancelOpens: cancelOpens,
-		connections: make(map[net.Conn]struct{}),
-		backends:    make(map[net.Conn]struct{}),
-		byPublicURL: make(map[string]int),
-		byDenied:    make(map[string]int),
-		byChallenge: make(map[string]int),
-		done:        make(chan struct{}),
+		listener:        listener,
+		config:          config,
+		openContext:     openContext,
+		cancelOpens:     cancelOpens,
+		connections:     make(map[net.Conn]struct{}),
+		backends:        make(map[net.Conn]struct{}),
+		byPublicURL:     make(map[string]int),
+		byDenied:        make(map[string]int),
+		byChallenge:     make(map[string]int),
+		done:            make(chan struct{}),
+		traffic:         traffic,
+		pendingVisitors: make(map[string]*visitorAdmission),
 	}, nil
 }
 
@@ -241,6 +274,16 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		}
 		return nil
 	}
+	if s.traffic != nil {
+		release, reason := s.traffic.source(source.Addr())
+		if reason != "" {
+			s.rejectCapacity(reason)
+			s.observeTraffic("source", "capacity")
+			return nil
+		}
+		s.observeTraffic("source", "accepted")
+		defer release()
+	}
 	_ = public.SetReadDeadline(time.Time{})
 	// fly sends the visitor's original destination in the trusted outer header.
 	// TCP clients can send protocol bytes before any TLS ClientHello.
@@ -268,6 +311,18 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	}
 	hello.ServerName = serverName
 	finishInspection()
+	if s.config.PrivateHostname != "" && hello.ServerName == s.config.PrivateHostname {
+		if s.config.PrivateConnector == nil || hello.ACMETLSALPN || destination.Port() != 443 {
+			return nil
+		}
+		release, rejected := s.admitClass(privateConnection, "")
+		if release == nil {
+			s.rejectCapacity(rejected)
+			return nil
+		}
+		defer release()
+		return s.config.PrivateConnector.Accept(s.openContext, &readerConn{Conn: &addressConn{Conn: public, remote: source, local: destination}, reader: hello.Replay()}, source, destination)
+	}
 	if hello.ServerName == s.config.ServerHostname {
 		if !s.handoff(public, source, destination, hello, controlConnection, s.config.HandleControl) {
 			return nil
@@ -334,6 +389,11 @@ func (s *Server) connectionMetadata(public net.Conn) (netip.AddrPort, netip.Addr
 }
 
 func (s *Server) admit(connection net.Conn) bool {
+	if s.traffic != nil && !s.traffic.process() {
+		s.rejectCapacity("process_connection_rate")
+		s.observeTraffic("source", "capacity")
+		return false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing || s.pending >= s.config.MaxClientHelloConnections {

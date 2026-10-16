@@ -26,6 +26,7 @@ type PublisherConnection struct {
 	opening  int
 	streams  map[*trackedConn]struct{}
 	changed  chan struct{}
+	pending  map[string]*pendingForwarding
 
 	closeOnce sync.Once
 	closeErr  error
@@ -49,10 +50,14 @@ func NewPublisherConnection(
 		claimed.RelayServiceId != ref.RelayServiceID {
 		return nil, errors.New("relay: claimed publisher connection does not match its reference")
 	}
-	return &PublisherConnection{
+	c := &PublisherConnection{
 		ref: ref, claimed: claimed, session: session,
-		streams: make(map[*trackedConn]struct{}), changed: make(chan struct{}),
-	}, nil
+		streams: make(map[*trackedConn]struct{}), changed: make(chan struct{}), pending: make(map[string]*pendingForwarding),
+	}
+	go func() {
+		_ = session.ServeAdmissions(context.Background(), tunnelv1.PublisherAdmissionStream, c.promoteVisitor)
+	}()
+	return c, nil
 }
 
 func (c *PublisherConnection) Ref() tunnelv1.PublisherConnectionRef { return c.ref }
@@ -61,7 +66,7 @@ func (c *PublisherConnection) OpenVisitor(ctx context.Context, visitorConnection
 	return c.openVisitor(ctx, visitorConnectionID, false)
 }
 
-func (c *PublisherConnection) OpenDeniedVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
+func (c *PublisherConnection) OpenPendingVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
 	return c.openVisitor(ctx, visitorConnectionID, true)
 }
 
@@ -75,7 +80,7 @@ func (c *PublisherConnection) openVisitor(ctx context.Context, visitorConnection
 		PublishRunID: c.ref.PublishRunID, PublishRunNumber: c.ref.PublishRunNumber,
 		PublisherConnectionID:        c.ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: c.ref.ConnectionAssignmentRevision,
-		IPPolicyDenied:               denied,
+		AccessPending:                denied,
 	})
 	return c.finishOpen(stream, err)
 }
@@ -294,13 +299,17 @@ func (r *Registry) Candidate(
 	lease relayv1.RelayLease,
 	now time.Time,
 ) (*PublisherConnection, bool) {
+	return r.candidate(header, lease, now, true)
+}
+
+func (r *Registry) candidate(header tunnelv1.InternalForwardingHeader, lease relayv1.RelayLease, now time.Time, opening bool) (*PublisherConnection, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	connection := r.connections[header.PublisherConnectionID]
 	// ingress copied the deadline when control published this public URL.
 	// relay renewals do not republish it; check this process's current lease
 	// so an expired or replaced relay cannot accept a visitor stream.
-	if r.closed || r.draining || connection == nil || !header.PublicUrlExpiresAt.After(now) ||
+	if r.closed || r.draining || connection == nil || opening && !header.PublicUrlExpiresAt.After(now) ||
 		lease.RelayLeaseRevision <= 0 || !lease.LeaseExpiresAt.After(now) || lease.Draining ||
 		lease.RelayServiceId != header.RelayServiceID || lease.RelayId != header.RelayID ||
 		lease.RelayRunId != header.RelayRunID || uint64(lease.RelayLeaseRevision) != header.RelayLeaseRevision {

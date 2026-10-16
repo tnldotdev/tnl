@@ -85,6 +85,8 @@ type ingressSettings struct {
 	leaseRenewalInterval             time.Duration
 	controlRetryInterval             time.Duration
 	routingTableWait                 time.Duration
+	traffic                          ingress.TrafficConfig
+	pending                          ingress.PendingConfig
 }
 
 func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
@@ -100,6 +102,8 @@ func ingressSettingsFrom(cfg tnldconfig.Config) ingressSettings {
 		leaseRenewalInterval:             cfg.LeaseRenewalInterval,
 		controlRetryInterval:             cfg.ControlRetryInterval,
 		routingTableWait:                 cfg.RoutingTableWait,
+		traffic:                          cfg.IngressTraffic(),
+		pending:                          cfg.IngressPending(),
 	}
 }
 
@@ -222,6 +226,8 @@ func (d *daemon) startIngressRuntime(
 			return backends, ingress.LookupCurrent
 		},
 		RequireProxyHeader: settings.requireProxyHeader, MaxConnections: publicCapacity,
+		Traffic: settings.traffic, Pending: settings.pending,
+		CurrentTrafficRuns:              routingTable.CurrentTrafficRuns,
 		MaxClientHelloConnections:       settings.clientHelloConnectionLimit,
 		MaxChallengeConnections:         settings.challengeConnectionLimit,
 		MaxHostnameChallengeConnections: settings.challengeHostnameConnectionLimit,
@@ -239,12 +245,31 @@ func (d *daemon) startIngressRuntime(
 	if runtimeConfig.configure != nil {
 		runtimeConfig.configure(&ingressConfig)
 	}
+	ingressConfig.Traffic, ingressConfig.Pending, err = tnldconfig.ValidateIngressTraffic(ingressConfig.Traffic, ingressConfig.Pending)
+	if err != nil {
+		_ = forwarder.Close()
+		return err
+	}
 	server, err := ingress.New(runtimeConfig.listener, ingressConfig)
 	if err != nil {
 		_ = forwarder.Close()
 		return err
 	}
 	runtime.server = server
+	forwarder.SetPromotionHandler(server.PromotePendingAdmission)
+	if metrics != nil {
+		for resource, limit := range map[string]int64{
+			"public_url_connections":         int64(ingressConfig.Traffic.Default.Connections),
+			"source_connections":             int64(ingressConfig.Traffic.SourceConnections),
+			"source_connection_rate":         int64(ingressConfig.Traffic.SourceRate),
+			"process_connection_rate":        int64(ingressConfig.Traffic.ProcessRate),
+			"denied_connections":             int64(ingressConfig.Pending.Connections),
+			"pending_public_url_connections": int64(ingressConfig.Pending.PublicURLConnections),
+			"pending_source_connections":     int64(ingressConfig.Pending.SourceConnections),
+		} {
+			metrics.SetCapacityLimit(resource, limit)
+		}
+	}
 	publicServer = server
 	d.ingresses = append(d.ingresses, runtime)
 	d.start("run ingress control", func() error { return controller.Run(ctx) })

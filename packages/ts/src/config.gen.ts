@@ -44,6 +44,16 @@ export interface TnlConfig {
      * One DNS label beneath the member namespace.
      */
     name?: string;
+    access?:
+      | ("restricted" | "anonymous")
+      | {
+          mode?: "restricted" | "anonymous";
+          /**
+           * @minItems 1
+           * @maxItems 256
+           */
+          ip?: [string, ...string[]];
+        };
     /**
      * Remove the public URL when this tunnel stops.
      */
@@ -80,14 +90,6 @@ export interface TnlConfig {
       };
     };
     /**
-     * Allow visitors from every IP address.
-     */
-    allowAllIPs?: boolean;
-    /**
-     * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
-     */
-    allowIP?: string[];
-    /**
      * Exact public URL hostname or HTTPS origin to publish.
      */
     publicURL?: string;
@@ -120,6 +122,16 @@ export interface TnlConfig {
              * One DNS label beneath the member namespace.
              */
             name?: string;
+            access?:
+              | ("restricted" | "anonymous")
+              | {
+                  mode?: "restricted" | "anonymous";
+                  /**
+                   * @minItems 1
+                   * @maxItems 256
+                   */
+                  ip?: [string, ...string[]];
+                };
             /**
              * Remove the public URL when this tunnel stops.
              */
@@ -147,14 +159,6 @@ export interface TnlConfig {
                 uploadBytes?: number;
               };
             };
-            /**
-             * Allow visitors from every IP address.
-             */
-            allowAllIPs?: boolean;
-            /**
-             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
-             */
-            allowIP?: string[];
             /**
              * Exact public URL hostname or HTTPS origin to publish.
              */
@@ -300,6 +304,16 @@ export interface TnlConfig {
              * One DNS label beneath the member namespace.
              */
             name?: string;
+            access?:
+              | ("restricted" | "anonymous")
+              | {
+                  mode?: "restricted" | "anonymous";
+                  /**
+                   * @minItems 1
+                   * @maxItems 256
+                   */
+                  ip?: [string, ...string[]];
+                };
             /**
              * Remove the public URL when this tunnel stops.
              */
@@ -327,14 +341,6 @@ export interface TnlConfig {
                 uploadBytes?: number;
               };
             };
-            /**
-             * Allow visitors from every IP address.
-             */
-            allowAllIPs?: boolean;
-            /**
-             * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
-             */
-            allowIP?: string[];
             /**
              * Exact public URL hostname or HTTPS origin to publish.
              */
@@ -442,14 +448,16 @@ export interface TnlConfig {
            * Ready team domain; otherwise inherit the entry service's domain.
            */
           domain?: string;
-          /**
-           * Allow visitors from every IP address.
-           */
-          allowAllIPs?: boolean;
-          /**
-           * Visitor IP addresses or prefixes allowed to use the public URL; the current client IP is added automatically.
-           */
-          allowIP?: string[];
+          access?:
+            | ("restricted" | "anonymous")
+            | {
+                mode?: "restricted" | "anonymous";
+                /**
+                 * @minItems 1
+                 * @maxItems 256
+                 */
+                ip?: [string, ...string[]];
+              };
           /**
            * Exact authorized public URL hostname or HTTPS origin; mutually exclusive with name and domain.
            */

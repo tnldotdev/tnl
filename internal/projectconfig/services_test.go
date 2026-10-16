@@ -18,7 +18,7 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		{"placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{target:{type:"app"}}}}`, true},
 		{"database placement", `{publisher:{type:"compose",service:"publisher"},services:{db:{protocol:"tcp",target:{type:"address",address:5432}}}}`, true},
 		{"mixed placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{},db:{protocol:"tcp",target:{type:"address",address:5432}}}}`, true},
-		{"mixed public defaults", `{tunnel:{allowAllIPs:true},services:{web:{},db:{protocol:"tcp",target:{type:"address",address:5432}}}}`, true},
+		{"mixed public defaults", `{tunnel:{access:"anonymous"},services:{web:{},db:{protocol:"tcp",target:{type:"address",address:5432}}}}`, true},
 		{"private TLS", `{services:{db:{protocol:"tcp",private:{name:"db"},target:{type:"address",address:"db.internal:3306",tls:{mode:"mysql",serverName:"db.internal",caFile:"./ca.pem"}}}}}`, true},
 		{"compose", `{services:{web:{target:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000}}}}`, true},
 		{"docker", `{services:{cache:{protocol:"tcp",target:{type:"docker",container:"shop-cache",port:6379}}}}`, true},

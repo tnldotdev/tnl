@@ -12,7 +12,7 @@ qualify claims:
   seamless workflow to expose your application.”
 - Write “Ingress may try another connected relay before sending the first visitor
   byte,” not “Traffic is intelligently rerouted.”
-- Write “By default, only your current IP is allowed to visit the public URL,”
+- Write “By default, visitors need a current sign-in, share link, or token,”
   not “Your app is completely private.”
 
 Keep the voice lowercase, spare, concrete, practical, and understated. Avoid
@@ -119,7 +119,7 @@ mutation counters; public URL counters are publish run numbers.
 | **public URL certificate**       | The publicly trusted certificate the publisher uses to terminate visitor TLS for a public URL hostname.     |
 | **certificate plan**             | The hostnames, cache scope, and challenge method approved for a public URL certificate.                     |
 | **certificate issuance**         | One attempt to obtain and install a public URL certificate for a publish run's certificate plan.            |
-| **IP policy**                    | The rule controlling which visitor source addresses may use a public URL.                                   |
+| **IP policy**                    | An optional filter on visitor source addresses, in addition to a public URL's access setting.               |
 | **ingress routing table**        | Short-lived routing information control sends to ingress, including public URL policy and connected relays. |
 | **policy revision**              | The authority policy version recorded when a public URL operation is authorized.                            |
 | **public URL mutation revision** | An ever-increasing counter changed whenever editable public URL state changes.                              |

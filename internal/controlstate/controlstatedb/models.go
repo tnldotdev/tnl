@@ -595,27 +595,29 @@ type ControlPrivateServiceRoutingEvent struct {
 }
 
 type ControlPrivateServiceRun struct {
-	ID                        string
-	PrivateServiceID          string
-	TeamID                    string
-	RunNumber                 int64
-	PublisherIdentityID       string
-	PublisherGrantID          string
-	PublisherKeyID            string
-	IdempotencyKey            string
-	RequestDigest             []byte
-	BindingNonce              []byte
-	BindingExpiresAt          pgtype.Timestamptz
-	RunTokenDigest            []byte
-	StreamPublicKey           []byte
-	StreamKeyBindingSignature []byte
-	BoundAt                   pgtype.Timestamptz
-	State                     string
-	CreatedAt                 pgtype.Timestamptz
-	PublisherExpiresAt        pgtype.Timestamptz
-	ReadyAt                   pgtype.Timestamptz
-	ClosedAt                  pgtype.Timestamptz
-	AssignmentsOpen           pgtype.Bool
+	ID                         string
+	PrivateServiceID           string
+	TeamID                     string
+	RunNumber                  int64
+	PublisherIdentityID        string
+	PublisherGrantID           string
+	PublisherKeyID             string
+	IdempotencyKey             string
+	RequestDigest              []byte
+	BindingNonce               []byte
+	BindingExpiresAt           pgtype.Timestamptz
+	AssignmentSeedCiphertext   []byte
+	AssignmentSeedStorageKeyID string
+	RunTokenDigest             []byte
+	StreamPublicKey            []byte
+	StreamKeyBindingSignature  []byte
+	BoundAt                    pgtype.Timestamptz
+	State                      string
+	CreatedAt                  pgtype.Timestamptz
+	PublisherExpiresAt         pgtype.Timestamptz
+	ReadyAt                    pgtype.Timestamptz
+	ClosedAt                   pgtype.Timestamptz
+	AssignmentsOpen            pgtype.Bool
 }
 
 type ControlPrivateServiceTicket struct {
@@ -652,6 +654,7 @@ type ControlPublicUrl struct {
 	PublicPort                  pgtype.Int4
 	PublicURLScope              string
 	PolicyRevision              int64
+	AccessMode                  string
 	IpPolicy                    string
 	AllowedIpPolicyCiphertext   []byte
 	AllowedIpPolicyStorageKeyID pgtype.Text
@@ -980,8 +983,11 @@ type ControlSchemaIdentity struct {
 type ControlShare struct {
 	ID                  string
 	SchemaVersion       int16
-	PreviewID           string
+	PreviewID           pgtype.Text
 	TeamID              string
+	GuestID             pgtype.Text
+	Scope               string
+	Label               string
 	CreatedByIdentityID string
 	IdempotencyKey      string
 	RequestDigest       []byte

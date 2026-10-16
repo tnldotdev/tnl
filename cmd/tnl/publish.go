@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -16,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -156,14 +160,25 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if protocol == controlv1.Http {
 		output.openURL = browserOpener(ctx, flags.Open, authenticated.Discovery.DnsAutomation)
 	}
-	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
+	policy, err := resolveVisitorAccess(ctx, authenticated.Control, flags.access, flags.Anonymous, flags.IP)
 	if err != nil {
 		return err
 	}
-	if policy.current != "" {
-		if err := output.currentIP(policy.current); err != nil {
-			return err
+	if protocol == controlv1.Ssh {
+		if flags.access != nil && flags.access.VisitorMode() != "anonymous" {
+			return failure.Wrap("validate SSH visitor access", failure.InvalidTunnelFlags, errors.New("SSH uses target authentication; select anonymous access for an optional IP list"))
 		}
+		policy.access = controlv1.Anonymous
+		policy.explicit = true
+	}
+	if guest != nil {
+		// guest publication remains bound to its issuing IP. control discards
+		// that prefix after checking it, so browser visits use the guest link.
+		guestPrefixes, sourceErr := accessIPPrefixes(ctx, authenticated.Control, []string{"current"})
+		if sourceErr != nil {
+			return sourceErr
+		}
+		policy.prefixes = guestPrefixes
 	}
 	if guest != nil {
 		allocated, err := authenticated.Control.AllocateGuestDemoNumber(ctx)
@@ -211,6 +226,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.limits())
+	if policy.explicit {
+		publisherConfig.AccessMode = policy.access
+	}
 	publisherConfig.ServiceProtocol = protocol
 	publisherConfig.TargetTLSName = flags.TargetTLSName
 	publisherConfig.TargetTLS = flags.TargetTLS
@@ -242,6 +260,27 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	publisherConfig.Logf = output.logf
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {
+		if guest != nil && event.Type == publisher.EventPublicURLAssigned {
+			secret := make([]byte, 32)
+			if _, err := rand.Read(secret); err != nil {
+				return err
+			}
+			fingerprint := sha256.Sum256(secret)
+			key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
+			if err != nil {
+				return err
+			}
+			share, err := authenticated.Control.CreateURLShare(ctx, key, controlv1.CreateShareRequest{
+				PublicUrlIds: []string{event.PublicURLID}, SecretFingerprint: hex.EncodeToString(fingerprint[:]), ExpiresAt: guest.ExpiresAt,
+			})
+			if err != nil {
+				return fmt.Errorf("create guest share: %w", err)
+			}
+			if share.Scope != controlv1.ShareScopeGuest || len(share.PublicUrlIds) != 1 || share.PublicUrlIds[0] != event.PublicURLID {
+				return failure.Wrap("create guest share", failure.ServerResponseInvalid, errors.New("server returned a share for another public URL"))
+			}
+			output.setGuestShare(share.Id + "." + base64.RawURLEncoding.EncodeToString(secret))
+		}
 		if localDemo != nil && event.Type == publisher.EventReady {
 			localDemo.SetPublicURL(event.PublicURL)
 		}

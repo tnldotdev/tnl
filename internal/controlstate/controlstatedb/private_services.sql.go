@@ -18,8 +18,10 @@ SET accepted_identity_id = $1, accepted_at = $2
 FROM control.private_services service, control.identities person
 WHERE invitation.token_digest = $3 AND invitation.revoked_at IS NULL
     AND invitation.accepted_at IS NULL AND invitation.expires_at > $2
-    AND service.id = invitation.private_service_id AND service.enabled AND service.deleted_at IS NULL
+    AND service.id = invitation.private_service_id AND service.team_id = invitation.team_id
+    AND service.enabled AND service.deleted_at IS NULL
     AND person.id = $1 AND person.disabled_at IS NULL
+    AND person.email_verified AND person.normalized_email = invitation.normalized_email
 RETURNING invitation.id, invitation.private_service_id, invitation.team_id, invitation.normalized_email, invitation.token_digest, invitation.created_by_identity_id, invitation.idempotency_key, invitation.request_digest, invitation.created_at, invitation.expires_at, invitation.accepted_at, invitation.accepted_identity_id, invitation.revoked_at
 `
 
@@ -29,7 +31,7 @@ type AcceptPrivateServiceInvitationParams struct {
 	TokenDigest []byte
 }
 
-// caller verifies the authenticated identity's email against normalized_email.
+// a verified exact email is required even when a caller has checked it already.
 func (q *Queries) AcceptPrivateServiceInvitation(ctx context.Context, arg AcceptPrivateServiceInvitationParams) (ControlPrivateServiceInvitation, error) {
 	row := q.db.QueryRow(ctx, acceptPrivateServiceInvitation, arg.IdentityID, arg.Now, arg.TokenDigest)
 	var i ControlPrivateServiceInvitation
@@ -70,7 +72,7 @@ func (q *Queries) AdvancePrivateServiceRoutingClock(ctx context.Context, arg Adv
 
 const advancePrivateServiceRunNumber = `-- name: AdvancePrivateServiceRunNumber :one
 UPDATE control.private_services SET next_run_number = next_run_number + 1, updated_at = $1
-WHERE id = $2 AND enabled AND deleted_at IS NULL RETURNING next_run_number - 1 AS run_number
+WHERE id = $2 AND enabled AND deleted_at IS NULL RETURNING (next_run_number - 1)::bigint AS run_number
 `
 
 type AdvancePrivateServiceRunNumberParams struct {
@@ -78,9 +80,9 @@ type AdvancePrivateServiceRunNumberParams struct {
 	ID  string
 }
 
-func (q *Queries) AdvancePrivateServiceRunNumber(ctx context.Context, arg AdvancePrivateServiceRunNumberParams) (int32, error) {
+func (q *Queries) AdvancePrivateServiceRunNumber(ctx context.Context, arg AdvancePrivateServiceRunNumberParams) (int64, error) {
 	row := q.db.QueryRow(ctx, advancePrivateServiceRunNumber, arg.Now, arg.ID)
-	var run_number int32
+	var run_number int64
 	err := row.Scan(&run_number)
 	return run_number, err
 }
@@ -110,7 +112,7 @@ WHERE run.id = $6 AND run.run_number = $7
     AND publisher.revoked_at IS NULL
     AND publisher_key.id = run.publisher_key_id AND publisher_key.publisher_identity_id = publisher.id
     AND publisher_key.retired_at IS NULL
-RETURNING run.id, run.private_service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.binding_nonce, run.binding_expires_at, run.run_token_digest, run.stream_public_key, run.stream_key_binding_signature, run.bound_at, run.state, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
+RETURNING run.id, run.private_service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.binding_nonce, run.binding_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.stream_public_key, run.stream_key_binding_signature, run.bound_at, run.state, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
 `
 
 type BindPrivateServiceRunKeyParams struct {
@@ -155,6 +157,8 @@ func (q *Queries) BindPrivateServiceRunKey(ctx context.Context, arg BindPrivateS
 		&i.RequestDigest,
 		&i.BindingNonce,
 		&i.BindingExpiresAt,
+		&i.AssignmentSeedCiphertext,
+		&i.AssignmentSeedStorageKeyID,
 		&i.RunTokenDigest,
 		&i.StreamPublicKey,
 		&i.StreamKeyBindingSignature,
@@ -174,11 +178,23 @@ UPDATE control.private_connector_sessions session
 SET bound_at = $1, source_ip = $2::inet,
     ingress_id = $3, ingress_run_id = $4,
     ingress_lease_revision = $5
-FROM control.ingress_leases ingress, control.identities person
+FROM control.ingress_leases ingress, control.identities person, control.private_services service
 WHERE session.id = $6 AND session.credential_digest = $7
     AND session.private_service_id = $8
     AND session.bound_at IS NULL AND session.revoked_at IS NULL AND session.expires_at > $1
     AND person.id = session.identity_id AND person.disabled_at IS NULL
+    AND service.id = session.private_service_id AND service.enabled AND service.deleted_at IS NULL
+    AND EXISTS (SELECT 1 FROM control.teams team WHERE team.id = service.team_id AND team.deleted_at IS NULL)
+    AND (EXISTS (SELECT 1 FROM control.team_memberships member
+        WHERE member.team_id = service.team_id AND member.identity_id = person.id
+            AND member.removed_at IS NULL AND member.role IN ('owner', 'admin'))
+      OR EXISTS (SELECT 1 FROM control.private_service_grants visitor_grant
+        LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
+            AND member.identity_id = person.id AND member.removed_at IS NULL
+        WHERE visitor_grant.private_service_id = service.id AND visitor_grant.revoked_at IS NULL
+            AND (visitor_grant.expires_at IS NULL OR visitor_grant.expires_at > $1)
+            AND ((visitor_grant.kind = 'identity' AND visitor_grant.identity_id = person.id)
+                OR (visitor_grant.kind = 'team' AND member.id IS NOT NULL))))
     AND ingress.ingress_id = $3 AND ingress.ingress_run_id = $4
     AND ingress.ingress_lease_revision = $5
     AND ingress.lease_expires_at > $1 AND NOT ingress.draining
@@ -357,6 +373,12 @@ WHERE ticket.digest = $3 AND ticket.private_service_id = $4
     AND ingress.lease_expires_at > $1 AND NOT ingress.draining
     AND r.run_number = ticket.run_number AND r.stream_public_key = ticket.stream_public_key
     AND r.closed_at IS NULL AND r.state = 'ready' AND r.publisher_expires_at > $1
+    AND EXISTS (SELECT 1 FROM control.private_service_connection_slots slot
+        JOIN control.relay_leases lease ON lease.relay_id = slot.relay_id
+          AND lease.relay_run_id = slot.relay_run_id AND lease.relay_lease_revision = slot.relay_lease_revision
+          AND lease.relay_service_id = slot.relay_service_id
+          AND lease.lease_expires_at > $1 AND NOT lease.draining
+        WHERE slot.private_run_id = r.id AND slot.state = 'ready' AND slot.session_open)
     AND s.id = ticket.private_service_id AND s.enabled AND s.deleted_at IS NULL
     AND EXISTS (SELECT 1 FROM control.teams team WHERE team.id = s.team_id AND team.deleted_at IS NULL)
     AND EXISTS (SELECT 1 FROM control.publisher_grants pg
@@ -459,6 +481,46 @@ func (q *Queries) DeletePrivateService(ctx context.Context, arg DeletePrivateSer
 	return i, err
 }
 
+const deletePrivateServiceConnectionSlot = `-- name: DeletePrivateServiceConnectionSlot :execrows
+DELETE FROM control.private_service_connection_slots WHERE publisher_connection_id = $1
+    AND private_run_id = $2
+    AND (state = 'closed' OR state = 'assigned' AND credential_expires_at <= $3)
+`
+
+type DeletePrivateServiceConnectionSlotParams struct {
+	PublisherConnectionID string
+	PrivateRunID          string
+	Now                   pgtype.Timestamptz
+}
+
+func (q *Queries) DeletePrivateServiceConnectionSlot(ctx context.Context, arg DeletePrivateServiceConnectionSlotParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePrivateServiceConnectionSlot, arg.PublisherConnectionID, arg.PrivateRunID, arg.Now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const demotePrivateServiceRun = `-- name: DemotePrivateServiceRun :execrows
+UPDATE control.private_service_runs SET state = 'starting'
+WHERE id = $1 AND private_service_id = $2
+    AND run_number = $3 AND state = 'ready' AND closed_at IS NULL
+`
+
+type DemotePrivateServiceRunParams struct {
+	ID               string
+	PrivateServiceID string
+	RunNumber        int64
+}
+
+func (q *Queries) DemotePrivateServiceRun(ctx context.Context, arg DemotePrivateServiceRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, demotePrivateServiceRun, arg.ID, arg.PrivateServiceID, arg.RunNumber)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const disconnectPrivateServiceConnectionSlot = `-- name: DisconnectPrivateServiceConnectionSlot :one
 UPDATE control.private_service_connection_slots slot
 SET state = 'closed', relay_id = NULL, relay_run_id = NULL, relay_lease_revision = NULL
@@ -513,6 +575,33 @@ func (q *Queries) DisconnectPrivateServiceConnectionSlot(ctx context.Context, ar
 	return i, err
 }
 
+const expirePrivateServiceConnectionSlot = `-- name: ExpirePrivateServiceConnectionSlot :execrows
+UPDATE control.private_service_connection_slots slot SET state = 'closed', relay_id = NULL,
+    relay_run_id = NULL, relay_lease_revision = NULL
+WHERE slot.publisher_connection_id = $1
+    AND slot.private_run_id = $2
+    AND slot.state IN ('connected', 'ready')
+    AND NOT EXISTS (SELECT 1 FROM control.relay_leases lease
+        WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
+          AND lease.relay_lease_revision = slot.relay_lease_revision
+          AND lease.relay_service_id = slot.relay_service_id
+          AND lease.lease_expires_at > $3 AND NOT lease.draining)
+`
+
+type ExpirePrivateServiceConnectionSlotParams struct {
+	PublisherConnectionID string
+	PrivateRunID          string
+	Now                   pgtype.Timestamptz
+}
+
+func (q *Queries) ExpirePrivateServiceConnectionSlot(ctx context.Context, arg ExpirePrivateServiceConnectionSlotParams) (int64, error) {
+	result, err := q.db.Exec(ctx, expirePrivateServiceConnectionSlot, arg.PublisherConnectionID, arg.PrivateRunID, arg.Now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const expirePrivateServiceRunPreparation = `-- name: ExpirePrivateServiceRunPreparation :execrows
 UPDATE control.private_service_runs SET state = 'closed', closed_at = $1
 WHERE id = $2 AND state = 'prepared' AND closed_at IS NULL AND binding_expires_at <= $1
@@ -536,7 +625,6 @@ SELECT publisher_key.public_key FROM control.private_service_runs run
 JOIN control.publisher_identity_keys publisher_key
     ON publisher_key.id = run.publisher_key_id
     AND publisher_key.publisher_identity_id = run.publisher_identity_id
-    AND publisher_key.retired_at IS NULL
 JOIN control.publisher_identities publisher ON publisher.id = run.publisher_identity_id
     AND publisher.revoked_at IS NULL AND publisher.team_id = run.team_id
 JOIN control.publisher_grants grant_record ON grant_record.id = run.publisher_grant_id
@@ -562,8 +650,8 @@ type GetPrivateRunBindingIdentityKeyParams struct {
 	PublisherKeyID      string
 }
 
-// use this enrolled public key after locking the prepared run and compare the
-// publisherAuth token's identity, grant and key ID with the same locked row.
+// a prepared run requires a current key before binding. an already bound run
+// may retry its exact signed binding after key rotation, as with public URLs.
 func (q *Queries) GetPrivateRunBindingIdentityKey(ctx context.Context, arg GetPrivateRunBindingIdentityKeyParams) ([]byte, error) {
 	row := q.db.QueryRow(ctx, getPrivateRunBindingIdentityKey,
 		arg.Now,
@@ -922,8 +1010,11 @@ WHERE s.id = $6 AND r.id = $7
     AND $3::timestamptz > $2
     AND $3::timestamptz <= $2::timestamptz + interval '1 minute'
     AND EXISTS (SELECT 1 FROM control.private_service_connection_slots slot
-        WHERE slot.private_run_id = r.id AND slot.state = 'ready'
-        GROUP BY slot.private_run_id HAVING count(*) = 2)
+        JOIN control.relay_leases lease ON lease.relay_id = slot.relay_id
+          AND lease.relay_run_id = slot.relay_run_id AND lease.relay_lease_revision = slot.relay_lease_revision
+          AND lease.relay_service_id = slot.relay_service_id
+          AND lease.lease_expires_at > $2 AND NOT lease.draining
+        WHERE slot.private_run_id = r.id AND slot.state = 'ready' AND slot.session_open)
     AND (EXISTS (SELECT 1 FROM control.team_memberships m WHERE m.team_id = s.team_id
         AND m.identity_id = i.id AND m.removed_at IS NULL AND m.role IN ('owner', 'admin'))
       OR EXISTS (SELECT 1 FROM control.private_service_grants g
@@ -976,7 +1067,7 @@ func (q *Queries) InsertPrivateServiceTicket(ctx context.Context, arg InsertPriv
 }
 
 const listAvailablePrivateServices = `-- name: ListAvailablePrivateServices :many
-SELECT s.id, s.team_id, s.name, r.id AS private_run_id, r.run_number
+SELECT s.id, s.team_id, s.name, s.created_at, r.id AS private_run_id, r.run_number
 FROM control.private_services s
 JOIN control.teams t ON t.id = s.team_id AND t.deleted_at IS NULL
 JOIN control.identities i ON i.id = $1 AND i.disabled_at IS NULL
@@ -989,8 +1080,11 @@ LEFT JOIN control.private_service_runs r ON r.private_service_id = s.id
           AND (pg.expires_at IS NULL OR pg.expires_at > $2)
           AND p.team_id = s.team_id AND p.revoked_at IS NULL)
     AND EXISTS (SELECT 1 FROM control.private_service_connection_slots slot
-        WHERE slot.private_run_id = r.id AND slot.state = 'ready'
-        GROUP BY slot.private_run_id HAVING count(*) = 2)
+        JOIN control.relay_leases lease ON lease.relay_id = slot.relay_id
+          AND lease.relay_run_id = slot.relay_run_id AND lease.relay_lease_revision = slot.relay_lease_revision
+          AND lease.relay_service_id = slot.relay_service_id
+          AND lease.lease_expires_at > $2 AND NOT lease.draining
+        WHERE slot.private_run_id = r.id AND slot.state = 'ready' AND slot.session_open)
 WHERE s.deleted_at IS NULL AND s.enabled AND s.id > $3
     AND (
         EXISTS (SELECT 1 FROM control.team_memberships m
@@ -1017,13 +1111,15 @@ type ListAvailablePrivateServicesRow struct {
 	ID           string
 	TeamID       string
 	Name         string
+	CreatedAt    pgtype.Timestamptz
 	PrivateRunID pgtype.Text
 	RunNumber    pgtype.Int8
 }
 
 // visitor inventory includes authorized saved services while the publisher is
-// offline. only project an open, ready run with two ready slots and a live
-// publisher grant. do not include target addresses, tickets or keys.
+// offline. two live slots are required for the first ready transition; after
+// that, one surviving slot keeps a ready run available during replacement.
+// do not include target addresses, tickets or keys.
 func (q *Queries) ListAvailablePrivateServices(ctx context.Context, arg ListAvailablePrivateServicesParams) ([]ListAvailablePrivateServicesRow, error) {
 	rows, err := q.db.Query(ctx, listAvailablePrivateServices, arg.IdentityID, arg.Now, arg.AfterID)
 	if err != nil {
@@ -1037,8 +1133,108 @@ func (q *Queries) ListAvailablePrivateServices(ctx context.Context, arg ListAvai
 			&i.ID,
 			&i.TeamID,
 			&i.Name,
+			&i.CreatedAt,
 			&i.PrivateRunID,
 			&i.RunNumber,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPrivateServiceConnectionSlots = `-- name: ListPrivateServiceConnectionSlots :many
+SELECT publisher_connection_id, private_run_id, private_service_id, run_number, connection_slot, connection_assignment_revision, relay_service_id, relay_address, tls_server_name, credential_digest, credential_expires_at, relay_id, relay_run_id, relay_lease_revision, state, session_open FROM control.private_service_connection_slots WHERE private_run_id = $1
+ORDER BY connection_slot
+`
+
+func (q *Queries) ListPrivateServiceConnectionSlots(ctx context.Context, privateRunID string) ([]ControlPrivateServiceConnectionSlot, error) {
+	rows, err := q.db.Query(ctx, listPrivateServiceConnectionSlots, privateRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlPrivateServiceConnectionSlot
+	for rows.Next() {
+		var i ControlPrivateServiceConnectionSlot
+		if err := rows.Scan(
+			&i.PublisherConnectionID,
+			&i.PrivateRunID,
+			&i.PrivateServiceID,
+			&i.RunNumber,
+			&i.ConnectionSlot,
+			&i.ConnectionAssignmentRevision,
+			&i.RelayServiceID,
+			&i.RelayAddress,
+			&i.TlsServerName,
+			&i.CredentialDigest,
+			&i.CredentialExpiresAt,
+			&i.RelayID,
+			&i.RelayRunID,
+			&i.RelayLeaseRevision,
+			&i.State,
+			&i.SessionOpen,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPrivateServiceConnectionSlotsNeedingReplacement = `-- name: ListPrivateServiceConnectionSlotsNeedingReplacement :many
+SELECT slot.publisher_connection_id, slot.private_run_id, slot.private_service_id, slot.run_number, slot.connection_slot, slot.connection_assignment_revision, slot.relay_service_id, slot.relay_address, slot.tls_server_name, slot.credential_digest, slot.credential_expires_at, slot.relay_id, slot.relay_run_id, slot.relay_lease_revision, slot.state, slot.session_open FROM control.private_service_connection_slots slot
+WHERE slot.private_run_id = $1
+    AND (slot.state = 'closed' OR slot.state = 'assigned' AND slot.credential_expires_at <= $2
+        OR slot.state IN ('connected', 'ready') AND NOT EXISTS (
+            SELECT 1 FROM control.relay_leases lease
+            WHERE lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
+              AND lease.relay_lease_revision = slot.relay_lease_revision
+              AND lease.relay_service_id = slot.relay_service_id
+              AND lease.lease_expires_at > $2 AND NOT lease.draining))
+ORDER BY slot.connection_slot
+`
+
+type ListPrivateServiceConnectionSlotsNeedingReplacementParams struct {
+	PrivateRunID string
+	Now          pgtype.Timestamptz
+}
+
+// never modify a connected or ready slot that still has its matching live
+// relay lease. its streams and assignment remain owned by that relay.
+func (q *Queries) ListPrivateServiceConnectionSlotsNeedingReplacement(ctx context.Context, arg ListPrivateServiceConnectionSlotsNeedingReplacementParams) ([]ControlPrivateServiceConnectionSlot, error) {
+	rows, err := q.db.Query(ctx, listPrivateServiceConnectionSlotsNeedingReplacement, arg.PrivateRunID, arg.Now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ControlPrivateServiceConnectionSlot
+	for rows.Next() {
+		var i ControlPrivateServiceConnectionSlot
+		if err := rows.Scan(
+			&i.PublisherConnectionID,
+			&i.PrivateRunID,
+			&i.PrivateServiceID,
+			&i.RunNumber,
+			&i.ConnectionSlot,
+			&i.ConnectionAssignmentRevision,
+			&i.RelayServiceID,
+			&i.RelayAddress,
+			&i.TlsServerName,
+			&i.CredentialDigest,
+			&i.CredentialExpiresAt,
+			&i.RelayID,
+			&i.RelayRunID,
+			&i.RelayLeaseRevision,
+			&i.State,
+			&i.SessionOpen,
 		); err != nil {
 			return nil, err
 		}
@@ -1288,7 +1484,7 @@ func (q *Queries) LockPrivateServiceRoutingClock(ctx context.Context) (int64, er
 }
 
 const lockPrivateServiceRun = `-- name: LockPrivateServiceRun :one
-SELECT id, private_service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, binding_nonce, binding_expires_at, run_token_digest, stream_public_key, stream_key_binding_signature, bound_at, state, created_at, publisher_expires_at, ready_at, closed_at, assignments_open FROM control.private_service_runs
+SELECT id, private_service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, binding_nonce, binding_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, stream_public_key, stream_key_binding_signature, bound_at, state, created_at, publisher_expires_at, ready_at, closed_at, assignments_open FROM control.private_service_runs
 WHERE id = $1 AND private_service_id = $2 FOR UPDATE
 `
 
@@ -1312,6 +1508,8 @@ func (q *Queries) LockPrivateServiceRun(ctx context.Context, arg LockPrivateServ
 		&i.RequestDigest,
 		&i.BindingNonce,
 		&i.BindingExpiresAt,
+		&i.AssignmentSeedCiphertext,
+		&i.AssignmentSeedStorageKeyID,
 		&i.RunTokenDigest,
 		&i.StreamPublicKey,
 		&i.StreamKeyBindingSignature,
@@ -1329,27 +1527,31 @@ func (q *Queries) LockPrivateServiceRun(ctx context.Context, arg LockPrivateServ
 const preparePrivateServiceRun = `-- name: PreparePrivateServiceRun :one
 INSERT INTO control.private_service_runs(id, private_service_id, team_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
-    request_digest, binding_nonce, binding_expires_at, state, created_at, publisher_expires_at)
+    request_digest, binding_nonce, binding_expires_at, assignment_seed_ciphertext,
+    assignment_seed_storage_key_id, state, created_at, publisher_expires_at)
 VALUES ($1, $2, $3, $4,
     $5, $6, $7,
     $8, $9, $10,
-    $11, 'prepared', $12, $13) RETURNING id, private_service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, binding_nonce, binding_expires_at, run_token_digest, stream_public_key, stream_key_binding_signature, bound_at, state, created_at, publisher_expires_at, ready_at, closed_at, assignments_open
+    $11, $12,
+    $13, 'prepared', $14, $15) RETURNING id, private_service_id, team_id, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, binding_nonce, binding_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, stream_public_key, stream_key_binding_signature, bound_at, state, created_at, publisher_expires_at, ready_at, closed_at, assignments_open
 `
 
 type PreparePrivateServiceRunParams struct {
-	ID                  string
-	PrivateServiceID    string
-	TeamID              string
-	RunNumber           int64
-	PublisherIdentityID string
-	PublisherGrantID    string
-	PublisherKeyID      string
-	IdempotencyKey      string
-	RequestDigest       []byte
-	BindingNonce        []byte
-	BindingExpiresAt    pgtype.Timestamptz
-	Now                 pgtype.Timestamptz
-	PublisherExpiresAt  pgtype.Timestamptz
+	ID                         string
+	PrivateServiceID           string
+	TeamID                     string
+	RunNumber                  int64
+	PublisherIdentityID        string
+	PublisherGrantID           string
+	PublisherKeyID             string
+	IdempotencyKey             string
+	RequestDigest              []byte
+	BindingNonce               []byte
+	BindingExpiresAt           pgtype.Timestamptz
+	AssignmentSeedCiphertext   []byte
+	AssignmentSeedStorageKeyID string
+	Now                        pgtype.Timestamptz
+	PublisherExpiresAt         pgtype.Timestamptz
 }
 
 // caller locks the service, checks the live publisher grant and enrolled key,
@@ -1368,6 +1570,8 @@ func (q *Queries) PreparePrivateServiceRun(ctx context.Context, arg PreparePriva
 		arg.RequestDigest,
 		arg.BindingNonce,
 		arg.BindingExpiresAt,
+		arg.AssignmentSeedCiphertext,
+		arg.AssignmentSeedStorageKeyID,
 		arg.Now,
 		arg.PublisherExpiresAt,
 	)
@@ -1384,6 +1588,8 @@ func (q *Queries) PreparePrivateServiceRun(ctx context.Context, arg PreparePriva
 		&i.RequestDigest,
 		&i.BindingNonce,
 		&i.BindingExpiresAt,
+		&i.AssignmentSeedCiphertext,
+		&i.AssignmentSeedStorageKeyID,
 		&i.RunTokenDigest,
 		&i.StreamPublicKey,
 		&i.StreamKeyBindingSignature,
@@ -1418,6 +1624,7 @@ WHERE slot.publisher_connection_id = $1
     AND run.closed_at IS NULL AND run.publisher_expires_at > $3
     AND lease.relay_id = slot.relay_id AND lease.relay_run_id = slot.relay_run_id
     AND lease.relay_lease_revision = slot.relay_lease_revision
+    AND lease.relay_service_id = slot.relay_service_id
     AND lease.lease_expires_at > $3 AND NOT lease.draining
 RETURNING slot.publisher_connection_id, slot.private_run_id, slot.private_service_id, slot.run_number, slot.connection_slot, slot.connection_assignment_revision, slot.relay_service_id, slot.relay_address, slot.tls_server_name, slot.credential_digest, slot.credential_expires_at, slot.relay_id, slot.relay_run_id, slot.relay_lease_revision, slot.state, slot.session_open
 `
@@ -1453,14 +1660,19 @@ func (q *Queries) ReadyPrivateServiceConnectionSlot(ctx context.Context, arg Rea
 }
 
 const readyPrivateServiceRun = `-- name: ReadyPrivateServiceRun :one
-UPDATE control.private_service_runs run SET state = 'ready', ready_at = $1
+UPDATE control.private_service_runs run SET state = 'ready', ready_at = COALESCE(run.ready_at, $1)
 WHERE run.id = $2 AND run.run_number = $3
     AND run.private_service_id = $4
     AND run.state = 'starting' AND run.closed_at IS NULL AND run.publisher_expires_at > $1
     AND EXISTS (SELECT 1 FROM control.private_service_connection_slots slot
-        WHERE slot.private_run_id = run.id AND slot.state = 'ready'
-        GROUP BY slot.private_run_id HAVING count(*) = 2)
-RETURNING run.id, run.private_service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.binding_nonce, run.binding_expires_at, run.run_token_digest, run.stream_public_key, run.stream_key_binding_signature, run.bound_at, run.state, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
+        JOIN control.relay_leases lease ON lease.relay_id = slot.relay_id
+          AND lease.relay_run_id = slot.relay_run_id AND lease.relay_lease_revision = slot.relay_lease_revision
+          AND lease.relay_service_id = slot.relay_service_id
+          AND lease.lease_expires_at > $1 AND NOT lease.draining
+        WHERE slot.private_run_id = run.id AND slot.state = 'ready' AND slot.session_open
+        GROUP BY slot.private_run_id
+        HAVING count(*) >= CASE WHEN run.ready_at IS NULL THEN 2 ELSE 1 END)
+RETURNING run.id, run.private_service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.binding_nonce, run.binding_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.stream_public_key, run.stream_key_binding_signature, run.bound_at, run.state, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
 `
 
 type ReadyPrivateServiceRunParams struct {
@@ -1490,6 +1702,8 @@ func (q *Queries) ReadyPrivateServiceRun(ctx context.Context, arg ReadyPrivateSe
 		&i.RequestDigest,
 		&i.BindingNonce,
 		&i.BindingExpiresAt,
+		&i.AssignmentSeedCiphertext,
+		&i.AssignmentSeedStorageKeyID,
 		&i.RunTokenDigest,
 		&i.StreamPublicKey,
 		&i.StreamKeyBindingSignature,
@@ -1501,6 +1715,134 @@ func (q *Queries) ReadyPrivateServiceRun(ctx context.Context, arg ReadyPrivateSe
 		&i.ClosedAt,
 		&i.AssignmentsOpen,
 	)
+	return i, err
+}
+
+const recheckPrivateServiceVisitor = `-- name: RecheckPrivateServiceVisitor :one
+WITH permitted AS (
+    SELECT LEAST($1::timestamptz + interval '2 minutes', run.publisher_expires_at,
+      ingress.lease_expires_at, publisher_grant.expires_at,
+      (SELECT MAX(relay.lease_expires_at) FROM control.private_service_connection_slots slot
+          JOIN control.relay_leases relay ON relay.relay_id = slot.relay_id
+            AND relay.relay_run_id = slot.relay_run_id
+            AND relay.relay_lease_revision = slot.relay_lease_revision
+            AND relay.relay_service_id = slot.relay_service_id
+            AND relay.lease_expires_at > $1 AND NOT relay.draining
+          WHERE slot.private_run_id = run.id AND slot.state = 'ready' AND slot.session_open),
+      CASE WHEN EXISTS (SELECT 1 FROM control.team_memberships owner_member
+          WHERE owner_member.team_id = service.team_id AND owner_member.identity_id = person.id
+            AND owner_member.removed_at IS NULL AND owner_member.role IN ('owner', 'admin'))
+        OR EXISTS (SELECT 1 FROM control.private_service_grants permanent
+          LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
+            AND member.identity_id = person.id AND member.removed_at IS NULL
+          WHERE permanent.private_service_id = service.id AND permanent.revoked_at IS NULL
+            AND permanent.expires_at IS NULL
+            AND ((permanent.kind = 'identity' AND permanent.identity_id = person.id)
+              OR (permanent.kind = 'team' AND member.id IS NOT NULL)))
+      THEN 'infinity'::timestamptz ELSE
+        (SELECT MAX(limited.expires_at) FROM control.private_service_grants limited
+          LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
+            AND member.identity_id = person.id AND member.removed_at IS NULL
+          WHERE limited.private_service_id = service.id AND limited.revoked_at IS NULL
+            AND limited.expires_at > $1
+            AND ((limited.kind = 'identity' AND limited.identity_id = person.id)
+              OR (limited.kind = 'team' AND member.id IS NOT NULL))) END) AS valid_until
+    FROM control.private_service_tickets ticket
+    JOIN control.private_connector_sessions session ON session.id = ticket.connector_session_id
+    JOIN control.private_service_runs run ON run.id = ticket.private_run_id
+    JOIN control.private_services service ON service.id = ticket.private_service_id
+    JOIN control.teams team ON team.id = service.team_id AND team.deleted_at IS NULL
+    JOIN control.identities person ON person.id = ticket.identity_id AND person.disabled_at IS NULL
+    JOIN control.ingress_leases ingress ON ingress.ingress_id = session.ingress_id
+      AND ingress.ingress_run_id = session.ingress_run_id
+      AND ingress.ingress_lease_revision = session.ingress_lease_revision
+    JOIN control.publisher_grants publisher_grant ON publisher_grant.id = run.publisher_grant_id
+    JOIN control.publisher_identities publisher ON publisher.id = run.publisher_identity_id
+    WHERE ticket.private_service_id = $2
+      AND ticket.private_run_id = $3
+      AND ticket.run_number = $4
+      AND ticket.connector_session_id = $5
+      AND ticket.identity_id = $6
+      AND ticket.visitor_connection_id = $7
+      AND ticket.consumed_at IS NOT NULL
+      AND ticket.source_ip = $8::inet
+      AND session.private_service_id = service.id AND session.identity_id = person.id
+      AND session.bound_at IS NOT NULL AND session.revoked_at IS NULL
+      AND session.source_ip = ticket.source_ip
+      AND session.ingress_id = $9
+      AND session.ingress_run_id = $10
+      AND session.ingress_lease_revision = $11
+      AND ingress.lease_expires_at > $1 AND NOT ingress.draining
+      AND service.enabled AND service.deleted_at IS NULL
+      AND run.private_service_id = service.id AND run.run_number = ticket.run_number
+      AND run.state = 'ready' AND run.closed_at IS NULL AND run.publisher_expires_at > $1
+      AND run.stream_public_key = ticket.stream_public_key
+      AND publisher_grant.publisher_identity_id = publisher.id
+      AND publisher_grant.private_service_id = service.id
+      AND publisher_grant.kind = 'private_service' AND publisher_grant.revoked_at IS NULL
+      AND (publisher_grant.expires_at IS NULL OR publisher_grant.expires_at > $1)
+      AND publisher.team_id = service.team_id AND publisher.revoked_at IS NULL
+      AND EXISTS (SELECT 1 FROM control.private_service_connection_slots slot
+          JOIN control.relay_leases relay ON relay.relay_id = slot.relay_id
+            AND relay.relay_run_id = slot.relay_run_id
+            AND relay.relay_lease_revision = slot.relay_lease_revision
+            AND relay.relay_service_id = slot.relay_service_id
+            AND relay.lease_expires_at > $1 AND NOT relay.draining
+          WHERE slot.private_run_id = run.id AND slot.state = 'ready' AND slot.session_open)
+      AND (EXISTS (SELECT 1 FROM control.team_memberships member
+          WHERE member.team_id = service.team_id AND member.identity_id = person.id
+            AND member.removed_at IS NULL AND member.role IN ('owner', 'admin'))
+        OR EXISTS (SELECT 1 FROM control.private_service_grants grant_record
+          LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
+            AND member.identity_id = person.id AND member.removed_at IS NULL
+          WHERE grant_record.private_service_id = service.id
+            AND grant_record.revoked_at IS NULL
+            AND (grant_record.expires_at IS NULL OR grant_record.expires_at > $1)
+            AND ((grant_record.kind = 'identity' AND grant_record.identity_id = person.id)
+              OR (grant_record.kind = 'team' AND member.id IS NOT NULL))))
+)
+SELECT EXISTS (SELECT 1 FROM permitted)::boolean AS allowed,
+    COALESCE((SELECT valid_until FROM permitted LIMIT 1), $1::timestamptz)::timestamptz AS valid_until
+`
+
+type RecheckPrivateServiceVisitorParams struct {
+	Now                  pgtype.Timestamptz
+	PrivateServiceID     string
+	PrivateRunID         string
+	RunNumber            int64
+	ConnectorSessionID   string
+	IdentityID           string
+	VisitorConnectionID  pgtype.Text
+	ObservedSourceIp     netip.Addr
+	IngressID            pgtype.Text
+	IngressRunID         pgtype.Text
+	IngressLeaseRevision pgtype.Int8
+}
+
+type RecheckPrivateServiceVisitorRow struct {
+	Allowed    bool
+	ValidUntil pgtype.Timestamptz
+}
+
+// use only the ingress-observed source and the visitor ID attached at atomic
+// ticket consumption. the expired one-use ticket is evidence of admission,
+// not a reusable credential or a reason to end an otherwise live stream.
+func (q *Queries) RecheckPrivateServiceVisitor(ctx context.Context, arg RecheckPrivateServiceVisitorParams) (RecheckPrivateServiceVisitorRow, error) {
+	row := q.db.QueryRow(ctx, recheckPrivateServiceVisitor,
+		arg.Now,
+		arg.PrivateServiceID,
+		arg.PrivateRunID,
+		arg.RunNumber,
+		arg.ConnectorSessionID,
+		arg.IdentityID,
+		arg.VisitorConnectionID,
+		arg.ObservedSourceIp,
+		arg.IngressID,
+		arg.IngressRunID,
+		arg.IngressLeaseRevision,
+	)
+	var i RecheckPrivateServiceVisitorRow
+	err := row.Scan(&i.Allowed, &i.ValidUntil)
 	return i, err
 }
 
@@ -1518,7 +1860,7 @@ WHERE run.id = $2 AND run.run_number = $3
     AND (publisher_grant.expires_at IS NULL OR publisher_grant.expires_at > $6)
     AND publisher.id = run.publisher_identity_id AND publisher.team_id = service.team_id
     AND publisher.revoked_at IS NULL
-RETURNING run.id, run.private_service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.binding_nonce, run.binding_expires_at, run.run_token_digest, run.stream_public_key, run.stream_key_binding_signature, run.bound_at, run.state, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
+RETURNING run.id, run.private_service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.binding_nonce, run.binding_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.stream_public_key, run.stream_key_binding_signature, run.bound_at, run.state, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
 `
 
 type RenewPrivateServiceRunParams struct {
@@ -1552,6 +1894,8 @@ func (q *Queries) RenewPrivateServiceRun(ctx context.Context, arg RenewPrivateSe
 		&i.RequestDigest,
 		&i.BindingNonce,
 		&i.BindingExpiresAt,
+		&i.AssignmentSeedCiphertext,
+		&i.AssignmentSeedStorageKeyID,
 		&i.RunTokenDigest,
 		&i.StreamPublicKey,
 		&i.StreamKeyBindingSignature,
@@ -1584,8 +1928,7 @@ WHERE run.id = $2 AND run.run_number = $3
     AND publisher.id = run.publisher_identity_id AND publisher.revoked_at IS NULL
     AND publisher.team_id = service.team_id
     AND publisher_key.id = run.publisher_key_id AND publisher_key.publisher_identity_id = publisher.id
-    AND publisher_key.retired_at IS NULL
-RETURNING run.id, run.private_service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.binding_nonce, run.binding_expires_at, run.run_token_digest, run.stream_public_key, run.stream_key_binding_signature, run.bound_at, run.state, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
+RETURNING run.id, run.private_service_id, run.team_id, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.binding_nonce, run.binding_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.stream_public_key, run.stream_key_binding_signature, run.bound_at, run.state, run.created_at, run.publisher_expires_at, run.ready_at, run.closed_at, run.assignments_open
 `
 
 type RetryPrivateServiceRunKeyBindingParams struct {
@@ -1599,8 +1942,8 @@ type RetryPrivateServiceRunKeyBindingParams struct {
 	Now              pgtype.Timestamptz
 }
 
-// the caller re-verifies the SAME signed binding using the enrolled identity
-// and atomically rotates only the run token. the public key is immutable.
+// the caller re-verifies the SAME signed binding against its enrolled key,
+// including a retired key for this exact bound run, and rotates only the token.
 func (q *Queries) RetryPrivateServiceRunKeyBinding(ctx context.Context, arg RetryPrivateServiceRunKeyBindingParams) (ControlPrivateServiceRun, error) {
 	row := q.db.QueryRow(ctx, retryPrivateServiceRunKeyBinding,
 		arg.RunTokenDigest,
@@ -1625,6 +1968,8 @@ func (q *Queries) RetryPrivateServiceRunKeyBinding(ctx context.Context, arg Retr
 		&i.RequestDigest,
 		&i.BindingNonce,
 		&i.BindingExpiresAt,
+		&i.AssignmentSeedCiphertext,
+		&i.AssignmentSeedStorageKeyID,
 		&i.RunTokenDigest,
 		&i.StreamPublicKey,
 		&i.StreamKeyBindingSignature,

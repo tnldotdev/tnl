@@ -10,7 +10,7 @@ import {
 export const config = defineConfig({
   inspection: { mode: "summary", retention: "24h", maxBytes: "64MiB" },
   tunnel: {
-    allowIP: ["192.0.2.0/24"],
+    access: { ip: ["192.0.2.0/24"] },
     limits: {
       http: { total: 100, concurrency: 5, rate: { count: 10, per: "1m", burst: 3 } },
       traffic: {
@@ -95,7 +95,7 @@ literalAsyncAddressResult.services.web.target.type satisfies "address";
 literalAsyncAddressResult.services.db.protocol satisfies "tcp";
 export const addressFactory = defineConfig(({ worktree }) => ({
   inspection: { mode: "summary", retention: "24h", maxBytes: "64MiB" },
-  tunnel: { allowIP: ["192.0.2.0/24"], limits: { http: { rate: { count: 5, per: "1m" } } } },
+  tunnel: { access: { ip: ["192.0.2.0/24"] }, limits: { http: { rate: { count: 5, per: "1m" } } } },
   services: {
     web: {
       protocol: "http",
@@ -109,7 +109,7 @@ export const addressFactory = defineConfig(({ worktree }) => ({
   webhooks: { payments: { service: "api", path: "/hooks/payments", provider: "stripe" } },
 }));
 export const asyncAddressFactory = defineConfig(async ({ worktree }) => ({
-  tunnel: { allowIP: ["192.0.2.0/24"] },
+  tunnel: { access: { ip: ["192.0.2.0/24"] } },
   services: {
     web: {
       target: { type: "address", address: 3000 },

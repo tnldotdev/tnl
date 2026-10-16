@@ -222,7 +222,7 @@ paths:
   /v1/visitor/private-services:
     get:
       operationId: listAvailablePrivateServices
-      description: Authorized saved private services for tnl connect, including offline services. Current ready run fields are absent when no ready run with two ready publisher connections is available. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+      description: Authorized saved private services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "#/components/parameters/PrivateServiceCursor" }]
       responses:
@@ -315,7 +315,7 @@ paths:
   /v1/private-services/{private_service_id}/runs/{private_run_id}:
     post:
       operationId: heartbeatPrivateServiceRun
-      description: Renew only the current run under its exact publisher grant. Ready requires two current relay assignments, never a certificate or DNS state.
+      description: Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
       security: [{ privateRunAuth: [] }]
       parameters:
         - { $ref: "#/components/parameters/PrivateServiceID" }
@@ -582,63 +582,24 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/VisitorGrant" }
         default: { $ref: "#/components/responses/Problem" }
-  /v1/public-urls/{public_url_id}/visitor-ip:
+  /v1/public-urls/{public_url_id}/access:
     parameters:
       - { $ref: "#/components/parameters/PublicURLID" }
-    get:
-      operationId: listVisitorIPGrants
-      security: [{ bearerAuth: [] }]
-      responses:
-        "200":
-          description: Live IP grants
-          content:
-            application/json:
-              schema: { type: array, items: { $ref: "#/components/schemas/VisitorIPGrant" } }
-        default: { $ref: "#/components/responses/Problem" }
     put:
-      operationId: setVisitorIPGrants
+      operationId: replaceVisitorAccess
+      summary: Replace the complete live visitor access policy
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              {
-                type: array,
-                maxItems: 256,
-                items: { $ref: "#/components/schemas/VisitorIPGrantInput" },
-              }
+            schema: { $ref: "#/components/schemas/ReplaceVisitorAccessRequest" }
       responses:
         "200":
-          description: Replaced live IP set
+          description: Saved policy for this public URL, active for new visitor work
           content:
             application/json:
-              schema: { type: array, items: { $ref: "#/components/schemas/VisitorIPGrant" } }
-        default: { $ref: "#/components/responses/Problem" }
-    post:
-      operationId: addVisitorIPGrant
-      security: [{ bearerAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/VisitorIPGrantInput" }
-      responses:
-        "201":
-          description: Added live IP grant
-          content:
-            application/json:
-              schema: { type: array, items: { $ref: "#/components/schemas/VisitorIPGrant" } }
-        default: { $ref: "#/components/responses/Problem" }
-  /v1/public-urls/{public_url_id}/visitor-ip/{grant_id}:
-    delete:
-      operationId: removeVisitorIPGrant
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { $ref: "#/components/parameters/PublicURLID" }
-        - { name: grant_id, in: path, required: true, schema: { type: string } }
-      responses:
-        "204": { description: IP grant removed for new connections }
+              schema: { $ref: "#/components/schemas/PublicURL" }
         default: { $ref: "#/components/responses/Problem" }
   /v1/public-urls/{public_url_id}/visitor-certificate:
     post:
@@ -695,6 +656,7 @@ paths:
                 properties:
                   identity_id: { $ref: "#/components/schemas/IdentityID" }
                   public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+                  valid_until: { type: string, format: date-time }
         default: { $ref: "#/components/responses/Problem" }
   /v1/guest-demo/publisher:
     post:
@@ -1098,6 +1060,29 @@ paths:
         default:
           $ref: "#/components/responses/Problem"
   /v1/shares:
+    post:
+      operationId: createURLShare
+      summary: Store one share for an exact authorized HTTP public URL
+      description: A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateShareRequest"
+      responses:
+        "201":
+          description: Stored share without its secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Share"
+        default:
+          $ref: "#/components/responses/Problem"
     get:
       operationId: listTeamShares
       summary: List manageable shares for one team
@@ -2119,7 +2104,7 @@ components:
         private_run_id:
           {
             $ref: "#/components/schemas/PrivateRunID",
-            description: Present only for a ready run with two ready publisher connections and a live publisher grant.,
+            description: Present for a ready run with a live publisher grant and at least one live ready publisher connection; first readiness requires two.,
           }
         run_number:
           {
@@ -2174,6 +2159,13 @@ components:
         expires_at: { type: string, format: date-time }
         accepted_at: { type: string, format: date-time }
         revoked_at: { type: string, format: date-time }
+        secret:
+          {
+            type: string,
+            minLength: 32,
+            maxLength: 128,
+            description: Returned only when the invitation is created; share it with the verified email recipient. Never returned by list.,
+          }
     PrivateConnectorSessionSetup:
       type: object
       additionalProperties: false
@@ -2412,6 +2404,19 @@ components:
         browser_cookie_secret: { type: string, maxLength: 43 }
         share_id: { type: string }
         share_cookie_secret: { type: string, maxLength: 43 }
+        share_secret: { type: string, maxLength: 43 }
+    ReplaceVisitorAccessRequest:
+      type: object
+      additionalProperties: false
+      required: [mode, ip, expected_revision]
+      properties:
+        mode: { $ref: "#/components/schemas/VisitorAccessMode" }
+        ip:
+          type: array
+          maxItems: 256
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 64 }
+        expected_revision: { type: integer, format: int64, minimum: 1 }
     HTTPVisitorResponse:
       type: object
       additionalProperties: false
@@ -2421,6 +2426,7 @@ components:
         team_member: { type: boolean }
         identity_id: { type: string }
         display_name: { type: string }
+        valid_until: { type: string, format: date-time }
     CreateTeamVisitorGrantRequest:
       type: object
       additionalProperties: false
@@ -2479,21 +2485,6 @@ components:
         service_protocol: { $ref: "#/components/schemas/PublicURLServiceProtocol" }
         public_port: { type: integer, format: int32, minimum: 1024, maximum: 65535 }
         visitor_access: { type: string, enum: [owner, preview_team, team_grant, identity_grant] }
-    VisitorIPGrantInput:
-      type: object
-      additionalProperties: false
-      required: [prefix]
-      properties:
-        prefix: { type: string, maxLength: 64 }
-        expires_at: { type: string, format: date-time }
-    VisitorIPGrant:
-      type: object
-      additionalProperties: false
-      required: [id, prefix]
-      properties:
-        id: { type: string }
-        prefix: { type: string }
-        expires_at: { type: string, format: date-time }
     VisitorCertificate:
       type: object
       additionalProperties: false
@@ -2777,6 +2768,9 @@ components:
     PublicURLPurpose:
       type: string
       enum: [app, alias, demo, oauth, webhooks]
+    VisitorAccessMode:
+      type: string
+      enum: [restricted, anonymous]
     PublicURLServiceProtocol:
       type: string
       enum: [http, ssh]
@@ -2796,6 +2790,8 @@ components:
           public_url_scope,
           purpose,
           service_protocol,
+          access_mode,
+          mutation_revision,
           policy_revision,
           lifecycle_state,
           next_publish_run_number,
@@ -2829,6 +2825,12 @@ components:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
           $ref: "#/components/schemas/PublicURLPurpose"
+        access_mode:
+          $ref: "#/components/schemas/VisitorAccessMode"
+        mutation_revision:
+          type: integer
+          format: int64
+          minimum: 1
         policy_revision:
           type: integer
           format: int64
@@ -2948,14 +2950,14 @@ components:
         target:
           type: string
           description: Local service address, such as http://app.internal:3000.
-        allow_ip:
+        ip:
           type: array
           maxItems: 32
           uniqueItems: true
           items:
             type: string
-        allow_all_ips:
-          type: boolean
+        access_mode:
+          $ref: "#/components/schemas/VisitorAccessMode"
         limits:
           $ref: "#/components/schemas/PublisherApplicationLimits"
     PublisherApplicationLimits:
@@ -3035,6 +3037,8 @@ components:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
           $ref: "#/components/schemas/PublicURLPurpose"
+        access_mode:
+          $ref: "#/components/schemas/VisitorAccessMode"
         allowed_ip_prefixes:
           type: array
           uniqueItems: true
@@ -3168,6 +3172,9 @@ components:
         secret_fingerprint:
           type: string
           pattern: "^[0-9a-f]{64}$"
+        label:
+          type: string
+          maxLength: 128
     Share:
       type: object
       additionalProperties: false
@@ -3175,7 +3182,8 @@ components:
         [
           schema_version,
           id,
-          preview_id,
+          scope,
+          label,
           team_id,
           public_url_ids,
           created_by_identity_id,
@@ -3189,6 +3197,11 @@ components:
           $ref: "#/components/schemas/ShareID"
         preview_id:
           $ref: "#/components/schemas/PreviewID"
+        scope:
+          type: string
+          enum: [url, preview, guest]
+        label:
+          type: string
         team_id:
           $ref: "#/components/schemas/TeamID"
         public_url_ids:
@@ -3600,13 +3613,14 @@ components:
     FeedbackReviewerAccess:
       type: object
       additionalProperties: false
-      required: [allowed_ip]
+      required: [visit_allowed]
       properties:
         source_ip:
           type: string
           maxLength: 64
-        allowed_ip:
+        visit_allowed:
           type: boolean
+        share_secret: { type: string, minLength: 43, maxLength: 43 }
         share_id:
           $ref: "#/components/schemas/ShareID"
         cookie_secret:
@@ -4018,7 +4032,7 @@ components:
     EnableShareAccessRequest:
       type: object
       additionalProperties: false
-      required: [publish_run_number, preview_id]
+      required: [publish_run_number]
       properties:
         publish_run_number:
           type: integer

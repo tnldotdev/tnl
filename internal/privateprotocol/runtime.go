@@ -71,8 +71,8 @@ type AdHocRegister struct {
 	Target         string       `json:"target"`
 	ServerURL      string       `json:"server_url,omitempty"`
 	Credential     string       `json:"credential"`
-	AllowIP        []string     `json:"allow_ip,omitempty"`
-	AllowAllIPs    bool         `json:"allow_all_ips,omitempty"`
+	AccessMode     string       `json:"access_mode,omitempty"`
+	IP             []string     `json:"ip,omitempty"`
 	Limits         *AdHocLimits `json:"limits,omitempty"`
 }
 

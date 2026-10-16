@@ -46,7 +46,7 @@ func TestDeniedPolicyMarkerSurvivesBothStreamHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	visitor.IPPolicyDenied = true
+	visitor.AccessPending = true
 	var wire bytes.Buffer
 	if err := WriteVisitorStreamHeader(&wire, visitor); err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestDeniedPolicyMarkerSurvivesBothStreamHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	forward.IPPolicyDenied = true
+	forward.AccessPending = true
 	wire.Reset()
 	if err := WriteInternalForwardingHeader(&wire, forward); err != nil {
 		t.Fatal(err)

@@ -24,7 +24,7 @@ type PublisherIdentityStore interface {
 	RevokePublisherIdentity(context.Context, string, string, string, time.Time) error
 	RevokePublisherGrant(context.Context, string, string, string, string, time.Time) error
 	AuthenticatePublisherAccess(context.Context, string, string, time.Time) (controlstate.PublisherIdentity, error)
-	AllocatePublisherPublicURL(context.Context, controlstate.PublisherIdentity, string, string, []string, []byte, time.Time) (controlstate.PublicURL, error)
+	AllocatePublisherPublicURL(context.Context, controlstate.PublisherIdentity, string, string, []string, []byte, time.Time, ...controlstate.VisitorAccessMode) (controlstate.PublicURL, error)
 	PublisherMayStartRun(context.Context, controlstate.PublisherIdentity, string) (bool, error)
 }
 
@@ -68,10 +68,20 @@ func (h *handler) publisherEditor(w http.ResponseWriter, r *http.Request, team s
 	return nil, controlstate.Membership{}, "", false
 }
 
-func publisherScope(team string, url, domain *string) (controlstate.PublisherScope, bool) {
+func publisherScope(team string, url, domain, private *string) (controlstate.PublisherScope, bool) {
 	s := controlstate.PublisherScope{TeamID: team}
-	if (url == nil) == (domain == nil) {
+	selected := 0
+	for _, value := range []*string{url, domain, private} {
+		if value != nil {
+			selected++
+		}
+	}
+	if selected != 1 {
 		return s, false
+	}
+	if private != nil {
+		s.Kind, s.PrivateServiceID = "private_service", *private
+		return s, opaqueid.Valid(*private, opaqueid.PrivateServicePrefix)
 	}
 	if url != nil {
 		s.Kind, s.PublicURLID = "saved_url", *url
@@ -87,7 +97,7 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher enrollment")
 		return
 	}
-	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId)
+	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId, b.PrivateServiceId)
 	if !valid || s.Kind == "namespace" && !h.config.DNSAutomation {
 		writeProblem(w, 400, controlv1.InvalidRequest, "select a saved URL or an automated HTTP namespace")
 		return
@@ -105,6 +115,9 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 	if e.Scope.PublicURLID != "" {
 		result.PublicUrlId = &e.Scope.PublicURLID
 	}
+	if e.Scope.PrivateServiceID != "" {
+		result.PrivateServiceId = &e.Scope.PrivateServiceID
+	}
 	if e.Scope.DomainID != "" {
 		result.DomainId = &e.Scope.DomainID
 	}
@@ -119,6 +132,9 @@ func publisherGrantResponse(g controlstatedb.ControlPublisherGrant) controlv1.Pu
 	r := controlv1.PublisherGrant{Id: g.ID, Kind: controlv1.PublisherGrantKind(g.Kind), CreatedAt: g.CreatedAt.Time}
 	if g.PublicURLID.Valid {
 		r.PublicUrlId = &g.PublicURLID.String
+	}
+	if g.PrivateServiceID.Valid {
+		r.PrivateServiceId = &g.PrivateServiceID.String
 	}
 	if g.DomainID.Valid {
 		r.DomainId = &g.DomainID.String
@@ -185,7 +201,7 @@ func (h *handler) CreatePublisherGrant(w http.ResponseWriter, r *http.Request, i
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher grant")
 		return
 	}
-	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId)
+	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId, b.PrivateServiceId)
 	if !valid || s.Kind == "namespace" && !h.config.DNSAutomation {
 		writeProblem(w, 400, controlv1.InvalidRequest, "select a saved URL or an automated HTTP namespace")
 		return

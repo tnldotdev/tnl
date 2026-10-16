@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
@@ -48,6 +50,34 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	first, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil {
 		t.Fatal(err)
+	}
+	share, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "first-share", "trial", sha256.Sum256([]byte("reviewer-secret")), stored.ExpiresAt, now)
+	if err != nil || share.Scope != "guest" || share.Label != "trial" || share.PreviewID != "" || len(share.PublicURLIDs) != 1 || share.PublicURLIDs[0] != first.ID || !share.ExpiresAt.Equal(stored.ExpiresAt) {
+		t.Fatalf("guest share = %+v, %v", share, err)
+	}
+	if _, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "first-share", "trial", sha256.Sum256([]byte("other-secret")), stored.ExpiresAt, now); !errors.Is(err, ErrShareIdempotency) {
+		t.Fatalf("reused guest share key with different secret: %v", err)
+	}
+	short, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "short-share", "", sha256.Sum256([]byte("short-lived")), now.Add(time.Hour), now)
+	if err != nil || !short.ExpiresAt.Equal(now.Add(time.Hour).UTC().Truncate(time.Microsecond)) {
+		t.Fatalf("guest share with shorter expiry = %+v, %v", short, err)
+	}
+	if _, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "short-share", "", sha256.Sum256([]byte("short-lived")), now.Add(2*time.Hour), now); !errors.Is(err, ErrShareIdempotency) {
+		t.Fatalf("reused guest share key with different expiry: %v", err)
+	}
+	capped, err := database.CreateGuestShare(t.Context(), guest.ID, first.ID, "capped-share", "", sha256.Sum256([]byte("trial-bound")), now.Add(4*24*time.Hour), now)
+	if err != nil || !capped.ExpiresAt.Equal(stored.ExpiresAt) {
+		t.Fatalf("guest share beyond trial = %+v, %v", capped, err)
+	}
+	unrelated, err := opaqueid.New(opaqueid.PublicURLPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateGuestShare(t.Context(), guest.ID, unrelated, "other-share", "", sha256.Sum256([]byte("reviewer-secret")), stored.ExpiresAt, now); !errors.Is(err, ErrShareStale) {
+		t.Fatalf("guest share of unrelated public URL: %v", err)
+	}
+	if _, err := controlstatedb.New(database.pool).GetActiveShareForPublicURL(t.Context(), controlstatedb.GetActiveShareForPublicURLParams{ShareID: share.ID, PublicURLID: first.ID, Now: timestamptz(now)}); err != nil {
+		t.Fatalf("guest share not active: %v", err)
 	}
 	var ingressPoolID string
 	if err := database.pool.QueryRow(t.Context(), `SELECT ingress_pool_id FROM control.public_urls WHERE id = $1`, first.ID).Scan(&ingressPoolID); err != nil || ingressPoolID != PrimaryIngressPoolID {
@@ -94,6 +124,9 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 	}
 	if _, err := database.AllocateGuestDemoNumber(t.Context(), guest.ID, now.Add(4*time.Second)); !errors.Is(err, ErrGuestTrialSpent) {
 		t.Fatalf("spent guest trial allocated another number: %v", err)
+	}
+	if _, err := controlstatedb.New(database.pool).GetActiveShareForPublicURL(t.Context(), controlstatedb.GetActiveShareForPublicURLParams{ShareID: share.ID, PublicURLID: first.ID, Now: timestamptz(now.Add(4 * time.Second))}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("ended guest trial retained share: %v", err)
 	}
 }
 
