@@ -42,6 +42,10 @@ func TestSSHCommandModel(t *testing.T) {
 		{[]string{"ssh", "chase@workstation.example.test", "--", "git status"}, "ssh <user@host> <command>"},
 		{[]string{"ssh", "enable", "--name", "workstation", "--user", "chase", "--user", "deploy"}, "ssh enable"},
 		{[]string{"ssh", "connect", "--public-url-id", "url_0123456789abcdefghijkl"}, "ssh connect"},
+		{[]string{"ssh", "copy", "local.txt", "chase@workstation.example.test:remote.txt"}, "ssh copy <source> <destination>"},
+		{[]string{"ssh", "sftp", "chase@workstation.example.test"}, "ssh sftp <user@host>"},
+		{[]string{"ssh", "install"}, "ssh install"},
+		{[]string{"service", "status", "workstation"}, "service status <job>"},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			var flags cli
@@ -205,6 +209,14 @@ func TestSSHEnableChecksExistingNonrootAccounts(t *testing.T) {
 	if err := validateSSHEnable(sshEnableCommand{Name: "workstation", Users: []string{"chase", "deploy"}}, lookup); err != nil {
 		t.Fatal(err)
 	}
+	for _, name := range []string{"0xcadams-laptop", strings.Repeat("a", 33), "nested.host"} {
+		if err := validateSSHEnable(sshEnableCommand{Name: name, Users: []string{"chase"}}, func(string) (*user.User, error) {
+			t.Fatal("invalid job name reached account lookup")
+			return nil, nil
+		}); err == nil {
+			t.Fatalf("invalid enrollment/job name accepted: %q", name)
+		}
+	}
 }
 
 type sshSetupFake struct {
@@ -266,7 +278,7 @@ func TestSSHEnablePreparesTargetlessScopedPrivateHandoff(t *testing.T) {
 	}
 }
 
-func TestSSHEnableScaffoldingFailsBeforeLogin(t *testing.T) {
+func TestSSHEnableRejectsInvalidSetupBeforeLogin(t *testing.T) {
 	err := runSSHEnable(t.Context(), sshEnableCommand{Name: "invalid.name", Users: []string{"root"}}, io.Discard, io.Discard)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.InvalidSetupInput {
 		t.Fatalf("invalid setup reached login: %v", err)

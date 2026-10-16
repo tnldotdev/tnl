@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -291,6 +292,31 @@ func TestOpenSSHHelper(t *testing.T) {
 			os.Exit(1)
 		}
 		for request := range requests {
+			if request.Type == "subsystem" {
+				var subsystem struct{ Name string }
+				if ssh.Unmarshal(request.Payload, &subsystem) != nil || subsystem.Name != "sftp" {
+					os.Exit(1)
+				}
+				server, err := sftp.NewServer(channel)
+				if err != nil {
+					os.Exit(1)
+				}
+				_ = request.Reply(true, nil)
+				if *sshClientReadyFile != "" {
+					if err := os.WriteFile(*sshClientReadyFile, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+						os.Exit(1)
+					}
+				}
+				err = server.Serve()
+				_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+				_ = server.Close()
+				_ = channel.Close()
+				_ = conn.Close()
+				if err != nil && !errors.Is(err, io.EOF) {
+					os.Exit(1)
+				}
+				os.Exit(0)
+			}
 			if request.Type == "exec" {
 				_ = request.Reply(true, nil)
 				if *sshClientReadyFile != "" {

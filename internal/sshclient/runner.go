@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"golang.org/x/crypto/ssh"
 )
@@ -39,12 +40,25 @@ type Session struct {
 // use real files for interactive sessions; arbitrary blocking readers cannot be
 // interrupted by os/exec. cancellation kills ssh and removes temporary trust.
 func Run(ctx context.Context, session Session, stdin io.Reader, stdout, stderr io.Writer) (result error) {
+	return runClient(ctx, session, "ssh", func(s Session, knownHosts, keyType, _ string) []string {
+		return commandArgs(s, knownHosts, keyType)
+	}, stdin, stdout, stderr)
+}
+
+func runClient(ctx context.Context, session Session, client string, args func(Session, string, string, string) []string, stdin io.Reader, stdout, stderr io.Writer) (result error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	path, err := findOpenSSH()
 	if err != nil {
 		return err
+	}
+	sshPath := path
+	if client != "ssh" {
+		path, err = exec.LookPath(client)
+		if err != nil {
+			return &Error{Op: "find OpenSSH transfer client", Err: errors.Join(ErrTransferUnavailable, err)}
+		}
 	}
 	session, key, err := validateSession(session)
 	if err != nil {
@@ -64,7 +78,7 @@ func Run(ctx context.Context, session Session, stdin io.Reader, stdout, stderr i
 	if err := os.WriteFile(knownHosts, []byte(entry), 0o600); err != nil {
 		return &Error{Op: "write pinned SSH host key", Err: err}
 	}
-	cmd := exec.CommandContext(ctx, path, commandArgs(session, knownHosts, key.Type())...)
+	cmd := exec.CommandContext(ctx, path, args(session, knownHosts, key.Type(), sshPath)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	// let OpenSSH's signal handler close its ProxyCommand child before WaitDelay
 	// falls back to killing a stuck client. a separate process group would break
@@ -173,6 +187,18 @@ func hostKeyAlias(s Session) string {
 }
 
 func commandArgs(s Session, knownHosts, keyType string) []string {
+	args := connectionArgs(s, knownHosts, keyType)
+	for _, forward := range s.LocalForwards {
+		args = append(args, "-L", forward)
+	}
+	for _, forward := range s.DynamicForwards {
+		args = append(args, "-D", forward)
+	}
+	args = append(args, "-l", s.User, "--", s.Hostname)
+	return append(args, s.Command...)
+}
+
+func connectionArgs(s Session, knownHosts, keyType string) []string {
 	if keyType == ssh.KeyAlgoRSA {
 		keyType = ssh.KeyAlgoRSASHA512 + "," + ssh.KeyAlgoRSASHA256
 	}
@@ -197,14 +223,7 @@ func commandArgs(s Session, knownHosts, keyType string) []string {
 	for _, option := range options {
 		args = append(args, "-o", option)
 	}
-	for _, forward := range s.LocalForwards {
-		args = append(args, "-L", forward)
-	}
-	for _, forward := range s.DynamicForwards {
-		args = append(args, "-D", forward)
-	}
-	args = append(args, "-l", s.User, "--", s.Hostname)
-	return append(args, s.Command...)
+	return args
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
@@ -216,15 +235,7 @@ func configQuote(s string) string {
 }
 
 func validUser(s string) bool {
-	if s == "" || len(s) > 256 || s[0] == '-' {
-		return false
-	}
-	for _, c := range s {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.') {
-			return false
-		}
-	}
-	return true
+	return authorization.SSHUserValid(s)
 }
 
 func validHostname(s string) bool {

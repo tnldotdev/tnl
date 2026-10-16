@@ -86,11 +86,17 @@ func TestShareAccountGrantsUseExplicitSSHUser(t *testing.T) {
 					if r.Header.Get("Idempotency-Key") == "" {
 						t.Error("missing idempotency key")
 					}
-					body["id"] = "grant_test"
-					body["public_url_id"] = id
-					body["kind"] = "team"
+					response := map[string]any{"id": "grant_test", "public_url_id": id, "expires_at": time.Now().Add(time.Hour)}
+					if tc.account != "" {
+						response["ssh_user"] = tc.account
+					}
+					if kind == "team" {
+						response["kind"] = "team"
+					} else {
+						response["email"] = body["email"]
+					}
 					w.WriteHeader(http.StatusCreated)
-					_ = json.NewEncoder(w).Encode(body)
+					_ = json.NewEncoder(w).Encode(response)
 				}))
 				defer server.Close()
 				control, err := controlclient.New(server.URL, server.Client(), credentials.AccessToken("session"))

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -22,10 +23,13 @@ import (
 type sshCommand struct {
 	Run     sshRunCommand     `cmd:"" default:"withargs" help:"Visit a managed SSH host: tnl ssh USER@HOST [-L port:host:port] [-- command]."`
 	Enable  sshEnableCommand  `cmd:"" help:"Enable managed SSH for existing nonroot accounts on this host."`
+	Install struct{}          `cmd:"" hidden:""`
+	Copy    sshCopyCommand    `cmd:"" help:"Copy a file between this machine and one managed SSH host using SFTP."`
+	SFTP    sshSFTPCommand    `cmd:"" name:"sftp" help:"Open the system SFTP client for a managed SSH host."`
 	Connect sshConnectCommand `cmd:"" hidden:""`
 }
 
-// SSH transport helpers use only a saved login, including when invoked by
+// ssh transport helpers use only a saved login, including when invoked by
 // OpenSSH. an expired login must never prompt on the SSH protocol's stdin.
 type sshRemoteFlags struct {
 	ServerURL string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the selected server."`
@@ -72,16 +76,7 @@ func parseSSHDestination(destination string) (string, string, error) {
 }
 
 func validSSHAccount(user string) bool {
-	if user == "" || user == "root" || len(user) > 32 {
-		return false
-	}
-	for i, c := range user {
-		if c >= 'a' && c <= 'z' || c == '_' || i > 0 && (c >= '0' && c <= '9' || c == '-') {
-			continue
-		}
-		return false
-	}
-	return true
+	return authorization.SSHUserValid(user)
 }
 
 func openSSHVisitorSession(ctx context.Context, flags sshRemoteFlags) (*teamSession, error) {
@@ -174,6 +169,8 @@ func writeSSHCommandError(output io.Writer, command string, err error) bool {
 		switch {
 		case errors.Is(err, sshclient.ErrSSHUnavailable):
 			sshErr = &sshCommandError{message: "OpenSSH is not installed or is not on PATH", action: "install the system OpenSSH client, then run tnl ssh again"}
+		case errors.Is(err, sshclient.ErrTransferUnavailable):
+			sshErr = &sshCommandError{message: "the OpenSSH file transfer client is not installed or is not on PATH", action: "install the system scp and sftp clients, then retry the transfer"}
 		case errors.Is(err, sshclient.ErrInvalidForward):
 			sshErr = &sshCommandError{message: "SSH forwarding needs a loopback TCP listener", action: "use -L port:host:port or -D port; Unix sockets and nonloopback listeners are not supported"}
 		case errors.Is(err, sshclient.ErrInvalidHostKey):

@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/managedssh"
 	"github.com/tnldotdev/tnl/internal/sshclient"
 	"golang.org/x/term"
 )
@@ -151,6 +152,14 @@ type aliasChoiceCommand struct {
 }
 
 func main() {
+	// the private child reads setup only from fd 3. it must run before cli state,
+	// telemetry, output adapters, or argument parsing can touch the session.
+	if isSSHChildCommand(os.Args[1:]) {
+		if err := managedssh.RunChild(context.Background()); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -501,6 +510,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runServiceStop(ctx, flags.Service.Stop, stdout)
 	case "service list":
 		return runServiceList(ctx, flags.Service.List, stdout)
+	case "service status <job>":
+		return runServiceStatus(ctx, flags.Service.Status, stdout)
 	case "service serve":
 		return runServiceServe(ctx, flags.Service.Serve)
 	case "ssh <user@host> <command>":
@@ -509,6 +520,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runSSHConnect(ctx, flags.SSH.Connect, os.Stdin, stdout)
 	case "ssh enable":
 		return runSSHEnable(ctx, flags.SSH.Enable, stdout, stderr)
+	case "ssh install":
+		return runSSHInstall(ctx, os.Stdin)
+	case "ssh copy <source> <destination>":
+		return runSSHCopy(ctx, flags.SSH.Copy, os.Stdin, stdout, stderr)
+	case "ssh sftp <user@host>":
+		return runSSHSFTP(ctx, flags.SSH.SFTP, os.Stdin, stdout, stderr)
 	case "status":
 		if !flags.Status.All {
 			flags.Status.Project, err = projectRoot(ctx, flags)

@@ -7,10 +7,12 @@ import (
 )
 
 var (
-	ErrSSHUnavailable = errors.New("OpenSSH was not found; install ssh and make it available on PATH")
-	ErrInvalidSession = errors.New("invalid managed SSH session settings")
-	ErrInvalidForward = errors.New("invalid SSH forwarding; use a loopback TCP listener and TCP destination")
-	ErrInvalidHostKey = errors.New("invalid pinned SSH public host key")
+	ErrSSHUnavailable      = errors.New("OpenSSH was not found; install ssh and make it available on PATH")
+	ErrInvalidSession      = errors.New("invalid managed SSH session settings")
+	ErrInvalidForward      = errors.New("invalid SSH forwarding; use a loopback TCP listener and TCP destination")
+	ErrInvalidHostKey      = errors.New("invalid pinned SSH public host key")
+	ErrTransferUnavailable = errors.New("OpenSSH scp or sftp was not found")
+	ErrInvalidTransfer     = errors.New("invalid SSH file transfer settings")
 )
 
 // Error identifies an operation while retaining its underlying cause. its message
