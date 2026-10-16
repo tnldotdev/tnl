@@ -142,6 +142,7 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 	} else {
 		route.ServiceProtocol = "http"
 	}
+	route.AccessMode = string(entry.AccessMode)
 	if entry.Traffic != nil {
 		limits, err := routingTraffic(*entry.Traffic)
 		if err != nil {
@@ -202,14 +203,14 @@ func (b forwardingBackend) Open(ctx context.Context, visitorConnectionID string)
 	return b.open(ctx, visitorConnectionID, false)
 }
 
-func (b forwardingBackend) OpenDenied(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
+func (b forwardingBackend) OpenPending(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
 	return b.open(ctx, visitorConnectionID, true)
 }
 
 func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string, denied bool) (net.Conn, error) {
 	header := b.header
 	header.VisitorConnectionID = visitorConnectionID
-	header.IPPolicyDenied = denied
+	header.AccessPending = denied
 	if err := header.Validate(); err != nil {
 		return nil, fmt.Errorf("ingress: internal forwarding header: %w", err)
 	}

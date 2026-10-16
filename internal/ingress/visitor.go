@@ -110,23 +110,21 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 			defer func() { usage.Close(time.Now().UTC()) }()
 		}
 	}
-	denied := !challenge && !route.allowsIP(source.Addr())
-	if denied {
+	if !challenge && !route.allowsIP(source.Addr()) {
 		visitorOutcome = observability.VisitorPolicyDenied
 		if usage != nil {
 			usage.PolicyDenied(time.Now().UTC())
 		}
-		// SSH has no end-to-end TLS authorization path. database publishers
-		// consume only bounded TLS startup locally, before target authentication.
-		if byPort && route.ServiceProtocol != "postgres" && route.ServiceProtocol != "mysql" && route.ServiceProtocol != "redis" {
-			return nil
-		}
+		return nil
 	}
+	// ingress cannot inspect a visitor credential inside TLS. restricted
+	// HTTP and database connections remain bounded until the publisher checks it.
+	denied := !challenge && route.AccessMode != "anonymous" && route.ServiceProtocol != "ssh"
 	kind, key := visitorConnection, route.ID
 	if challenge {
 		kind, key = challengeConnection, hello.ServerName
 	} else if denied {
-		kind = deniedConnection
+		kind = pendingConnection
 	}
 	var admission *visitorAdmission
 	var release func()
@@ -282,11 +280,11 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []routebackend.
 		started := time.Now()
 		var candidate net.Conn
 		var openErr error
-		if kind == deniedConnection {
-			if denialBackend, ok := backend.(routebackend.DenialBackend); ok {
-				candidate, openErr = denialBackend.OpenDenied(attemptCtx, visitorID)
+		if kind == pendingConnection {
+			if pendingBackend, ok := backend.(routebackend.PendingBackend); ok {
+				candidate, openErr = pendingBackend.OpenPending(attemptCtx, visitorID)
 			} else {
-				openErr = errors.New("ingress: backend does not support denied connections")
+				openErr = errors.New("ingress: backend does not support pending authorization")
 			}
 		} else {
 			candidate, openErr = backend.Open(attemptCtx, visitorID)

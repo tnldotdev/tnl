@@ -7,8 +7,9 @@ info:
     Same-origin browser feedback endpoints served by the local publisher on a
     public URL. The publisher supplies the preview, service, public URL, publish
     run, and current source state. Visitors cannot select that scope or supply
-    control credentials. IP policy or a current share cookie grants preview
-    access; the browser tracking cookie only selects a short failed-request
+    control credentials. Current visitor access, including a sign-in, share,
+    token, or explicitly anonymous URL, grants preview access; an optional IP
+    filter never grants access by itself. The browser tracking cookie only selects a short failed-request
     trail. Requests and responses use Cache-Control no-store. Errors are plain
     text diagnostics and never include upstream response bodies or credentials.
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
@@ -233,9 +234,9 @@ components:
         public_url_id:
           $ref: "../../control/v1/openapi.yaml#/components/schemas/PublicURLID"
         publish_run_number: { type: integer, format: int64, minimum: 1 }
-        access_method: { type: string, enum: [ip, share, team] }
+        access_method: { type: string, enum: [anonymous, share, team, visitor] }
         expires_at: { type: string, format: date-time }
-        reason: { type: string, enum: [TNL_IP_POLICY_DENIED] }
+        reason: { type: string, enum: [TNL_VISITOR_ACCESS_DENIED] }
     BrowserFeedbackReportRequest:
       type: object
       additionalProperties: false

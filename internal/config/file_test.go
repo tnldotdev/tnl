@@ -74,8 +74,7 @@ tnl:
   feedback: true
   oauth: true
   tunnel:
-    allow_ip: [192.0.2.1]
-    allow_all_ips: false
+    access: {ip: [192.0.2.1]}
     limits:
       http:
         total: 20
@@ -98,7 +97,7 @@ tnl:
 		document.TNL.Feedback == nil || !*document.TNL.Feedback || !document.TNL.OAuth ||
 		document.TNL.Services["web"].Target == nil || string(*document.TNL.Services["web"].Target.Address) != "3000" ||
 		document.TNL.Services["web"].HTTP.Readiness.Path != "/health" ||
-		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs ||
+		document.TNL.Tunnel == nil || document.TNL.Tunnel.Access == nil || document.TNL.Tunnel.Access.VisitorMode() != "restricted" || len(document.TNL.Tunnel.Access.IP) != 1 ||
 		document.TNL.Tunnel.Limits == nil || document.TNL.Tunnel.Limits.HTTP.Concurrency == nil || *document.TNL.Tunnel.Limits.HTTP.Concurrency != 750 ||
 		document.TNL.Tunnel.Limits.HTTP.Total == nil || *document.TNL.Tunnel.Limits.HTTP.Total != 20 ||
 		document.TNL.Tunnel.Limits.HTTP.Rate == nil || document.TNL.Tunnel.Limits.HTTP.Rate.Count == nil || *document.TNL.Tunnel.Limits.HTTP.Rate.Count != 5 ||
@@ -224,8 +223,8 @@ func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) 
 	invalidTarget := Target("https://example.com")
 	for name, value := range map[string]TNL{
 		"target":            {Services: Services{"web": {Target: &ServiceTarget{Type: "address", Address: &invalidTarget}}}},
-		"masked prefix":     {Tunnel: &Tunnel{AllowIP: []string{"192.0.2.7/24"}}},
-		"duplicate address": {Tunnel: &Tunnel{AllowIP: []string{"192.0.2.1", "192.0.2.1/32"}}},
+		"masked prefix":     {Tunnel: &Tunnel{Access: &Access{IP: []string{"192.0.2.7/24"}}}},
+		"duplicate address": {Tunnel: &Tunnel{Access: &Access{IP: []string{"192.0.2.1", "192.0.2.1/32"}}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := ValidateTNL(value); err == nil {
@@ -327,8 +326,8 @@ func TestTCPInspectionModes(t *testing.T) {
 
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"inspection":{"mode":"none"},"services":{"web":{"inspection":{"mode":"summary"},"target":{"type":"address","address":3000},"http":{"readiness":{"path":"/health"}}}},"tunnel":{"allow_ip":["192.0.2.1"]}}}`,
-		"yml":  "version: 1\ntnl:\n  inspection: {mode: none}\n  services:\n    web:\n      inspection: {mode: summary}\n      target: {type: address, address: 3000}\n      http:\n        readiness: {path: /health}\n  tunnel:\n    allow_ip: [192.0.2.1]\n",
+		"json": `{"version":1,"tnl":{"inspection":{"mode":"none"},"services":{"web":{"inspection":{"mode":"summary"},"target":{"type":"address","address":3000},"http":{"readiness":{"path":"/health"}}}},"tunnel":{"access":{"ip":["192.0.2.1"]}}}}`,
+		"yml":  "version: 1\ntnl:\n  inspection: {mode: none}\n  services:\n    web:\n      inspection: {mode: summary}\n      target: {type: address, address: 3000}\n      http:\n        readiness: {path: /health}\n  tunnel:\n    access: {ip: [192.0.2.1]}\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -358,8 +357,8 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"service feedback":           {`{"version":1,"tnl":{"services":{"web":{"feedback":true}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      feedback: true\n", "feedback"},
 		"obsolete subdomain":         {`{"version":1,"tnl":{"tunnel":{"subdomain":"api"}}}`, "version: 1\ntnl:\n  tunnel:\n    subdomain: api\n", "subdomain"},
 		"target":                     {`{"version":1,"tnl":{"services":{"web":{"target":{"type":"address","address":"https://example.com/path"}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      target: {type: address, address: https://example.com/path}\n", "target.address:"},
-		"ip":                         {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
-		"duplicate":                  {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},
+		"ip":                         {`{"version":1,"tnl":{"tunnel":{"access":{"ip":["192.0.2.7/24"]}}}}`, "version: 1\ntnl:\n  tunnel:\n    access: {ip: [192.0.2.7/24]}\n", "distinct canonical addresses or prefixes"},
+		"duplicate":                  {`{"version":1,"tnl":{"tunnel":{"access":{"ip":["192.0.2.1","192.0.2.1/32"]}}}}`, "version: 1\ntnl:\n  tunnel:\n    access: {ip: [192.0.2.1, 192.0.2.1/32]}\n", "distinct canonical addresses or prefixes"},
 		"obsolete provider grant":    {`{"version":1,"tnl":{"tunnel":{"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [stripe]\n", "allow_providers"},
 		"unknown webhook provider":   {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","provider":"other"}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      provider: other\n", "provider must be"},
 		"missing webhook provider":   {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe"}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n", "provider must be"},

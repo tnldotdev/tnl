@@ -121,7 +121,7 @@ func TestTunnelHelpExplainsIPPolicyAndTeamSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := strings.Join(strings.Fields(output.String()), " ")
-	for _, want := range []string{"your current IP is also allowed", "every IP", "--team", "--server"} {
+	for _, want := range []string{"--anonymous", "--ip", "--team", "--server"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("publish help missing %q:\n%s", want, output.String())
 		}
@@ -272,20 +272,19 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 
 func TestTunnelCLIUnitOverridesConflictingEnvironmentUnit(t *testing.T) {
 	t.Setenv("TNL_NAME", "environment-name")
-	t.Setenv("TNL_ALLOW_ALL_IPS", "true")
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"publish", "3000", "--public-url", "https://api.example", "--allow-ip", "192.0.2.1"}
+	args := []string{"publish", "3000", "--public-url", "https://api.example", "--ip", "current"}
 	parsed, err := parser.Parse(args)
 	if err != nil {
 		t.Fatal(err)
 	}
 	applyTunnelCLIUnits(parsed, &flags)
-	if flags.Publish.Name != "" || flags.Publish.PublicURL != "https://api.example" || flags.Publish.AllowAllIPs ||
-		len(flags.Publish.AllowIP) != 1 {
+	if flags.Publish.Name != "" || flags.Publish.PublicURL != "https://api.example" ||
+		len(flags.Publish.IP) != 1 || flags.Publish.IP[0] != "current" {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
 }
@@ -296,7 +295,7 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"publish", "3000", "--allow-all-ips=false", "--ephemeral=false"}
+	args := []string{"publish", "3000", "--ephemeral=false"}
 	parsed, err := parser.Parse(args)
 	if err != nil {
 		t.Fatal(err)
@@ -304,9 +303,9 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	applyTunnelCLIUnits(parsed, &flags)
 	configured := true
 	applyTunnelConfiguration(&flags.Publish.tunnelFlags, &config.Tunnel{
-		AllowAllIPs: &configured, Ephemeral: &configured,
+		Ephemeral: &configured,
 	})
-	if flags.Publish.AllowAllIPs || flags.Publish.Ephemeral {
+	if flags.Publish.Ephemeral {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
 }

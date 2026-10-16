@@ -23,19 +23,22 @@ import (
 
 // Defines values for BrowserAccessStatusAccessMethod.
 const (
-	Ip    BrowserAccessStatusAccessMethod = "ip"
-	Share BrowserAccessStatusAccessMethod = "share"
-	Team  BrowserAccessStatusAccessMethod = "team"
+	Anonymous BrowserAccessStatusAccessMethod = "anonymous"
+	Share     BrowserAccessStatusAccessMethod = "share"
+	Team      BrowserAccessStatusAccessMethod = "team"
+	Visitor   BrowserAccessStatusAccessMethod = "visitor"
 )
 
 // Valid indicates whether the value is a known member of the BrowserAccessStatusAccessMethod enum.
 func (e BrowserAccessStatusAccessMethod) Valid() bool {
 	switch e {
-	case Ip:
+	case Anonymous:
 		return true
 	case Share:
 		return true
 	case Team:
+		return true
+	case Visitor:
 		return true
 	default:
 		return false
@@ -44,13 +47,13 @@ func (e BrowserAccessStatusAccessMethod) Valid() bool {
 
 // Defines values for BrowserAccessStatusReason.
 const (
-	TNLIPPOLICYDENIED BrowserAccessStatusReason = "TNL_IP_POLICY_DENIED"
+	TNLVISITORACCESSDENIED BrowserAccessStatusReason = "TNL_VISITOR_ACCESS_DENIED"
 )
 
 // Valid indicates whether the value is a known member of the BrowserAccessStatusReason enum.
 func (e BrowserAccessStatusReason) Valid() bool {
 	switch e {
-	case TNLIPPOLICYDENIED:
+	case TNLVISITORACCESSDENIED:
 		return true
 	default:
 		return false

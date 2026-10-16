@@ -485,6 +485,7 @@ func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
 		TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", ActingIdentityID: "identity_1", IdempotencyKey: "create-key",
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp,
 		ServiceProtocol:   controlstate.PublicURLServiceHTTP,
+		AccessMode:        controlstate.VisitorAccessRestricted,
 		AllowedIPPrefixes: []string{"192.0.2.0/24", "2001:db8::/64"}, DNSState: controlstate.PublicURLDNSPending,
 		DNSAuthorityReference: "dns_authority_1", PolicyRevision: 9, Ephemeral: true,
 	}

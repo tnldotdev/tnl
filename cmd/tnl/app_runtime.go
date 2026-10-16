@@ -500,7 +500,7 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 	}
 	flags := tunnelFlags{}
 	applyTunnelConfiguration(&flags, effective.Tunnel)
-	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
+	policy, err := resolveVisitorAccess(ctx, authenticated.Control, flags.access, flags.Anonymous, flags.IP)
 	if err != nil {
 		return projectpublisher.Configuration{}, err
 	}
@@ -513,6 +513,9 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 		return projectpublisher.Configuration{}, err
 	}
 	cfg := services.config(service.Target, policy.prefixes, limits)
+	if policy.explicit {
+		cfg.AccessMode = policy.access
+	}
 	var binding *projectpublisher.TargetBinding
 	{
 		binding = runtimeTargetBinding(project.Project, service.Name, a.placement, service.Target, nil)
