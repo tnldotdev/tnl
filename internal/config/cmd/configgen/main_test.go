@@ -64,12 +64,12 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	if ips, found := webhook.Properties.Get("source_ips"); !found || ips.MinItems == nil || *ips.MinItems != 1 {
 		t.Fatalf("webhook source override schema = %#v", ips)
 	}
-	if ips, found := tunnel.Properties.Get("allow_ip"); !found || ips.MaxItems != nil {
-		t.Fatalf("tunnel IP limit = %#v", ips)
+	if access, found := tunnel.Properties.Get("access"); !found || len(access.OneOf) != 2 {
+		t.Fatalf("tunnel visitor access schema = %#v", access)
 	}
 	keys := map[string]string{}
 	collectTypeScriptKeys(reflect.TypeOf(config.TNL{}), keys)
-	if keys["allow_ip"] != "allowIP" || keys["source_ips"] != "sourceIPs" || keys["startup_timeout"] != "" || keys["request_limit"] != "" || keys["strip_prefix"] != "stripPrefix" {
+	if keys["allow_ip"] != "" || keys["source_ips"] != "sourceIPs" || keys["startup_timeout"] != "" || keys["request_limit"] != "" || keys["strip_prefix"] != "stripPrefix" {
 		t.Fatalf("TypeScript key mappings = %#v", keys)
 	}
 	duration := schemaForType(reflect.TypeOf(config.Duration(0)))

@@ -40,6 +40,8 @@ type PublicURLServerConfig struct {
 	Target                      string
 	ResolveTarget               func(context.Context) (string, string, error)
 	ServiceProtocol             controlv1.PublicURLServiceProtocol
+	Purpose                     controlv1.PublicURLPurpose
+	AccessMode                  controlv1.VisitorAccessMode
 	PublicPort                  uint16
 	TargetTLSName               string
 	TargetTLS                   bool
@@ -267,7 +269,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						return
 					}
 					if config.ShareAccess == nil {
-						diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
 						return
 					}
 					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
@@ -275,7 +277,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 					redemption, err := config.ShareAccess.redeem(request.Context(), request.URL.EscapedPath())
 					if err != nil {
-						diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
 						return
 					}
 					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
@@ -303,29 +305,33 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						}
 					}
 				}
-				browser := controlv1.BrowserAccessResponse{}
-				browserPermitted := false
-				if config.BrowserAccess != nil {
-					browser, browserPermitted = config.BrowserAccess.check(request)
-				}
-				if browserPermitted {
-					request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
-				}
 				// the publisher can inspect browser credentials that ingress cannot.
-				// recheck the exact run and grant for each denied-IP request before
-				// attempting to promote its pending visitor connection.
+				// check each request against the bounded, run-scoped decision,
+				// including requests on an already-promoted visitor connection.
 				serverPermitted := false
-				if denied && !proof && config.BrowserAccess != nil {
+				browser := controlv1.BrowserAccessResponse{}
+				if !proof && config.BrowserAccess != nil {
 					decision, err := config.BrowserAccess.decision(request)
-					serverPermitted = err == nil && decision.VisitAllowed
+					if err == nil {
+						serverPermitted = decision.VisitAllowed
+						if decision.IdentityId != nil && decision.DisplayName != nil {
+							browser = controlv1.BrowserAccessResponse{IdentityId: *decision.IdentityId, DisplayName: *decision.DisplayName,
+								TeamMember: decision.TeamMember && decision.VisitAllowed, VisitAllowed: decision.VisitAllowed}
+							request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
+						}
+					}
 				}
-				allowed := proof || !denied || sharePermitted || serverPermitted
+				// cached share state is only a hint for the browser UI. the bounded
+				// control decision, including its revocation deadline, owns admission.
+				sharePermitted = sharePermitted && serverPermitted
+				integrationRequest := (config.Purpose == controlv1.Oauth || config.Purpose == controlv1.Webhooks) && config.AccessMode == controlv1.Anonymous && !denied
+				allowed := proof || serverPermitted || integrationRequest
 				if request.URL.Path == "/__tnl/access" {
 					if request.Method != http.MethodGet || config.PreviewID == "" {
 						http.NotFound(response, request)
 						return
 					}
-					result := previewAccessStatus(config, denied, sharePermitted, serverPermitted && browser.TeamMember, shareExpiry)
+					result := previewAccessStatus(config, serverPermitted, sharePermitted, serverPermitted && browser.TeamMember, shareExpiry)
 					request = request.WithContext(context.WithValue(request.Context(), accessStatusContextKey{}, result))
 					(&feedbackHTTP{}).GetBrowserAccessStatus(response, request)
 					return
@@ -334,18 +340,17 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					if config.BrowserLoginAvailable && config.BrowserAccess != nil && config.BrowserAccess.redirectRestricted(response, request) {
 						return
 					}
-					diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+					diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
 					return
 				}
 				if config.Feedback != nil {
-					if config.Feedback.handle(response, request, denied) {
+					if config.Feedback.handle(response, request, !allowed) {
 						return
 					}
 					request = config.Feedback.prepareBrowser(response, request)
 				}
-				if config.ShareAccess != nil || config.Feedback != nil || config.BrowserAccess != nil {
-					request = stripTnlCookies(request)
-				}
+				request = stripTnlCookies(request)
+				request.Header.Del(shareAccessHeaderName)
 				if proof {
 					select {
 					case probeSlots <- struct{}{}:
@@ -674,7 +679,7 @@ func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tu
 			delete(r.streams, incoming.Stream)
 			r.mu.Unlock()
 		}()
-		r.handleVisitorHeaderContext(ctx, incoming.Stream, incoming.Header.IPPolicyDenied, incoming.Header)
+		r.handleVisitorHeaderContext(ctx, incoming.Stream, incoming.Header.AccessPending, incoming.Header)
 	}()
 	return nil
 }
@@ -777,7 +782,7 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 	if promote == nil && streamHeader.PublisherConnectionID != "" {
 		promote = r.defaultPromote
 	}
-	streamHeader.IPPolicyDenied = denied
+	streamHeader.AccessPending = denied
 	session := &visitorSession{visitor: Visitor{Run: r.run, Header: streamHeader, Source: header.Source, Destination: header.Destination}, promote: promote, guard: r.guard, life: life, cancel: cancel}
 	defer session.close()
 	var pendingTimer *time.Timer

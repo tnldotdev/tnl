@@ -61,24 +61,24 @@ type tunnelFlags struct {
 	Domain             string                `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
 	Name               string                `name:"name" env:"TNL_NAME" help:"One label beneath the selected domain or member namespace. Defaults to a service-and-worktree name."`
 	PublicURL          string                `name:"public-url" env:"TNL_PUBLIC_URL" help:"Exact public URL hostname or HTTPS origin to publish."`
-	AllowIP            []string              `name:"allow-ip" help:"Add a visitor IP address or prefix; your current IP is also allowed. Repeat for each value."`
-	AllowAllIPs        bool                  `name:"allow-all-ips" env:"TNL_ALLOW_ALL_IPS" help:"Allow visitors from every IP instead of a restricted IP policy."`
-	Ephemeral          bool                  `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Create a temporary HTTP URL and remove it when this tunnel stops."`
-	Requests           *int                  `name:"requests" env:"TNL_REQUESTS" help:"Total HTTP requests or TCP connections admitted before the tunnel drains."`
-	RateRequests       *int                  `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"HTTP requests or TCP connections admitted per rate period. Requires --rate-per."`
+	Anonymous          bool                  `name:"anonymous" help:"Do not require a tnl visitor credential; the local service still owns its own authentication."`
+	IP                 []string              `name:"ip" help:"Restrict visitor source addresses; repeat for each address, CIDR or 'current'."`
+	Ephemeral          bool                  `name:"ephemeral" env:"TNL_EPHEMERAL" help:"Remove the public URL when this tunnel stops."`
+	Requests           *int                  `name:"requests" env:"TNL_REQUESTS" help:"Total application requests admitted before the tunnel drains."`
+	RateRequests       *int                  `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"Number of requests admitted per rate period. Requires --rate-per."`
 	RatePer            string                `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
 	RateBurst          *int                  `name:"rate-burst" help:"Maximum burst of application work admitted by the rate limit."`
 	Concurrency        *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous HTTP work or TCP connections. Defaults to 64 for HTTP and 24 for TCP."`
 	TargetCAFile       string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS or TCP target."`
 	InspectionMode     config.InspectionMode `name:"inspection-mode" enum:"none,summary" default:"summary" help:"Local HTTP and TCP inspection: summary (default) or none."`
 
-	allowAllIPsFromCLI       bool
 	ephemeralFromCLI         bool
 	domainFromCLI            bool
 	inspectionModeFromCLI    bool
 	inspectionModeFromConfig bool
 	workLimits               *config.Limits
 	inspection               *config.Inspection
+	access                   *config.Access
 }
 
 type remoteFlags struct {
@@ -315,7 +315,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	parser, err := kong.New(
 		&flags,
 		kong.Name("tnl"),
-		kong.Description("Publish local services at stable public URLs. Start your app normally with its tnl integration, try tnl publish --demo, or run tnl publish 3000 for an already-running service. By default, only your current IP is allowed to visit."),
+		kong.Description("Publish local services at stable public URLs. Start your app normally with its tnl integration, try tnl publish --demo, or run tnl publish 3000 for an already-running service. By default, visitors need a current sign-in, link, or token."),
 		kong.ExplicitGroups([]kong.Group{
 			{Key: "start", Title: "Start here:"},
 			{Key: "manage", Title: "Manage:"},
@@ -573,24 +573,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runURLAvailable(ctx, flags.URL.Available, stdout, stderr)
 	case "url certificate <url>":
 		return runVisitorCertificate(ctx, flags.URL.Certificate, stdout, stderr)
-	case "url ip set <url> <prefixes>", "url ip set <url>":
-		return runURLIPSet(ctx, flags.URL.IP.Set, stdout, stderr)
-	case "url ip add <url> <prefix>":
-		return runURLIPAdd(ctx, flags.URL.IP.Add, stdout, stderr)
-	case "url ip list <url>":
-		return runURLIPList(ctx, flags.URL.IP.List, stdout, stderr)
-	case "url ip remove <url> <grant-id>":
-		return runURLIPRemove(ctx, flags.URL.IP.Remove, stdout, stderr)
+	case "url access show <url>":
+		return runURLAccessShow(ctx, flags.URL.Access.Show, stdout, stderr)
+	case "url access set <url> <mode>":
+		return runURLAccessSet(ctx, flags.URL.Access.Set, stdout, stderr)
 	case "url update <public-url-id>":
 		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
 	case "url delete <public-url-id>":
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
 	case "share link create <url>":
 		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
+	case "share token create <url>":
+		return runShareTokenCreate(ctx, flags.Share.Token.Create, project, stdout, stderr)
 	case "share list <url>":
 		return runShareList(ctx, flags.Share.List, project, stdout, stderr)
-	case "share link revoke <share-id>":
-		return runShareRevoke(ctx, flags.Share.Link.Revoke, stdout, stderr)
+	case "share revoke <share-id>":
+		return runShareRevoke(ctx, flags.Share.Revoke, stdout, stderr)
 	case "share team create <url>":
 		return runShareTeamCreate(ctx, flags.Share.Team.Create, project, stdout, stderr)
 	case "share team revoke", "share team revoke <url>":
@@ -694,7 +692,7 @@ func canonicalParsedCommand(command string) string {
 }
 
 func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
-	publicURL, name, domain, allowIP, allowAllIPs, ephemeral, open := false, false, false, false, false, false, false
+	publicURL, name, domain, ephemeral, open := false, false, false, false, false
 	inspectionMode := false
 	for _, path := range parsed.Path {
 		if path.Flag == nil {
@@ -709,10 +707,6 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 			domain = true
 		case "open":
 			open = true
-		case "allow-ip":
-			allowIP = true
-		case "allow-all-ips":
-			allowAllIPs = true
 		case "ephemeral":
 			ephemeral = true
 		case "inspection-mode":
@@ -720,7 +714,6 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 		}
 	}
 	apply := func(tunnel *tunnelFlags) {
-		tunnel.allowAllIPsFromCLI = allowAllIPs
 		tunnel.ephemeralFromCLI = ephemeral
 		tunnel.domainFromCLI = domain
 		tunnel.inspectionModeFromCLI = inspectionMode
@@ -729,9 +722,6 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 		}
 		if name && !publicURL {
 			tunnel.PublicURL = ""
-		}
-		if allowIP && !allowAllIPs {
-			tunnel.AllowAllIPs = false
 		}
 	}
 	switch canonicalParsedCommand(parsed.Command()) {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -29,6 +30,7 @@ func (c *Client) CreateTeamVisitorGrant(ctx context.Context, id, key string, bod
 		return c.api.CreateTeamVisitorGrant(ctx, id, &controlv1.CreateTeamVisitorGrantParams{IdempotencyKey: key}, body, e...)
 	})
 }
+
 func (c *Client) ListVisitorGrants(ctx context.Context, id string) ([]controlv1.VisitorGrant, error) {
 	return requestWithAccess[[]controlv1.VisitorGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.ListVisitorGrants(ctx, id, e...)
@@ -61,26 +63,10 @@ func (c *Client) AcceptVisitorInvitation(ctx context.Context, secret string) (co
 		return c.api.AcceptVisitorInvitation(ctx, controlv1.AcceptVisitorInvitationJSONRequestBody{Secret: secret}, e...)
 	})
 }
-func (c *Client) ListVisitorIPGrants(ctx context.Context, id string) ([]controlv1.VisitorIPGrant, error) {
-	return requestWithAccess[[]controlv1.VisitorIPGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ListVisitorIPGrants(ctx, id, e...)
+func (c *Client) ReplaceVisitorAccess(ctx context.Context, id string, body controlv1.ReplaceVisitorAccessRequest) (controlv1.PublicURL, error) {
+	return requestWithAccess[controlv1.PublicURL](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ReplaceVisitorAccess(ctx, id, body, e...)
 	})
-}
-func (c *Client) SetVisitorIPGrants(ctx context.Context, id string, input []controlv1.VisitorIPGrantInput) ([]controlv1.VisitorIPGrant, error) {
-	return requestWithAccess[[]controlv1.VisitorIPGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.SetVisitorIPGrants(ctx, id, input, e...)
-	})
-}
-func (c *Client) AddVisitorIPGrant(ctx context.Context, id string, input controlv1.VisitorIPGrantInput) ([]controlv1.VisitorIPGrant, error) {
-	return requestWithAccess[[]controlv1.VisitorIPGrant](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.AddVisitorIPGrant(ctx, id, input, e...)
-	})
-}
-func (c *Client) RemoveVisitorIPGrant(ctx context.Context, id, grantID string) error {
-	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RemoveVisitorIPGrant(ctx, id, grantID, e...)
-	})
-	return err
 }
 func (c *Client) IssueVisitorCertificate(ctx context.Context, id string, csr []byte) (controlv1.VisitorCertificate, error) {
 	return requestWithAccess[controlv1.VisitorCertificate](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
@@ -98,8 +84,15 @@ type VisitorCertificateScope struct {
 }
 
 func (c *Client) AuthorizeVisitorCertificate(ctx context.Context, scope VisitorCertificateScope, state tls.ConnectionState) error {
+	_, err := c.AuthorizeVisitorCertificateDecision(ctx, scope, state)
+	return err
+}
+
+// AuthorizeVisitorCertificateDecision returns the current decision's hard
+// deadline for subsequent connections with the same scoped proof.
+func (c *Client) AuthorizeVisitorCertificateDecision(ctx context.Context, scope VisitorCertificateScope, state tls.ConnectionState) (time.Time, error) {
 	if !state.HandshakeComplete || len(state.PeerCertificates) > 4 || scope.PublicURLID == "" || scope.PublishRunID == "" || scope.PublishRunNumber == 0 || scope.PublishRunNumber > 1<<63-1 || scope.PublishRunToken == "" || !scope.SourceIP.IsValid() || scope.SourceIP.Zone() != "" {
-		return errors.New("visitor certificate proof is missing")
+		return time.Time{}, errors.New("visitor certificate proof is missing")
 	}
 	body := controlv1.AuthorizeVisitorCertificateJSONRequestBody{PublishRunNumber: int64(scope.PublishRunNumber), SourceIp: scope.SourceIP.Unmap().String()}
 	if len(state.PeerCertificates) > 0 {
@@ -107,16 +100,20 @@ func (c *Client) AuthorizeVisitorCertificate(ctx context.Context, scope VisitorC
 		body.Certificate = &encoded
 	}
 	result, err := request[struct {
-		IdentityID  string `json:"identity_id,omitempty"`
-		PublicURLID string `json:"public_url_id"`
+		IdentityID  string     `json:"identity_id,omitempty"`
+		PublicURLID string     `json:"public_url_id"`
+		ValidUntil  *time.Time `json:"valid_until,omitempty"`
 	}](ctx, c, scope.PublishRunToken.String(), func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.AuthorizeVisitorCertificate(ctx, scope.PublishRunID, body, e...)
 	})
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
 	if result.PublicURLID != scope.PublicURLID || body.Certificate != nil && result.IdentityID == "" {
-		return errors.New("visitor certificate decision has a different scope")
+		return time.Time{}, errors.New("visitor certificate decision has a different scope")
 	}
-	return nil
+	if result.ValidUntil != nil {
+		return *result.ValidUntil, nil
+	}
+	return time.Time{}, nil
 }

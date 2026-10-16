@@ -24,7 +24,7 @@ type PublisherIdentityStore interface {
 	RevokePublisherIdentity(context.Context, string, string, string, time.Time) error
 	RevokePublisherGrant(context.Context, string, string, string, string, time.Time) error
 	AuthenticatePublisherAccess(context.Context, string, string, time.Time) (controlstate.PublisherIdentity, error)
-	AllocatePublisherPublicURL(context.Context, controlstate.PublisherIdentity, string, string, []string, []byte, time.Time) (controlstate.PublicURL, error)
+	AllocatePublisherPublicURL(context.Context, controlstate.PublisherIdentity, string, string, []string, []byte, time.Time, ...controlstate.VisitorAccessMode) (controlstate.PublicURL, error)
 	PublisherMayStartRun(context.Context, controlstate.PublisherIdentity, string) (bool, error)
 }
 

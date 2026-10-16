@@ -40,6 +40,7 @@ type PublicURL struct {
 	PublicPort        *uint16
 	PublishRunID      string
 	ServiceProtocol   string
+	AccessMode        string
 	Traffic           *TrafficLimits
 }
 

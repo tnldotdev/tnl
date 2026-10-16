@@ -343,8 +343,8 @@ components:
         server_url: { type: string, maxLength: 4096 }
         publisher_id: { type: string, maxLength: 128, x-go-type-skip-optional-pointer: true }
         publisher_file: { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }
-        allow_ip: { type: array, maxItems: 64, items: { type: string, maxLength: 64 } }
-        allow_all_ips: { type: boolean }
+        access_mode: { type: string, enum: [restricted, anonymous] }
+        ip: { type: array, maxItems: 32, items: { type: string, maxLength: 64 } }
     Check:
       type: object
       additionalProperties: false

@@ -14,6 +14,7 @@ type visitorAdmission struct {
 	mu                          sync.Mutex
 	server                      *Server
 	key                         trafficKey
+	source                      netip.Addr
 	runID, hostname             string
 	port                        uint16
 	byPort                      bool
@@ -53,7 +54,7 @@ func (s *Server) admitVisitor(route PublicURL, source netip.Addr, denied bool) (
 	key := trafficKey{url: route.ID, run: route.PublishRunNumber, id: route.PublishRunID}
 	kind := visitorConnection
 	if denied {
-		kind = deniedConnection
+		kind = pendingConnection
 	}
 	release, reason := s.admitClass(kind, route.ID)
 	if release == nil {
@@ -70,7 +71,7 @@ func (s *Server) admitVisitor(route PublicURL, source netip.Addr, denied bool) (
 		return nil, reason
 	}
 	accepted = true
-	return &visitorAdmission{server: s, key: key, runID: route.PublishRunID, ordinary: !denied,
+	return &visitorAdmission{server: s, key: key, source: source, runID: route.PublishRunID, ordinary: !denied,
 		deadline: time.Now().Add(s.config.Pending.Timeout), upload: s.config.Pending.UploadBytes, download: s.config.Pending.DownloadBytes,
 		release: func() { release(); budgetRelease() }}, ""
 }
@@ -178,6 +179,9 @@ func (s *Server) PromotePendingAdmission(ctx context.Context, h tunnelv1.Admissi
 	}
 	if reason != LookupCurrent || current.ID != v.key.url || current.PublishRunNumber != v.key.run || current.PublishRunID != v.runID {
 		return reject(tunnelv1.StalePublishRunNumber)
+	}
+	if !current.allowsIP(v.source) {
+		return reject(tunnelv1.Unauthenticated)
 	}
 	// a routing refresh can replace the assignment while the visitor authorizes.
 	matched := false

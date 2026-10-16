@@ -30,8 +30,8 @@ type Options struct {
 	Publisher     *nativeauth.Native
 	InvocationID  string
 	Target        string
-	AllowIP       []string
-	AllowAllIPs   bool
+	AccessMode    controlv1.VisitorAccessMode
+	IP            []string
 	Limits        publisher.ApplicationLimits
 	OnAllocated   func(controlv1.PublicURL) error
 	Observe       func(publisher.Event) error
@@ -69,11 +69,13 @@ func Run(ctx context.Context, options Options) (result error) {
 		return nativeauth.ErrScope
 	}
 	body := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: options.InvocationID, Target: target}
-	if options.AllowAllIPs {
-		body.AllowAllIps = &options.AllowAllIPs
-	} else if len(options.AllowIP) != 0 {
-		allowed := slices.Clone(options.AllowIP)
-		body.AllowIp = &allowed
+	if options.AccessMode != "" {
+		mode := options.AccessMode
+		body.AccessMode = &mode
+	}
+	if options.IP != nil {
+		allowed := slices.Clone(options.IP)
+		body.Ip = &allowed
 	}
 	if options.Limits.Requests != 0 || options.Limits.RateRequests != 0 || options.Limits.Concurrency != 0 {
 		limits := &controlv1.PublisherApplicationLimits{}
@@ -121,8 +123,9 @@ func Run(ctx context.Context, options Options) (result error) {
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
 	publication := publisher.Config{
-		Control:    native,
-		ControlURL: options.ControlURL, State: options.State,
+		Control:        native,
+		VisitorControl: client,
+		ControlURL:     options.ControlURL, State: options.State,
 		TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membershipID,
 		PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: route.PublicUrlScope,
 		Purpose: controlv1.App, Hostname: route.CanonicalHostname, Target: target, ServiceProtocol: controlv1.Http,

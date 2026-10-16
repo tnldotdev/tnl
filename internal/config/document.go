@@ -166,14 +166,13 @@ func (m *PathMount) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type Tunnel struct {
-	Domain      *string  `json:"domain,omitempty" yaml:"domain,omitempty"`
-	Name        *string  `json:"name,omitempty" yaml:"name,omitempty"`
-	PublicURL   *string  `json:"public_url,omitempty" yaml:"public_url,omitempty"`
-	Open        *bool    `json:"-" yaml:"-"`
-	AllowIP     []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
-	AllowAllIPs *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
-	Ephemeral   *bool    `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
-	Limits      *Limits  `json:"limits,omitempty" yaml:"limits,omitempty"`
+	Domain    *string `json:"domain,omitempty" yaml:"domain,omitempty"`
+	Name      *string `json:"name,omitempty" yaml:"name,omitempty"`
+	PublicURL *string `json:"public_url,omitempty" yaml:"public_url,omitempty"`
+	Open      *bool   `json:"-" yaml:"-"`
+	Access    *Access `json:"access,omitempty" yaml:"access,omitempty"`
+	Ephemeral *bool   `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
+	Limits    *Limits `json:"limits,omitempty" yaml:"limits,omitempty"`
 }
 
 // Limits apply to application requests after visitor access.

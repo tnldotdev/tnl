@@ -31,10 +31,11 @@ Try the built-in demo without installing a project dependency or signing in:
 npx --yes @tnldotdev/tnl publish --demo
 ```
 
-On tnl.dev, the public URL opens in your browser when ready. Click **ping** and
+On tnl.dev, the guest link opens in your browser when ready. Click **ping** and
 match the URL and count with the terminal running `tnl`. The browser shows the
 round-trip time and when your computer sent the pong. Guests can run one demo
-at a time. Only your current IP can visit. A guest credential lasts 72 hours
+at a time. The link admits this demo without signing in; tnl prints it once
+instead of admitting every visitor from your IP. A guest credential lasts 72 hours
 and allows 15 minutes ready or about 5 MiB of traffic across runs. Ctrl+C
 stops the demo and removes its public URL. Run `tnl auth login` to publish your own
 app. CLI telemetry is on by default, including for the demo. Run
@@ -80,7 +81,11 @@ npx tnl wait
 
 Sign in once with `tnl auth login`. The integration prepares public metadata before
 framework startup, then reports the listener's actual bound port to a local
-`tnl` process. By default, only your current IP can visit the public URL.
+`tnl` process. By default, a visitor needs a current sign-in, share link, or
+URL-scoped visitor token. To allow anonymous visitors to a service, set
+`tunnel: { access: "anonymous" }` for that service. An additional IP list in
+`access: { ip: ["192.0.2.0/24"] }` limits where credentialed visitors may connect;
+an IP match does not replace their credential.
 
 `tnl wait` checks a fresh public response. `tnl status` shows every configured
 service, including apps that have not started, without sending a request to the

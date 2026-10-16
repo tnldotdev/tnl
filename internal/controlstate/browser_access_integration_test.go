@@ -130,10 +130,13 @@ func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 	}
 }
 
-func TestIntegrationNonmemberWithAllowedIPPostsVerifiedFeedback(t *testing.T) {
+func TestIntegrationNonmemberWithAnonymousAccessPostsVerifiedFeedback(t *testing.T) {
 	f := newPublishRunFixture(t)
 	database, now := f.database, f.now
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state='ready',ready_at=$2 WHERE id=$1`, f.setup.PublishRunID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, f.setup.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
 	preview, err := database.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "browser-feedback", now)
@@ -170,7 +173,7 @@ func TestIntegrationNonmemberWithAllowedIPPostsVerifiedFeedback(t *testing.T) {
 		t.Fatal(err)
 	}
 	auth := f.authentication()
-	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", PublishRunAuthentication: &auth, AllowedIP: true, IdentityID: identityID, DisplayName: "Sam", BrowserCookieSecret: raw}
+	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", PublishRunAuthentication: &auth, VisitAllowed: true, IdentityID: identityID, DisplayName: "Sam", BrowserCookieSecret: raw}
 	thread, err := database.CreateFeedback(t.Context(), f.authentication(), CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "The label is unclear",
 		AuthorDisplayName: "not sam", Anchor: json.RawMessage(`null`),
@@ -186,8 +189,10 @@ func TestIntegrationNonmemberWithAllowedIPPostsVerifiedFeedback(t *testing.T) {
 	if err != nil || reply.AuthorIdentityID != identityID || reply.AuthorDisplayName != "Sam" || !reply.AuthorVerified {
 		t.Fatalf("verified reply identity = %q, %q, %t, %v", reply.AuthorIdentityID, reply.AuthorDisplayName, reply.AuthorVerified, err)
 	}
-	actor.AllowedIP = false
-	actor.SourceIP = ""
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='restricted' WHERE id=$1`, f.setup.PublicURLID); err != nil {
+		t.Fatal(err)
+	}
+	actor.VisitAllowed = false
 	shareSecret := []byte("0123456789abcdefghijklmnopqrstuv")
 	share, err := database.CreateShare(t.Context(), CreateShareRequest{
 		PreviewID: preview.ID, TeamID: f.request.TeamID, ActingIdentityID: f.request.ActingIdentityID,

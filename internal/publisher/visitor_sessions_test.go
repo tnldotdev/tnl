@@ -97,7 +97,7 @@ func TestAutomaticPromotionUsesExactCurrentSessionAndWaitsForAck(t *testing.T) {
 		})
 	}()
 	t.Cleanup(func() { cancel(); _ = relay.Close(); awaitPublisherTest(t, worker) })
-	h := tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor-1", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, IPPolicyDenied: true}
+	h := tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor-1", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, AccessPending: true}
 	result := make(chan error, 1)
 	go func() { result <- route.defaultPromote(t.Context(), Visitor{Header: h}) }()
 	awaitPublisherTest(t, entered)

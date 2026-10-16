@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import os
 import re
 import secrets
 import socket
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 import uvicorn
@@ -30,6 +31,7 @@ from ._protocol import (
 
 _native = NativeRuntime()
 _alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+_duration = re.compile(r"(?:(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:ns|us|µs|ms|s|m|h))+")
 
 
 class _OwnedServer(uvicorn.Server):
@@ -41,6 +43,82 @@ class _OwnedServer(uvicorn.Server):
                 await self.tunnel.unregister()
         finally:
             await super().shutdown(sockets)
+
+
+@dataclass(frozen=True, slots=True)
+class RateLimit:
+    requests: int
+    per: str
+
+
+@dataclass(frozen=True, slots=True)
+class Limits:
+    requests: int | None = None
+    rate: RateLimit | None = None
+    concurrency: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AccessPolicy:
+    """a visitor access mode with an optional additional network restriction."""
+
+    mode: Literal["restricted", "anonymous"] = "restricted"
+    ip: tuple[str, ...] = ()
+
+
+def _access_payload(
+    access: Literal["restricted", "anonymous"] | AccessPolicy | None,
+) -> tuple[str | None, list[str] | None]:
+    if access is None:
+        return None, None
+    if isinstance(access, str):
+        if access not in ("restricted", "anonymous"):
+            raise TnlError("sdk.configuration_invalid", "access must be restricted or anonymous")
+        return access, None
+    if (
+        not isinstance(access, AccessPolicy)
+        or access.mode not in ("restricted", "anonymous")
+        or len(access.ip) > 32
+    ):
+        raise TnlError("sdk.configuration_invalid", "invalid visitor access policy")
+    if any(not isinstance(value, str) or not value for value in access.ip) or len(
+        set(access.ip)
+    ) != len(access.ip):
+        raise TnlError(
+            "sdk.configuration_invalid", "visitor IP list contains invalid or duplicate entries"
+        )
+    return access.mode, list(access.ip) if access.ip else None
+
+
+def _limit_payload(value: Limits | None) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Limits):
+        raise TnlError("sdk.configuration_invalid", "limits must be a Limits value")
+    if (
+        value.requests is not None
+        and (type(value.requests) is not int or value.requests < 1)
+        or value.concurrency is not None
+        and (type(value.concurrency) is not int or value.concurrency < 1)
+    ):
+        raise TnlError("sdk.configuration_invalid", "request limits must be positive")
+    result: dict[str, object] = {}
+    if value.requests is not None:
+        result["requests"] = value.requests
+    if value.concurrency is not None:
+        result["concurrency"] = value.concurrency
+    if value.rate is not None:
+        if (
+            not isinstance(value.rate, RateLimit)
+            or type(value.rate.requests) is not int
+            or value.rate.requests < 1
+            or not isinstance(value.rate.per, str)
+            or _duration.fullmatch(value.rate.per) is None
+            or not any(character in "123456789" for character in value.rate.per)
+        ):
+            raise TnlError("sdk.configuration_invalid", "rate requires positive requests and per")
+        result["rate"] = {"requests": value.rate.requests, "per": value.rate.per}
+    return result
 
 
 class Tunnel:
@@ -57,8 +135,9 @@ class Tunnel:
         publisher_id: str | None,
         server_url: str | None,
         state_dir: str | None,
-        allow_ip: Sequence[str] | None,
-        allow_all_ips: bool,
+        access_mode: str | None,
+        ip: list[str] | None,
+        limits: Limits | None,
     ) -> None:
         self._native = native
         self._server = server
@@ -83,11 +162,13 @@ class Tunnel:
             self._payload["publisher_id"] = publisher_id
         if server_url is not None:
             self._payload["server_url"] = server_url
-        if allow_ip is not None:
-            self._payload["allow_ip"] = list(allow_ip)
-        if allow_all_ips:
-            self._payload["allow_all_ips"] = True
         self._registration: dict[str, object] | None = None
+        if access_mode is not None:
+            self._payload["access_mode"] = access_mode
+        if ip is not None:
+            self._payload["ip"] = ip
+        if limits is not None:
+            self._payload["limits"] = _limit_payload(limits)
         self._closed = False
         self._closing_event = asyncio.Event()
         self._close_lock = asyncio.Lock()
@@ -290,8 +371,8 @@ async def open(
     server: str | None = None,
     directory: str | Path | None = None,
     state_dir: str | Path | None = None,
-    allow_ip: Sequence[str] | None = None,
-    allow_all_ips: bool = False,
+    access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
+    limits: Limits | None = None,
 ) -> AsyncIterator[Tunnel]:
     """start ASGI, register its bound listener, and wait for native routability."""
     if not callable(app):
@@ -314,20 +395,6 @@ async def open(
         or re.fullmatch(r"pub_[A-Za-z0-9]{22}", publisher_id) is None
     ):
         raise TnlError("sdk.configuration_invalid", "pass a stored publisher ID")
-    if type(allow_all_ips) is not bool or allow_all_ips and allow_ip is not None:
-        raise TnlError("sdk.configuration_invalid", "choose allow_ip or allow_all_ips")
-    if allow_ip is not None:
-        if isinstance(allow_ip, str) or len(allow_ip) > 64:
-            raise TnlError("sdk.configuration_invalid", "allow_ip must contain at most 64 networks")
-        for network in allow_ip:
-            try:
-                if not isinstance(network, str) or len(network) > 64:
-                    raise ValueError
-                ipaddress.ip_network(network, strict=False)
-            except ValueError:
-                raise TnlError(
-                    "sdk.configuration_invalid", "allow_ip contains an invalid network"
-                ) from None
     if server is not None:
         origin = urlsplit(server)
         if (
@@ -341,6 +408,8 @@ async def open(
             or origin.fragment
         ):
             raise TnlError("sdk.configuration_invalid", "server must be an HTTPS origin")
+    access_mode, ip = _access_payload(access)
+    _limit_payload(limits)
     root = str(Path(directory or os.getcwd()).resolve())
     asgi_server, task, listener = await _start_asgi(app)
     tunnel = Tunnel(
@@ -353,8 +422,9 @@ async def open(
         publisher_id,
         server,
         None if state_dir is None else str(state_dir),
-        allow_ip,
-        allow_all_ips,
+        access_mode,
+        ip,
+        limits,
     )
     try:
         await tunnel.start()

@@ -87,7 +87,7 @@ func (h *handler) BeginPreviewBrowserLogin(response http.ResponseWriter, request
 		writeControlStateProblem(response, "read browser public URL", err)
 		return
 	}
-	if preview.ID != "" && publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled || publicURL.Purpose != controlstate.PublicURLPurposeApp || publicURL.ServiceProtocol != controlstate.PublicURLServiceHTTP {
+	if preview.ID != "" && publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled || publicURL.Purpose != controlstate.PublicURLPurposeApp && publicURL.Purpose != controlstate.PublicURLPurposeAlias || publicURL.ServiceProtocol != controlstate.PublicURLServiceHTTP {
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "public URL not found")
 		return
 	}

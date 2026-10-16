@@ -222,7 +222,9 @@ def test_lifespan_precedes_registration_and_close_joins_websockets(
                 await send({"type": "websocket.send", "text": "hello websocket"})
                 await receive()
 
-        async with tnl.open(app, publisher_id=_publisher, allow_all_ips=True) as tunnel:
+        async with tnl.open(
+            app, publisher_id=_publisher, access="anonymous", limits=tnl.Limits(requests=2)
+        ) as tunnel:
             assert tunnel.url == _public_url
             assert tunnel._payload["publisher_id"] == _publisher
             assert events.index("startup") < events.index("register")

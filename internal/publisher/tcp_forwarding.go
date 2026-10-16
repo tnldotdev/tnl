@@ -394,7 +394,7 @@ func (d *tcpForwarding) admit(ctx context.Context, session *visitorSession) (fun
 
 func (d *tcpForwarding) authorizeTLS(ctx context.Context, session *visitorSession, secured *tls.Conn) error {
 	if d.authorize == nil {
-		if session.visitor.Header.IPPolicyDenied {
+		if session.visitor.Header.AccessPending {
 			return errors.New("publisher: denied database visitor requires live certificate authorization")
 		}
 		return nil
