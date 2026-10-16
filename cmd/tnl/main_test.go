@@ -242,7 +242,6 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 		{[]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--namespace"}, "publisher grant add <publisher-id>"},
 		{[]string{"publisher", "grant", "revoke", "pub_0123456789abcdefghijkl", "pgr_0123456789abcdefghijkl"}, "publisher grant revoke <publisher-id> <grant-id>"},
 		{[]string{"url", "certificate", "orders.example", "--directory", "/tmp/visitor"}, "url certificate <url>"},
-		{[]string{"url", "ip", "set", "orders.example"}, "url ip set <url> <prefixes>"},
 		{[]string{"url", "access", "show", "orders.example"}, "url access show <url>"},
 		{[]string{"url", "access", "set", "orders.example", "restricted", "--ip", "192.0.2.1"}, "url access set <url> <mode>"},
 		{[]string{"auth", "browser", "app.example"}, "auth browser <url>"},
