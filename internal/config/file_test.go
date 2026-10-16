@@ -235,11 +235,11 @@ func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) 
 }
 
 func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
-	protocol, target, tlsName, caFile := "postgres", Target("db.internal:5432"), "db.internal", "./certs/target-ca.pem"
+	protocol, target, tlsName, caFile := "tcp", Target("db.internal:5432"), "db.internal", "./certs/target-ca.pem"
 	webTarget := Target("3000")
 	project := TNL{OAuth: true, Services: Services{
 		"web":    {Target: &ServiceTarget{Type: "address", Address: &webTarget}},
-		"orders": {Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: &target, TLS: &TargetTLS{ServerName: &tlsName, CAFile: &caFile}}},
+		"orders": {Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: &target, TLS: &TargetTLS{Mode: "postgres", ServerName: &tlsName, CAFile: &caFile}}},
 	}}
 	if err := ValidateTNL(project); err != nil {
 		t.Fatalf("mixed web and PostgreSQL services: %v", err)
@@ -302,7 +302,7 @@ func TestInspectionModeValid(t *testing.T) {
 }
 
 func TestTCPInspectionModes(t *testing.T) {
-	for _, protocol := range []string{"postgres", "mysql", "redis"} {
+	for _, protocol := range []string{"tcp"} {
 		mode := InspectionSummary
 		project := TNL{Inspection: &Inspection{Mode: &mode}, Services: Services{"service": {
 			Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: targetPointer("5432")},

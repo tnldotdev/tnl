@@ -12,6 +12,26 @@ type generatedServer struct {
 
 var _ ingressv1.ServerInterface = generatedServer{}
 
+func (s generatedServer) ClaimPrivateConnectorSession(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID) {
+	s.handler.claimPrivateConnectorSession(w, r, id)
+}
+
+func (s generatedServer) ClaimPrivateServiceTicket(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID) {
+	s.handler.claimPrivateServiceTicket(w, r, id)
+}
+
+func (s generatedServer) RecheckPrivateServiceVisitor(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID) {
+	s.handler.recheckPrivateServiceVisitor(w, r, id)
+}
+
+func (s generatedServer) GetPrivateServiceSnapshot(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID, p ingressv1.GetPrivateServiceSnapshotParams) {
+	s.handler.privateServiceSnapshot(w, r, id, p)
+}
+
+func (s generatedServer) GetPrivateServiceEvents(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID, p ingressv1.GetPrivateServiceEventsParams) {
+	s.handler.privateServiceEvents(w, r, id, p)
+}
+
 func (s generatedServer) RegisterIngress(response http.ResponseWriter, request *http.Request) {
 	s.handler.registerIngress(response, request)
 }

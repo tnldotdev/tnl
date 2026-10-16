@@ -92,6 +92,10 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if err != nil {
 		return err
 	}
+	if service != "" && config.Protocol(c.Config.Services[service]) == "tcp" {
+		return failure.Wrap("publish private TCP service", failure.PrivatePublisherUnavailable,
+			errors.New("private relay publisher connection is not available"))
+	}
 	flags.Service = service
 	flags.project = c
 	flags.projectRoot = c.Root
@@ -166,6 +170,10 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 	definition, found := c.Config.Services[service]
 	if !found || service == "" {
 		return nil
+	}
+	if config.Protocol(definition) == "tcp" {
+		return failure.Wrap("install private TCP service", failure.PrivatePublisherUnavailable,
+			errors.New("private relay publisher connection is not available"))
 	}
 	effective, err := c.EffectiveService(service)
 	if err != nil {

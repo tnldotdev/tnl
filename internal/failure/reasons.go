@@ -33,6 +33,7 @@ const (
 	ServiceNotInstalled                 Reason = "TNL_CLIENT_SERVICE_NOT_INSTALLED"
 	InstalledPublisherSelectionMissing  Reason = "TNL_CLIENT_INSTALLED_PUBLISHER_SELECTION_MISSING"
 	InstalledServiceIdentityUnavailable Reason = "TNL_CLIENT_INSTALLED_SERVICE_IDENTITY_UNAVAILABLE"
+	PrivatePublisherUnavailable         Reason = "TNL_CLIENT_PRIVATE_PUBLISHER_UNAVAILABLE"
 	InstalledTargetMissing              Reason = "TNL_CLIENT_INSTALLED_TARGET_MISSING"
 	InstalledJobAmbiguous               Reason = "TNL_CLIENT_INSTALLED_JOB_AMBIGUOUS"
 	DetachedNotFound                    Reason = "TNL_CLIENT_DETACHED_NOT_FOUND"
@@ -247,6 +248,10 @@ var definitions = map[Reason]Definition{
 	InstalledServiceIdentityUnavailable: {
 		Class: Unavailable, Message: "tnl could not determine the configured service's exact public hostname and team",
 		Action: "sign in to resolve the selected team and domain, or configure an exact tunnel.public_url and select its publisher explicitly", Retry: RetryAfterChange,
+	},
+	PrivatePublisherUnavailable: {
+		Class: Unavailable, Message: "the private TCP publisher is not connected to the relay service yet",
+		Action: "wait for private publisher relay support before installing this service", Retry: RetryAfterChange,
 	},
 	InstalledTargetMissing: {
 		Class: Invalid, Message: "the configured service has no fixed target to install",

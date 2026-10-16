@@ -26,8 +26,8 @@ const PublisherEnrollmentLifetime = 10 * time.Minute
 const PublisherAccessLifetime = 5 * time.Minute
 
 type PublisherScope struct {
-	TeamID, Kind, PublicURLID, DomainID, Namespace, MembershipID string
-	PublicURLScope                                               PublicURLScope
+	TeamID, Kind, PublicURLID, PrivateServiceID, DomainID, Namespace, MembershipID string
+	PublicURLScope                                                                 PublicURLScope
 }
 type PublisherIdentity struct {
 	ID, KeyID, GrantID, CreatorID, Kind, GuestID string
@@ -66,7 +66,7 @@ func publisherLookupError(err, unavailable error) error {
 }
 
 func scopeFromGrant(team string, g controlstatedb.ControlPublisherGrant) PublisherScope {
-	return PublisherScope{TeamID: team, Kind: g.Kind, PublicURLID: g.PublicURLID.String, DomainID: g.DomainID.String, Namespace: g.Namespace.String, MembershipID: g.MembershipID.String, PublicURLScope: PublicURLScope(g.PublicURLScope.String)}
+	return PublisherScope{TeamID: team, Kind: g.Kind, PublicURLID: g.PublicURLID.String, PrivateServiceID: g.PrivateServiceID.String, DomainID: g.DomainID.String, Namespace: g.Namespace.String, MembershipID: g.MembershipID.String, PublicURLScope: PublicURLScope(g.PublicURLScope.String)}
 }
 
 // authorizePublisherScope captures an explicit grant after checking the current
@@ -85,8 +85,22 @@ func (d *Database) authorizePublisherScope(ctx context.Context, q *controlstated
 	if m.ID != membership || m.PolicyRevision != int64(revision) {
 		return scope, ErrPublisherIdentity
 	}
+	if scope.Kind == "private_service" {
+		if !opaqueid.Valid(scope.PrivateServiceID, opaqueid.PrivateServicePrefix) || scope.PublicURLID != "" || scope.DomainID != "" || scope.Namespace != "" ||
+			scope.MembershipID != "" || scope.PublicURLScope != "" || m.Role != "owner" && m.Role != "admin" {
+			return scope, ErrPublisherIdentity
+		}
+		s, err := q.LockPrivateService(ctx, scope.PrivateServiceID)
+		if err != nil {
+			return scope, publisherLookupError(err, ErrPublisherIdentity)
+		}
+		if s.TeamID != scope.TeamID || !s.Enabled || s.DeletedAt.Valid {
+			return scope, ErrPublisherIdentity
+		}
+		return scope, nil
+	}
 	if scope.Kind == "saved_url" {
-		if scope.DomainID != "" || scope.Namespace != "" {
+		if scope.PrivateServiceID != "" || scope.DomainID != "" || scope.Namespace != "" {
 			return scope, ErrPublisherIdentity
 		}
 		u, err := q.LockPublicURLForRun(ctx, scope.PublicURLID)
@@ -99,7 +113,7 @@ func (d *Database) authorizePublisherScope(ctx context.Context, q *controlstated
 		}
 		return PublisherScope{TeamID: scope.TeamID, Kind: "saved_url", PublicURLID: u.ID}, nil
 	}
-	if scope.Kind != "namespace" || scope.PublicURLID != "" {
+	if scope.Kind != "namespace" || scope.PublicURLID != "" || scope.PrivateServiceID != "" {
 		return scope, ErrPublisherIdentity
 	}
 	c, err := q.GetPublicURLCreationContext(ctx, controlstatedb.GetPublicURLCreationContextParams{IdentityID: editor, DomainID: scope.DomainID, TeamID: scope.TeamID})
@@ -146,7 +160,7 @@ func (d *Database) IssuePublisherEnrollment(ctx context.Context, r CreatePublish
 	key := id + "." + base64.RawURLEncoding.EncodeToString(secret[:])
 	digest := sha256.Sum256([]byte(key))
 	until := r.Now.Add(PublisherEnrollmentLifetime)
-	_, err = q.InsertPublisherEnrollment(ctx, controlstatedb.InsertPublisherEnrollmentParams{ID: id, EnrollmentKeyDigest: digest[:], TeamID: s.TeamID, Name: r.Name, IdentityKind: r.Kind, GrantKind: s.Kind, PublicURLID: nullableText(s.PublicURLID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), PublicURLScope: nullableText(string(s.PublicURLScope)), CreatedByIdentityID: r.EditorID, CreatedAt: timestamptz(r.Now), ExpiresAt: timestamptz(until)})
+	_, err = q.InsertPublisherEnrollment(ctx, controlstatedb.InsertPublisherEnrollmentParams{ID: id, EnrollmentKeyDigest: digest[:], TeamID: s.TeamID, Name: r.Name, IdentityKind: r.Kind, GrantKind: s.Kind, PublicURLID: nullableText(s.PublicURLID), PrivateServiceID: nullableText(s.PrivateServiceID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), PublicURLScope: nullableText(string(s.PublicURLScope)), CreatedByIdentityID: r.EditorID, CreatedAt: timestamptz(r.Now), ExpiresAt: timestamptz(until)})
 	if err != nil {
 		return result, err
 	}
@@ -161,9 +175,9 @@ func insertPublisherGrant(ctx context.Context, q *controlstatedb.Queries, publis
 	if err != nil {
 		return controlstatedb.ControlPublisherGrant{}, err
 	}
-	grant, err := q.InsertPublisherGrant(ctx, controlstatedb.InsertPublisherGrantParams{ID: id, PublisherIdentityID: publisher, CreatedByIdentityID: issuer, Kind: s.Kind, PublicURLID: nullableText(s.PublicURLID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), PublicURLScope: nullableText(string(s.PublicURLScope)), CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
+	grant, err := q.InsertPublisherGrant(ctx, controlstatedb.InsertPublisherGrantParams{ID: id, PublisherIdentityID: publisher, CreatedByIdentityID: issuer, Kind: s.Kind, PublicURLID: nullableText(s.PublicURLID), PrivateServiceID: nullableText(s.PrivateServiceID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), PublicURLScope: nullableText(string(s.PublicURLScope)), CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
 	var constraint *pgconn.PgError
-	if errors.As(err, &constraint) && constraint.Code == "23505" && (constraint.ConstraintName == "publisher_grants_active_url" || constraint.ConstraintName == "publisher_grants_active_namespace") {
+	if errors.As(err, &constraint) && constraint.Code == "23505" && (constraint.ConstraintName == "publisher_grants_active_url" || constraint.ConstraintName == "publisher_grants_active_namespace" || constraint.ConstraintName == "publisher_grants_active_private_service") {
 		return grant, ErrAuthorityConflict
 	}
 	return grant, err
@@ -214,7 +228,7 @@ func (d *Database) RedeemPublisherEnrollment(ctx context.Context, secret string,
 	if subtle.ConstantTimeCompare(digest[:], e.EnrollmentKeyDigest) != 1 || !e.ExpiresAt.Time.After(now) {
 		return result, ErrPublisherEnrollment
 	}
-	s := PublisherScope{TeamID: e.TeamID, Kind: e.GrantKind, PublicURLID: e.PublicURLID.String, DomainID: e.DomainID.String, Namespace: e.Namespace.String, MembershipID: e.MembershipID.String, PublicURLScope: PublicURLScope(e.PublicURLScope.String)}
+	s := PublisherScope{TeamID: e.TeamID, Kind: e.GrantKind, PublicURLID: e.PublicURLID.String, PrivateServiceID: e.PrivateServiceID.String, DomainID: e.DomainID.String, Namespace: e.Namespace.String, MembershipID: e.MembershipID.String, PublicURLScope: PublicURLScope(e.PublicURLScope.String)}
 	if e.RedeemedAt.Valid {
 		if subtle.ConstantTimeCompare(e.RedeemedPublicKey, public) != 1 {
 			return result, ErrPublisherEnrollment
@@ -245,7 +259,23 @@ func (d *Database) RedeemPublisherEnrollment(ctx context.Context, secret string,
 }
 
 func validatePublisherScope(ctx context.Context, q *controlstatedb.Queries, s PublisherScope, guest string) error {
+	if s.Kind == "private_service" {
+		if guest != "" || !opaqueid.Valid(s.PrivateServiceID, opaqueid.PrivateServicePrefix) || s.PublicURLID != "" || s.DomainID != "" || s.Namespace != "" {
+			return ErrPublisherIdentity
+		}
+		service, err := q.LockPrivateService(ctx, s.PrivateServiceID)
+		if err != nil {
+			return publisherLookupError(err, ErrPublisherIdentity)
+		}
+		if service.TeamID != s.TeamID || service.DeletedAt.Valid || !service.Enabled {
+			return ErrPublisherIdentity
+		}
+		return nil
+	}
 	if s.Kind == "saved_url" {
+		if s.PrivateServiceID != "" {
+			return ErrPublisherIdentity
+		}
 		u, err := q.LockPublicURLForRun(ctx, s.PublicURLID)
 		if err != nil {
 			return publisherLookupError(err, ErrPublisherIdentity)
@@ -263,7 +293,7 @@ func validatePublisherScope(ctx context.Context, q *controlstatedb.Queries, s Pu
 		_, err = q.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: u.DomainID, TeamID: text(s.TeamID)})
 		return err
 	}
-	if s.Kind != "namespace" || guest != "" {
+	if s.Kind != "namespace" || guest != "" || s.PrivateServiceID != "" {
 		return ErrPublisherIdentity
 	}
 	domain, err := q.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: s.DomainID, TeamID: text(s.TeamID)})
@@ -526,6 +556,31 @@ func (d *Database) RevokePublisherIdentity(ctx context.Context, team, id, editor
 	if err := authorizePublisherManagement(ctx, q, team, id, editor); err != nil {
 		return err
 	}
+	rows, err := tx.Query(ctx, `SELECT DISTINCT private_service_id FROM control.publisher_grants
+		WHERE publisher_identity_id=$1 AND kind='private_service' AND private_service_id IS NOT NULL
+		ORDER BY private_service_id`, id)
+	if err != nil {
+		return err
+	}
+	var privateServices []string
+	for rows.Next() {
+		var serviceID string
+		if err = rows.Scan(&serviceID); err != nil {
+			rows.Close()
+			return err
+		}
+		privateServices = append(privateServices, serviceID)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, serviceID := range privateServices {
+		if err = closeRevokedPrivatePublication(ctx, tx, q, serviceID, id, "", now); err != nil {
+			return err
+		}
+	}
 	n, err := q.RevokePublisherIdentity(ctx, controlstatedb.RevokePublisherIdentityParams{ID: id, TeamID: team, Now: timestamptz(now)})
 	if err != nil {
 		return err
@@ -551,6 +606,15 @@ func (d *Database) RevokePublisherGrant(ctx context.Context, team, id, grant, ed
 	if err := authorizePublisherManagement(ctx, q, team, id, editor); err != nil {
 		return err
 	}
+	selected, err := q.GetPublisherGrant(ctx, controlstatedb.GetPublisherGrantParams{ID: grant, PublisherIdentityID: id})
+	if err != nil {
+		return publisherLookupError(err, ErrPublisherIdentity)
+	}
+	if selected.Kind == "private_service" {
+		if err = closeRevokedPrivatePublication(ctx, tx, q, selected.PrivateServiceID.String, id, grant, now); err != nil {
+			return err
+		}
+	}
 	n, err := q.RevokePublisherGrant(ctx, controlstatedb.RevokePublisherGrantParams{ID: grant, PublisherIdentityID: id, Now: timestamptz(now)})
 	if err != nil {
 		return err
@@ -559,6 +623,36 @@ func (d *Database) RevokePublisherGrant(ctx context.Context, team, id, grant, ed
 		return ErrPublisherIdentity
 	}
 	return tx.Commit(ctx)
+}
+
+func closeRevokedPrivatePublication(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, serviceID, publisherID, grantID string, now time.Time) error {
+	if !opaqueid.Valid(serviceID, opaqueid.PrivateServicePrefix) {
+		return ErrPublisherIdentity
+	}
+	service, err := q.LockPrivateService(ctx, serviceID)
+	if err != nil {
+		return err
+	}
+	if service.DeletedAt.Valid {
+		return nil
+	}
+	var runID string
+	var number int64
+	err = tx.QueryRow(ctx, `SELECT id, run_number FROM control.private_service_runs
+		WHERE private_service_id=$1 AND publisher_identity_id=$2 AND ($3='' OR publisher_grant_id=$3)
+		AND closed_at IS NULL FOR UPDATE`, serviceID, publisherID, grantID).Scan(&runID, &number)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err = q.ClosePrivateServiceRun(ctx, controlstatedb.ClosePrivateServiceRunParams{
+		ID: runID, PrivateServiceID: serviceID, RunNumber: number, Now: timestamptz(now),
+	}); err != nil {
+		return err
+	}
+	return privateRoutingTombstone(ctx, q, serviceID, now)
 }
 
 // enroll a guest only after its demo URL exists. the trial credential is a

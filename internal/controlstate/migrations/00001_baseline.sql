@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-private-connectors')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-private-connectors');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -330,7 +330,8 @@ CREATE TABLE control.public_urls (
     target text NOT NULL,
     namespace text NOT NULL DEFAULT '',
     purpose text NOT NULL CHECK (purpose IN ('app', 'alias', 'demo', 'oauth', 'webhooks')),
-    service_protocol text NOT NULL DEFAULT 'http' CHECK (service_protocol IN ('http', 'postgres', 'mysql', 'redis', 'ssh')),
+    service_protocol text NOT NULL DEFAULT 'http' CHECK (service_protocol IN ('http', 'ssh')),
+    ssh_host_key text,
     public_port integer CHECK (public_port BETWEEN 1024 AND 65535),
     public_url_scope text NOT NULL CHECK (public_url_scope IN ('member', 'shared')),
     policy_revision bigint NOT NULL CHECK (policy_revision >= 1),
@@ -365,7 +366,12 @@ CREATE TABLE control.public_urls (
     CHECK ((public_url_scope = 'member') = (membership_id IS NOT NULL)),
     CHECK (target <> '' OR (purpose = 'app' AND (NOT ephemeral OR service_protocol <> 'http'))),
     CHECK (service_protocol = 'http' OR (purpose = 'app' AND target = '')),
-    CHECK (service_protocol <> 'http' OR public_port IS NULL),
+    CHECK (service_protocol = 'ssh' OR public_port IS NULL),
+    CONSTRAINT public_urls_managed_ssh_check CHECK (
+        (service_protocol = 'ssh' AND NOT ephemeral AND target = '' AND ssh_host_key IS NOT NULL
+            AND btrim(ssh_host_key) <> '' AND octet_length(ssh_host_key) <= 1024)
+        OR (service_protocol <> 'ssh' AND ssh_host_key IS NULL)
+    ),
     CONSTRAINT public_urls_private_digest_check CHECK (
         (lifecycle_state = 'deleted' AND request_digest_ciphertext IS NULL AND request_digest_storage_key_id IS NULL)
         OR (lifecycle_state <> 'deleted' AND request_digest_ciphertext IS NOT NULL AND request_digest_storage_key_id IS NOT NULL)
@@ -418,10 +424,10 @@ CREATE TABLE control.publish_runs (
     publish_run_token_digest bytea NOT NULL UNIQUE CHECK (octet_length(publish_run_token_digest) = 32),
     policy_revision bigint NOT NULL CHECK (policy_revision >= 1),
     policy_denials bigint NOT NULL DEFAULT 0 CHECK (policy_denials >= 0),
-    certificate_cache_key text NOT NULL CHECK (certificate_cache_key <> ''),
-    certificate_scope text NOT NULL CHECK (certificate_scope <> ''),
-    certificate_identifiers text[] NOT NULL CHECK (cardinality(certificate_identifiers) > 0),
-    certificate_challenge_method text NOT NULL CHECK (certificate_challenge_method IN ('dns-01', 'tls-alpn-01')),
+    certificate_cache_key text CHECK (certificate_cache_key <> ''),
+    certificate_scope text CHECK (certificate_scope <> ''),
+    certificate_identifiers text[] CHECK (cardinality(certificate_identifiers) > 0),
+    certificate_challenge_method text CHECK (certificate_challenge_method IN ('dns-01', 'tls-alpn-01')),
     traffic_limits jsonb NOT NULL DEFAULT '{"connections":32,"rate":20,"rate_per_ns":1000000000,"burst":40,"upload_bytes":8388608,"download_bytes":16777216}'::jsonb CHECK (jsonb_typeof(traffic_limits) = 'object'),
     state text NOT NULL CHECK (state IN ('starting', 'ready', 'closed', 'expired', 'canceled')),
     created_at timestamptz NOT NULL,
@@ -440,7 +446,13 @@ CREATE TABLE control.publish_runs (
     UNIQUE (id, assignments_open),
     FOREIGN KEY (public_url_id, team_id) REFERENCES control.public_urls(id, team_id) ON DELETE RESTRICT,
     CONSTRAINT publish_runs_private_digest_check CHECK ((request_digest_ciphertext IS NULL) = (request_digest_storage_key_id IS NULL) AND (closed_at IS NOT NULL OR request_digest_ciphertext IS NOT NULL)),
-    CHECK (array_position(certificate_identifiers, NULL) IS NULL),
+    -- ssh runs omit all visitor-certificate fields; http runs require a plan.
+    CHECK ((certificate_cache_key IS NULL AND certificate_scope IS NULL AND certificate_identifiers IS NULL
+            AND certificate_challenge_method IS NULL AND certificate_installed_at IS NULL
+            AND certificate_issuance_id IS NULL AND certificate_not_after IS NULL)
+        OR (certificate_cache_key IS NOT NULL AND certificate_scope IS NOT NULL AND certificate_identifiers IS NOT NULL
+            AND certificate_challenge_method IS NOT NULL)),
+    CHECK (certificate_identifiers IS NULL OR array_position(certificate_identifiers, NULL) IS NULL),
     CHECK (last_heartbeat_at >= created_at),
     CHECK (publisher_expires_at > created_at),
     CHECK (certificate_installed_at IS NULL OR certificate_installed_at >= created_at),
@@ -458,6 +470,24 @@ CREATE UNIQUE INDEX publish_runs_nonterminal_route
 CREATE INDEX publish_runs_expiration
     ON control.publish_runs (publisher_expires_at, id)
     WHERE closed_at IS NULL;
+
+-- a run's plan follows its saved protocol even for direct SQL writes.
+-- +goose StatementBegin
+CREATE FUNCTION control.check_publish_run_certificate_plan() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM control.public_urls WHERE id = NEW.public_url_id AND service_protocol = 'ssh') THEN
+        IF NEW.certificate_cache_key IS NOT NULL THEN
+            RAISE EXCEPTION 'SSH publish run cannot have a visitor certificate plan' USING ERRCODE = '23514';
+        END IF;
+    ELSIF NEW.certificate_cache_key IS NULL THEN
+        RAISE EXCEPTION 'HTTP publish runs require a visitor certificate plan' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER check_publish_run_certificate_plan BEFORE INSERT OR UPDATE OF public_url_id, certificate_cache_key
+    ON control.publish_runs FOR EACH ROW EXECUTE FUNCTION control.check_publish_run_certificate_plan();
 
 CREATE TABLE control.relay_services (
     id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -1320,6 +1350,37 @@ CREATE TABLE control.browser_access_sessions (
     parent_control_session_id text REFERENCES control.control_sessions(id) ON DELETE RESTRICT
 );
 CREATE INDEX browser_access_sessions_by_expiry ON control.browser_access_sessions(expires_at);
+-- one shared identity cookie on the control hostname, independent of the
+-- per-public-URL preview cookie. control locks the row before token refresh.
+CREATE TABLE control.browser_identity_login_attempts (
+    state_digest bytea PRIMARY KEY CHECK (octet_length(state_digest) = 32),
+    binding_digest bytea NOT NULL CHECK (octet_length(binding_digest) = 32),
+    nonce text NOT NULL CHECK (nonce <> ''),
+    verifier_ciphertext bytea NOT NULL CHECK (octet_length(verifier_ciphertext) > 29),
+    verifier_storage_key_id text NOT NULL CHECK (verifier_storage_key_id <> ''),
+    created_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL CHECK (expires_at > created_at AND expires_at <= created_at + interval '10 minutes'),
+    consumed_at timestamptz
+);
+CREATE INDEX browser_identity_login_expiry ON control.browser_identity_login_attempts(expires_at);
+CREATE TABLE control.browser_identity_sessions (
+    cookie_digest bytea PRIMARY KEY CHECK (octet_length(cookie_digest) = 32),
+    identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    parent_control_session_id text REFERENCES control.control_sessions(id) ON DELETE RESTRICT,
+    access_ciphertext bytea NOT NULL CHECK (octet_length(access_ciphertext) > 29),
+    refresh_ciphertext bytea NOT NULL CHECK (octet_length(refresh_ciphertext) > 29),
+    storage_key_id text NOT NULL CHECK (storage_key_id <> ''),
+    access_expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    revoked_at timestamptz,
+    CHECK (expires_at > created_at AND expires_at <= created_at + interval '24 hours'),
+    CHECK (access_expires_at > created_at AND access_expires_at <= expires_at),
+    CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+);
+CREATE INDEX browser_identity_sessions_expiry ON control.browser_identity_sessions(expires_at);
+CREATE INDEX browser_identity_sessions_parent ON control.browser_identity_sessions(parent_control_session_id)
+    WHERE parent_control_session_id IS NOT NULL;
 CREATE TABLE control.browser_access_handoffs (
     token_digest bytea PRIMARY KEY CHECK (octet_length(token_digest) = 32),
     session_digest bytea NOT NULL REFERENCES control.browser_access_sessions(token_digest) ON DELETE CASCADE,
@@ -1341,6 +1402,7 @@ CREATE TABLE control.visitor_grants (
     team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
     kind text NOT NULL CHECK (kind IN ('team', 'identity')),
     identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    ssh_user text CHECK (ssh_user IS NULL OR (ssh_user ~ '^[a-z_][a-z0-9_-]{0,31}$' AND ssh_user <> 'root')),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL, request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     created_at timestamptz NOT NULL, expires_at timestamptz, revoked_at timestamptz,
@@ -1354,6 +1416,7 @@ CREATE TABLE control.visitor_invitations (
     id text PRIMARY KEY CHECK (id <> ''), public_url_id text NOT NULL REFERENCES control.public_urls(id) ON DELETE RESTRICT,
     team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
     normalized_email text NOT NULL, token_digest bytea NOT NULL CHECK (octet_length(token_digest) = 32),
+    ssh_user text CHECK (ssh_user IS NULL OR (ssh_user ~ '^[a-z_][a-z0-9_-]{0,31}$' AND ssh_user <> 'root')),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL, request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL CHECK (expires_at > created_at),
@@ -1372,6 +1435,45 @@ CREATE TABLE control.visitor_ip_policy_sets (
     public_url_id text PRIMARY KEY REFERENCES control.public_urls(id) ON DELETE RESTRICT
 );
 
+-- a code identifies a pending decision, never an authorization. publisher
+-- proof is private to the current run and is needed to claim the stream.
+CREATE TABLE control.ssh_attempts (
+    id text PRIMARY KEY CHECK (id <> ''),
+    code_digest bytea NOT NULL CHECK (octet_length(code_digest) = 32),
+    publisher_proof_digest bytea NOT NULL CHECK (octet_length(publisher_proof_digest) = 32),
+    public_url_id text NOT NULL,
+    publish_run_id text NOT NULL,
+    publish_run_number bigint NOT NULL CHECK (publish_run_number >= 1),
+    visitor_connection_id text NOT NULL CHECK (visitor_connection_id <> '' AND octet_length(visitor_connection_id) <= 128),
+    source_ip inet NOT NULL,
+    ssh_user text NOT NULL CHECK (ssh_user ~ '^[a-z_][a-z0-9_-]{0,31}$' AND ssh_user <> 'root'),
+    ssh_session_digest bytea NOT NULL CHECK (octet_length(ssh_session_digest) = 32),
+    state text NOT NULL CHECK (state IN ('pending', 'approved', 'denied', 'claimed', 'canceled')),
+    identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    approved_at timestamptz,
+    denied_at timestamptz,
+    claimed_at timestamptz,
+    canceled_at timestamptz,
+    FOREIGN KEY (publish_run_id, public_url_id, publish_run_number)
+        REFERENCES control.publish_runs(id, public_url_id, publish_run_number) ON DELETE RESTRICT,
+    UNIQUE (publish_run_id, visitor_connection_id),
+    CHECK (expires_at > created_at AND expires_at <= created_at + interval '10 minutes'),
+    CHECK (approved_at IS NULL OR approved_at >= created_at),
+    CHECK (denied_at IS NULL OR denied_at >= created_at),
+    CHECK (claimed_at IS NULL OR claimed_at >= approved_at),
+    CHECK (canceled_at IS NULL OR canceled_at >= created_at),
+    CHECK ((state = 'pending' AND approved_at IS NULL AND denied_at IS NULL AND claimed_at IS NULL AND canceled_at IS NULL AND identity_id IS NULL)
+        OR (state = 'approved' AND approved_at IS NOT NULL AND denied_at IS NULL AND claimed_at IS NULL AND canceled_at IS NULL AND identity_id IS NOT NULL)
+        OR (state = 'claimed' AND approved_at IS NOT NULL AND denied_at IS NULL AND claimed_at IS NOT NULL AND canceled_at IS NULL AND identity_id IS NOT NULL)
+        OR (state = 'denied' AND approved_at IS NULL AND denied_at IS NOT NULL AND claimed_at IS NULL AND canceled_at IS NULL)
+        OR (state = 'canceled' AND claimed_at IS NULL AND canceled_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX ssh_attempts_code ON control.ssh_attempts(code_digest);
+CREATE INDEX ssh_attempts_expiry ON control.ssh_attempts(expires_at)
+    WHERE state IN ('pending', 'approved');
+
 -- this is the sole identity permission rule. callers lock the team and URL
 -- before using it for a connection or a write; inventory uses a read snapshot.
 -- +goose StatementBegin
@@ -1383,8 +1485,8 @@ RETURNS TABLE(reason text, expires_at timestamptz) LANGUAGE sql STABLE AS $$
     LEFT JOIN control.team_memberships m ON m.team_id = u.team_id AND m.identity_id = i.id AND m.removed_at IS NULL
     CROSS JOIN LATERAL (
         SELECT 'owner'::text AS reason, NULL::timestamptz AS expires_at, 0 AS priority
-        WHERE (u.public_url_scope = 'member' AND m.id = u.membership_id)
-           OR (u.public_url_scope = 'shared' AND m.role IN ('owner', 'admin'))
+        WHERE u.service_protocol <> 'ssh' AND ((u.public_url_scope = 'member' AND m.id = u.membership_id)
+           OR (u.public_url_scope = 'shared' AND m.role IN ('owner', 'admin')))
         UNION ALL
         SELECT 'preview_team', NULL::timestamptz, 1
         WHERE u.service_protocol = 'http' AND m.id IS NOT NULL AND EXISTS (
@@ -1395,10 +1497,12 @@ RETURNS TABLE(reason text, expires_at timestamptz) LANGUAGE sql STABLE AS $$
         SELECT CASE g.kind WHEN 'team' THEN 'team_grant' ELSE 'identity_grant' END, g.expires_at, 2
         FROM control.visitor_grants g WHERE g.public_url_id = u.id AND g.team_id = u.team_id AND g.revoked_at IS NULL
           AND (g.expires_at IS NULL OR g.expires_at > at_time)
+          AND ((u.service_protocol = 'ssh' AND g.ssh_user IS NOT NULL)
+            OR (u.service_protocol <> 'ssh' AND g.ssh_user IS NULL))
           AND ((g.kind = 'team' AND m.id IS NOT NULL) OR (g.kind = 'identity' AND g.identity_id = i.id))
     ) permission
     WHERE u.id = url_id AND u.lifecycle_state = 'enabled' AND u.purpose IN ('app', 'alias')
-      AND u.service_protocol IN ('http', 'postgres', 'mysql', 'redis')
+      AND u.service_protocol IN ('http', 'ssh')
     ORDER BY permission.priority, permission.expires_at DESC NULLS FIRST LIMIT 1;
 $$;
 -- +goose StatementEnd
@@ -1432,29 +1536,34 @@ CREATE UNIQUE INDEX publisher_identity_keys_current ON control.publisher_identit
 CREATE TABLE control.publisher_grants (
     id text PRIMARY KEY CHECK (id <> ''), publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
-    kind text NOT NULL CHECK (kind IN ('saved_url', 'namespace')),
+    kind text NOT NULL CHECK (kind IN ('saved_url', 'namespace', 'private_service')),
     public_url_id text REFERENCES control.public_urls(id) ON DELETE CASCADE,
+    private_service_id text,
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT, namespace text,
     membership_id text, public_url_scope text CHECK (public_url_scope IN ('member', 'shared')),
     created_at timestamptz NOT NULL, expires_at timestamptz, revoked_at timestamptz,
     UNIQUE (id, publisher_identity_id),
     CHECK (expires_at IS NULL OR expires_at > created_at),
-    CHECK ((kind = 'saved_url' AND public_url_id IS NOT NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL)
-        OR (kind = 'namespace' AND public_url_id IS NULL AND domain_id IS NOT NULL AND namespace IS NOT NULL AND namespace <> '' AND public_url_scope IS NOT NULL AND (public_url_scope = 'member') = (membership_id IS NOT NULL)))
+    CHECK ((kind = 'saved_url' AND public_url_id IS NOT NULL AND private_service_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL)
+        OR (kind = 'namespace' AND public_url_id IS NULL AND private_service_id IS NULL AND domain_id IS NOT NULL AND namespace IS NOT NULL AND namespace <> '' AND public_url_scope IS NOT NULL AND (public_url_scope = 'member') = (membership_id IS NOT NULL))
+        OR (kind = 'private_service' AND private_service_id IS NOT NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL))
 );
 CREATE UNIQUE INDEX publisher_grants_active_url ON control.publisher_grants(publisher_identity_id, public_url_id) WHERE revoked_at IS NULL AND kind = 'saved_url';
 CREATE UNIQUE INDEX publisher_grants_active_namespace ON control.publisher_grants(publisher_identity_id, domain_id, namespace) WHERE revoked_at IS NULL AND kind = 'namespace';
 CREATE TABLE control.publisher_enrollments (
     id text PRIMARY KEY CHECK (id <> ''), enrollment_key_digest bytea NOT NULL CHECK (octet_length(enrollment_key_digest) = 32),
     team_id text NOT NULL, name text NOT NULL, identity_kind text NOT NULL CHECK (identity_kind IN ('installed', 'automation', 'run')),
-    grant_kind text NOT NULL CHECK (grant_kind IN ('saved_url', 'namespace')), public_url_id text, domain_id text, namespace text,
+    grant_kind text NOT NULL CHECK (grant_kind IN ('saved_url', 'namespace', 'private_service')), public_url_id text, private_service_id text, domain_id text, namespace text,
     membership_id text, public_url_scope text,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL CHECK (expires_at > created_at),
     redeemed_identity_id text REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
     redeemed_key_id text, redeemed_grant_id text, redeemed_public_key bytea, redeemed_at timestamptz,
     CHECK ((redeemed_at IS NULL) = (redeemed_identity_id IS NULL)),
-    CHECK ((redeemed_at IS NULL) = (redeemed_public_key IS NULL))
+    CHECK ((redeemed_at IS NULL) = (redeemed_public_key IS NULL)),
+    CHECK ((grant_kind = 'saved_url' AND public_url_id IS NOT NULL AND private_service_id IS NULL AND domain_id IS NULL)
+        OR (grant_kind = 'namespace' AND public_url_id IS NULL AND private_service_id IS NULL AND domain_id IS NOT NULL)
+        OR (grant_kind = 'private_service' AND private_service_id IS NOT NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND membership_id IS NULL AND public_url_scope IS NULL))
 );
 CREATE TABLE control.publisher_assertions (
     publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
@@ -1481,3 +1590,198 @@ CREATE TABLE control.publish_run_publisher_grants (
     publisher_identity_id text NOT NULL, publisher_grant_id text NOT NULL,
     FOREIGN KEY (publisher_grant_id, publisher_identity_id) REFERENCES control.publisher_grants(id, publisher_identity_id) ON DELETE RESTRICT
 );
+
+-- private services have no public URL, DNS record, port allocation, or ACME plan.
+-- authorization names a saved service ID; names are unique within a team.
+CREATE TABLE control.private_services (
+    id text PRIMARY KEY CHECK (id ~ '^psvc_[A-Za-z0-9]{22}$'),
+    team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
+    name text NOT NULL CHECK (name ~ '^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$'),
+    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
+    request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
+    enabled boolean NOT NULL DEFAULT true,
+    next_run_number bigint NOT NULL DEFAULT 1 CHECK (next_run_number >= 1),
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL CHECK (updated_at >= created_at),
+    deleted_at timestamptz,
+    UNIQUE (id, team_id), UNIQUE (created_by_identity_id, idempotency_key)
+);
+CREATE UNIQUE INDEX private_services_team_name ON control.private_services(team_id, name) WHERE deleted_at IS NULL;
+ALTER TABLE control.publisher_grants ADD CONSTRAINT publisher_grants_private_service_fkey
+    FOREIGN KEY (private_service_id) REFERENCES control.private_services(id) ON DELETE RESTRICT;
+ALTER TABLE control.publisher_enrollments ADD CONSTRAINT publisher_enrollments_private_service_fkey
+    FOREIGN KEY (private_service_id) REFERENCES control.private_services(id) ON DELETE RESTRICT;
+CREATE UNIQUE INDEX publisher_grants_active_private_service ON control.publisher_grants(publisher_identity_id, private_service_id)
+    WHERE revoked_at IS NULL AND kind = 'private_service';
+
+CREATE TABLE control.private_service_grants (
+    id text PRIMARY KEY CHECK (id ~ '^psgr_[A-Za-z0-9]{22}$'), private_service_id text NOT NULL, team_id text NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('team', 'identity')),
+    identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    invitation_id text,
+    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
+    request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
+    created_at timestamptz NOT NULL, expires_at timestamptz, revoked_at timestamptz,
+    FOREIGN KEY (private_service_id, team_id) REFERENCES control.private_services(id, team_id) ON DELETE RESTRICT,
+    CHECK ((kind = 'identity') = (identity_id IS NOT NULL)),
+    CHECK (invitation_id IS NULL OR kind = 'identity'),
+    CHECK (expires_at IS NULL OR expires_at > created_at),
+    UNIQUE (created_by_identity_id, kind, idempotency_key),
+    UNIQUE (invitation_id)
+);
+CREATE INDEX private_service_grants_by_service ON control.private_service_grants(private_service_id) WHERE revoked_at IS NULL;
+CREATE TABLE control.private_service_invitations (
+    id text PRIMARY KEY CHECK (id ~ '^psivt_[A-Za-z0-9]{22}$'), private_service_id text NOT NULL, team_id text NOT NULL,
+    normalized_email text NOT NULL CHECK (normalized_email <> ''),
+    token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) = 32),
+    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
+    request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
+    created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL CHECK (expires_at > created_at),
+    accepted_at timestamptz, accepted_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    revoked_at timestamptz,
+    FOREIGN KEY (private_service_id, team_id) REFERENCES control.private_services(id, team_id) ON DELETE RESTRICT,
+    CHECK ((accepted_at IS NULL) = (accepted_identity_id IS NULL)),
+    UNIQUE (created_by_identity_id, idempotency_key),
+    UNIQUE (id, private_service_id, team_id)
+);
+ALTER TABLE control.private_service_grants ADD CONSTRAINT private_service_grants_invitation_fkey
+    FOREIGN KEY (invitation_id, private_service_id, team_id)
+        REFERENCES control.private_service_invitations(id, private_service_id, team_id) ON DELETE RESTRICT;
+
+-- control reserves a run and nonce before accepting a publisher-generated
+-- Ed25519 public key. the enrolled publisher key signs the exact run binding;
+-- the private TLS key never leaves the publisher or enters control storage.
+CREATE TABLE control.private_service_runs (
+    id text PRIMARY KEY CHECK (id ~ '^psrun_[A-Za-z0-9]{22}$'), private_service_id text NOT NULL, team_id text NOT NULL,
+    run_number bigint NOT NULL CHECK (run_number >= 1),
+    publisher_identity_id text NOT NULL, publisher_grant_id text NOT NULL,
+    publisher_key_id text NOT NULL,
+    idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
+    request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
+    binding_nonce bytea NOT NULL CHECK (octet_length(binding_nonce) = 32),
+    binding_expires_at timestamptz NOT NULL,
+    assignment_seed_ciphertext bytea NOT NULL,
+    assignment_seed_storage_key_id text NOT NULL CHECK (assignment_seed_storage_key_id <> ''),
+    run_token_digest bytea UNIQUE CHECK (run_token_digest IS NULL OR octet_length(run_token_digest) = 32),
+    stream_public_key bytea CHECK (stream_public_key IS NULL OR octet_length(stream_public_key) = 32),
+    stream_key_binding_signature bytea CHECK (stream_key_binding_signature IS NULL OR octet_length(stream_key_binding_signature) = 64),
+    bound_at timestamptz,
+    state text NOT NULL CHECK (state IN ('prepared', 'starting', 'ready', 'closed')),
+    created_at timestamptz NOT NULL, publisher_expires_at timestamptz NOT NULL CHECK (publisher_expires_at > created_at),
+    ready_at timestamptz, closed_at timestamptz,
+    assignments_open boolean GENERATED ALWAYS AS (closed_at IS NULL) STORED,
+    FOREIGN KEY (private_service_id, team_id) REFERENCES control.private_services(id, team_id) ON DELETE RESTRICT,
+    FOREIGN KEY (publisher_grant_id, publisher_identity_id) REFERENCES control.publisher_grants(id, publisher_identity_id) ON DELETE RESTRICT,
+    FOREIGN KEY (publisher_key_id, publisher_identity_id) REFERENCES control.publisher_identity_keys(id, publisher_identity_id) ON DELETE RESTRICT,
+    UNIQUE (private_service_id, run_number), UNIQUE (private_service_id, idempotency_key),
+    UNIQUE (id, private_service_id, run_number), UNIQUE (id, assignments_open),
+    CHECK ((state = 'closed') = (closed_at IS NOT NULL)),
+    CHECK (state <> 'ready' OR ready_at IS NOT NULL),
+    CHECK (binding_expires_at > created_at AND binding_expires_at <= created_at + interval '5 minutes'),
+    CHECK ((stream_public_key IS NULL AND stream_key_binding_signature IS NULL AND run_token_digest IS NULL AND bound_at IS NULL)
+        OR (stream_public_key IS NOT NULL AND stream_key_binding_signature IS NOT NULL AND run_token_digest IS NOT NULL AND bound_at IS NOT NULL)),
+    CHECK (state NOT IN ('starting', 'ready') OR bound_at IS NOT NULL),
+    CHECK (state <> 'prepared' OR bound_at IS NULL)
+);
+CREATE UNIQUE INDEX private_service_runs_active ON control.private_service_runs(private_service_id) WHERE closed_at IS NULL;
+CREATE INDEX private_service_runs_expiring ON control.private_service_runs(publisher_expires_at) WHERE closed_at IS NULL;
+
+CREATE TABLE control.private_service_connection_slots (
+    publisher_connection_id text PRIMARY KEY CHECK (publisher_connection_id ~ '^pc_[A-Za-z0-9]{22}$'),
+    private_run_id text NOT NULL, private_service_id text NOT NULL,
+    run_number bigint NOT NULL, connection_slot smallint NOT NULL CHECK (connection_slot BETWEEN 0 AND 1),
+    connection_assignment_revision bigint NOT NULL CHECK (connection_assignment_revision >= 1),
+    relay_service_id text NOT NULL REFERENCES control.relay_services(relay_service_id) ON DELETE RESTRICT,
+    relay_address text NOT NULL CHECK (relay_address <> ''),
+    tls_server_name text NOT NULL CHECK (tls_server_name <> ''),
+    credential_digest bytea NOT NULL UNIQUE CHECK (octet_length(credential_digest) = 32),
+    credential_expires_at timestamptz NOT NULL,
+    relay_id text, relay_run_id text, relay_lease_revision bigint,
+    state text NOT NULL CHECK (state IN ('assigned', 'connected', 'ready', 'closed')),
+    session_open boolean NOT NULL DEFAULT true,
+    FOREIGN KEY (private_run_id, private_service_id, run_number)
+        REFERENCES control.private_service_runs(id, private_service_id, run_number) ON DELETE RESTRICT,
+    FOREIGN KEY (private_run_id, session_open) REFERENCES control.private_service_runs(id, assignments_open)
+        ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED,
+    UNIQUE (private_run_id, connection_slot), UNIQUE (private_run_id, relay_service_id),
+    CHECK ((relay_id IS NULL) = (relay_run_id IS NULL) AND (relay_id IS NULL) = (relay_lease_revision IS NULL)),
+    CHECK (state NOT IN ('connected', 'ready') OR relay_id IS NOT NULL)
+);
+CREATE TRIGGER update_private_relay_assignment_totals
+AFTER INSERT OR UPDATE OR DELETE ON control.private_service_connection_slots
+FOR EACH ROW EXECUTE FUNCTION control.update_relay_assignment_totals();
+
+-- ingress receives only the shared connector address and an ID-keyed projection.
+-- a tombstone must supersede any older projection for the same service ID.
+CREATE TABLE control.private_service_routing_events (
+    revision bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    private_service_id text NOT NULL REFERENCES control.private_services(id) ON DELETE RESTRICT,
+    kind text NOT NULL CHECK (kind IN ('upsert', 'tombstone')),
+    private_run_id text REFERENCES control.private_service_runs(id) ON DELETE RESTRICT,
+    run_number bigint CHECK (run_number >= 1),
+    projection bytea NOT NULL,
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL,
+    CHECK ((kind = 'upsert') = (private_run_id IS NOT NULL AND run_number IS NOT NULL))
+);
+CREATE INDEX private_service_routing_by_service ON control.private_service_routing_events(private_service_id, revision DESC);
+CREATE TABLE control.private_service_routing_clock (
+    id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    current_revision bigint NOT NULL DEFAULT 0 CHECK (current_revision >= 0),
+    updated_at timestamptz NOT NULL
+);
+INSERT INTO control.private_service_routing_clock(id, updated_at) VALUES (1, now());
+
+-- one authenticated mux session binds an identity and selected private service
+-- to ingress-observed source metadata. its credential is claimed once.
+CREATE TABLE control.private_connector_sessions (
+    id text PRIMARY KEY CHECK (id ~ '^pcs_[A-Za-z0-9]{22}$'),
+    credential_digest bytea NOT NULL UNIQUE CHECK (octet_length(credential_digest) = 32),
+    private_service_id text NOT NULL REFERENCES control.private_services(id) ON DELETE RESTRICT,
+    identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    bound_at timestamptz,
+    source_ip inet,
+    ingress_id text,
+    ingress_run_id text,
+    ingress_lease_revision bigint,
+    revoked_at timestamptz,
+    CHECK (expires_at > created_at AND expires_at <= created_at + interval '15 minutes'),
+    CHECK ((bound_at IS NULL AND source_ip IS NULL AND ingress_id IS NULL AND ingress_run_id IS NULL AND ingress_lease_revision IS NULL)
+        OR (bound_at IS NOT NULL AND source_ip IS NOT NULL AND ingress_id IS NOT NULL AND ingress_run_id IS NOT NULL AND ingress_lease_revision >= 1)),
+    CHECK (source_ip IS NULL OR masklen(source_ip) = CASE family(source_ip) WHEN 4 THEN 32 ELSE 128 END),
+    CHECK (revoked_at IS NULL OR revoked_at >= created_at),
+    UNIQUE (id, private_service_id, identity_id, source_ip)
+);
+CREATE INDEX private_connector_sessions_expiring ON control.private_connector_sessions(expires_at);
+
+-- one fresh ticket per visitor stream, bound to the authenticated mux session,
+-- exact service/run, identity and ingress-observed source. grants, not an IP
+-- allowlist, are the private service visitor policy.
+CREATE TABLE control.private_service_tickets (
+    digest bytea PRIMARY KEY CHECK (octet_length(digest) = 32),
+    private_service_id text NOT NULL, private_run_id text NOT NULL, run_number bigint NOT NULL,
+    connector_session_id text NOT NULL REFERENCES control.private_connector_sessions(id) ON DELETE RESTRICT,
+    identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    source_ip inet NOT NULL,
+    stream_public_key bytea NOT NULL CHECK (octet_length(stream_public_key) = 32),
+    created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL,
+    consumed_at timestamptz,
+    visitor_connection_id text CHECK (visitor_connection_id IS NULL OR visitor_connection_id ~ '^vc_[A-Za-z0-9]{22}$'),
+    FOREIGN KEY (private_run_id, private_service_id, run_number)
+        REFERENCES control.private_service_runs(id, private_service_id, run_number) ON DELETE RESTRICT,
+    FOREIGN KEY (connector_session_id, private_service_id, identity_id, source_ip)
+        REFERENCES control.private_connector_sessions(id, private_service_id, identity_id, source_ip) ON DELETE RESTRICT,
+    CHECK (expires_at > created_at AND expires_at <= created_at + interval '1 minute'),
+    CHECK (masklen(source_ip) = CASE family(source_ip) WHEN 4 THEN 32 ELSE 128 END),
+    CHECK ((consumed_at IS NULL) = (visitor_connection_id IS NULL)),
+    CHECK (consumed_at IS NULL OR consumed_at >= created_at)
+);
+CREATE INDEX private_service_tickets_expiring ON control.private_service_tickets(expires_at);
+CREATE INDEX private_service_tickets_session ON control.private_service_tickets(connector_session_id, expires_at);
+CREATE UNIQUE INDEX private_service_tickets_consumed_visitor ON control.private_service_tickets(private_run_id, visitor_connection_id)
+    WHERE visitor_connection_id IS NOT NULL;

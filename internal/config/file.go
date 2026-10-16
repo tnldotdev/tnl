@@ -191,10 +191,29 @@ func ValidateTNL(config TNL) error {
 		names = append(names, name)
 	}
 	slices.Sort(names)
+	privateNames := make(map[string]string)
 	for _, name := range names {
 		service := config.Services[name]
+		if !naming.ValidServiceName(name) {
+			return fmt.Errorf("service name %q must be one lowercase DNS label beginning with a letter", name)
+		}
 		if err := validateTarget(service); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
+		}
+		if Protocol(service) == "tcp" {
+			if service.Tunnel != nil {
+				return fmt.Errorf("services.%s: tcp cannot use public tunnel settings", name)
+			}
+			privateName := PrivateServiceName(name, service)
+			if !naming.ValidServiceName(privateName) {
+				return fmt.Errorf("services.%s: private.name must be one lowercase DNS label beginning with a letter", name)
+			}
+			if existing := privateNames[privateName]; existing != "" {
+				return fmt.Errorf("services.%s: private name %q is already used by services.%s", name, privateName, existing)
+			}
+			privateNames[privateName] = name
+		} else if service.Private != nil {
+			return fmt.Errorf("services.%s: private requires protocol tcp", name)
 		}
 		if service.HTTP != nil && Protocol(service) != "http" {
 			return fmt.Errorf("services.%s: http settings require protocol http", name)
@@ -207,9 +226,6 @@ func ValidateTNL(config TNL) error {
 		if err := ValidateInspection(service.Inspection); err != nil {
 			return fmt.Errorf("services.%s.inspection: %w", name, err)
 		}
-		if !naming.ValidServiceName(name) {
-			return fmt.Errorf("service name %q must be one lowercase DNS label beginning with a letter", name)
-		}
 		if err := validateTunnel(service.Tunnel); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
@@ -220,8 +236,10 @@ func ValidateTNL(config TNL) error {
 				return fmt.Errorf("services.%s: SSH inspection supports none only", name)
 			}
 		}
-		if err := validateLimits(tunnelLimits(service.Tunnel), tunnelLimits(config.Tunnel), protocol); err != nil {
-			return fmt.Errorf("services.%s: %w", name, err)
+		if protocol != "tcp" {
+			if err := validateLimits(tunnelLimits(service.Tunnel), tunnelLimits(config.Tunnel), protocol); err != nil {
+				return fmt.Errorf("services.%s: %w", name, err)
+			}
 		}
 		paths := ServicePaths(service)
 		if len(paths) > 32 {

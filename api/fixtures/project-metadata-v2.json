@@ -2,25 +2,25 @@
   "version": 2,
   "cases": [
     {
-      "name": "saved postgres address",
-      "valid": true,
+      "name": "private tcp has no public hostname metadata",
+      "valid": false,
       "metadata": {
         "version": 2,
         "namespace": "member.example",
         "dev": false,
         "services": {
           "db": {
-            "protocol": "postgres",
+            "protocol": "tcp",
             "namespace": "member.example",
             "hostname": "db.member.example",
-            "port": 15432,
-            "address": "db.member.example:15432"
+            "port": 443,
+            "address": "db.member.example:443"
           }
         }
       }
     },
     {
-      "name": "saved TCP minimum port",
+      "name": "saved SSH minimum port",
       "valid": true,
       "metadata": {
         "version": 2,
@@ -28,7 +28,7 @@
         "dev": false,
         "services": {
           "cache": {
-            "protocol": "redis",
+            "protocol": "ssh",
             "namespace": "member.example",
             "hostname": "cache.member.example",
             "port": 1024,
@@ -38,7 +38,7 @@
       }
     },
     {
-      "name": "saved TCP maximum port",
+      "name": "saved SSH maximum port",
       "valid": true,
       "metadata": {
         "version": 2,
@@ -56,7 +56,7 @@
       }
     },
     {
-      "name": "TCP port below public range",
+      "name": "SSH port below public range",
       "valid": false,
       "metadata": {
         "version": 2,
@@ -64,7 +64,7 @@
         "dev": false,
         "services": {
           "db": {
-            "protocol": "mysql",
+            "protocol": "ssh",
             "namespace": "member.example",
             "hostname": "db.member.example",
             "port": 1023,
@@ -74,7 +74,7 @@
       }
     },
     {
-      "name": "TCP port above public range",
+      "name": "SSH port above public range",
       "valid": false,
       "metadata": {
         "version": 2,
@@ -82,7 +82,7 @@
         "dev": false,
         "services": {
           "db": {
-            "protocol": "mysql",
+            "protocol": "ssh",
             "namespace": "member.example",
             "hostname": "db.member.example",
             "port": 65536,
@@ -92,7 +92,7 @@
       }
     },
     {
-      "name": "TCP address does not match reservation",
+      "name": "SSH address does not match reservation",
       "valid": false,
       "metadata": {
         "version": 2,
@@ -100,7 +100,7 @@
         "dev": false,
         "services": {
           "db": {
-            "protocol": "postgres",
+            "protocol": "ssh",
             "namespace": "member.example",
             "hostname": "db.member.example",
             "port": 15432,
@@ -110,7 +110,7 @@
       }
     },
     {
-      "name": "TCP cannot have HTTP fields",
+      "name": "SSH cannot have HTTP fields",
       "valid": false,
       "metadata": {
         "version": 2,
@@ -118,7 +118,7 @@
         "dev": false,
         "services": {
           "db": {
-            "protocol": "postgres",
+            "protocol": "ssh",
             "namespace": "member.example",
             "hostname": "db.member.example",
             "port": 15432,
@@ -129,7 +129,7 @@
       }
     },
     {
-      "name": "private targets are not metadata",
+      "name": "private targets are not browser metadata",
       "valid": false,
       "metadata": {
         "version": 2,
@@ -137,11 +137,10 @@
         "dev": false,
         "services": {
           "db": {
-            "protocol": "postgres",
+            "protocol": "http",
             "namespace": "member.example",
             "hostname": "db.member.example",
-            "port": 15432,
-            "address": "db.member.example:15432",
+            "url": "https://db.member.example",
             "target": "db.internal:5432"
           }
         }

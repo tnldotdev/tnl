@@ -120,7 +120,7 @@ INSERT INTO control.acme_orders (
     available_at,
     created_at,
     updated_at
-) VALUES (
+) SELECT
     sqlc.arg(id),
     sqlc.arg(account_id),
     sqlc.arg(publish_run_id),
@@ -138,7 +138,11 @@ INSERT INTO control.acme_orders (
     sqlc.arg(created_at),
     sqlc.arg(created_at),
     sqlc.arg(created_at)
-)
+FROM control.publish_runs AS run
+JOIN control.public_urls AS url ON url.id = run.public_url_id
+WHERE run.id = sqlc.arg(publish_run_id) AND run.public_url_id = sqlc.arg(public_url_id)
+  AND run.publish_run_number = sqlc.arg(publish_run_number) AND run.closed_at IS NULL
+  AND run.certificate_cache_key IS NOT NULL AND url.service_protocol IN ('http', 'tcp')
 RETURNING *;
 
 -- name: GetCertificateOrderDomainKind :one

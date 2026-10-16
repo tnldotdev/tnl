@@ -82,7 +82,7 @@ for (const manager of ["npm", "pnpm"] as const) {
         import("@tnldotdev/tnl"), import("@tnldotdev/tnl/config"),
         import("@tnldotdev/tnl/next"), import("@tnldotdev/tnl/vite"),
       ]);
-      const config = { services: { web: { protocol: "http", target: { type: "app" } } } };
+      const config = { tunnel: { allowAllIPs: true }, services: { web: { protocol: "http", target: { type: "app" } } } };
       if (tnl.port !== 3000 || tnl.services !== undefined || tnl.dev !== false || typeof tnl.prepare !== "function" || typeof tnl.open !== "function" ||
           defineConfig(config) !== config || typeof withTnl !== "function" || typeof vite !== "function") {
         throw new Error("release package exports are invalid");

@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -273,6 +274,26 @@ func TestProjectConfigurationRequiresServiceWhenAmbiguous(t *testing.T) {
 		writeCommandError(&output, err)
 		if !strings.Contains(output.String(), "configured services: api, web") {
 			t.Fatalf("ambiguous service output omitted names: %s", output.String())
+		}
+	}
+}
+
+func TestPrivateTCPProjectPublishFailsBeforeAnyPublicURLSelection(t *testing.T) {
+	protocol := "tcp"
+	target := config.Target("127.0.0.1:5432")
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
+		"orders": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}},
+	}}}}
+	for _, install := range []bool{false, true} {
+		flags := publishCommand{Target: "orders"}
+		var err error
+		if install {
+			err = project.applyInstalledService(&flags)
+		} else {
+			err = project.applyPublish(&flags)
+		}
+		if typed, ok := failure.Of(err); !ok || typed.Reason() != failure.PrivatePublisherUnavailable || flags.PublicURL != "" || flags.ServiceName != "" {
+			t.Fatalf("private TCP service fell through public URL publication: install=%t flags=%+v err=%v", install, flags, err)
 		}
 	}
 }

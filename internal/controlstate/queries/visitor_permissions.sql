@@ -12,7 +12,7 @@ SELECT * FROM control.control_sessions WHERE access_token_id = $1 FOR SHARE;
 SELECT * FROM control.control_sessions WHERE id = $1 FOR SHARE;
 
 -- name: ListVisitorInventory :many
-SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol, u.public_port,
+SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol, u.public_port, u.ssh_host_key,
     permission.reason::text AS visitor_access
 FROM control.public_urls u JOIN control.teams t ON t.id = u.team_id
 CROSS JOIN LATERAL control.visitor_permission(u.id, sqlc.arg(identity_id)::text,
@@ -24,8 +24,8 @@ ORDER BY u.id LIMIT 101;
 
 -- name: CreateVisitorGrant :one
 INSERT INTO control.visitor_grants(id, public_url_id, team_id, kind, identity_id, created_by_identity_id,
-    idempotency_key, request_digest, created_at, expires_at)
-VALUES ($1, $2, $3, $4, sqlc.narg(identity_id), $5, $6, $7, $8, sqlc.narg(expires_at))
+    idempotency_key, request_digest, created_at, expires_at, ssh_user)
+VALUES ($1, $2, $3, $4, sqlc.narg(identity_id), $5, $6, $7, $8, sqlc.narg(expires_at), sqlc.narg(ssh_user))
 ON CONFLICT (created_by_identity_id, kind, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING *;
 
 -- name: ListVisitorGrants :many
@@ -39,8 +39,8 @@ UPDATE control.visitor_grants SET revoked_at = COALESCE(revoked_at, $2) WHERE id
 
 -- name: CreateVisitorInvitation :one
 INSERT INTO control.visitor_invitations(id, public_url_id, team_id, normalized_email, token_digest, created_by_identity_id,
-    idempotency_key, request_digest, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    idempotency_key, request_digest, created_at, expires_at, ssh_user)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, sqlc.narg(ssh_user))
 ON CONFLICT (created_by_identity_id, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING *;
 
 -- name: GetVisitorInvitation :one

@@ -81,6 +81,8 @@ type Config struct {
 	RelayHostname                   string
 	HandleRelay                     func(net.Conn) bool
 	HandleRelayChallenge            func(net.Conn) bool
+	PrivateHostname                 string
+	PrivateConnector                *PrivateConnector
 	RequireProxyHeader              bool
 	MaxConnections                  int
 	MaxClientHelloConnections       int
@@ -88,6 +90,7 @@ type Config struct {
 	MaxHostnameChallengeConnections int
 	MaxControlConnections           int
 	MaxRelayConnections             int
+	MaxPrivateConnections           int
 	OpenTimeout                     time.Duration
 	Metrics                         Metrics
 	Observer                        OperationObserver
@@ -153,6 +156,15 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	}
 	if config.RelayHostname != "" && config.RelayHostname == config.ServerHostname {
 		return nil, errors.New("ingress: control and relay hostnames must be distinct")
+	}
+	if config.PrivateHostname != "" {
+		host, err := naming.CanonicalizeHostname(config.PrivateHostname)
+		if err != nil || host != config.PrivateHostname || host == config.ServerHostname || host == config.RelayHostname {
+			return nil, errors.New("ingress: private infrastructure hostname is invalid or shared with another handler")
+		}
+	}
+	if config.PrivateConnector != nil && (config.PrivateHostname == "" || config.PrivateConnector.config.Hostname != config.PrivateHostname) {
+		return nil, errors.New("ingress: private connector and infrastructure hostname must match")
 	}
 	if config.OpenTimeout <= 0 {
 		config.OpenTimeout = defaultOpenTimeout
@@ -299,6 +311,18 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	}
 	hello.ServerName = serverName
 	finishInspection()
+	if s.config.PrivateHostname != "" && hello.ServerName == s.config.PrivateHostname {
+		if s.config.PrivateConnector == nil || hello.ACMETLSALPN || destination.Port() != 443 {
+			return nil
+		}
+		release, rejected := s.admitClass(privateConnection, "")
+		if release == nil {
+			s.rejectCapacity(rejected)
+			return nil
+		}
+		defer release()
+		return s.config.PrivateConnector.Accept(s.openContext, &readerConn{Conn: &addressConn{Conn: public, remote: source, local: destination}, reader: hello.Replay()}, source, destination)
+	}
 	if hello.ServerName == s.config.ServerHostname {
 		if !s.handoff(public, source, destination, hello, controlConnection, s.config.HandleControl) {
 			return nil

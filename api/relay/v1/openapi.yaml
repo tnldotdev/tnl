@@ -3,14 +3,81 @@ info:
   title: tnl relay API
   version: 1.0.0
   license:
-    name: MIT
-    identifier: MIT
+    name: BSD-3-Clause
+    identifier: BSD-3-Clause
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://relay-control.internal
 security:
   - clusterAuth: []
 paths:
+  /internal/v1/private-publisher-connections/{publisher_connection_id}/claim:
+    post:
+      operationId: claimPrivatePublisherConnection
+      description: Authenticate an assigned private run slot and current relay lease without accepting a public URL ID.
+      parameters:
+        - name: publisher_connection_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Identifier" }
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/PrivatePublisherConnectionClaim" } },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Current private run assignment,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PrivatePublisherConnection" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/private-publisher-connections/{publisher_connection_id}/ready:
+    post:
+      operationId: readyPrivatePublisherConnection
+      description: Mark the private slot ready only while its assignment and relay lease are current.
+      parameters:
+        - name: publisher_connection_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Identifier" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrivatePublisherConnectionTransition" }
+      responses:
+        "200":
+          description: Ready private slot
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivatePublisherConnection" }
+        default: { $ref: "#/components/responses/Problem" }
+  /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect:
+    post:
+      operationId: disconnectPrivatePublisherConnection
+      description: Invalidate this exact assignment and remove it from ingress projections.
+      parameters:
+        - name: publisher_connection_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Identifier" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrivatePublisherConnectionTransition" }
+      responses:
+        "204": { description: Private slot disconnected }
+        default: { $ref: "#/components/responses/Problem" }
   /internal/v1/relays/register:
     post:
       operationId: registerRelay
@@ -206,6 +273,73 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    PrivateServiceID:
+      type: string
+      pattern: "^psvc_[A-Za-z0-9]{22}$"
+    PrivateRunID:
+      type: string
+      pattern: "^psrun_[A-Za-z0-9]{22}$"
+    PrivatePublisherConnectionClaim:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          private_service_id,
+          private_run_id,
+          run_number,
+          connection_assignment_revision,
+          relay_id,
+          relay_run_id,
+          relay_lease_revision,
+          credential,
+        ]
+      properties:
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        connection_assignment_revision: { type: integer, format: int64, minimum: 1 }
+        relay_id: { $ref: "#/components/schemas/Identifier" }
+        relay_run_id: { $ref: "#/components/schemas/Identifier" }
+        relay_lease_revision: { type: integer, format: int64, minimum: 1 }
+        credential: { type: string, minLength: 1, maxLength: 4096 }
+    PrivatePublisherConnection:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          private_service_id,
+          private_run_id,
+          run_number,
+          publisher_connection_id,
+          connection_assignment_revision,
+          relay_service_id,
+        ]
+      properties:
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        publisher_connection_id: { $ref: "#/components/schemas/Identifier" }
+        connection_assignment_revision: { type: integer, format: int64, minimum: 1 }
+        relay_service_id: { $ref: "#/components/schemas/Identifier" }
+    PrivatePublisherConnectionTransition:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          private_run_id,
+          run_number,
+          connection_assignment_revision,
+          relay_id,
+          relay_run_id,
+          relay_lease_revision,
+        ]
+      properties:
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        connection_assignment_revision: { type: integer, format: int64, minimum: 1 }
+        relay_id: { $ref: "#/components/schemas/Identifier" }
+        relay_run_id: { $ref: "#/components/schemas/Identifier" }
+        relay_lease_revision: { type: integer, format: int64, minimum: 1 }
     Identifier:
       type: string
       minLength: 1

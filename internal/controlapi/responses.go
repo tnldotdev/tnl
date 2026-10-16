@@ -51,7 +51,7 @@ func publishRunSetupResponse(
 ) controlv1.PublishRunSetup {
 	return controlv1.PublishRunSetup{
 		PublicUrl: publicURLResponse(route), PublishRun: publishRunResponse(setup),
-		PublishRunToken: setup.PublishRunToken.String(), CertificatePlan: certificatePlan,
+		PublishRunToken: setup.PublishRunToken.String(), CertificatePlan: &certificatePlan,
 		PublisherConnections: connectionAssignmentResponses(setup.PublisherConnections),
 		Traffic:              trafficLimitsResponse(setup.Traffic),
 	}

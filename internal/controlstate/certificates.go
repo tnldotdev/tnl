@@ -206,9 +206,9 @@ func (d *Database) CreateCertificateIssuance(
 	row, err := queries.InsertACMEOrder(ctx, controlstatedb.InsertACMEOrderParams{
 		ID: issuanceID, AccountID: account.ID, PublishRunID: session.ID, PublicURLID: session.PublicURLID,
 		PublishRunNumber: session.PublishRunNumber, IdempotencyKey: request.IdempotencyKey,
-		RequestDigest: request.RequestDigest[:], CertificateCacheKey: session.CertificateCacheKey,
-		CertificateScope: session.CertificateScope, CertificateIdentifiers: slices.Clone(session.CertificateIdentifiers),
-		ChallengeMethod: session.CertificateChallengeMethod, CsrDer: slices.Clone(request.CSRDER),
+		RequestDigest: request.RequestDigest[:], CertificateCacheKey: session.CertificateCacheKey.String,
+		CertificateScope: session.CertificateScope.String, CertificateIdentifiers: slices.Clone(session.CertificateIdentifiers),
+		ChallengeMethod: session.CertificateChallengeMethod.String, CsrDer: slices.Clone(request.CSRDER),
 		CsrDigest: csrDigest[:], CreatedAt: timestamptz(now),
 	})
 	if err != nil {

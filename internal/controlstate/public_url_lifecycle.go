@@ -271,9 +271,9 @@ func (d *Database) MarkPublicURLCertificateInstalled(
 	}
 	alreadyInstalled := session.CertificateInstalledAt.Valid
 	order, err := queries.LockACMEOrderForInstall(ctx, controlstatedb.LockACMEOrderForInstallParams{
-		IssuanceID: issuanceID, TeamID: session.TeamID, CertificateCacheKey: session.CertificateCacheKey,
-		CertificateScope: session.CertificateScope, CertificateIdentifiers: session.CertificateIdentifiers,
-		ChallengeMethod: session.CertificateChallengeMethod,
+		IssuanceID: issuanceID, TeamID: session.TeamID, CertificateCacheKey: session.CertificateCacheKey.String,
+		CertificateScope: session.CertificateScope.String, CertificateIdentifiers: session.CertificateIdentifiers,
+		ChallengeMethod: session.CertificateChallengeMethod.String,
 		NotAfter:        timestamptz(notAfter), InstalledAt: timestamptz(now),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
