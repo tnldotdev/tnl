@@ -34,7 +34,7 @@ type ShareRedemption struct {
 }
 
 func (d *Database) EnableShareAccess(ctx context.Context, authentication PublishRunAuthentication, previewID string) error {
-	if err := validatePublishRunAuthentication(authentication); err != nil || !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) {
+	if err := validatePublishRunAuthentication(authentication); err != nil || previewID != "" && !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) {
 		return ErrPreviewAccess
 	}
 	if err := d.requireOpen(); err != nil {

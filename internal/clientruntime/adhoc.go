@@ -48,7 +48,7 @@ func NewAdHocManager(ctx context.Context, run AdHocRun, alive func(int) bool, ho
 func (m *AdHocManager) Register(request privateprotocol.AdHocRegister) (privateprotocol.AdHocStatus, error) {
 	if request.Version != privateprotocol.Version || !opaqueid.Valid(request.RegistrationID, opaqueid.InvocationPrefix) ||
 		!privateprotocol.ValidOwner(request.Owner) || request.PID <= 0 || m.alive != nil && !m.alive(request.PID) ||
-		request.AllowAllIPs && len(request.AllowIP) != 0 {
+		request.AccessMode != "" && request.AccessMode != "restricted" && request.AccessMode != "anonymous" || len(request.IP) > 32 {
 		return privateprotocol.AdHocStatus{}, errors.New("invalid ad-hoc registration")
 	}
 	canonical, err := localproxy.NormalizeTarget(request.Target)

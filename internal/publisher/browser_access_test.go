@@ -38,7 +38,12 @@ func (s *browserAccessStub) CheckBrowserAccess(_ context.Context, _ string, _ ui
 }
 
 func (s *browserAccessStub) AuthorizeHTTPVisitor(_ context.Context, _ string, request controlv1.HTTPVisitorRequest, _ credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
-	return controlv1.HTTPVisitorResponse{VisitAllowed: request.BrowserCookieSecret != nil && *request.BrowserCookieSecret == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" && (s.member || s.invited)}, nil
+	result := controlv1.HTTPVisitorResponse{VisitAllowed: request.BrowserCookieSecret != nil && *request.BrowserCookieSecret == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" && (s.member || s.invited), TeamMember: s.member}
+	if request.BrowserCookieSecret != nil {
+		id, name := "user-one", "Sam"
+		result.IdentityId, result.DisplayName = &id, &name
+	}
+	return result, nil
 }
 
 func (*browserAccessStub) RevokeBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
@@ -121,11 +126,8 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 		t.Fatalf("local app received visitor credential: %q", got)
 	}
 	client.invited = false
-	if response := serve("/settings", visitorCookie, false); response.Code != http.StatusOK {
-		t.Fatalf("nonmember allowed by IP = %d", response.Code)
-	}
-	if got := <-cookies; got != "app_session=ok" {
-		t.Fatalf("local app received browser credential: %q", got)
+	if response := serve("/settings", visitorCookie, false); response.Code != http.StatusForbidden {
+		t.Fatalf("source IP bypassed visitor access: %d", response.Code)
 	}
 	shares.teamAccessEnabled = false
 	if response := serve("/__tnl/team/login", "", true); response.Code != http.StatusSeeOther {

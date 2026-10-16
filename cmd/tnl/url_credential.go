@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -34,16 +35,17 @@ type publicURLCredentialCommand struct {
 
 type publicURLCredentialCreateCommand struct {
 	scopedTeamFlags `embed:""`
-	Selector        string               `arg:"" name:"service-or-public-url-id" optional:"" help:"Configured service or saved public URL ID. Omit to use a single service or create a new saved URL."`
-	PublicURL       string               `name:"public-url" help:"Exact public URL hostname or HTTPS origin to save before issuing the credential."`
-	Name            string               `name:"name" help:"One label under the selected domain or namespace."`
-	Domain          string               `name:"domain" help:"Team domain for this public URL."`
-	Ephemeral       bool                 `name:"ephemeral" help:"Issue a credential for temporary public URLs in the selected namespace."`
-	Target          string               `name:"target" help:"HTTP or HTTPS target origin to save with the public URL."`
-	Protocol        string               `name:"protocol" help:"Service protocol of a new saved public URL; defaults to http."`
-	ExpiresIn       string               `name:"expires-in" default:"90d" help:"Lifetime from issue time, greater than zero and at most 90d."`
-	AllowIP         []string             `name:"allow-ip" help:"Visitor IP address or prefix; repeat for more visitors."`
-	AllowAllIPs     bool                 `name:"allow-all-ips" help:"Allow visitors from every IP."`
+	Selector        string   `arg:"" name:"service-or-public-url-id" optional:"" help:"Configured service or saved public URL ID. Omit to use a single service or create a new saved URL."`
+	PublicURL       string   `name:"public-url" help:"Exact public URL hostname or HTTPS origin to save before issuing the credential."`
+	Name            string   `name:"name" help:"One label under the selected domain or namespace."`
+	Domain          string   `name:"domain" help:"Team domain for this public URL."`
+	Ephemeral       bool     `name:"ephemeral" help:"Issue a credential for temporary public URLs in the selected namespace."`
+	Target          string   `name:"target" help:"HTTP or HTTPS target origin to save with the public URL."`
+	Protocol        string   `name:"protocol" help:"Service protocol of a new saved public URL; defaults to http."`
+	ExpiresIn       string   `name:"expires-in" default:"90d" help:"Lifetime from issue time, greater than zero and at most 90d."`
+	Anonymous       bool     `name:"anonymous" help:"Do not require a tnl visitor credential for this new URL."`
+	IP              []string `name:"ip" help:"Restrict visitor source addresses; repeat for each address, CIDR, or 'current'."`
+	access          *config.Access
 	Output          credentialOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
@@ -120,14 +122,14 @@ func runURLCredentialCreate(ctx context.Context, flags publicURLCredentialCreate
 			errors.New("TCP targets stay on the publisher; omit --target and supply host:port when publishing"))
 	}
 	if flags.Ephemeral {
-		if flags.Selector != "" || flags.PublicURL != "" || flags.Name != "" || flags.Target != "" || flags.AllowIP != nil || flags.AllowAllIPs || protocol != controlv1.Http {
+		if flags.Selector != "" || flags.PublicURL != "" || flags.Name != "" || flags.Target != "" || flags.Anonymous || len(flags.IP) != 0 || protocol != controlv1.Http {
 			return failure.Wrap("validate ad-hoc credential options", failure.InvalidTunnelFlags,
 				errors.New("--ephemeral cannot select an existing URL, name, target, or visitor policy"))
 		}
 		return runEphemeralCredentialCreate(ctx, flags, expiresIn, output, diagnostics)
 	}
 	isURLID := opaqueid.Valid(flags.Selector, opaqueid.PublicURLPrefix)
-	if isURLID && (flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Target != "" || flags.AllowIP != nil || flags.AllowAllIPs) {
+	if isURLID && (flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Target != "" || flags.Anonymous || len(flags.IP) != 0) {
 		return failure.Wrap("select public URL", failure.InvalidTunnelFlags, errors.New("an existing public URL ID does not take hostname, target, or visitor policy options"))
 	}
 	if !isURLID {
@@ -314,12 +316,7 @@ func resolveCredentialCreateConfig(flags publicURLCredentialCreateCommand, proje
 			if flags.Domain == "" && effective.Tunnel.Domain != nil {
 				flags.Domain = *effective.Tunnel.Domain
 			}
-			if flags.AllowIP == nil && !flags.AllowAllIPs {
-				flags.AllowIP = slices.Clone(effective.Tunnel.AllowIP)
-				if flags.AllowIP == nil && effective.Tunnel.AllowAllIPs != nil {
-					flags.AllowAllIPs = *effective.Tunnel.AllowAllIPs
-				}
-			}
+			flags.access = effective.Tunnel.Access
 		}
 		if flags.PublicURL == "" && flags.Name == "" {
 			flags.Name = projectconfig.ServiceWorktreeLabel(service, project.Worktree)
@@ -348,9 +345,15 @@ func reservePublishCredentialURL(ctx context.Context, session *teamSession, flag
 	if err != nil {
 		return controlv1.PublicURL{}, err
 	}
-	policy, err := resolveIPPolicy(ctx, session.authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
+	policy, err := resolveVisitorAccess(ctx, session.authenticated.Control, flags.access, flags.Anonymous, flags.IP)
 	if err != nil {
 		return controlv1.PublicURL{}, err
+	}
+	if protocol == controlv1.Ssh {
+		if flags.access != nil && flags.access.VisitorMode() != "anonymous" {
+			return controlv1.PublicURL{}, failure.Wrap("validate SSH visitor access", failure.InvalidTunnelFlags, errors.New("SSH uses target authentication; select anonymous access for an optional IP list"))
+		}
+		policy.access, policy.explicit = controlv1.Anonymous, true
 	}
 	route, err := session.authenticated.Control.GetPublicURLByHostname(ctx, services.teamID, services.hostname)
 	if errors.Is(err, controlclient.ErrNotFound) {
@@ -361,6 +364,10 @@ func reservePublishCredentialURL(ctx context.Context, session *teamSession, flag
 		request := controlv1.CreatePublicURLRequest{
 			TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: services.hostname,
 			Target: target, PublicUrlScope: services.publicURLScope, Purpose: controlv1.App,
+		}
+		if policy.explicit {
+			mode := policy.access
+			request.AccessMode = &mode
 		}
 		if protocol != controlv1.Http {
 			request.ServiceProtocol = &protocol
@@ -384,7 +391,7 @@ func reservePublishCredentialURL(ctx context.Context, session *teamSession, flag
 	if target != "" && route.Target != target || route.ServiceProtocol != protocol ||
 		protocol != controlv1.Http && (route.Target != "" || route.PublicPort == nil) ||
 		route.CanonicalHostname != services.hostname || route.Purpose != controlv1.App ||
-		route.Ephemeral || !slices.Equal(currentPolicy, policy.prefixes) {
+		route.Ephemeral || policy.explicit && (!slices.Equal(currentPolicy, policy.prefixes) || route.AccessMode != policy.access) {
 		return controlv1.PublicURL{}, failure.Wrap("reserve public URL for credential", failure.PublishCredentialMismatch,
 			fmt.Errorf("public URL %s already exists with a different target or visitor policy", route.Id))
 	}

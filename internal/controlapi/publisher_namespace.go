@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"slices"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/applicationlimits"
@@ -105,26 +104,15 @@ func validAllocationLimits(l *controlv1.PublisherApplicationLimits) bool {
 	return applicationlimits.Valid(requests, rate, concurrency, period)
 }
 
-func allocationIPPolicy(r *http.Request, b controlv1.AllocateEphemeralPublicURLRequest) ([]string, error) {
-	if b.AllowAllIps != nil && *b.AllowAllIps {
-		return []string{}, nil
-	}
+func allocationIPPolicy(b controlv1.AllocateEphemeralPublicURLRequest) ([]string, error) {
 	values := []string{}
-	if b.AllowIp != nil {
-		values = *b.AllowIp
+	if b.Ip != nil {
+		values = *b.Ip
 	}
 	p, err := authorization.CanonicalizeIPPrefixes(values)
 	if err != nil || len(p) > 32 {
 		return nil, authorization.ErrInvalid
 	}
-	source := publisherRequestSource(r)
-	if source == "" {
-		return nil, authorization.ErrInvalid
-	}
-	if !slices.Contains(p, source) {
-		p = append(p, source)
-	}
-	slices.Sort(p)
 	return p, nil
 }
 
@@ -138,7 +126,7 @@ func (h *handler) AllocatePublisherPublicURL(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var b controlv1.AllocateEphemeralPublicURLRequest
-	if decodeJSON(w, r, &b) != nil || !opaqueid.Valid(b.InvocationId, opaqueid.InvocationPrefix) || b.AllowAllIps != nil && *b.AllowAllIps && b.AllowIp != nil || !validAllocationLimits(b.Limits) {
+	if decodeJSON(w, r, &b) != nil || !opaqueid.Valid(b.InvocationId, opaqueid.InvocationPrefix) || !validAllocationLimits(b.Limits) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid namespace allocation")
 		return
 	}
@@ -146,9 +134,17 @@ func (h *handler) AllocatePublisherPublicURL(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, 400, controlv1.InvalidRequest, "target must be an HTTP or HTTPS origin")
 		return
 	}
-	prefixes, err := allocationIPPolicy(r, b)
+	prefixes, err := allocationIPPolicy(b)
 	if err != nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor IP policy")
+		return
+	}
+	mode := controlstate.VisitorAccessRestricted
+	if b.AccessMode != nil {
+		mode = controlstate.VisitorAccessMode(*b.AccessMode)
+	}
+	if !mode.Valid() {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor access mode")
 		return
 	}
 	// retain a canonical limits binding in retries even though limits are
@@ -158,7 +154,7 @@ func (h *handler) AllocatePublisherPublicURL(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher limits")
 		return
 	}
-	u, err := store.AllocatePublisherPublicURL(r.Context(), p, b.InvocationId, b.Target, prefixes, binding, time.Now())
+	u, err := store.AllocatePublisherPublicURL(r.Context(), p, b.InvocationId, b.Target, prefixes, binding, time.Now(), mode)
 	if err != nil {
 		publisherProblem(w, "allocate publisher URL", err)
 		return

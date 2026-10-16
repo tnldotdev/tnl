@@ -39,7 +39,7 @@ func NewVisitorPromoter[T any](header func(T) tunnelv1.VisitorStreamHeader, reso
 		if err := h.Validate(); err != nil {
 			return err
 		}
-		if !h.IPPolicyDenied {
+		if !h.AccessPending {
 			return nil
 		}
 		s := resolve(h.PublisherConnectionID)

@@ -49,9 +49,9 @@ func TestGuestDemoReusesOneCredentialAndRejectsAccessOverrides(t *testing.T) {
 		}
 	}
 	if _, err := guestForDemoWithControl(t.Context(), database, "https://control.example", publishCommand{
-		Demo: true, tunnelFlags: tunnelFlags{AllowAllIPs: true},
+		Demo: true, tunnelFlags: tunnelFlags{Anonymous: true},
 	}, control); err == nil {
-		t.Fatal("guest changed the visitor IP policy")
+		t.Fatal("guest changed the visitor access policy")
 	}
 }
 

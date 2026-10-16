@@ -91,9 +91,21 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     const service = record(value, `${description} service ${JSON.stringify(name)}`);
     exactKeys(
       service,
-      ["hostname", "namespace", "url", ...["paths"].filter((key) => Object.hasOwn(service, key))],
+      [
+        "hostname",
+        "namespace",
+        "url",
+        ...["protocol", "paths"].filter((key) => Object.hasOwn(service, key)),
+      ],
       `${description} service ${JSON.stringify(name)}`,
     );
+    if (
+      service.protocol !== undefined &&
+      (typeof service.protocol !== "string" ||
+        !["", "http", "postgres", "mysql", "redis", "ssh"].includes(service.protocol))
+    ) {
+      throw new TnlError("sdk.runtime_invalid");
+    }
     const serviceNamespace = requiredHostname(
       service.namespace,
       `${description} service ${JSON.stringify(name)} namespace`,

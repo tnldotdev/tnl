@@ -334,6 +334,7 @@ CREATE TABLE control.public_urls (
     public_port integer CHECK (public_port BETWEEN 1024 AND 65535),
     public_url_scope text NOT NULL CHECK (public_url_scope IN ('member', 'shared')),
     policy_revision bigint NOT NULL CHECK (policy_revision >= 1),
+    access_mode text NOT NULL DEFAULT 'restricted' CHECK (access_mode IN ('restricted', 'anonymous')),
     ip_policy text NOT NULL CHECK (ip_policy IN ('allow_all', 'allowlist')),
     allowed_ip_policy_ciphertext bytea,
     allowed_ip_policy_storage_key_id text,
@@ -1165,6 +1166,13 @@ CREATE TABLE control.guest_trials (
 CREATE INDEX guest_trials_issuance_created ON control.guest_trials(source_ip_key_id, issuance_ip_digest, created_at DESC);
 CREATE INDEX guest_trials_active_expiry ON control.guest_trials(expires_at) WHERE active_publish_run_id IS NOT NULL;
 CREATE INDEX guest_trials_created_at ON control.guest_trials(created_at);
+CREATE FUNCTION control.guest_share_live(guest_id text, at_time timestamptz) RETURNS boolean LANGUAGE sql STABLE AS $$
+    SELECT EXISTS (SELECT 1 FROM control.guest_trials guest WHERE guest.id = guest_id
+        AND guest.ended_at IS NULL AND guest.expires_at > at_time
+        AND guest.used_bytes < 5242880 AND guest.used_ready_ns < 900000000000
+        AND (guest.active_ready_at IS NULL OR guest.used_ready_ns + GREATEST(0,
+            floor(extract(epoch FROM (at_time - guest.active_ready_at)) * 1000000000)::bigint) < 900000000000))
+$$;
 CREATE TABLE control.guest_public_urls (
     public_url_id text PRIMARY KEY REFERENCES control.public_urls(id) ON DELETE RESTRICT,
     guest_id text NOT NULL REFERENCES control.guest_trials(id) ON DELETE RESTRICT,
@@ -1194,7 +1202,10 @@ CREATE INDEX preview_public_urls_by_url ON control.preview_public_urls(public_ur
 CREATE TABLE control.shares (
     id text PRIMARY KEY CHECK (id <> ''),
     schema_version smallint NOT NULL DEFAULT 1 CHECK (schema_version >= 1),
-    preview_id text NOT NULL, team_id text NOT NULL CHECK (team_id <> ''),
+    preview_id text, team_id text NOT NULL CHECK (team_id <> ''),
+    guest_id text REFERENCES control.guest_trials(id) ON DELETE RESTRICT,
+    scope text NOT NULL CHECK (scope IN ('url', 'preview', 'guest')),
+    label text NOT NULL DEFAULT '' CHECK (char_length(label) <= 128),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
@@ -1203,6 +1214,8 @@ CREATE TABLE control.shares (
     revoked_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
     UNIQUE (id, team_id), UNIQUE (created_by_identity_id, idempotency_key),
     FOREIGN KEY (preview_id, team_id) REFERENCES control.previews(id, team_id) ON DELETE RESTRICT,
+    CHECK ((scope = 'preview') = (preview_id IS NOT NULL)),
+    CHECK ((scope = 'guest') = (guest_id IS NOT NULL)),
     CHECK (expires_at > created_at AND expires_at <= created_at + interval '30 days'),
     CHECK ((revoked_at IS NULL) = (revoked_by_identity_id IS NULL))
 );
@@ -1384,7 +1397,7 @@ RETURNS TABLE(reason text, expires_at timestamptz) LANGUAGE sql STABLE AS $$
           AND (g.expires_at IS NULL OR g.expires_at > at_time)
           AND ((g.kind = 'team' AND m.id IS NOT NULL) OR (g.kind = 'identity' AND g.identity_id = i.id))
     ) permission
-    WHERE u.id = url_id AND u.lifecycle_state = 'enabled' AND u.purpose = 'app'
+    WHERE u.id = url_id AND u.lifecycle_state = 'enabled' AND u.purpose IN ('app', 'alias')
       AND u.service_protocol IN ('http', 'postgres', 'mysql', 'redis')
     ORDER BY permission.priority, permission.expires_at DESC NULLS FIRST LIMIT 1;
 $$;

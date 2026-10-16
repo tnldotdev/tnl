@@ -28,6 +28,7 @@ type publicURLReadPrincipal struct {
 	displayName   string
 	teamIDs       map[string]struct{}
 	administrator bool
+	guest         *controlstate.GuestTrial
 }
 
 type publicURLAuthorizer interface {

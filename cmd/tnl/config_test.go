@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -127,18 +126,18 @@ func TestBarePublishUsesStableDirectoryNameWithoutConfiguration(t *testing.T) {
 
 func TestCredentialPublishDoesNotInheritProjectVisitorPolicy(t *testing.T) {
 	name := "project-url"
-	allowAllIPs := true
+	access := &config.Access{Mode: "anonymous"}
 	ephemeral := true
 	limit := 20
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		Tunnel:   &config.Tunnel{Name: &name, AllowAllIPs: &allowAllIPs, Ephemeral: &ephemeral, Limits: &config.Limits{Concurrency: &limit}},
+		Tunnel:   &config.Tunnel{Name: &name, Access: access, Ephemeral: &ephemeral, Limits: &config.Limits{Concurrency: &limit}},
 		Services: config.Services{"api": {}, "web": {}},
 	}}}
 	flags := publishCommand{PublishCredential: "tnl_publish_example"}
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	if flags.Service != "" || flags.Target != "" || flags.Name != "" || flags.PublicURL != "" || flags.AllowAllIPs || flags.Ephemeral || flags.Concurrency == nil || *flags.Concurrency != limit {
+	if flags.Service != "" || flags.Target != "" || flags.Name != "" || flags.PublicURL != "" || flags.access != nil || flags.Ephemeral || flags.Concurrency == nil || *flags.Concurrency != limit {
 		t.Fatalf("credential publish inherited a project URL or visitor policy: %#v", flags)
 	}
 }
@@ -152,16 +151,16 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parser.Parse([]string{"publish", "--allow-ip", "198.51.100.0/24"}); err != nil {
+	if _, err := parser.Parse([]string{"publish", "--ip", "198.51.100.0/24"}); err != nil {
 		t.Fatal(err)
 	}
 	projectServer := "https://project.example"
 	projectName := "project"
-	allowAllIPs := true
+	access := &config.Access{Mode: "anonymous"}
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
 		Server:  &projectServer,
-		Tunnel:  &config.Tunnel{Name: &projectName, AllowAllIPs: &allowAllIPs},
+		Tunnel:  &config.Tunnel{Name: &projectName, Access: access},
 		Publish: &config.Publish{Target: &target},
 	}}}
 	if err := project.applyPublish(&flags.Publish); err != nil {
@@ -169,8 +168,8 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	}
 	if flags.Publish.ServerURL != "https://environment.example" || flags.Publish.Name != "environment-name" ||
 		flags.Publish.selectedTeam != "environment-team" ||
-		flags.Publish.PublicURL != "" || flags.Publish.Target != "3000" || flags.Publish.AllowAllIPs ||
-		!reflect.DeepEqual(flags.Publish.AllowIP, []string{"198.51.100.0/24"}) {
+		flags.Publish.PublicURL != "" || flags.Publish.Target != "3000" || flags.Publish.access != access ||
+		len(flags.Publish.IP) != 1 || flags.Publish.IP[0] != "198.51.100.0/24" {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
 }

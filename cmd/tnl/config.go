@@ -190,18 +190,12 @@ func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 			flags.Name = *tunnel.Name
 		}
 	}
+	if tunnel.Access != nil {
+		flags.access = tunnel.Access
+	}
 	_, ephemeralFromEnvironment := os.LookupEnv("TNL_EPHEMERAL")
 	if tunnel.Ephemeral != nil && !flags.ephemeralFromCLI && !ephemeralFromEnvironment {
 		flags.Ephemeral = *tunnel.Ephemeral
-	}
-	_, allowAllIPsFromEnvironment := os.LookupEnv("TNL_ALLOW_ALL_IPS")
-	if !flags.allowAllIPsFromCLI && !allowAllIPsFromEnvironment {
-		if flags.AllowIP == nil {
-			flags.AllowIP = slices.Clone(tunnel.AllowIP)
-		}
-		if tunnel.AllowAllIPs != nil && flags.AllowIP == nil {
-			flags.AllowAllIPs = *tunnel.AllowAllIPs
-		}
 	}
 }
 
@@ -255,9 +249,6 @@ func validateTunnelFlags(flags tunnelFlags) error {
 	}
 	if flags.PublicURL != "" && flags.Name != "" {
 		return errors.New("--public-url and --name are mutually exclusive")
-	}
-	if flags.AllowAllIPs && flags.AllowIP != nil {
-		return errors.New("--allow-all-ips cannot be combined with --allow-ip")
 	}
 	return nil
 }
@@ -387,6 +378,10 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Domain.Release.remoteFlags, true)
 	case "url list":
 		apply(&flags.URL.List.remoteFlags, true)
+	case "url access show <url>":
+		apply(&flags.URL.Access.Show.remoteFlags, true)
+	case "url access set <url> <mode>":
+		apply(&flags.URL.Access.Set.remoteFlags, true)
 	case "url update <public-url-id>":
 		apply(&flags.URL.Update.remoteFlags, true)
 	case "url delete <public-url-id>":
@@ -399,10 +394,12 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Credential.Revoke.remoteFlags, true)
 	case "share link create <url>":
 		apply(&flags.Share.Link.Create.remoteFlags, true)
+	case "share token create <url>":
+		apply(&flags.Share.Token.Create.remoteFlags, true)
 	case "share list <url>":
 		apply(&flags.Share.List.remoteFlags, true)
-	case "share link revoke <share-id>":
-		apply(&flags.Share.Link.Revoke.remoteFlags, true)
+	case "share revoke <share-id>":
+		apply(&flags.Share.Revoke.remoteFlags, true)
 	case "share team create <url>":
 		apply(&flags.Share.Team.Create.remoteFlags, true)
 	case "share team revoke":

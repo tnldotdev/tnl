@@ -17,6 +17,7 @@ const (
 	RequestRateLimited          Code = "TNL_REQUEST_RATE_LIMITED"
 	RequestBudgetExhausted      Code = "TNL_REQUEST_BUDGET_EXHAUSTED"
 	IPPolicyDenied              Code = "TNL_IP_POLICY_DENIED"
+	VisitorAccessDenied         Code = "TNL_VISITOR_ACCESS_DENIED"
 	AuthenticationTimeout       Code = "TNL_AUTHENTICATION_TIMEOUT"
 	AuthenticationRequired      Code = "TNL_AUTHENTICATION_REQUIRED"
 	ServerUnavailable           Code = "TNL_SERVER_UNAVAILABLE"

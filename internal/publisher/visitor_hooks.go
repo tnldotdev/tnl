@@ -3,9 +3,11 @@ package publisher
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -51,6 +53,7 @@ type VisitorCertificateAuthorizer interface {
 // VisitorCertificateAuthorization binds live control authorization to one run.
 // source IP is always taken from trusted visitor metadata, never TLS input.
 func VisitorCertificateAuthorization(client VisitorCertificateAuthorizer, scope controlclient.VisitorCertificateScope) AuthorizeVisitorCertificate {
+	cache := &visitorDecisionCache[struct{}]{}
 	return func(ctx context.Context, visitor Visitor, state tls.ConnectionState) error {
 		if client == nil || scope.PublicURLID == "" || scope.PublishRunID == "" || scope.PublishRunNumber == 0 || scope.PublishRunToken == "" || !visitor.Source.IsValid() || visitor.Source.Addr().Zone() != "" ||
 			visitor.Run.PublicURLID != scope.PublicURLID || visitor.Run.Number != scope.PublishRunNumber ||
@@ -62,7 +65,41 @@ func VisitorCertificateAuthorization(client VisitorCertificateAuthorizer, scope 
 		}
 		bound := scope
 		bound.SourceIP = visitor.Source.Addr().Unmap()
-		return client.AuthorizeVisitorCertificate(ctx, bound, state)
+		cached, ok := client.(interface {
+			AuthorizeVisitorCertificateDecision(context.Context, controlclient.VisitorCertificateScope, tls.ConnectionState) (time.Time, error)
+		})
+		if !ok {
+			return client.AuthorizeVisitorCertificate(ctx, bound, state)
+		}
+		if !state.HandshakeComplete || len(state.PeerCertificates) > 4 {
+			return errors.New("publisher: visitor certificate proof is invalid")
+		}
+		var fingerprint [sha256.Size]byte
+		var certificateExpires time.Time
+		if len(state.PeerCertificates) != 0 {
+			leaf := state.PeerCertificates[0]
+			certificateExpires = leaf.NotAfter
+			if !time.Now().Before(certificateExpires) || time.Now().Before(leaf.NotBefore) {
+				return errors.New("publisher: visitor certificate is outside its validity period")
+			}
+			fingerprint = sha256.Sum256(leaf.Raw)
+		}
+		proof, err := json.Marshal(struct {
+			RunID, URLID, Source string
+			Number               uint64
+			Certificate          [sha256.Size]byte
+		}{scope.PublishRunID, scope.PublicURLID, bound.SourceIP.String(), scope.PublishRunNumber, fingerprint})
+		if err != nil {
+			return err
+		}
+		_, err = cache.check(ctx, sha256.Sum256(proof), func(ctx context.Context) (struct{}, time.Time, bool, error) {
+			expires, err := cached.AuthorizeVisitorCertificateDecision(ctx, bound, state)
+			if !certificateExpires.IsZero() && certificateExpires.Before(expires) {
+				expires = certificateExpires
+			}
+			return struct{}{}, expires, err == nil, err
+		})
+		return err
 	}
 }
 
