@@ -391,7 +391,8 @@ func TestTypeScriptDatabasePublishUsesTargetTLSNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	options := config.ServicePublish(value.Services["orders"])
-	if options == nil || options.Protocol == nil || *options.Protocol != "tcp" || options.TargetTLSMode == nil || *options.TargetTLSMode != "postgres" ||
+	if config.PrivateServiceName("orders", value.Services["orders"]) != "orders" || value.Services["orders"].Tunnel != nil ||
+		options == nil || options.Protocol == nil || *options.Protocol != "tcp" || options.TargetTLSMode == nil || *options.TargetTLSMode != "postgres" ||
 		options.Target == nil || string(*options.Target) != "db.internal:5432" ||
 		options.TargetTLS == nil || !*options.TargetTLS ||
 		options.TargetTLSName == nil || *options.TargetTLSName != "db.internal" ||

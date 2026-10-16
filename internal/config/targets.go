@@ -175,6 +175,9 @@ func validateTarget(service Service) error {
 		return errors.New("target.port must be between 1 and 65535")
 	}
 	if tls := target.TLS; tls != nil {
+		if protocol == "ssh" {
+			return errors.New("ssh does not use target TLS")
+		}
 		if tls.Mode != "direct" && tls.Mode != "postgres" && tls.Mode != "mysql" || protocol == "http" && tls.Mode != "direct" {
 			return errors.New("target.tls.mode must be direct, postgres, or mysql (direct for HTTP)")
 		}

@@ -498,6 +498,141 @@ type ControlPreviewPublicUrl struct {
 	AddedAt     pgtype.Timestamptz
 }
 
+type ControlPrivateConnectorSession struct {
+	ID                   string
+	CredentialDigest     []byte
+	PrivateServiceID     string
+	IdentityID           string
+	CreatedAt            pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+	BoundAt              pgtype.Timestamptz
+	SourceIp             *netip.Addr
+	IngressID            pgtype.Text
+	IngressRunID         pgtype.Text
+	IngressLeaseRevision pgtype.Int8
+	RevokedAt            pgtype.Timestamptz
+}
+
+type ControlPrivateService struct {
+	ID                  string
+	TeamID              string
+	Name                string
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	RequestDigest       []byte
+	Enabled             bool
+	NextRunNumber       int64
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	DeletedAt           pgtype.Timestamptz
+}
+
+type ControlPrivateServiceConnectionSlot struct {
+	PublisherConnectionID        string
+	PrivateRunID                 string
+	PrivateServiceID             string
+	RunNumber                    int64
+	ConnectionSlot               int16
+	ConnectionAssignmentRevision int64
+	RelayServiceID               string
+	RelayAddress                 string
+	TlsServerName                string
+	CredentialDigest             []byte
+	CredentialExpiresAt          pgtype.Timestamptz
+	RelayID                      pgtype.Text
+	RelayRunID                   pgtype.Text
+	RelayLeaseRevision           pgtype.Int8
+	State                        string
+	SessionOpen                  bool
+}
+
+type ControlPrivateServiceGrant struct {
+	ID                  string
+	PrivateServiceID    string
+	TeamID              string
+	Kind                string
+	IdentityID          pgtype.Text
+	InvitationID        pgtype.Text
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	RequestDigest       []byte
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+}
+
+type ControlPrivateServiceInvitation struct {
+	ID                  string
+	PrivateServiceID    string
+	TeamID              string
+	NormalizedEmail     string
+	TokenDigest         []byte
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	RequestDigest       []byte
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	AcceptedAt          pgtype.Timestamptz
+	AcceptedIdentityID  pgtype.Text
+	RevokedAt           pgtype.Timestamptz
+}
+
+type ControlPrivateServiceRoutingClock struct {
+	ID              int16
+	CurrentRevision int64
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type ControlPrivateServiceRoutingEvent struct {
+	Revision         int64
+	PrivateServiceID string
+	Kind             string
+	PrivateRunID     pgtype.Text
+	RunNumber        pgtype.Int8
+	Projection       []byte
+	ExpiresAt        pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+}
+
+type ControlPrivateServiceRun struct {
+	ID                        string
+	PrivateServiceID          string
+	TeamID                    string
+	RunNumber                 int64
+	PublisherIdentityID       string
+	PublisherGrantID          string
+	PublisherKeyID            string
+	IdempotencyKey            string
+	RequestDigest             []byte
+	BindingNonce              []byte
+	BindingExpiresAt          pgtype.Timestamptz
+	RunTokenDigest            []byte
+	StreamPublicKey           []byte
+	StreamKeyBindingSignature []byte
+	BoundAt                   pgtype.Timestamptz
+	State                     string
+	CreatedAt                 pgtype.Timestamptz
+	PublisherExpiresAt        pgtype.Timestamptz
+	ReadyAt                   pgtype.Timestamptz
+	ClosedAt                  pgtype.Timestamptz
+	AssignmentsOpen           pgtype.Bool
+}
+
+type ControlPrivateServiceTicket struct {
+	Digest              []byte
+	PrivateServiceID    string
+	PrivateRunID        string
+	RunNumber           int64
+	ConnectorSessionID  string
+	IdentityID          string
+	SourceIp            netip.Addr
+	StreamPublicKey     []byte
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	ConsumedAt          pgtype.Timestamptz
+	VisitorConnectionID pgtype.Text
+}
+
 type ControlPublicUrl struct {
 	ID                          string
 	TeamID                      string
@@ -703,6 +838,7 @@ type ControlPublisherEnrollment struct {
 	IdentityKind        string
 	GrantKind           string
 	PublicURLID         pgtype.Text
+	PrivateServiceID    pgtype.Text
 	DomainID            pgtype.Text
 	Namespace           pgtype.Text
 	MembershipID        pgtype.Text
@@ -723,6 +859,7 @@ type ControlPublisherGrant struct {
 	CreatedByIdentityID string
 	Kind                string
 	PublicURLID         pgtype.Text
+	PrivateServiceID    pgtype.Text
 	DomainID            pgtype.Text
 	Namespace           pgtype.Text
 	MembershipID        pgtype.Text

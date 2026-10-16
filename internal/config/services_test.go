@@ -21,17 +21,27 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"removed directory", `{"services":{"web":{"directory":"apps/web"}}}`, false},
 		{"app", `{"services":{"web":{"target":{"type":"app"}}}}`, true},
 		{"address", `{"services":{"web":{"target":{"type":"address","address":3000},"http":{"readiness":{"path":"/health"},"open":true}}}}`, true},
-		{"compose", `{"services":{"db":{"protocol":"tcp","target":{"type":"compose","project":"shop-feature","file":"dev/compose.yml","service":"db","port":5432,"tls":{"mode":"postgres","server_name":"db.internal","ca_file":"certs/ca.pem"}}}}}`, true},
+		{"compose", `{"services":{"db":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"compose","project":"shop-feature","file":"dev/compose.yml","service":"db","port":5432,"tls":{"mode":"postgres","server_name":"db.internal","ca_file":"certs/ca.pem"}}}}}`, true},
 		{"compose defaults", `{"services":{"db":{"protocol":"tcp","target":{"type":"compose","service":"db","port":5432}}}}`, true},
 		{"docker", `{"services":{"cache":{"protocol":"tcp","target":{"type":"docker","container":"shop-cache_1","port":6379}}}}`, true},
 		{"placement", `{"publisher":{"type":"compose","service":"publisher"},"services":{"web":{"target":{"type":"app"}}}}`, true},
-		{"placement file", `{"publisher":{"type":"compose","service":"publisher","file":"dev/compose.yml"},"services":{"db":{"protocol":"tcp","target":{"type":"address","address":5432}}}}`, true},
+		{"placement file", `{"publisher":{"type":"compose","service":"publisher","file":"dev/compose.yml"},"services":{"db":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"address","address":5432}}}}`, true},
 		{"mixed placement", `{"publisher":{"type":"compose","service":"publisher"},"services":{"web":{},"db":{"protocol":"tcp","target":{"type":"address","address":5432}}}}`, true},
+		{"mixed public defaults", `{"tunnel":{"allow_all_ips":true,"limits":{"http":{"concurrency":3}}},"services":{"web":{},"db":{"protocol":"tcp","target":{"type":"address","address":5432}},"shell":{"protocol":"ssh","target":{"type":"address","address":22}}}}`, true},
 		{"HTTPS private TLS name", `{"services":{"web":{"target":{"type":"address","address":"https://127.0.0.1:3000","tls":{"mode":"direct","server_name":"web.internal","ca_file":"certs/ca.pem"}}}}}`, true},
-		{"TCP direct TLS", `{"services":{"db":{"protocol":"tcp","target":{"type":"docker","container":"db","port":6379,"tls":{"mode":"direct"}}}}}`, true},
-		{"TCP MySQL TLS", `{"services":{"db":{"protocol":"tcp","target":{"type":"address","address":3306,"tls":{"mode":"mysql","server_name":"db.internal"}}}}}`, true},
+		{"TCP direct TLS", `{"services":{"db":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"docker","container":"db","port":6379,"tls":{"mode":"direct"}}}}}`, true},
+		{"TCP MySQL TLS", `{"services":{"db":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"address","address":3306,"tls":{"mode":"mysql","server_name":"db.internal"}}}}}`, true},
+		{"TCP name defaults to service key", `{"services":{"orders":{"protocol":"tcp","target":{"type":"address","address":5432}}}}`, true},
+		{"empty private override", `{"services":{"orders":{"protocol":"tcp","private":{},"target":{"type":"address","address":5432}}}}`, true},
+		{"explicit private name override", `{"services":{"orders":{"protocol":"tcp","private":{"name":"database"},"target":{"type":"address","address":5432}}}}`, true},
+		{"conflicting default and override", `{"services":{"orders":{"protocol":"tcp","target":{"type":"address","address":5432}},"database":{"protocol":"tcp","private":{"name":"orders"},"target":{"type":"address","address":3306}}}}`, false},
+		{"duplicate explicit private name", `{"services":{"one":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"address","address":5432}},"two":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"address","address":3306}}}}`, false},
+		{"empty explicit private name", `{"services":{"db":{"protocol":"tcp","private":{"name":""},"target":{"type":"address","address":5432}}}}`, false},
+		{"invalid private name", `{"services":{"db":{"protocol":"tcp","private":{"name":"db-"},"target":{"type":"address","address":5432}}}}`, false},
+		{"TCP with public URL", `{"services":{"db":{"protocol":"tcp","private":{"name":"db"},"tunnel":{"public_url":"https://db.example.com"},"target":{"type":"address","address":5432}}}}`, false},
+		{"HTTP private", `{"services":{"web":{"private":{"name":"web"}}}}`, false},
 		{"legacy database protocol", `{"services":{"db":{"protocol":"postgres","target":{"type":"address","address":5432}}}}`, false},
-		{"missing TLS mode", `{"services":{"db":{"protocol":"tcp","target":{"type":"address","address":5432,"tls":{"server_name":"db.internal"}}}}}`, false},
+		{"missing TLS mode", `{"services":{"db":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"address","address":5432,"tls":{"server_name":"db.internal"}}}}}`, false},
 		{"HTTP database TLS mode", `{"services":{"web":{"target":{"type":"address","address":"https://db.internal","tls":{"mode":"postgres"}}}}}`, false},
 		{"retention", `{"inspection":{"mode":"summary","retention":"720h","max_bytes":"1024MiB"}}`, true},
 		{"traffic", `{"tunnel":{"limits":{"http":{"rate":{"count":5,"per":"1m","burst":10}},"tcp":{"concurrency":4},"traffic":{"connections":8,"rate":5,"rate_per":"1s","burst":10,"upload_bytes":1048576,"download_bytes":2097152,"total_upload_bytes":4194304}}}}`, true},
@@ -54,13 +64,13 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"docker filter", `{"services":{"web":{"target":{"type":"docker","container":"name=web","port":3000}}}}`, false},
 		{"docker slash", `{"services":{"web":{"target":{"type":"docker","container":"/web","port":3000}}}}`, false},
 		{"docker foreign field", `{"services":{"web":{"target":{"type":"docker","container":"web","port":3000,"file":"compose.yml"}}}}`, false},
-		{"zero port", `{"services":{"db":{"protocol":"tcp","target":{"type":"docker","container":"db","port":0}}}}`, false},
-		{"large port", `{"services":{"db":{"protocol":"tcp","target":{"type":"docker","container":"db","port":65536}}}}`, false},
-		{"TCP app", `{"services":{"db":{"protocol":"tcp","target":{"type":"app"}}}}`, false},
-		{"TCP HTTP", `{"services":{"db":{"protocol":"tcp","target":{"type":"address","address":5432},"http":{"open":false}}}}`, false},
+		{"zero port", `{"services":{"db":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"docker","container":"db","port":0}}}}`, false},
+		{"large port", `{"services":{"db":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"docker","container":"db","port":65536}}}}`, false},
+		{"TCP app", `{"services":{"db":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"app"}}}}`, false},
+		{"TCP HTTP", `{"services":{"db":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"address","address":5432},"http":{"open":false}}}}`, false},
 		{"HTTP TCP limits", `{"services":{"web":{"tunnel":{"limits":{"tcp":{"total":1}}}}}}`, false},
 		{"TLS plain HTTP", `{"services":{"web":{"target":{"type":"address","address":3000,"tls":{}}}}}`, false},
-		{"TLS invalid name", `{"services":{"db":{"protocol":"tcp","target":{"type":"address","address":5432,"tls":{"mode":"direct","server_name":"db/path"}}}}}`, false},
+		{"TLS invalid name", `{"services":{"db":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"address","address":5432,"tls":{"mode":"direct","server_name":"db/path"}}}}}`, false},
 		{"removed publisher port", `{"publisher":{"type":"compose","service":"publisher","port":8765}}`, false},
 		{"removed publisher root", `{"publisher":{"type":"compose","service":"publisher","project_root":"/project"}}`, false},
 		{"removed publisher descriptors", `{"publisher":{"type":"compose","service":"publisher","app_endpoints":{"web":"/run/web.json"}}}`, false},
@@ -168,6 +178,26 @@ func TestNativeResolutionHelpersSelectProtocolAndInspection(t *testing.T) {
 	}
 	if MatchesDockerIdentifier("abc123", "abc123456789", "/database") || !MatchesDockerIdentifier("database", "abc123456789", "/database") {
 		t.Fatal("Docker exact identity matching failed")
+	}
+}
+
+func TestPrivateServiceNameDefaultsToValidatedServiceKey(t *testing.T) {
+	protocol := "tcp"
+	service := Service{Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: targetPointer("5432")}}
+	if got := PrivateServiceName("orders", service); got != "orders" {
+		t.Fatalf("default private name = %q", got)
+	}
+	service.Private = &PrivateService{}
+	if got := PrivateServiceName("orders", service); got != "orders" {
+		t.Fatalf("empty override private name = %q", got)
+	}
+	override := "database"
+	service.Private.Name = &override
+	if got := PrivateServiceName("orders", service); got != override {
+		t.Fatalf("explicit private name = %q", got)
+	}
+	if err := ValidateTNL(TNL{Services: Services{"orders": service}}); err != nil {
+		t.Fatal(err)
 	}
 }
 

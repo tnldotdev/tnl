@@ -11,6 +11,8 @@ import (
 )
 
 type Querier interface {
+	// caller verifies the authenticated identity's email against normalized_email.
+	AcceptPrivateServiceInvitation(ctx context.Context, arg AcceptPrivateServiceInvitationParams) (ControlPrivateServiceInvitation, error)
 	AcceptTeamInvitation(ctx context.Context, arg AcceptTeamInvitationParams) (int64, error)
 	AcceptVisitorInvitation(ctx context.Context, arg AcceptVisitorInvitationParams) error
 	ActivateMemberSlug(ctx context.Context, arg ActivateMemberSlugParams) (int64, error)
@@ -21,6 +23,8 @@ type Querier interface {
 	// commit the retention floor before pruning in another transaction. a crash
 	// between them retains extra rows, never a missing advertised suffix.
 	AdvanceIngressRoutingRetentionFloor(ctx context.Context, revision int64) (int64, error)
+	AdvancePrivateServiceRoutingClock(ctx context.Context, arg AdvancePrivateServiceRoutingClockParams) (int64, error)
+	AdvancePrivateServiceRunNumber(ctx context.Context, arg AdvancePrivateServiceRunNumberParams) (int32, error)
 	AdvanceTeamPolicyRevision(ctx context.Context, arg AdvanceTeamPolicyRevisionParams) (int64, error)
 	// callers hold the ingress/run, public URL/publish run, and existing bucket
 	// guards. dependent writes insert the immutable report, apply its aggregate
@@ -37,6 +41,10 @@ type Querier interface {
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
 	BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams) (BeginRelayDrainRow, error)
 	BindBrowserSessionHost(ctx context.Context, arg BindBrowserSessionHostParams) error
+	// control verifies the Ed25519 signature with the enrolled publisher identity
+	// key over the exact team/service/run/number/nonce/public key/idempotency tuple
+	// before this write. a bearer token alone cannot supply or replace the pin.
+	BindPrivateServiceRunKey(ctx context.Context, arg BindPrivateServiceRunKeyParams) (ControlPrivateServiceRun, error)
 	BrowserSessionCurrentHost(ctx context.Context, arg BrowserSessionCurrentHostParams) (string, error)
 	BrowserSessionPublicURLIncluded(ctx context.Context, arg BrowserSessionPublicURLIncludedParams) (string, error)
 	CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg CancelOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
@@ -52,6 +60,10 @@ type Querier interface {
 	ClaimDNSAuthorityWork(ctx context.Context, arg ClaimDNSAuthorityWorkParams) (ControlDnsAuthority, error)
 	ClaimDNSPublicURLWork(ctx context.Context, arg ClaimDNSPublicURLWorkParams) (ControlPublicUrl, error)
 	ClaimInvitationEmail(ctx context.Context, arg ClaimInvitationEmailParams) (ControlTeamInvitationEmailDelivery, error)
+	// observed_source_ip is supplied ONLY by authenticated ingress from its
+	// trusted socket/PROXY metadata; never from a connector frame or browser.
+	ClaimPrivateConnectorSession(ctx context.Context, arg ClaimPrivateConnectorSessionParams) (ControlPrivateConnectorSession, error)
+	ClaimPrivateServiceConnectionSlot(ctx context.Context, arg ClaimPrivateServiceConnectionSlotParams) (ControlPrivateServiceConnectionSlot, error)
 	ClaimPublicURLUsageDeliveries(ctx context.Context, arg ClaimPublicURLUsageDeliveriesParams) ([]ControlPublicUrlUsageDelivery, error)
 	ClaimPublisherAssertion(ctx context.Context, arg ClaimPublisherAssertionParams) (int64, error)
 	// require the exact publish run, assignment revision, and relay service. only
@@ -65,10 +77,13 @@ type Querier interface {
 	CleanupBrowserAccess(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupBrowserIdentityLogins(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupBrowserIdentitySessions(ctx context.Context, now pgtype.Timestamptz) error
+	CleanupPrivateConnectorSessions(ctx context.Context, now pgtype.Timestamptz) error
+	CleanupPrivateServiceTickets(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupSSHAttempts(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupVisitorHandoffs(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupVisitorLogins(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupVisitorSessions(ctx context.Context, now pgtype.Timestamptz) error
+	ClosePrivateServiceRun(ctx context.Context, arg ClosePrivateServiceRunParams) (int64, error)
 	ClosePublishRun(ctx context.Context, arg ClosePublishRunParams) (ControlPublishRun, error)
 	ClosePublishRunConnections(ctx context.Context, arg ClosePublishRunConnectionsParams) error
 	CompleteACMEAuthorizationCleanup(ctx context.Context, arg CompleteACMEAuthorizationCleanupParams) (int64, error)
@@ -77,6 +92,11 @@ type Querier interface {
 	ConsumeBrowserIdentityLoginAttempt(ctx context.Context, arg ConsumeBrowserIdentityLoginAttemptParams) (ConsumeBrowserIdentityLoginAttemptRow, error)
 	ConsumeBrowserLoginAttempt(ctx context.Context, arg ConsumeBrowserLoginAttemptParams) (ConsumeBrowserLoginAttemptRow, error)
 	ConsumeOIDCAssertion(ctx context.Context, arg ConsumeOIDCAssertionParams) (int64, error)
+	// consume before forwarding bytes, against the current grant and ingress lease.
+	// the publisher proves the run key over end-to-end TLS after this claim.
+	// ingress passes the authenticated mux session ID and its trusted socket source;
+	// no client-supplied source or SNI is used for this exact-ID lookup.
+	ConsumePrivateServiceTicket(ctx context.Context, arg ConsumePrivateServiceTicketParams) (ControlPrivateServiceTicket, error)
 	ConsumeShareHandoff(ctx context.Context, arg ConsumeShareHandoffParams) (ConsumeShareHandoffRow, error)
 	CountActiveShareCookiesForPublicURL(ctx context.Context, arg CountActiveShareCookiesForPublicURLParams) (int64, error)
 	CountActiveSharesForPublicURL(ctx context.Context, arg CountActiveSharesForPublicURLParams) (int64, error)
@@ -112,9 +132,13 @@ type Querier interface {
 	DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteExpiredShareCookies(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteFinishedShareHandoffs(ctx context.Context, now pgtype.Timestamptz) error
+	// caller closes its active run and publishes a tombstone under this service
+	// lock in the same transaction.
+	DeletePrivateService(ctx context.Context, arg DeletePrivateServiceParams) (ControlPrivateService, error)
 	DeletePublicURL(ctx context.Context, arg DeletePublicURLParams) (int64, error)
 	DenySSHAttempt(ctx context.Context, arg DenySSHAttemptParams) (ControlSshAttempt, error)
 	DiscardInactiveInvitationEmails(ctx context.Context, now pgtype.Timestamptz) error
+	DisconnectPrivateServiceConnectionSlot(ctx context.Context, arg DisconnectPrivateServiceConnectionSlotParams) (ControlPrivateServiceConnectionSlot, error)
 	// close only the exact claim so a late disconnect cannot close its replacement.
 	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
 	EnableIngressPool(ctx context.Context, arg EnableIngressPoolParams) (ControlIngressPool, error)
@@ -125,6 +149,7 @@ type Querier interface {
 	EnsureGuestRetryMasterKey(ctx context.Context, arg EnsureGuestRetryMasterKeyParams) (EnsureGuestRetryMasterKeyRow, error)
 	EnsureIngressUsageRun(ctx context.Context, arg EnsureIngressUsageRunParams) (ControlIngressUsageRun, error)
 	EnsurePublicURLUsageConfiguration(ctx context.Context, arg EnsurePublicURLUsageConfigurationParams) (ControlVisitorNetworkHashKey, error)
+	ExpirePrivateServiceRunPreparation(ctx context.Context, arg ExpirePrivateServiceRunPreparationParams) (int64, error)
 	ExpirePublisherConnection(ctx context.Context, arg ExpirePublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
 	ExpireTeamInvitations(ctx context.Context, arg ExpireTeamInvitationsParams) ([]string, error)
 	ExpireVisitorIPGrants(ctx context.Context, arg ExpireVisitorIPGrantsParams) error
@@ -176,6 +201,9 @@ type Querier interface {
 	GetOpenPublishRun(ctx context.Context, publicUrlID string) (ControlPublishRun, error)
 	GetOrganizationTeamByIdempotency(ctx context.Context, arg GetOrganizationTeamByIdempotencyParams) (GetOrganizationTeamByIdempotencyRow, error)
 	GetPreview(ctx context.Context, id string) (GetPreviewRow, error)
+	// use this enrolled public key after locking the prepared run and compare the
+	// publisherAuth token's identity, grant and key ID with the same locked row.
+	GetPrivateRunBindingIdentityKey(ctx context.Context, arg GetPrivateRunBindingIdentityKeyParams) ([]byte, error)
 	GetPublicURLByCreatorIdempotency(ctx context.Context, arg GetPublicURLByCreatorIdempotencyParams) (GetPublicURLByCreatorIdempotencyRow, error)
 	GetPublicURLCreationContext(ctx context.Context, arg GetPublicURLCreationContextParams) (GetPublicURLCreationContextRow, error)
 	GetPublicURLForAuthorizationData(ctx context.Context, arg GetPublicURLForAuthorizationDataParams) (GetPublicURLForAuthorizationDataRow, error)
@@ -238,6 +266,20 @@ type Querier interface {
 	InsertGuestPublicURL(ctx context.Context, arg InsertGuestPublicURLParams) error
 	InsertGuestTrial(ctx context.Context, arg InsertGuestTrialParams) (ControlGuestTrial, error)
 	InsertIngressRoutingTableEvent(ctx context.Context, arg InsertIngressRoutingTableEventParams) (int64, error)
+	// a signed-in identity obtains a one-use infrastructure credential before
+	// starting the mux session. source IP is unknown until ingress claims it.
+	InsertPrivateConnectorSession(ctx context.Context, arg InsertPrivateConnectorSessionParams) (ControlPrivateConnectorSession, error)
+	InsertPrivateService(ctx context.Context, arg InsertPrivateServiceParams) (ControlPrivateService, error)
+	InsertPrivateServiceConnectionSlot(ctx context.Context, arg InsertPrivateServiceConnectionSlotParams) (ControlPrivateServiceConnectionSlot, error)
+	InsertPrivateServiceGrant(ctx context.Context, arg InsertPrivateServiceGrantParams) (ControlPrivateServiceGrant, error)
+	InsertPrivateServiceInvitation(ctx context.Context, arg InsertPrivateServiceInvitationParams) (ControlPrivateServiceInvitation, error)
+	// lock PrivateServiceRoutingClock before inserting, and advance the clock in
+	// the same transaction so a snapshot cannot miss an earlier uncommitted event.
+	InsertPrivateServiceRoutingEvent(ctx context.Context, arg InsertPrivateServiceRoutingEventParams) (ControlPrivateServiceRoutingEvent, error)
+	// caller locks the service/run. this rechecks current permission and copies
+	// the ingress-observed source from the claimed, identity-bound mux session.
+	// never put a ticket in a routing projection or accept a client source IP.
+	InsertPrivateServiceTicket(ctx context.Context, arg InsertPrivateServiceTicketParams) (ControlPrivateServiceTicket, error)
 	InsertPublicURL(ctx context.Context, arg InsertPublicURLParams) (ControlPublicUrl, error)
 	InsertPublicURLCreateAuditEvent(ctx context.Context, arg InsertPublicURLCreateAuditEventParams) error
 	InsertPublicURLDeleteAuditEvent(ctx context.Context, arg InsertPublicURLDeleteAuditEventParams) error
@@ -266,6 +308,10 @@ type Querier interface {
 	ListActiveSharesForPublicURL(ctx context.Context, arg ListActiveSharesForPublicURLParams) ([]ListActiveSharesForPublicURLRow, error)
 	ListAdminRelayLeases(ctx context.Context, arg ListAdminRelayLeasesParams) ([]ListAdminRelayLeasesRow, error)
 	ListAuthorizedPublicURLsData(ctx context.Context, arg ListAuthorizedPublicURLsDataParams) ([]ListAuthorizedPublicURLsDataRow, error)
+	// visitor inventory includes authorized saved services while the publisher is
+	// offline. only project an open, ready run with two ready slots and a live
+	// publisher grant. do not include target addresses, tickets or keys.
+	ListAvailablePrivateServices(ctx context.Context, arg ListAvailablePrivateServicesParams) ([]ListAvailablePrivateServicesRow, error)
 	ListCurrentDomainNames(ctx context.Context) ([]string, error)
 	ListDNSChallengePresentations(ctx context.Context, baseIdentifier string) ([]ListDNSChallengePresentationsRow, error)
 	ListFeedbackEventsForTeam(ctx context.Context, arg ListFeedbackEventsForTeamParams) ([]ControlFeedbackEvent, error)
@@ -285,6 +331,11 @@ type Querier interface {
 	ListLatestIngressUsageReports(ctx context.Context, arg ListLatestIngressUsageReportsParams) ([]ListLatestIngressUsageReportsRow, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error)
+	ListPrivateServiceGrants(ctx context.Context, privateServiceID string) ([]ControlPrivateServiceGrant, error)
+	ListPrivateServiceInvitations(ctx context.Context, privateServiceID string) ([]ControlPrivateServiceInvitation, error)
+	ListPrivateServiceRoutingEvents(ctx context.Context, arg ListPrivateServiceRoutingEventsParams) ([]ControlPrivateServiceRoutingEvent, error)
+	ListPrivateServiceRoutingSnapshot(ctx context.Context, arg ListPrivateServiceRoutingSnapshotParams) ([]ControlPrivateServiceRoutingEvent, error)
+	ListPrivateServicesForTeam(ctx context.Context, arg ListPrivateServicesForTeamParams) ([]ControlPrivateService, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
 	ListPublisherGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGrant, error)
 	ListPublisherIdentities(ctx context.Context, arg ListPublisherIdentitiesParams) ([]ControlPublisherIdentity, error)
@@ -344,6 +395,9 @@ type Querier interface {
 	LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error)
 	LockMembershipPublicURLs(ctx context.Context, arg LockMembershipPublicURLsParams) ([]ControlPublicUrl, error)
 	LockPreviewForTeamAccess(ctx context.Context, id string) (LockPreviewForTeamAccessRow, error)
+	LockPrivateService(ctx context.Context, id string) (ControlPrivateService, error)
+	LockPrivateServiceRoutingClock(ctx context.Context) (int64, error)
+	LockPrivateServiceRun(ctx context.Context, arg LockPrivateServiceRunParams) (ControlPrivateServiceRun, error)
 	LockPublicURLCreationControl(ctx context.Context) (bool, error)
 	// serialize creators without blocking publish run and audit foreign-key checks.
 	LockPublicURLCreator(ctx context.Context, identityID string) (string, error)
@@ -397,6 +451,10 @@ type Querier interface {
 	OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error)
 	OtherTeamAccessForPublicURL(ctx context.Context, arg OtherTeamAccessForPublicURLParams) (string, error)
 	PollSSHAttempt(ctx context.Context, arg PollSSHAttemptParams) (PollSSHAttemptRow, error)
+	// caller locks the service, checks the live publisher grant and enrolled key,
+	// allocates one run number, then returns this run ID and nonce to the publisher.
+	// a retry with the same idempotency key returns the same prepared row.
+	PreparePrivateServiceRun(ctx context.Context, arg PreparePrivateServiceRunParams) (ControlPrivateServiceRun, error)
 	PreviewInvitation(ctx context.Context, arg PreviewInvitationParams) (PreviewInvitationRow, error)
 	// bound candidates scanned, even when an anchor cannot be removed. retain the
 	// latest hostname/category projection, including tombstones and expired rows,
@@ -405,14 +463,17 @@ type Querier interface {
 	PruneIngressRoutingHistoryBatch(ctx context.Context, afterRevision int64) (PruneIngressRoutingHistoryBatchRow, error)
 	PrunePublisherAccess(ctx context.Context, arg PrunePublisherAccessParams) error
 	PrunePublisherAssertions(ctx context.Context, arg PrunePublisherAssertionsParams) error
-	// this read does not lock URLs after identities. URL/run transactions acquire
-	// their URL lock first and recheck the same live grant before committing.
+	// this read does not lock resources after identities. URL and private-service
+	// run transactions lock their own saved resource first and recheck the grant.
 	PublisherScopeAvailable(ctx context.Context, arg PublisherScopeAvailableParams) (bool, error)
 	PutControlTLSCacheEntry(ctx context.Context, arg PutControlTLSCacheEntryParams) error
 	QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error)
 	QuarantineTCPPortClaim(ctx context.Context, arg QuarantineTCPPortClaimParams) (int64, error)
 	ReadIngressRoutingTableClock(ctx context.Context) (ControlIngressRoutingTableClock, error)
+	ReadPrivateServiceRoutingClock(ctx context.Context) (int64, error)
 	ReadyBrowserHosts(ctx context.Context, arg ReadyBrowserHostsParams) ([]ReadyBrowserHostsRow, error)
+	ReadyPrivateServiceConnectionSlot(ctx context.Context, arg ReadyPrivateServiceConnectionSlotParams) (ControlPrivateServiceConnectionSlot, error)
+	ReadyPrivateServiceRun(ctx context.Context, arg ReadyPrivateServiceRunParams) (ControlPrivateServiceRun, error)
 	RecentGuestTrialStats(ctx context.Context, since pgtype.Timestamptz) (RecentGuestTrialStatsRow, error)
 	RecordFeedbackActivity(ctx context.Context, arg RecordFeedbackActivityParams) error
 	RedeemPublisherEnrollment(ctx context.Context, arg RedeemPublisherEnrollmentParams) error
@@ -430,6 +491,7 @@ type Querier interface {
 	RemoveVisitorIPGrant(ctx context.Context, arg RemoveVisitorIPGrantParams) (int64, error)
 	RenewEphemeralPublicURLExpiry(ctx context.Context, arg RenewEphemeralPublicURLExpiryParams) (pgtype.Timestamptz, error)
 	RenewIngress(ctx context.Context, arg RenewIngressParams) (ControlIngressLease, error)
+	RenewPrivateServiceRun(ctx context.Context, arg RenewPrivateServiceRunParams) (ControlPrivateServiceRun, error)
 	RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRelayRow, error)
 	// a failed ready connection can keep its existing service reservation. this
 	// atomic ready -> assigned transition has zero counter delta and needs only the
@@ -445,12 +507,20 @@ type Querier interface {
 	ReserveManagedDirectName(ctx context.Context, arg ReserveManagedDirectNameParams) (string, error)
 	ReserveManagedLabel(ctx context.Context, arg ReserveManagedLabelParams) (string, error)
 	RetirePublisherKey(ctx context.Context, arg RetirePublisherKeyParams) (int64, error)
+	// the caller re-verifies the SAME signed binding using the enrolled identity
+	// and atomically rotates only the run token. the public key is immutable.
+	RetryPrivateServiceRunKeyBinding(ctx context.Context, arg RetryPrivateServiceRunKeyBindingParams) (ControlPrivateServiceRun, error)
 	RetryPublicURLUsageDelivery(ctx context.Context, arg RetryPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (string, error)
 	RevokeBrowserAccessSession(ctx context.Context, arg RevokeBrowserAccessSessionParams) error
 	RevokeBrowserIdentitySession(ctx context.Context, arg RevokeBrowserIdentitySessionParams) (int64, error)
 	RevokeChildBrowserIdentitySessions(ctx context.Context, arg RevokeChildBrowserIdentitySessionsParams) error
 	RevokeControlSession(ctx context.Context, arg RevokeControlSessionParams) (int64, error)
+	RevokePrivateConnectorSession(ctx context.Context, arg RevokePrivateConnectorSessionParams) (int64, error)
+	RevokePrivateServiceGrant(ctx context.Context, arg RevokePrivateServiceGrantParams) (int64, error)
+	RevokePrivateServiceInvitation(ctx context.Context, arg RevokePrivateServiceInvitationParams) (int64, error)
+	// caller revokes invitation and accepted grant in the same transaction.
+	RevokePrivateServiceInvitationGrant(ctx context.Context, arg RevokePrivateServiceInvitationGrantParams) (int64, error)
 	RevokePublisherGrant(ctx context.Context, arg RevokePublisherGrantParams) (int64, error)
 	RevokePublisherIdentity(ctx context.Context, arg RevokePublisherIdentityParams) (int64, error)
 	RevokeShare(ctx context.Context, arg RevokeShareParams) (ControlShare, error)
@@ -476,6 +546,8 @@ type Querier interface {
 	// can be out of revision order. keep every recent event without taking the
 	// publication clock during this scan.
 	SelectIngressRoutingRetentionFloor(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error)
+	// only an exact grant for an active team and service permits publication.
+	SelectPrivateServiceForPublisher(ctx context.Context, arg SelectPrivateServiceForPublisherParams) (ControlPrivateService, error)
 	SetDNSReadyDomainDefault(ctx context.Context, arg SetDNSReadyDomainDefaultParams) (int64, error)
 	SetDomainAuthorityRevision(ctx context.Context, arg SetDomainAuthorityRevisionParams) error
 	SetMaintenanceControl(ctx context.Context, arg SetMaintenanceControlParams) (ControlMaintenanceControl, error)

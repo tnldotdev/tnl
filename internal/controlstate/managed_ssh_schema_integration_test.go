@@ -176,7 +176,7 @@ func TestIntegrationManagedSSHSchemaConstraints(t *testing.T) {
 		})
 	}
 	var identity string
-	if err := pool.QueryRow(t.Context(), `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&identity); err != nil || identity != "tnl-control-fresh-v1-protocol-rewrite" {
+	if err := pool.QueryRow(t.Context(), `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&identity); err != nil || identity != "tnl-control-fresh-v1-private-connectors" {
 		t.Fatalf("managed SSH baseline identity = %q, %v", identity, err)
 	}
 	if _, err := pool.Exec(t.Context(), `UPDATE control.schema_identity SET baseline_id='tnl-control-fresh-v1' WHERE id=1`); err == nil {

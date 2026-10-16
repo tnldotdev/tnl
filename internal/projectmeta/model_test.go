@@ -49,7 +49,7 @@ func TestSavedAddressesRenderWithoutPrivateData(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !strings.Contains(string(file), `"address": "db.member.example:15432"`) || !strings.Contains(string(declarations), `readonly port: 15432`) || strings.Contains(string(declarations), "readonly url:") {
-			t.Fatalf("TCP declarations=%s", declarations)
+			t.Fatalf("SSH declarations=%s", declarations)
 		}
 		public, err := json.Marshal(metadata.Public(true))
 		if err != nil {
@@ -60,22 +60,21 @@ func TestSavedAddressesRenderWithoutPrivateData(t *testing.T) {
 		}
 		metadata.Aliases = map[string]Alias{"review": {Hostname: "review.member.example", URL: "https://review.member.example", Service: "db"}}
 		if err := metadata.Validate(); err == nil {
-			t.Fatal("TCP alias was accepted")
+			t.Fatal("SSH alias was accepted")
 		}
 		metadata.Aliases = nil
 		http, _ := NewService("member.example", "web.member.example", "http", nil)
 		http.Paths = map[string]Path{"/db": {Service: "db", URL: "https://web.member.example/db"}}
 		metadata.Services["web"] = http
 		if err := metadata.Validate(); err == nil {
-			t.Fatal("HTTP mount into TCP service was accepted")
+			t.Fatal("HTTP mount into SSH service was accepted")
 		}
 	}
-	tcp, err := NewService("member.example", "db.member.example", "tcp", nil)
-	if err != nil || tcp.Port == nil || *tcp.Port != 443 || tcp.Address != "db.member.example:443" {
-		t.Fatalf("shared tcp metadata = %+v: %v", tcp, err)
+	if _, err := NewService("member.example", "db.member.example", "tcp", nil); err == nil {
+		t.Fatal("private TCP service received a public hostname and shared port")
 	}
 	if _, err := NewService("member.example", "db.member.example", "tcp", &port); err == nil {
-		t.Fatal("tcp metadata accepted an assigned port")
+		t.Fatal("private TCP service received a public port")
 	}
 	if _, err := NewService("member.example", "db.member.example", "ssh", nil); err == nil {
 		t.Fatal("ssh metadata was built before port assignment")

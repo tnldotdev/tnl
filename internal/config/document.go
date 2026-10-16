@@ -50,11 +50,26 @@ type Services map[string]Service
 
 // Service contains project-local overrides for one named local service.
 type Service struct {
-	Inspection *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
-	Tunnel     *Tunnel        `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Public URL and tunnel overrides for this service."`
-	Protocol   *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=tcp,enum=ssh"`
-	Target     *ServiceTarget `json:"target,omitempty" yaml:"target,omitempty"`
-	HTTP       *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
+	Inspection *Inspection     `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
+	Tunnel     *Tunnel         `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Public URL and tunnel overrides for this service."`
+	Private    *PrivateService `json:"private,omitempty" yaml:"private,omitempty" jsonschema_description:"Saved team-scoped private service selected by tnl connect; only for TCP."`
+	Protocol   *string         `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=tcp,enum=ssh"`
+	Target     *ServiceTarget  `json:"target,omitempty" yaml:"target,omitempty"`
+	HTTP       *HTTPService    `json:"http,omitempty" yaml:"http,omitempty"`
+}
+
+// PrivateService optionally overrides the saved name derived from the project
+// service key. it is not a hostname or public URL.
+type PrivateService struct {
+	Name *string `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Optional team-unique saved name for tnl connect; defaults to the project service key."`
+}
+
+// PrivateServiceName selects the saved name for a validated private service.
+func PrivateServiceName(serviceName string, service Service) string {
+	if service.Private != nil && service.Private.Name != nil {
+		return *service.Private.Name
+	}
+	return serviceName
 }
 
 // AppPublisher selects where app registrations are published. a compose file,
@@ -79,7 +94,7 @@ type ServiceTarget struct {
 }
 
 type TargetTLS struct {
-	Mode       string  `json:"mode" yaml:"mode" jsonschema:"required,enum=direct,enum=postgres,enum=mysql" jsonschema_description:"Verified TLS handshake with the private target; direct starts TLS immediately."`
+	Mode       string  `json:"mode" yaml:"mode" jsonschema:"required,enum=direct,enum=postgres,enum=mysql" jsonschema_description:"Verified target TLS; direct starts immediately, postgres and mysql negotiate TLS before connecting."`
 	ServerName *string `json:"server_name,omitempty" yaml:"server_name,omitempty"`
 	CAFile     *string `json:"ca_file,omitempty" yaml:"ca_file,omitempty"`
 }

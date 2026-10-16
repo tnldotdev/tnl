@@ -18,9 +18,13 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		{"placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{target:{type:"app"}}}}`, true},
 		{"database placement", `{publisher:{type:"compose",service:"publisher"},services:{db:{protocol:"tcp",target:{type:"address",address:5432}}}}`, true},
 		{"mixed placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{},db:{protocol:"tcp",target:{type:"address",address:5432}}}}`, true},
-		{"private TLS", `{services:{db:{protocol:"tcp",target:{type:"address",address:"db.internal:3306",tls:{mode:"mysql",serverName:"db.internal",caFile:"./ca.pem"}}}}}`, true},
+		{"mixed public defaults", `{tunnel:{allowAllIPs:true},services:{web:{},db:{protocol:"tcp",target:{type:"address",address:5432}}}}`, true},
+		{"private TLS", `{services:{db:{protocol:"tcp",private:{name:"db"},target:{type:"address",address:"db.internal:3306",tls:{mode:"mysql",serverName:"db.internal",caFile:"./ca.pem"}}}}}`, true},
 		{"compose", `{services:{web:{target:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000}}}}`, true},
 		{"docker", `{services:{cache:{protocol:"tcp",target:{type:"docker",container:"shop-cache",port:6379}}}}`, true},
+		{"explicit private name", `{services:{orders:{protocol:"tcp",private:{name:"database"},target:{type:"address",address:5432}}}}`, true},
+		{"conflicting private names", `{services:{orders:{protocol:"tcp",target:{type:"address",address:5432}},database:{protocol:"tcp",private:{name:"orders"},target:{type:"address",address:3306}}}}`, false},
+		{"private service public URL", `{services:{db:{protocol:"tcp",private:{name:"db"},tunnel:{name:"db"},target:{type:"address",address:5432}}}}`, false},
 		{"inspection", `{inspection:{mode:"summary",retention:"24h",maxBytes:"64MiB"}}`, true},
 		{"traffic", `{tunnel:{limits:{traffic:{connections:8,rate:5,ratePer:"1s",burst:10,uploadBytes:1048576,downloadBytes:2097152,totalUploadBytes:4194304}}}}`, true},
 		{"old root", `{publish:{target:3000}}`, false},
@@ -128,7 +132,7 @@ func TestResolveFillsComposeTargetDefaultsPerProject(t *testing.T) {
 			t.Fatal(err)
 		}
 		path := filepath.Join(root, "tnl.json")
-		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{"db":{"protocol":"tcp","target":{"type":"compose","service":"db","port":5432}}}}}`), 0600); err != nil {
+		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{"db":{"protocol":"tcp","private":{"name":"db"},"target":{"type":"compose","service":"db","port":5432}}}}}`), 0600); err != nil {
 			t.Fatal(err)
 		}
 		project, err := Resolve(t.Context(), Selection{Path: path}, root, [32]byte{})
@@ -136,6 +140,9 @@ func TestResolveFillsComposeTargetDefaultsPerProject(t *testing.T) {
 			t.Fatal(err)
 		}
 		target := project.Config.Services["db"].Target
+		if got := config.PrivateServiceName("db", project.Config.Services["db"]); got != "db" {
+			t.Fatalf("default private service name = %q", got)
+		}
 		if target.Project == nil || target.File == nil || *target.Project != project.Worktree.Label.FullLabel || *target.File != "compose.yml" {
 			t.Fatalf("Compose target defaults = %+v", target)
 		}
@@ -153,6 +160,9 @@ func TestEffectiveServiceKeepsAppAndAddressTargetsIndependent(t *testing.T) {
 	p := Project{Config: config.TNL{Services: config.Services{
 		"web": {}, "db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{Mode: "postgres", CAFile: &ca}}},
 	}}}
+	if err := config.ValidateTNL(p.Config); err != nil {
+		t.Fatalf("mixed HTTP and private TCP services: %v", err)
+	}
 	web, err := p.EffectiveService("web")
 	if err != nil {
 		t.Fatal(err)

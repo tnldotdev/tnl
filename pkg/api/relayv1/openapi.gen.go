@@ -125,6 +125,44 @@ type ClaimedPublisherConnectionState string
 // Identifier defines model for Identifier.
 type Identifier = string
 
+// PrivatePublisherConnection defines model for PrivatePublisherConnection.
+type PrivatePublisherConnection struct {
+	ConnectionAssignmentRevision int64            `json:"connection_assignment_revision"`
+	PrivateRunId                 PrivateRunID     `json:"private_run_id"`
+	PrivateServiceId             PrivateServiceID `json:"private_service_id"`
+	PublisherConnectionId        Identifier       `json:"publisher_connection_id"`
+	RelayServiceId               Identifier       `json:"relay_service_id"`
+	RunNumber                    int64            `json:"run_number"`
+}
+
+// PrivatePublisherConnectionClaim defines model for PrivatePublisherConnectionClaim.
+type PrivatePublisherConnectionClaim struct {
+	ConnectionAssignmentRevision int64            `json:"connection_assignment_revision"`
+	Credential                   string           `json:"credential"`
+	PrivateRunId                 PrivateRunID     `json:"private_run_id"`
+	PrivateServiceId             PrivateServiceID `json:"private_service_id"`
+	RelayId                      Identifier       `json:"relay_id"`
+	RelayLeaseRevision           int64            `json:"relay_lease_revision"`
+	RelayRunId                   Identifier       `json:"relay_run_id"`
+	RunNumber                    int64            `json:"run_number"`
+}
+
+// PrivatePublisherConnectionTransition defines model for PrivatePublisherConnectionTransition.
+type PrivatePublisherConnectionTransition struct {
+	ConnectionAssignmentRevision int64        `json:"connection_assignment_revision"`
+	PrivateRunId                 PrivateRunID `json:"private_run_id"`
+	RelayId                      Identifier   `json:"relay_id"`
+	RelayLeaseRevision           int64        `json:"relay_lease_revision"`
+	RelayRunId                   Identifier   `json:"relay_run_id"`
+	RunNumber                    int64        `json:"run_number"`
+}
+
+// PrivateRunID defines model for PrivateRunID.
+type PrivateRunID = string
+
+// PrivateServiceID defines model for PrivateServiceID.
+type PrivateServiceID = string
+
 // Problem defines model for Problem.
 type Problem struct {
 	Code      ProblemCode             `json:"code"`
@@ -295,6 +333,15 @@ type GetRelayTransportCertificateParams struct {
 	RelayLeaseRevision int64      `form:"relay_lease_revision" json:"relay_lease_revision"`
 }
 
+// ClaimPrivatePublisherConnectionJSONRequestBody defines body for ClaimPrivatePublisherConnection for application/json ContentType.
+type ClaimPrivatePublisherConnectionJSONRequestBody = PrivatePublisherConnectionClaim
+
+// DisconnectPrivatePublisherConnectionJSONRequestBody defines body for DisconnectPrivatePublisherConnection for application/json ContentType.
+type DisconnectPrivatePublisherConnectionJSONRequestBody = PrivatePublisherConnectionTransition
+
+// ReadyPrivatePublisherConnectionJSONRequestBody defines body for ReadyPrivatePublisherConnection for application/json ContentType.
+type ReadyPrivatePublisherConnectionJSONRequestBody = PrivatePublisherConnectionTransition
+
 // ClaimPublisherConnectionJSONRequestBody defines body for ClaimPublisherConnection for application/json ContentType.
 type ClaimPublisherConnectionJSONRequestBody = PublisherConnectionClaim
 
@@ -387,6 +434,42 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// ClaimPrivatePublisherConnectionWithBody performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimPrivatePublisherConnection` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Authenticate an assigned private run slot and current relay lease without accepting a public URL ID.
+	ClaimPrivatePublisherConnectionWithBody(ctx context.Context, publisherConnectionId Identifier, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimPrivatePublisherConnection performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimPrivatePublisherConnection` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Authenticate an assigned private run slot and current relay lease without accepting a public URL ID.
+	ClaimPrivatePublisherConnection(ctx context.Context, publisherConnectionId Identifier, body ClaimPrivatePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DisconnectPrivatePublisherConnectionWithBody performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPrivatePublisherConnection` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Invalidate this exact assignment and remove it from ingress projections.
+	DisconnectPrivatePublisherConnectionWithBody(ctx context.Context, publisherConnectionId Identifier, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DisconnectPrivatePublisherConnection performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPrivatePublisherConnection` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Invalidate this exact assignment and remove it from ingress projections.
+	DisconnectPrivatePublisherConnection(ctx context.Context, publisherConnectionId Identifier, body DisconnectPrivatePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadyPrivatePublisherConnectionWithBody performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/ready (the `ReadyPrivatePublisherConnection` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Mark the private slot ready only while its assignment and relay lease are current.
+	ReadyPrivatePublisherConnectionWithBody(ctx context.Context, publisherConnectionId Identifier, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadyPrivatePublisherConnection performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/ready (the `ReadyPrivatePublisherConnection` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Mark the private slot ready only while its assignment and relay lease are current.
+	ReadyPrivatePublisherConnection(ctx context.Context, publisherConnectionId Identifier, body ReadyPrivatePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ClaimPublisherConnectionWithBody Claim a publisher connection with its credential
 	//
 	// Takes any type of body and a specified content type.
@@ -475,6 +558,102 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 	RenewRelay(ctx context.Context, relayId RelayID, body RenewRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// ClaimPrivatePublisherConnectionWithBody performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimPrivatePublisherConnection` operationId) request,
+// with any type of body and a specified content type.
+//
+// Authenticate an assigned private run slot and current relay lease without accepting a public URL ID.
+func (c *Client) ClaimPrivatePublisherConnectionWithBody(ctx context.Context, publisherConnectionId Identifier, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimPrivatePublisherConnectionRequestWithBody(c.Server, publisherConnectionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimPrivatePublisherConnection performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimPrivatePublisherConnection` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Authenticate an assigned private run slot and current relay lease without accepting a public URL ID.
+func (c *Client) ClaimPrivatePublisherConnection(ctx context.Context, publisherConnectionId Identifier, body ClaimPrivatePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimPrivatePublisherConnectionRequest(c.Server, publisherConnectionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DisconnectPrivatePublisherConnectionWithBody performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPrivatePublisherConnection` operationId) request,
+// with any type of body and a specified content type.
+//
+// Invalidate this exact assignment and remove it from ingress projections.
+func (c *Client) DisconnectPrivatePublisherConnectionWithBody(ctx context.Context, publisherConnectionId Identifier, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDisconnectPrivatePublisherConnectionRequestWithBody(c.Server, publisherConnectionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DisconnectPrivatePublisherConnection performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPrivatePublisherConnection` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Invalidate this exact assignment and remove it from ingress projections.
+func (c *Client) DisconnectPrivatePublisherConnection(ctx context.Context, publisherConnectionId Identifier, body DisconnectPrivatePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDisconnectPrivatePublisherConnectionRequest(c.Server, publisherConnectionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadyPrivatePublisherConnectionWithBody performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/ready (the `ReadyPrivatePublisherConnection` operationId) request,
+// with any type of body and a specified content type.
+//
+// Mark the private slot ready only while its assignment and relay lease are current.
+func (c *Client) ReadyPrivatePublisherConnectionWithBody(ctx context.Context, publisherConnectionId Identifier, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadyPrivatePublisherConnectionRequestWithBody(c.Server, publisherConnectionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadyPrivatePublisherConnection performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/ready (the `ReadyPrivatePublisherConnection` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Mark the private slot ready only while its assignment and relay lease are current.
+func (c *Client) ReadyPrivatePublisherConnection(ctx context.Context, publisherConnectionId Identifier, body ReadyPrivatePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadyPrivatePublisherConnectionRequest(c.Server, publisherConnectionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // ClaimPublisherConnectionWithBody Claim a publisher connection with its credential
@@ -694,6 +873,147 @@ func (c *Client) RenewRelay(ctx context.Context, relayId RelayID, body RenewRela
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewClaimPrivatePublisherConnectionRequest calls the generic ClaimPrivatePublisherConnection builder with application/json body
+func NewClaimPrivatePublisherConnectionRequest(server string, publisherConnectionId Identifier, body ClaimPrivatePublisherConnectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClaimPrivatePublisherConnectionRequestWithBody(server, publisherConnectionId, "application/json", bodyReader)
+}
+
+// NewClaimPrivatePublisherConnectionRequestWithBody constructs an http.Request for the ClaimPrivatePublisherConnection method, with any body, and a specified content type
+func NewClaimPrivatePublisherConnectionRequestWithBody(server string, publisherConnectionId Identifier, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_connection_id", publisherConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/private-publisher-connections/%s/claim", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDisconnectPrivatePublisherConnectionRequest calls the generic DisconnectPrivatePublisherConnection builder with application/json body
+func NewDisconnectPrivatePublisherConnectionRequest(server string, publisherConnectionId Identifier, body DisconnectPrivatePublisherConnectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDisconnectPrivatePublisherConnectionRequestWithBody(server, publisherConnectionId, "application/json", bodyReader)
+}
+
+// NewDisconnectPrivatePublisherConnectionRequestWithBody constructs an http.Request for the DisconnectPrivatePublisherConnection method, with any body, and a specified content type
+func NewDisconnectPrivatePublisherConnectionRequestWithBody(server string, publisherConnectionId Identifier, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_connection_id", publisherConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/private-publisher-connections/%s/disconnect", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReadyPrivatePublisherConnectionRequest calls the generic ReadyPrivatePublisherConnection builder with application/json body
+func NewReadyPrivatePublisherConnectionRequest(server string, publisherConnectionId Identifier, body ReadyPrivatePublisherConnectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReadyPrivatePublisherConnectionRequestWithBody(server, publisherConnectionId, "application/json", bodyReader)
+}
+
+// NewReadyPrivatePublisherConnectionRequestWithBody constructs an http.Request for the ReadyPrivatePublisherConnection method, with any body, and a specified content type
+func NewReadyPrivatePublisherConnectionRequestWithBody(server string, publisherConnectionId Identifier, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_connection_id", publisherConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/private-publisher-connections/%s/ready", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
 }
 
 // NewClaimPublisherConnectionRequest calls the generic ClaimPublisherConnection builder with application/json body
@@ -1088,6 +1408,48 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// ClaimPrivatePublisherConnectionWithBodyWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimPrivatePublisherConnection` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Authenticate an assigned private run slot and current relay lease without accepting a public URL ID.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ClaimPrivatePublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId Identifier, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimPrivatePublisherConnectionResponse, error)
+
+	// ClaimPrivatePublisherConnectionWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimPrivatePublisherConnection` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Authenticate an assigned private run slot and current relay lease without accepting a public URL ID.
+	ClaimPrivatePublisherConnectionWithResponse(ctx context.Context, publisherConnectionId Identifier, body ClaimPrivatePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimPrivatePublisherConnectionResponse, error)
+
+	// DisconnectPrivatePublisherConnectionWithBodyWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPrivatePublisherConnection` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Invalidate this exact assignment and remove it from ingress projections.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	DisconnectPrivatePublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId Identifier, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DisconnectPrivatePublisherConnectionResponse, error)
+
+	// DisconnectPrivatePublisherConnectionWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPrivatePublisherConnection` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Invalidate this exact assignment and remove it from ingress projections.
+	DisconnectPrivatePublisherConnectionWithResponse(ctx context.Context, publisherConnectionId Identifier, body DisconnectPrivatePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*DisconnectPrivatePublisherConnectionResponse, error)
+
+	// ReadyPrivatePublisherConnectionWithBodyWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/ready (the `ReadyPrivatePublisherConnection` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Mark the private slot ready only while its assignment and relay lease are current.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ReadyPrivatePublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId Identifier, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadyPrivatePublisherConnectionResponse, error)
+
+	// ReadyPrivatePublisherConnectionWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/ready (the `ReadyPrivatePublisherConnection` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Mark the private slot ready only while its assignment and relay lease are current.
+	ReadyPrivatePublisherConnectionWithResponse(ctx context.Context, publisherConnectionId Identifier, body ReadyPrivatePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadyPrivatePublisherConnectionResponse, error)
+
 	// ClaimPublisherConnectionWithBodyWithResponse Claim a publisher connection with its credential
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -1178,6 +1540,143 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /internal/v1/relays/{relay_id}/renew (the `RenewRelay` operationId).
 	RenewRelayWithResponse(ctx context.Context, relayId RelayID, body RenewRelayJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewRelayResponse, error)
+}
+
+type ClaimPrivatePublisherConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivatePublisherConnection
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ClaimPrivatePublisherConnectionResponse) GetJSON200() *PrivatePublisherConnection {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClaimPrivatePublisherConnectionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ClaimPrivatePublisherConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClaimPrivatePublisherConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClaimPrivatePublisherConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClaimPrivatePublisherConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DisconnectPrivatePublisherConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DisconnectPrivatePublisherConnectionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DisconnectPrivatePublisherConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DisconnectPrivatePublisherConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DisconnectPrivatePublisherConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DisconnectPrivatePublisherConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReadyPrivatePublisherConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivatePublisherConnection
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReadyPrivatePublisherConnectionResponse) GetJSON200() *PrivatePublisherConnection {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReadyPrivatePublisherConnectionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReadyPrivatePublisherConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadyPrivatePublisherConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadyPrivatePublisherConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReadyPrivatePublisherConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type ClaimPublisherConnectionResponse struct {
@@ -1523,6 +2022,84 @@ func (r RenewRelayResponse) ContentType() string {
 	return ""
 }
 
+// ClaimPrivatePublisherConnectionWithBodyWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimPrivatePublisherConnection` operationId) request,
+// with any type of body and a specified content type.
+//
+// Authenticate an assigned private run slot and current relay lease without accepting a public URL ID.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ClaimPrivatePublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId Identifier, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimPrivatePublisherConnectionResponse, error) {
+	rsp, err := c.ClaimPrivatePublisherConnectionWithBody(ctx, publisherConnectionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimPrivatePublisherConnectionResponse(rsp)
+}
+
+// ClaimPrivatePublisherConnectionWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimPrivatePublisherConnection` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Authenticate an assigned private run slot and current relay lease without accepting a public URL ID.
+func (c *ClientWithResponses) ClaimPrivatePublisherConnectionWithResponse(ctx context.Context, publisherConnectionId Identifier, body ClaimPrivatePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimPrivatePublisherConnectionResponse, error) {
+	rsp, err := c.ClaimPrivatePublisherConnection(ctx, publisherConnectionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimPrivatePublisherConnectionResponse(rsp)
+}
+
+// DisconnectPrivatePublisherConnectionWithBodyWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPrivatePublisherConnection` operationId) request,
+// with any type of body and a specified content type.
+//
+// Invalidate this exact assignment and remove it from ingress projections.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) DisconnectPrivatePublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId Identifier, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DisconnectPrivatePublisherConnectionResponse, error) {
+	rsp, err := c.DisconnectPrivatePublisherConnectionWithBody(ctx, publisherConnectionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDisconnectPrivatePublisherConnectionResponse(rsp)
+}
+
+// DisconnectPrivatePublisherConnectionWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPrivatePublisherConnection` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Invalidate this exact assignment and remove it from ingress projections.
+func (c *ClientWithResponses) DisconnectPrivatePublisherConnectionWithResponse(ctx context.Context, publisherConnectionId Identifier, body DisconnectPrivatePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*DisconnectPrivatePublisherConnectionResponse, error) {
+	rsp, err := c.DisconnectPrivatePublisherConnection(ctx, publisherConnectionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDisconnectPrivatePublisherConnectionResponse(rsp)
+}
+
+// ReadyPrivatePublisherConnectionWithBodyWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/ready (the `ReadyPrivatePublisherConnection` operationId) request,
+// with any type of body and a specified content type.
+//
+// Mark the private slot ready only while its assignment and relay lease are current.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ReadyPrivatePublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId Identifier, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadyPrivatePublisherConnectionResponse, error) {
+	rsp, err := c.ReadyPrivatePublisherConnectionWithBody(ctx, publisherConnectionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadyPrivatePublisherConnectionResponse(rsp)
+}
+
+// ReadyPrivatePublisherConnectionWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/ready (the `ReadyPrivatePublisherConnection` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Mark the private slot ready only while its assignment and relay lease are current.
+func (c *ClientWithResponses) ReadyPrivatePublisherConnectionWithResponse(ctx context.Context, publisherConnectionId Identifier, body ReadyPrivatePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadyPrivatePublisherConnectionResponse, error) {
+	rsp, err := c.ReadyPrivatePublisherConnection(ctx, publisherConnectionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadyPrivatePublisherConnectionResponse(rsp)
+}
+
 // ClaimPublisherConnectionWithBodyWithResponse Claim a publisher connection with its credential
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -1690,6 +2267,101 @@ func (c *ClientWithResponses) RenewRelayWithResponse(ctx context.Context, relayI
 		return nil, err
 	}
 	return ParseRenewRelayResponse(rsp)
+}
+
+// ParseClaimPrivatePublisherConnectionResponse parses an HTTP response from a ClaimPrivatePublisherConnectionWithResponse call
+func ParseClaimPrivatePublisherConnectionResponse(rsp *http.Response) (*ClaimPrivatePublisherConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClaimPrivatePublisherConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivatePublisherConnection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDisconnectPrivatePublisherConnectionResponse parses an HTTP response from a DisconnectPrivatePublisherConnectionWithResponse call
+func ParseDisconnectPrivatePublisherConnectionResponse(rsp *http.Response) (*DisconnectPrivatePublisherConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DisconnectPrivatePublisherConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReadyPrivatePublisherConnectionResponse parses an HTTP response from a ReadyPrivatePublisherConnectionWithResponse call
+func ParseReadyPrivatePublisherConnectionResponse(rsp *http.Response) (*ReadyPrivatePublisherConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadyPrivatePublisherConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivatePublisherConnection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseClaimPublisherConnectionResponse parses an HTTP response from a ClaimPublisherConnectionWithResponse call
@@ -1938,6 +2610,15 @@ func ParseRenewRelayResponse(rsp *http.Response) (*RenewRelayResponse, error) {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+
+	// (POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim)
+	ClaimPrivatePublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId Identifier)
+
+	// (POST /internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect)
+	DisconnectPrivatePublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId Identifier)
+
+	// (POST /internal/v1/private-publisher-connections/{publisher_connection_id}/ready)
+	ReadyPrivatePublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId Identifier)
 	// ClaimPublisherConnection Claim a publisher connection with its credential
 	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/claim)
 	ClaimPublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID)
@@ -1969,6 +2650,84 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ClaimPrivatePublisherConnection operation middleware
+func (siw *ServerInterfaceWrapper) ClaimPrivatePublisherConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publisher_connection_id" -------------
+	var publisherConnectionId Identifier
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_connection_id", r.PathValue("publisher_connection_id"), &publisherConnectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_connection_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ClaimPrivatePublisherConnection(w, r, publisherConnectionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DisconnectPrivatePublisherConnection operation middleware
+func (siw *ServerInterfaceWrapper) DisconnectPrivatePublisherConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publisher_connection_id" -------------
+	var publisherConnectionId Identifier
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_connection_id", r.PathValue("publisher_connection_id"), &publisherConnectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_connection_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DisconnectPrivatePublisherConnection(w, r, publisherConnectionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReadyPrivatePublisherConnection operation middleware
+func (siw *ServerInterfaceWrapper) ReadyPrivatePublisherConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publisher_connection_id" -------------
+	var publisherConnectionId Identifier
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publisher_connection_id", r.PathValue("publisher_connection_id"), &publisherConnectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_connection_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadyPrivatePublisherConnection(w, r, publisherConnectionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ClaimPublisherConnection operation middleware
 func (siw *ServerInterfaceWrapper) ClaimPublisherConnection(w http.ResponseWriter, r *http.Request) {
@@ -2302,6 +3061,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/private-publisher-connections/{publisher_connection_id}/claim", wrapper.ClaimPrivatePublisherConnection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/private-publisher-connections/{publisher_connection_id}/ready", wrapper.ReadyPrivatePublisherConnection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/private-publisher-connections/{publisher_connection_id}/disconnect", wrapper.DisconnectPrivatePublisherConnection)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/relays/register", wrapper.RegisterRelay)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/relays/{relay_id}/renew", wrapper.RenewRelay)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/relays/{relay_id}/drain", wrapper.DrainRelay)

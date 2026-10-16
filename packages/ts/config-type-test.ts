@@ -13,7 +13,6 @@ export const config = defineConfig({
     allowIP: ["192.0.2.0/24"],
     limits: {
       http: { total: 100, concurrency: 5, rate: { count: 10, per: "1m", burst: 3 } },
-      tcp: { concurrency: 3 },
       traffic: {
         connections: 8,
         rate: 5,
@@ -53,12 +52,18 @@ export const config = defineConfig({
         tls: { mode: "postgres" },
       },
     },
-    cache: { protocol: "tcp", target: { type: "docker", container: "shop-cache", port: 6379 } },
+    cache: {
+      protocol: "tcp",
+      private: { name: "shared-cache" },
+      target: { type: "docker", container: "shop-cache", port: 6379 },
+    },
   },
   aliases: { review: { service: "web" } },
   webhooks: { payments: { service: "api", path: "/hooks/payments", provider: "stripe" } },
 });
+
 config.services.db.protocol satisfies "tcp";
+config.services.cache.private.name satisfies "shared-cache";
 config.services.web.http.paths["/api"] satisfies "api";
 
 export const factory = defineConfig(async ({ worktree, project, env, cwd }) => ({
@@ -106,13 +111,20 @@ export const addressFactory = defineConfig(({ worktree }) => ({
 export const asyncAddressFactory = defineConfig(async ({ worktree }) => ({
   tunnel: { allowIP: ["192.0.2.0/24"] },
   services: {
-    web: { target: { type: "address", address: 3000 }, http: { paths: { "/api": "api" } } },
+    web: {
+      target: { type: "address", address: 3000 },
+      http: { paths: { "/api": "api" } },
+    },
     api: { protocol: "http", target: { type: "app" }, tunnel: { name: worktree.label.id } },
     db: {
       protocol: "tcp",
       target: { type: "compose", service: "db", port: 5432 },
     },
-    cache: { protocol: "tcp", target: { type: "docker", container: "cache", port: 6379 } },
+    cache: {
+      protocol: "tcp",
+      private: { name: "cache" },
+      target: { type: "docker", container: "cache", port: 6379 },
+    },
   },
   aliases: { review: { service: "web" } },
   webhooks: { payments: { service: "api", path: "/hooks/payments", provider: "stripe" } },
@@ -131,7 +143,9 @@ asyncAddressFactoryResult.aliases.review.service satisfies "web";
 
 export const databasePublisher = {
   publisher: { type: "compose", service: "publisher" },
-  services: { db: { protocol: "tcp", target: { type: "address", address: 5432 } } },
+  services: {
+    db: { protocol: "tcp", target: { type: "address", address: 5432 } },
+  },
 } satisfies TnlConfig;
 defineConfig(databasePublisher);
 defineConfig(() => databasePublisher);
@@ -208,11 +222,19 @@ defineConfig({
   services: { db: { protocol: "postgres", target: { type: "address", address: 5432 } } },
 });
 defineConfig({
-  // @ts-expect-error private TLS requires an explicit handshake mode.
-  services: { db: { protocol: "tcp", target: { type: "address", address: 5432, tls: {} } } },
+  services: {
+    db: {
+      protocol: "tcp",
+      private: { name: "db" },
+      // @ts-expect-error private TLS requires an explicit handshake mode.
+      target: { type: "address", address: 5432, tls: {} },
+    },
+  },
 });
 defineConfig({
-  services: { db: { protocol: "tcp", target: { type: "address", address: 5432 } } },
+  services: {
+    db: { protocol: "tcp", private: { name: "db" }, target: { type: "address", address: 5432 } },
+  },
   // @ts-expect-error aliases can only select HTTP services.
   aliases: { review: { service: "db" } },
 });
@@ -220,7 +242,7 @@ defineConfig({
   services: {
     // @ts-expect-error HTTP mounts cannot select TCP services.
     web: { http: { paths: { "/db": "db" } } },
-    db: { protocol: "tcp", target: { type: "address", address: 5432 } },
+    db: { protocol: "tcp", private: { name: "db" }, target: { type: "address", address: 5432 } },
   },
 });
 // @ts-expect-error factory references retain configured service names.
@@ -235,7 +257,37 @@ defineConfig({ version: 1 });
 defineConfig({ tnld: { role: "relay" } });
 
 // the same non-fresh invalid values must fail file-shape, object, and factory checks.
-const tcpApp = { services: { db: { protocol: "tcp", target: { type: "app" } } } } as const;
+defineConfig({ services: { db: { protocol: "tcp", target: { type: "address", address: 5432 } } } });
+defineConfig({
+  services: {
+    db: { protocol: "tcp", private: {}, target: { type: "address", address: 5432 } },
+  },
+});
+defineConfig({
+  services: {
+    db: {
+      protocol: "tcp",
+      // @ts-expect-error explicit private saved names must be strings.
+      private: { name: 42 },
+      target: { type: "address", address: 5432 },
+    },
+  },
+});
+defineConfig({
+  services: {
+    db: {
+      protocol: "tcp",
+      private: { name: "db" },
+      // @ts-expect-error private TCP services cannot declare public tunnel settings.
+      tunnel: { name: "db" },
+      target: { type: "address", address: 5432 },
+    },
+  },
+});
+
+const tcpApp = {
+  services: { db: { protocol: "tcp", private: { name: "db" }, target: { type: "app" } } },
+} as const;
 // @ts-expect-error TCP services cannot select an app target.
 tcpApp satisfies TnlConfig;
 // @ts-expect-error TCP services cannot select an app target.
@@ -247,7 +299,12 @@ defineConfig(async () => tcpApp);
 
 const tcpHTTP = {
   services: {
-    db: { protocol: "tcp", target: { type: "address", address: 5432 }, http: { open: true } },
+    db: {
+      protocol: "tcp",
+      private: { name: "db" },
+      target: { type: "address", address: 5432 },
+      http: { open: true },
+    },
   },
 } as const;
 // @ts-expect-error HTTP settings cannot be applied to a TCP service.
@@ -259,7 +316,9 @@ defineConfig(() => tcpHTTP);
 // @ts-expect-error HTTP settings cannot be applied to a TCP service.
 defineConfig(async () => tcpHTTP);
 
-const missingTCPTarget = { services: { db: { protocol: "tcp" } } } as const;
+const missingTCPTarget = {
+  services: { db: { protocol: "tcp", private: { name: "db" } } },
+} as const;
 // @ts-expect-error a TCP service needs a private target.
 missingTCPTarget satisfies TnlConfig;
 // @ts-expect-error a TCP service needs a private target.
@@ -318,6 +377,7 @@ const mixedDocker = {
   services: {
     db: {
       protocol: "tcp",
+      private: { name: "db" },
       target: { type: "docker", container: "db", port: 3306, address: "db:3306" },
     },
   },
@@ -332,7 +392,9 @@ defineConfig(() => mixedDocker);
 defineConfig(async () => mixedDocker);
 
 const tcpAlias = {
-  services: { db: { protocol: "tcp", target: { type: "address", address: 5432 } } },
+  services: {
+    db: { protocol: "tcp", private: { name: "db" }, target: { type: "address", address: 5432 } },
+  },
   aliases: { review: { service: "db" } },
 } as const satisfies TnlConfig;
 // @ts-expect-error aliases must select an HTTP service.
@@ -343,7 +405,9 @@ defineConfig(() => tcpAlias);
 defineConfig(async () => tcpAlias);
 
 const tcpWebhook = {
-  services: { db: { protocol: "tcp", target: { type: "address", address: 5432 } } },
+  services: {
+    db: { protocol: "tcp", private: { name: "db" }, target: { type: "address", address: 5432 } },
+  },
   webhooks: { hook: { service: "db", path: "/hook", provider: "custom" } },
 } as const satisfies TnlConfig;
 // @ts-expect-error webhooks must select an HTTP service.
@@ -356,7 +420,7 @@ defineConfig(async () => tcpWebhook);
 const tcpMount = {
   services: {
     web: { http: { paths: { "/db": "db" } } },
-    db: { protocol: "tcp", target: { type: "address", address: 5432 } },
+    db: { protocol: "tcp", private: { name: "db" }, target: { type: "address", address: 5432 } },
   },
 } as const satisfies TnlConfig;
 // @ts-expect-error mounts must select another HTTP service.
@@ -369,7 +433,7 @@ defineConfig(async () => tcpMount);
 const tcpObjectMount = {
   services: {
     web: { http: { paths: { "/db": { service: "db" } } } },
-    db: { protocol: "tcp", target: { type: "address", address: 5432 } },
+    db: { protocol: "tcp", private: { name: "db" }, target: { type: "address", address: 5432 } },
   },
 } as const satisfies TnlConfig;
 // @ts-expect-error object mounts must select another HTTP service.

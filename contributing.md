@@ -123,14 +123,17 @@ future compatible migrations may advance that version. The server's PostgreSQL
 baseline requires a fresh database, and control checks both its exact migration
 version and baseline identity before serving.
 
-The fresh public URL contract uses `http`, `tcp`, and `ssh`. tcp visitors start
-TLS on the shared hostname-based 443 listener; ssh uses an assigned port.
-`target.tls.mode` selects `direct`, `postgres`, or `mysql` for a private target;
-omitting `tls` leaves a Docker or Compose tcp target plaintext. A tcp target's
-TLS configuration verifies its server name against the target certificate and
-may add a project-relative CA file. ssh publish runs need two ready publisher
-connections, DNS, and an assigned port, but no visitor certificate plan or
-ACME order. This baseline does not import old database-specific public URLs.
+The fresh public URL contract uses `http` and `ssh`. ssh uses an assigned port;
+its publish runs need two ready publisher connections, DNS, and that port, but
+no visitor certificate plan or ACME order. A `tcp` service instead uses its
+project service key as the saved private name, with optional `private.name`
+override, and is selected by `tnl connect` through the authenticated
+control API. It has no public URL, service-specific DNS, WebPKI certificate or
+public port. `target.tls.mode` selects `direct`, `postgres`, or `mysql` for a
+private target; omitting `tls` leaves a Docker or Compose tcp target plaintext.
+Target TLS verifies the target server name and may add a project-relative CA
+file. See [private service boundaries](docs/maintainers/private-services.md).
+This baseline does not import old database-specific public URLs.
 
 | Source                                                                                    | Generated output                                                                          |
 | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
