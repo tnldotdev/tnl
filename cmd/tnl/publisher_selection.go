@@ -33,7 +33,7 @@ func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg p
 		if checkErr != nil {
 			return controlv1.PublicURL{}, checkErr
 		}
-		if route.Target == "" && slices.Equal(prefixes, cfg.AllowedIPPrefixes) {
+		if route.Target == "" && configuredURLAccessMatches(route, prefixes, cfg) {
 			return route, nil
 		}
 	} else if !errors.Is(err, controlclient.ErrNotFound) {
@@ -55,6 +55,10 @@ func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg p
 			protocol = "http"
 		}
 		body := controlv1.CreatePublicURLRequest{TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: cfg.Hostname, PublicUrlScope: services.publicURLScope, Purpose: controlv1.App, ServiceProtocol: &protocol, AllowedIpPrefixes: &cfg.AllowedIPPrefixes}
+		if cfg.AccessMode != "" {
+			mode := cfg.AccessMode
+			body.AccessMode = &mode
+		}
 		if services.publicURLScope == controlv1.Member && services.membershipID != "" {
 			body.MembershipId = &services.membershipID
 		}
@@ -67,10 +71,29 @@ func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg p
 	if err != nil {
 		return controlv1.PublicURL{}, err
 	}
-	if route.Target != "" || !slices.Equal(prefixes, cfg.AllowedIPPrefixes) {
-		return services.routes.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{Target: "", AllowedIpPrefixes: slices.Clone(cfg.AllowedIPPrefixes)})
+	if cfg.AccessMode != "" && (route.AccessMode != cfg.AccessMode || !slices.Equal(prefixes, cfg.AllowedIPPrefixes)) {
+		route, err = services.routes.ReplaceVisitorAccess(ctx, route.Id, controlv1.ReplaceVisitorAccessRequest{
+			Mode: cfg.AccessMode, Ip: append([]string{}, cfg.AllowedIPPrefixes...), ExpectedRevision: route.MutationRevision,
+		})
+		if err != nil {
+			return controlv1.PublicURL{}, err
+		}
+		prefixes = cfg.AllowedIPPrefixes
+	}
+	if route.Target != "" || cfg.AccessMode == "" && cfg.AllowedIPPrefixes != nil && !slices.Equal(prefixes, cfg.AllowedIPPrefixes) {
+		if cfg.AccessMode == "" && cfg.AllowedIPPrefixes != nil {
+			prefixes = cfg.AllowedIPPrefixes
+		}
+		return services.routes.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{Target: "", AllowedIpPrefixes: slices.Clone(prefixes)})
 	}
 	return route, nil
+}
+
+func configuredURLAccessMatches(route controlv1.PublicURL, prefixes []string, cfg publisher.Config) bool {
+	if cfg.AccessMode != "" {
+		return route.AccessMode == cfg.AccessMode && slices.Equal(prefixes, cfg.AllowedIPPrefixes)
+	}
+	return cfg.AllowedIPPrefixes == nil || slices.Equal(prefixes, cfg.AllowedIPPrefixes)
 }
 
 func checkedConfiguredURL(route controlv1.PublicURL, services publisherServices, cfg publisher.Config) ([]string, error) {

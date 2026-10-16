@@ -64,14 +64,6 @@ func browserCookie(response http.ResponseWriter, secret string, expires time.Tim
 	})
 }
 
-func (a *browserAccess) check(request *http.Request) (controlv1.BrowserAccessResponse, bool) {
-	result, err := a.checkCurrent(request)
-	// callers that still gate on team access must not treat mere membership as
-	// permission. final admission uses decision.VisitAllowed directly.
-	result.TeamMember = result.TeamMember && result.VisitAllowed
-	return result, err == nil
-}
-
 func (a *browserAccess) checkCurrent(request *http.Request) (controlv1.BrowserAccessResponse, error) {
 	cookie, err := request.Cookie(browserAccessCookieName)
 	if err != nil {

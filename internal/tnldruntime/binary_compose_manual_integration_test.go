@@ -46,7 +46,7 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 	if err := os.WriteFile(base, []byte(configuration), 0600); err != nil {
 		t.Fatal(err)
 	}
-	projectConfig := "version: 1\ntnl:\n  server: https://control.127.0.0.1.nip.io\n  services:\n    web:\n      target: {type: address, address: 'http://web:3000'}\n      tunnel: {name: compose-web, allow_all_ips: true}\n    db:\n      protocol: postgres\n      target: {type: address, address: 'db:5432'}\n      tunnel: {name: compose-db, allow_all_ips: true}\n"
+	projectConfig := "version: 1\ntnl:\n  server: https://control.127.0.0.1.nip.io\n  services:\n    web:\n      target: {type: address, address: 'http://web:3000'}\n      tunnel: {name: compose-web, access: anonymous}\n    db:\n      protocol: postgres\n      target: {type: address, address: 'db:5432'}\n      tunnel: {name: compose-db, access: anonymous}\n"
 	if err := os.WriteFile(filepath.Join(root, "tnl.yml"), []byte(projectConfig), 0600); err != nil {
 		t.Fatal(err)
 	}
