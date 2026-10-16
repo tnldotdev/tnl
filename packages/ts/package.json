@@ -16,7 +16,7 @@
   "bugs": {
     "url": "https://github.com/tnldotdev/tnl/issues"
   },
-  "license": "MIT",
+  "license": "BSD-3-Clause",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tnldotdev/tnl.git",

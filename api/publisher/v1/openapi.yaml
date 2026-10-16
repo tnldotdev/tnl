@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: tnl publisher API
   version: 1.0.0
-  license: { name: MIT, identifier: MIT }
+  license: { name: BSD-3-Clause, identifier: BSD-3-Clause }
   description: >-
     Same-origin browser feedback endpoints served by the local publisher on a
     public URL. The publisher supplies the preview, service, public URL, publish
