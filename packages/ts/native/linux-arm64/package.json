@@ -2,7 +2,7 @@
   "name": "@tnldotdev/tnl-linux-arm64",
   "version": "0.0.0-development",
   "description": "The Linux arm64 binary for tnl.",
-  "license": "MIT",
+  "license": "BSD-3-Clause",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tnldotdev/tnl.git",

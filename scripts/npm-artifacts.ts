@@ -22,6 +22,7 @@ export type PackedPackage = z.infer<typeof packedPackageSchema>;
 export const packageManifestSchema = z.looseObject({
   name: z.string(),
   version: z.string(),
+  license: z.literal("BSD-3-Clause"),
   bin: z.optional(z.record(z.string(), z.string())),
   cpu: z.optional(z.array(z.string())),
   exports: z.optional(z.record(z.string(), z.unknown())),

@@ -431,11 +431,11 @@ jobs:
           test "$(docker run --rm tnl:ci version)" = "tnld ci (ci)"
           test "$(docker run --rm --entrypoint tnl tnl:ci --no-telemetry version)" = "tnl ci (ci)"
           docker run --rm --entrypoint tnl tnl:ci status --state-dir /state --all > /dev/null
-          test "$(docker image inspect tnl:ci --format '{{ index .Config.Labels "org.opencontainers.image.licenses" }}')" = MIT
+          test "$(docker image inspect tnl:ci --format '{{ index .Config.Labels "org.opencontainers.image.licenses" }}')" = BSD-3-Clause
           container="$(docker create tnl:ci)"
           trap 'docker rm "$container" >/dev/null' EXIT
           docker cp "$container:/licenses/tnl/LICENSE" "$RUNNER_TEMP/LICENSE"
-          grep -q '^MIT License$' "$RUNNER_TEMP/LICENSE"
+          grep -q '^BSD 3-Clause License$' "$RUNNER_TEMP/LICENSE"
 
       - name: Build multi-platform image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
