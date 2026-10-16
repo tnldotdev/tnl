@@ -5,15 +5,13 @@ WHERE run.id = sqlc.arg(publish_run_id)
   AND run.public_url_id = sqlc.arg(public_url_id)
   AND run.publish_run_number = sqlc.arg(publish_run_number)
   AND run.state = 'starting'
-  AND EXISTS (
-      SELECT 1 FROM control.preview_public_urls AS membership
-      JOIN control.previews AS preview ON preview.id = membership.preview_id
-      JOIN control.public_urls AS url ON url.id = membership.public_url_id
-      WHERE membership.preview_id = sqlc.arg(preview_id)
-        AND membership.public_url_id = run.public_url_id
-        AND preview.created_by_identity_id = run.acting_identity_id
-        AND preview.demo_publish_run_id IS NULL AND url.service_protocol = 'http' AND url.purpose = 'app'
-  )
+  AND EXISTS (SELECT 1 FROM control.public_urls AS url WHERE url.id = run.public_url_id
+      AND url.service_protocol = 'http' AND url.purpose IN ('app', 'alias', 'demo')
+      AND (sqlc.arg(preview_id)::text = '' OR (url.purpose = 'app' AND EXISTS (
+          SELECT 1 FROM control.preview_public_urls AS membership
+          JOIN control.previews AS preview ON preview.id = membership.preview_id
+          WHERE membership.preview_id = sqlc.arg(preview_id) AND membership.public_url_id = url.id
+            AND preview.created_by_identity_id = run.acting_identity_id AND preview.demo_publish_run_id IS NULL))))
 RETURNING run.id;
 
 -- name: GetActiveShareForPublicURL :one
@@ -23,7 +21,8 @@ JOIN control.share_public_urls AS included ON included.share_id = share.id
 WHERE share.id = sqlc.arg(share_id)
   AND included.public_url_id = sqlc.arg(public_url_id)
   AND share.revoked_at IS NULL
-  AND share.expires_at > sqlc.arg(now);
+  AND share.expires_at > sqlc.arg(now)
+  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)));
 
 -- name: ListActiveSharesForPublicURL :many
 SELECT share.id, share.secret_digest, share.expires_at
@@ -32,13 +31,15 @@ JOIN control.share_public_urls AS included ON included.share_id = share.id
 WHERE included.public_url_id = sqlc.arg(public_url_id)
   AND share.revoked_at IS NULL
   AND share.expires_at > sqlc.arg(now)
+  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)))
 ORDER BY share.id LIMIT 256;
 
 -- name: CountActiveSharesForPublicURL :one
 SELECT count(*)::bigint FROM control.shares AS share
 JOIN control.share_public_urls AS included ON included.share_id = share.id
 WHERE included.public_url_id = sqlc.arg(public_url_id)
-  AND share.revoked_at IS NULL AND share.expires_at > sqlc.arg(now);
+  AND share.revoked_at IS NULL AND share.expires_at > sqlc.arg(now)
+  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)));
 
 -- name: ListActiveShareCookiesForPublicURL :many
 SELECT cookie.share_id, cookie.token_digest, cookie.expires_at
@@ -48,6 +49,7 @@ WHERE cookie.public_url_id = sqlc.arg(public_url_id)
   AND cookie.expires_at > sqlc.arg(now)
   AND share.revoked_at IS NULL
   AND share.expires_at > sqlc.arg(now)
+  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)))
 ORDER BY cookie.created_at DESC LIMIT 2048;
 
 -- name: CountActiveShareCookiesForPublicURL :one
@@ -55,7 +57,8 @@ SELECT count(*)::bigint FROM control.share_cookies AS cookie
 JOIN control.shares AS share ON share.id = cookie.share_id
 WHERE cookie.public_url_id = sqlc.arg(public_url_id)
   AND cookie.expires_at > sqlc.arg(now)
-  AND share.revoked_at IS NULL AND share.expires_at > sqlc.arg(now);
+  AND share.revoked_at IS NULL AND share.expires_at > sqlc.arg(now)
+  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)));
 
 -- name: ListReadyShareHostnames :many
 SELECT url.id AS public_url_id, url.canonical_hostname
@@ -63,8 +66,8 @@ FROM control.share_public_urls AS included
 JOIN control.public_urls AS url ON url.id = included.public_url_id
 JOIN control.publish_runs AS run ON run.public_url_id = url.id
 WHERE included.share_id = sqlc.arg(share_id)
-   AND url.lifecycle_state = 'enabled'
-   AND url.service_protocol = 'http' AND url.purpose = 'app'
+  AND url.lifecycle_state = 'enabled'
+  AND url.service_protocol = 'http' AND url.purpose IN ('app', 'alias', 'demo')
   AND run.state = 'ready'
   AND run.publisher_expires_at > sqlc.arg(now)
   AND run.share_capable = true
@@ -80,6 +83,7 @@ JOIN control.share_public_urls AS included
 WHERE share.id = sqlc.arg(share_id)
   AND share.revoked_at IS NULL
   AND share.expires_at > sqlc.arg(created_at)
+  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(created_at)))
 RETURNING token_digest;
 
 -- name: InsertShareHandoff :one
@@ -92,6 +96,7 @@ JOIN control.share_public_urls AS included
 WHERE share.id = sqlc.arg(share_id)
   AND share.revoked_at IS NULL
   AND share.expires_at > sqlc.arg(created_at)
+  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(created_at)))
 RETURNING token_digest;
 
 -- name: ConsumeShareHandoff :one
@@ -105,12 +110,13 @@ WHERE handoff.token_digest = sqlc.arg(token_digest)
   AND share.id = handoff.share_id
   AND share.revoked_at IS NULL
   AND share.expires_at > sqlc.arg(now)
+  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)))
 RETURNING handoff.share_id, handoff.redirect_url, handoff.bridge;
 
 -- name: GetShareCapablePublishRun :one
 SELECT run.id
 FROM control.publish_runs AS run
-JOIN control.public_urls AS url ON url.id = run.public_url_id AND url.service_protocol = 'http' AND url.purpose = 'app'
+JOIN control.public_urls AS url ON url.id = run.public_url_id AND url.service_protocol = 'http' AND url.purpose IN ('app', 'alias', 'demo')
 WHERE run.id = sqlc.arg(publish_run_id)
   AND run.public_url_id = sqlc.arg(public_url_id)
   AND run.publish_run_number = sqlc.arg(publish_run_number)

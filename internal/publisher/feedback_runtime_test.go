@@ -129,7 +129,7 @@ func TestFeedbackResolveAndReopenUsePreviewAccess(t *testing.T) {
 			}
 			response := httptest.NewRecorder()
 			runtime.handle(response, request, !allowedIP)
-			if response.Code != http.StatusOK || string(client.event.Type) != kind || client.event.Access.AllowedIp != allowedIP || client.event.SourceState != nil {
+			if response.Code != http.StatusOK || string(client.event.Type) != kind || client.event.Access.VisitAllowed != allowedIP || client.event.SourceState != nil {
 				t.Fatalf("%s through preview access = %d, %+v", kind, response.Code, client.event)
 			}
 		}
@@ -149,7 +149,7 @@ func TestFeedbackListFiltersKeepPublisherScope(t *testing.T) {
 		request := httptest.NewRequest(http.MethodGet, path+"&preview_id=other&public_url_id=other", nil)
 		response := httptest.NewRecorder()
 		runtime.handle(response, request, false)
-		if response.Code != http.StatusOK || client.page.PreviewId != runtime.previewID || client.page.PublishRunNumber != 2 || !client.page.Access.AllowedIp || client.page.State == nil || *client.page.State != controlv1.Resolved {
+		if response.Code != http.StatusOK || client.page.PreviewId != runtime.previewID || client.page.PublishRunNumber != 2 || !client.page.Access.VisitAllowed || client.page.State == nil || *client.page.State != controlv1.Resolved {
 			t.Fatalf("feedback list escaped publisher scope: %d, %+v", response.Code, client.page)
 		}
 		if strings.Contains(path, "path=") {
@@ -193,7 +193,7 @@ func TestFeedbackPublisherContractKeepsSourceAndScopeOutOfBrowserInput(t *testin
 	if err != nil || created.JSON200 == nil || created.JSON200.Id != thread.Id || created.JSON200.Report.Text != input.Text {
 		t.Fatalf("browser report contract failed: %v", err)
 	}
-	if control.create.PreviewId != runtime.previewID || control.create.PublishRunNumber != 2 || control.create.Service != "web" || !control.create.Access.AllowedIp ||
+	if control.create.PreviewId != runtime.previewID || control.create.PublishRunNumber != 2 || control.create.Service != "web" || !control.create.Access.VisitAllowed ||
 		control.create.SourceAtReport.Complete || control.create.SourceAtReport.HeadCommit != "" || len(control.create.SourceAtReport.ChangedFiles) != 0 {
 		t.Fatalf("publisher did not provide report scope and demo source state: %+v", control.create)
 	}

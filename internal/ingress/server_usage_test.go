@@ -170,7 +170,7 @@ type gatedDeniedBackend struct {
 	*gatedOpenBackend
 }
 
-func (b gatedDeniedBackend) OpenDenied(ctx context.Context, id string) (net.Conn, error) {
+func (b gatedDeniedBackend) OpenPending(ctx context.Context, id string) (net.Conn, error) {
 	return b.Open(ctx, id)
 }
 

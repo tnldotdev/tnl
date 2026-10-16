@@ -20,7 +20,7 @@ type connectionKind uint8
 
 const (
 	visitorConnection connectionKind = iota
-	deniedConnection
+	pendingConnection
 	challengeConnection
 	controlConnection
 	relayConnection
@@ -61,7 +61,7 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 	switch kind {
 	case visitorConnection:
 		limit, resource = s.config.MaxConnections, "public_connections"
-	case deniedConnection:
+	case pendingConnection:
 		limit, resource = s.config.Pending.Connections, "denied_connections"
 		if s.byDenied[key] >= s.config.Pending.PublicURLConnections {
 			return nil, "denied_public_url_connections"
@@ -83,7 +83,7 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 	s.reportAdmittedLocked()
 	if kind == visitorConnection {
 		s.byPublicURL[key]++
-	} else if kind == deniedConnection {
+	} else if kind == pendingConnection {
 		s.byDenied[key]++
 	} else if kind == challengeConnection {
 		s.byChallenge[key]++
@@ -96,7 +96,7 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 		var counts map[string]int
 		if kind == visitorConnection {
 			counts = s.byPublicURL
-		} else if kind == deniedConnection {
+		} else if kind == pendingConnection {
 			counts = s.byDenied
 		} else if kind == challengeConnection {
 			counts = s.byChallenge

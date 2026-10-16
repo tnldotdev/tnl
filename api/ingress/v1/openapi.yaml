@@ -386,6 +386,7 @@ components:
         - publish_run_number
         - canonical_hostname
         - policy_revision
+        - access_mode
         - ip_policy
         - allowed_ip_hashes
         - public_url_expires_at
@@ -416,6 +417,9 @@ components:
           type: integer
           format: int64
           minimum: 1
+        access_mode:
+          type: string
+          enum: [restricted, anonymous]
         ip_policy:
           type: string
           enum: [allow_all, hashed_allowlist]

@@ -95,9 +95,9 @@ type VisitorStreamHeader struct {
 	PublishRunNumber             uint64     `json:"publish_run_number"`
 	PublisherConnectionID        string     `json:"publisher_connection_id"`
 	ConnectionAssignmentRevision uint64     `json:"connection_assignment_revision"`
-	// IPPolicyDenied is trusted ingress state: this visitor has only bounded
+	// AccessPending is trusted ingress state: this visitor has only bounded
 	// pending authorization capacity until an authenticated promotion is accepted.
-	IPPolicyDenied bool `json:"ip_policy_denied,omitempty"`
+	AccessPending bool `json:"access_pending,omitempty"`
 }
 
 // InternalForwardingHeader identifies one visitor connection sent from ingress to a connected relay.
@@ -117,7 +117,7 @@ type InternalForwardingHeader struct {
 	RelayLeaseRevision           uint64     `json:"relay_lease_revision"`
 	PublicUrlExpiresAt           time.Time  `json:"public_url_expires_at"`
 	LeaseExpiresAt               time.Time  `json:"lease_expires_at"`
-	IPPolicyDenied               bool       `json:"ip_policy_denied,omitempty"`
+	AccessPending                bool       `json:"access_pending,omitempty"`
 }
 
 type StreamResponseType string

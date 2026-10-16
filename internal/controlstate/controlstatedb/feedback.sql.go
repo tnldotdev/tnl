@@ -272,7 +272,7 @@ func (q *Queries) GetFeedbackEventByActorKey(ctx context.Context, arg GetFeedbac
 }
 
 const getFeedbackPublicURL = `-- name: GetFeedbackPublicURL :one
-SELECT id, team_id, domain_id, ingress_pool_id, membership_id, created_by_identity_id, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target, namespace, purpose, service_protocol, public_port, public_url_scope, policy_revision, ip_policy, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at FROM control.public_urls WHERE id = $1
+SELECT id, team_id, domain_id, ingress_pool_id, membership_id, created_by_identity_id, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target, namespace, purpose, service_protocol, public_port, public_url_scope, policy_revision, access_mode, ip_policy, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at FROM control.public_urls WHERE id = $1
 `
 
 func (q *Queries) GetFeedbackPublicURL(ctx context.Context, id string) (ControlPublicUrl, error) {
@@ -296,6 +296,7 @@ func (q *Queries) GetFeedbackPublicURL(ctx context.Context, id string) (ControlP
 		&i.PublicPort,
 		&i.PublicURLScope,
 		&i.PolicyRevision,
+		&i.AccessMode,
 		&i.IpPolicy,
 		&i.AllowedIpPolicyCiphertext,
 		&i.AllowedIpPolicyStorageKeyID,
@@ -727,7 +728,7 @@ func (q *Queries) ReserveFeedbackEventCursor(ctx context.Context) (int64, error)
 }
 
 const reviewerShareCookieValid = `-- name: ReviewerShareCookieValid :one
-SELECT share.id FROM control.shares AS share
+SELECT LEAST(share.expires_at, cookie.expires_at)::timestamptz FROM control.shares AS share
 JOIN control.share_cookies AS cookie ON cookie.share_id = share.id
 JOIN control.share_public_urls AS included ON included.share_id = share.id
 WHERE share.id = $1
@@ -737,6 +738,7 @@ WHERE share.id = $1
   AND cookie.expires_at > $4
   AND share.expires_at > $4
   AND share.revoked_at IS NULL
+  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, $4))
 `
 
 type ReviewerShareCookieValidParams struct {
@@ -746,16 +748,16 @@ type ReviewerShareCookieValidParams struct {
 	Now         pgtype.Timestamptz
 }
 
-func (q *Queries) ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (string, error) {
+func (q *Queries) ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (pgtype.Timestamptz, error) {
 	row := q.db.QueryRow(ctx, reviewerShareCookieValid,
 		arg.ShareID,
 		arg.PublicURLID,
 		arg.TokenDigest,
 		arg.Now,
 	)
-	var id string
-	err := row.Scan(&id)
-	return id, err
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const updateFeedbackThreadState = `-- name: UpdateFeedbackThreadState :one

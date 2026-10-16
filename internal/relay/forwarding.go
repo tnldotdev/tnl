@@ -155,7 +155,7 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)
 	}
 	openVisitor := connection.OpenVisitor
-	if incoming.Header.IPPolicyDenied {
+	if incoming.Header.AccessPending {
 		var session *tunnel.Session
 		if len(ingressSessions) > 0 {
 			session = ingressSessions[0]
@@ -170,7 +170,7 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 			return incoming.Reject(tunnelv1.StaleConnectionAssignment)
 		}
 		defer remove()
-		openVisitor = connection.OpenDeniedVisitor
+		openVisitor = connection.OpenPendingVisitor
 	}
 	publisher, err := openVisitor(ctx, incoming.Header.VisitorConnectionID)
 	if err != nil {

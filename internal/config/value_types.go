@@ -42,7 +42,7 @@ func validateYAMLValueTypes(node *yaml.Node, typ reflect.Type, active map[*yaml.
 		}
 		return nil
 	}
-	if typ == reflect.TypeOf(PathMount{}) && node.Tag == "!!str" {
+	if (typ == reflect.TypeOf(PathMount{}) || typ == reflect.TypeOf(Access{})) && node.Tag == "!!str" {
 		return nil
 	}
 	switch typ.Kind() {

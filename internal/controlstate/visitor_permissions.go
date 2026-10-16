@@ -15,38 +15,61 @@ import (
 
 type HTTPVisitorRequest struct {
 	SourceIP, BrowserCookieSecret, ShareID string
-	ShareCookieSecret                      []byte
+	ShareCookieSecret, ShareSecret         []byte
 }
 
 func (d *Database) httpVisitorDecision(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, input HTTPVisitorRequest, now time.Time) (VisitorPermission, error) {
 	result := VisitorPermission{}
+	ip, ipExpires, err := d.visitorIPAllowed(ctx, q, url, input.SourceIP, now)
+	if err != nil || !ip {
+		return result, err
+	}
+	result.ExpiresAt = ipExpires
 	if input.BrowserCookieSecret != "" {
-		var err error
-		result, err = d.browserPermission(ctx, q, url.ID, input.BrowserCookieSecret, now)
-		if err != nil {
-			return result, err
+		verified, verifyErr := d.browserPermission(ctx, q, url.ID, input.BrowserCookieSecret, now)
+		if verifyErr == nil {
+			result = verified
+			if ipExpires != nil {
+				result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, *ipExpires)
+			}
+		} else if !errors.Is(verifyErr, ErrVisitorSignIn) {
+			return result, verifyErr
 		}
+	}
+	if url.AccessMode == string(VisitorAccessAnonymous) {
+		result.VisitAllowed, result.Reason = true, "anonymous"
+		return result, nil
 	}
 	if result.VisitAllowed {
 		return result, nil
 	}
-	ip, err := d.visitorIPAllowed(ctx, q, url, input.SourceIP, now)
-	if err != nil {
-		return result, err
+	if len(input.ShareSecret) == 32 {
+		share, lookupErr := q.GetActiveShareForPublicURL(ctx, controlstatedb.GetActiveShareForPublicURLParams{
+			ShareID: input.ShareID, PublicURLID: url.ID, Now: timestamptz(now),
+		})
+		if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
+			return result, lookupErr
+		}
+		if lookupErr == nil {
+			digest := sha256.Sum256(input.ShareSecret)
+			if subtle.ConstantTimeCompare(digest[:], share.SecretDigest) == 1 {
+				result.VisitAllowed, result.Reason = true, "anonymous_share"
+				result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, share.ExpiresAt.Time)
+				return result, nil
+			}
+		}
 	}
-	if ip {
-		result.VisitAllowed = true
-		result.Reason = "allowed_ip"
-	}
-	if !result.VisitAllowed && len(input.ShareCookieSecret) == 32 && url.Purpose == "app" {
+	if !result.VisitAllowed && len(input.ShareCookieSecret) == 32 {
 		digest := sha256.Sum256(input.ShareCookieSecret)
-		_, err = q.ReviewerShareCookieValid(ctx, controlstatedb.ReviewerShareCookieValidParams{ShareID: input.ShareID, PublicURLID: url.ID, TokenDigest: digest[:], Now: timestamptz(now)})
+		expires, lookupErr := q.ReviewerShareCookieValid(ctx, controlstatedb.ReviewerShareCookieValidParams{ShareID: input.ShareID, PublicURLID: url.ID, TokenDigest: digest[:], Now: timestamptz(now)})
+		err = lookupErr
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return result, err
 		}
 		if err == nil {
 			result.VisitAllowed = true
 			result.Reason = "anonymous_share"
+			result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, expires.Time)
 		}
 	}
 	return result, nil
@@ -66,14 +89,26 @@ func (d *Database) HTTPVisitorPermission(ctx context.Context, auth PublishRunAut
 	if url.ServiceProtocol != "http" {
 		return result, ErrPreviewAccess
 	}
-	if _, err = d.lockAuthenticatedRun(ctx, q, auth, now); err != nil {
+	run, err := d.lockAuthenticatedRun(ctx, q, auth, now)
+	if err != nil {
 		return result, err
 	}
 	result, err = d.httpVisitorDecision(ctx, q, url, input, now)
 	if err != nil {
 		return result, err
 	}
+	if result.VisitAllowed {
+		result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, run.PublisherExpiresAt.Time)
+		result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, now.Add(2*time.Minute))
+	}
 	return result, tx.Commit(ctx)
+}
+
+func earlierVisitorExpiry(current *time.Time, candidate time.Time) *time.Time {
+	if candidate.IsZero() || current != nil && !candidate.Before(*current) {
+		return current
+	}
+	return &candidate
 }
 
 var ErrVisitorSignIn = errors.New("visitor sign-in required")
@@ -156,35 +191,39 @@ func identityPermission(ctx context.Context, q *controlstatedb.Queries, urlID, i
 
 // currentVisitorSession checks the local control session inside the decision
 // transaction. authority HTTP refresh must finish before this boundary.
-func currentVisitorSession(ctx context.Context, q *controlstatedb.Queries, access string, identityID, parentID string, now time.Time) error {
+func currentVisitorSession(ctx context.Context, q *controlstatedb.Queries, access string, identityID, parentID string, now time.Time) (time.Time, error) {
 	id, digest, err := credentials.ParseAccessToken(credentials.AccessToken(access))
 	if err != nil {
-		return ErrVisitorSignIn
+		return time.Time{}, ErrVisitorSignIn
 	}
 	session, err := q.LockVisitorControlSession(ctx, id.String())
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrVisitorSignIn
+		return time.Time{}, ErrVisitorSignIn
 	}
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
 	if session.IdentityID != identityID || session.RevokedAt.Valid || !session.AccessExpiresAt.Time.After(now) ||
 		subtle.ConstantTimeCompare(session.AccessTokenDigest, digest[:]) != 1 {
-		return ErrVisitorSignIn
+		return time.Time{}, ErrVisitorSignIn
 	}
+	expires := session.AccessExpiresAt.Time
 	if parentID != "" {
 		parent, err := q.GetVisitorParentSession(ctx, parentID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrVisitorSignIn
+			return time.Time{}, ErrVisitorSignIn
 		}
 		if err != nil {
-			return err
+			return time.Time{}, err
 		}
 		if parent.IdentityID != identityID || parent.RevokedAt.Valid || !parent.RefreshExpiresAt.Time.After(now) {
-			return ErrVisitorSignIn
+			return time.Time{}, ErrVisitorSignIn
+		}
+		if parent.RefreshExpiresAt.Time.Before(expires) {
+			expires = parent.RefreshExpiresAt.Time
 		}
 	}
-	return nil
+	return expires, nil
 }
 
 func (d *Database) browserPermission(ctx context.Context, q *controlstatedb.Queries, urlID, token string, now time.Time) (VisitorPermission, error) {
@@ -208,10 +247,17 @@ func (d *Database) browserPermission(ctx context.Context, q *controlstatedb.Quer
 	if err != nil {
 		return VisitorPermission{}, err
 	}
-	if err := currentVisitorSession(ctx, q, string(access), row.IdentityID, row.ParentControlSessionID.String, now); err != nil {
+	sessionExpires, err := currentVisitorSession(ctx, q, string(access), row.IdentityID, row.ParentControlSessionID.String, now)
+	if err != nil {
 		return VisitorPermission{}, err
 	}
-	return identityPermission(ctx, q, urlID, row.IdentityID, row.PreviewID.String, now)
+	result, err := identityPermission(ctx, q, urlID, row.IdentityID, row.PreviewID.String, now)
+	if err != nil {
+		return result, err
+	}
+	result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, sessionExpires)
+	result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, row.ExpiresAt.Time)
+	return result, nil
 }
 
 // BrowserAuthorizationForRun is the final decision after any identity-provider
@@ -227,7 +273,7 @@ func (d *Database) BrowserAuthorizationForRun(ctx context.Context, auth PublishR
 	if err != nil {
 		return result, err
 	}
-	if url.Purpose != "app" || url.ServiceProtocol != "http" {
+	if url.Purpose != "app" && url.Purpose != "alias" || url.ServiceProtocol != "http" {
 		return result, ErrPreviewAccess
 	}
 	if _, err = d.lockAuthenticatedRun(ctx, q, auth, now); err != nil {
@@ -292,17 +338,28 @@ func (d *Database) DatabaseVisitorPermission(ctx context.Context, auth PublishRu
 	if url.Purpose != "app" || !databaseProtocol(url.ServiceProtocol) {
 		return result, ErrPreviewAccess
 	}
-	if _, err = d.lockAuthenticatedRun(ctx, q, auth, now); err != nil {
+	run, err := d.lockAuthenticatedRun(ctx, q, auth, now)
+	if err != nil {
 		return result, err
 	}
-	if identityID == "" {
-		result.VisitAllowed, err = d.visitorIPAllowed(ctx, q, url, sourceIP, now)
-		result.Reason = "allowed_ip"
-	} else {
+	ip, ipExpires, err := d.visitorIPAllowed(ctx, q, url, sourceIP, now)
+	if err != nil || !ip {
+		return result, err
+	}
+	if url.AccessMode == string(VisitorAccessAnonymous) {
+		result.VisitAllowed, result.Reason = true, "anonymous"
+	} else if identityID != "" {
 		result, err = identityPermission(ctx, q, url.ID, identityID, "", now)
 	}
 	if err != nil {
 		return result, err
+	}
+	if result.VisitAllowed {
+		if ipExpires != nil {
+			result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, *ipExpires)
+		}
+		result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, run.PublisherExpiresAt.Time)
+		result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, now.Add(2*time.Minute))
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return VisitorPermission{}, err
@@ -342,7 +399,7 @@ func (d *Database) IssueVisitorCertificateScope(ctx context.Context, access cred
 		}
 		return nil, expires, err
 	}
-	if err = currentVisitorSession(ctx, q, access.String(), session.IdentityID, "", now); err != nil {
+	if _, err = currentVisitorSession(ctx, q, access.String(), session.IdentityID, "", now); err != nil {
 		return nil, expires, err
 	}
 	permission, err := identityPermission(ctx, q, urlID, session.IdentityID, "", now)

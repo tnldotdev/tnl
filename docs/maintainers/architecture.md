@@ -26,25 +26,26 @@ The arrows show responsibility, not one permanent network connection. Control
 coordinates the system. Visitor bytes travel through ingress and one connected
 relay to the publisher.
 
-| Component                  | Responsibility                                                                          |
-| -------------------------- | --------------------------------------------------------------------------------------- |
-| `tnl` client and publisher | Tunnel lifecycle, publisher connections, visitor TLS termination, and target forwarding |
-| Control                    | Durable state, authorization, placement, certificates, administration, and coordination |
-| Ingress                    | Visitor acceptance, IP policy, relay selection, usage, and one-time forwarding          |
-| Relay                      | Publisher connections and visitor streams for locally connected publishers              |
-| PostgreSQL                 | Authoritative durable server state                                                      |
+| Component                  | Responsibility                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------ |
+| `tnl` client and publisher | Tunnel lifecycle, publisher connections, visitor TLS termination, and target forwarding    |
+| Control                    | Durable state, authorization, placement, certificates, administration, and coordination    |
+| Ingress                    | Visitor acceptance, optional IP filtering, relay selection, usage, and one-time forwarding |
+| Relay                      | Publisher connections and visitor streams for locally connected publishers                 |
+| PostgreSQL                 | Authoritative durable server state                                                         |
 
 Only control connects to PostgreSQL. Ingress receives a short-lived routing
 table. Each relay knows its own lease and the publishers connected to it.
 
-Control encrypts saved signed-in IP allowlists and request digests with
+Control encrypts saved IP filters and request digests with
 `TNLD_STORAGE_KEY`. Guest trials keep a keyed digest of their issuing IP,
 never its address; a guest credential expires 72 hours after issuance. For each
 public URL, control derives a purpose-specific verifier from the storage key
 and sends it only over the authenticated ingress API. PostgreSQL routing
 events contain hashed IP prefixes, not the verifier or the original CIDRs.
 Ingress masks a visitor address to each permitted prefix length and checks its
-digest before forwarding; an absent verifier rejects the visitor. Ingress and
+digest before forwarding; an absent verifier rejects the visitor. An IP match
+does not grant access to a restricted public URL. Ingress and
 relays never receive `TNLD_STORAGE_KEY`. The separate visitor-network usage
 sketch estimates distinct networks and cannot authorize a visitor.
 
@@ -57,30 +58,44 @@ Standalone composes control, ingress, and two logical relay services in one
 visitor
    | visitor TLS ClientHello
    v
-ingress: inspect hostname and apply IP policy
+ingress: inspect hostname and apply optional IP filter
    | authenticated internal forwarding
    v
 relay: open a stream on a ready publisher connection
    | unchanged visitor TLS bytes
    v
-publisher: terminate visitor TLS
+publisher: terminate visitor TLS, check visitor access
    | HTTP or HTTPS to the configured target
    v
 target service
 ```
 
 Ingress creates one PROXY v2 metadata header with the original source and
-destination. Relay preserves that header and the visitor TLS bytes. A denied
-visitor may use a separate, bounded forwarding budget to reach the publisher
-for an HTTPS 403, but never reaches the target. The publisher removes
+destination. Relay preserves that header and the visitor TLS bytes. On a restricted
+public URL, ingress gives a matching source bounded pending capacity until the
+publisher checks a sign-in, share, token, or database certificate and promotes
+the exact connection through relay back to ingress. A source outside a configured
+IP filter is rejected before forwarding. The publisher removes
 untrusted forwarding headers before proxying an allowed HTTP request.
+
+The publisher checks every HTTP app request against a run-local visitor decision.
+Positive decisions are scoped to the public URL, run, credential digest, and
+trusted source IP. An active decision refreshes after 30 seconds; if control is
+unavailable, its last successful decision expires within two minutes or sooner
+at the underlying credential, IP grant, or run expiry. Unknown visitors fail
+closed. Only the first allowed request on a restricted visitor connection
+promotes ingress capacity; subsequent requests still check visitor access.
+Database certificates use the same bounded decision cache for new connections,
+not for commands on an already admitted connection.
 
 For a TCP public URL, ingress uses the original destination port in the
 trusted outer PROXY v2 header instead of inspecting a ClientHello. A routing
 entry binds that port to a saved public URL within one ingress pool; missing or
-conflicting entries fail closed. Ingress applies the same IP policy, admission,
-and retry boundary before forwarding visitor bytes unchanged. It closes a denied
-TCP connection without opening a publisher stream. Ingress does not terminate
+conflicting entries fail closed. Ingress applies the same optional IP filter,
+admission, and retry boundary before forwarding visitor bytes unchanged. A
+restricted database visitor proves a URL-bound certificate at the publisher;
+an explicitly anonymous database URL reaches the target's own login without one.
+Ingress does not terminate
 visitor TLS for TCP public URLs; the publisher handles it when the protocol uses TLS.
 `internal/tcpport` checks allocated public ports (1024–65535) separately from
 ordinary TCP ports (1–65535). `internal/tcptarget` checks the private
@@ -348,7 +363,7 @@ ad-hoc allocation is control-owned: one invocation ID and an ephemeral
 credential select one URL beneath the stored namespace. control rechecks the
 stored credential, current membership and domain, and the public URL creation
 gate in the creation transaction. the caller supplies a canonical loopback
-target and visitor IP policy, never the hostname. the 128-bit `eph-` label is
+target and visitor access policy, never the hostname. the 128-bit `eph-` label is
 random; identical allocation retries return the same saved URL, while changed
 inputs conflict. namespace wildcard DNS covers the label, but ingress still
 requires the exact saved URL and a ready publish run before routing visitors.
@@ -538,14 +553,14 @@ namespaces.
 
 ## own each api
 
-| Contract                                                       | Implementer                               | Caller and authentication                                                           |
-| -------------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------- |
-| [Control](../../api/control/v1/openapi.yaml)                   | `internal/controlapi` on control          | CLI and publisher with access or publish-run credentials                            |
-| [Authority](../../api/authority/v1/openapi.yaml)               | Built-in authority on control             | CLI sessions and team/domain operations; scoped website identity and invitations    |
-| [Ingress](../../api/ingress/v1/openapi.yaml)                   | `internal/ingressapi` on control          | Ingress with cluster authentication, or standalone direct calls                     |
-| [Relay](../../api/relay/v1/openapi.yaml)                       | `internal/relayapi` on control            | Relay with cluster authentication, or standalone direct calls                       |
-| [Public URL usage](../../api/public-url-usage/v1/openapi.yaml) | External receiver                         | Control public URL usage worker with a configured bearer token                      |
-| [Publisher](../../api/publisher/v1/openapi.yaml)               | `internal/publisher` on the local process | Same-origin browser feedback through public URL IP policy or a current share cookie |
+| Contract                                                       | Implementer                               | Caller and authentication                                                        |
+| -------------------------------------------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------- |
+| [Control](../../api/control/v1/openapi.yaml)                   | `internal/controlapi` on control          | CLI and publisher with access or publish-run credentials                         |
+| [Authority](../../api/authority/v1/openapi.yaml)               | Built-in authority on control             | CLI sessions and team/domain operations; scoped website identity and invitations |
+| [Ingress](../../api/ingress/v1/openapi.yaml)                   | `internal/ingressapi` on control          | Ingress with cluster authentication, or standalone direct calls                  |
+| [Relay](../../api/relay/v1/openapi.yaml)                       | `internal/relayapi` on control            | Relay with cluster authentication, or standalone direct calls                    |
+| [Public URL usage](../../api/public-url-usage/v1/openapi.yaml) | External receiver                         | Control public URL usage worker with a configured bearer token                   |
+| [Publisher](../../api/publisher/v1/openapi.yaml)               | `internal/publisher` on the local process | Same-origin browser feedback after current visitor authorization                 |
 
 OpenAPI is the wire contract. It does not promise that every reserved operation
 is implemented.

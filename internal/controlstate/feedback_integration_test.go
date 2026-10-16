@@ -62,7 +62,7 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	auth := f.authentication()
-	actor := FeedbackActor{Kind: "reviewer", ShareID: share.ID, CookieSecret: cookie, PublishRunAuthentication: &auth}
+	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ShareID: share.ID, CookieSecret: cookie, PublishRunAuthentication: &auth}
 	source := feedbackTestSource(t)
 	request := CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/settings/profile", PageTitle: "Profile settings",
@@ -205,6 +205,9 @@ func TestIntegrationFeedbackCursorsOrderConcurrentReports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, f.setup.PublicURLID); err != nil {
+		t.Fatal(err)
+	}
 	started := make(chan struct{})
 	results := make(chan error, 2)
 	source := feedbackTestSource(t)
@@ -216,7 +219,7 @@ func TestIntegrationFeedbackCursorsOrderConcurrentReports(t *testing.T) {
 				ReportText:     "The settings save is inconsistent",
 				Evidence:       json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
 				SourceAtReport: source, IdempotencyKey: key,
-				Actor: FeedbackActor{Kind: "reviewer", AllowedIP: true, SourceIP: "192.0.2.9"},
+				Actor: FeedbackActor{Kind: "reviewer", VisitAllowed: true, SourceIP: "192.0.2.9"},
 			}, f.now)
 			results <- err
 		}()

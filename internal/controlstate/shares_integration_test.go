@@ -6,6 +6,9 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
 
 func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
@@ -126,5 +129,48 @@ func TestIntegrationShareRejectsStaleOrUnrelatedURLs(t *testing.T) {
 	request.ActingIdentityID = "other-identity"
 	if _, err := database.CreateShare(t.Context(), request, now); !errors.Is(err, ErrPreviewAccess) {
 		t.Fatalf("other identity used preview: %v", err)
+	}
+}
+
+func TestIntegrationExactAndPreviewShareSnapshotsHaveDifferentScopes(t *testing.T) {
+	database, now := newControlStateIntegrationDatabase(t, "share_scopes")
+	request := builtinRouteRequest(t, database, now)
+	first := createTestPublicURL(t, database, request, now)
+	request.IdempotencyKey = "second-service"
+	request.RequestDigest = sha256.Sum256([]byte("second-service"))
+	request.CanonicalHostname = "second-" + first.CanonicalHostname
+	second := createTestPublicURL(t, database, request, now)
+	preview, err := database.CreatePreview(t.Context(), first.TeamID, request.ActingIdentityID, "two-services", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []PublicURL{first, second} {
+		if _, err := database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
+			PreviewID: preview.ID, PublicURLID: route.ID, TeamID: route.TeamID, IdentityID: request.ActingIdentityID,
+			PolicyRevision: uint64(route.PolicyRevision), ExpectedMutationRevision: route.MutationRevision,
+		}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	create := CreateShareRequest{
+		TeamID: first.TeamID, ActingIdentityID: request.ActingIdentityID, IdempotencyKey: "exact",
+		SecretFingerprint: sha256.Sum256([]byte("exact")), ExpiresAt: now.Add(time.Hour),
+		PolicyRevision: uint64(first.PolicyRevision),
+		PublicURLs:     []AuthorizedSharePublicURL{{PublicURLID: first.ID, ExpectedMutationRevision: first.MutationRevision}},
+	}
+	exact, err := database.CreateShare(t.Context(), create, now)
+	if err != nil || exact.Scope != "url" || exact.PreviewID != "" || !slices.Equal(exact.PublicURLIDs, []string{first.ID}) {
+		t.Fatalf("exact snapshot = %+v, %v", exact, err)
+	}
+	create.PreviewID, create.IdempotencyKey = preview.ID, "preview"
+	create.PublicURLs = append(create.PublicURLs, AuthorizedSharePublicURL{PublicURLID: second.ID, ExpectedMutationRevision: second.MutationRevision})
+	wide, err := database.CreateShare(t.Context(), create, now)
+	if err != nil || wide.Scope != "preview" || wide.PreviewID != preview.ID || len(wide.PublicURLIDs) != 2 {
+		t.Fatalf("preview snapshot = %+v, %v", wide, err)
+	}
+	if _, err := controlstatedb.New(database.pool).GetActiveShareForPublicURL(t.Context(), controlstatedb.GetActiveShareForPublicURLParams{
+		ShareID: exact.ID, PublicURLID: second.ID, Now: timestamptz(now),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("exact share opened the other preview URL: %v", err)
 	}
 }

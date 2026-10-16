@@ -19,12 +19,12 @@ func (d *Database) currentReviewer(ctx context.Context, q *controlstatedb.Querie
 	if len(actor.BrowserCookieSecret) != 0 {
 		token = base64.RawURLEncoding.EncodeToString(actor.BrowserCookieSecret)
 	}
-	identity, err := d.httpVisitorDecision(ctx, q, url, HTTPVisitorRequest{SourceIP: actor.SourceIP, BrowserCookieSecret: token, ShareID: actor.ShareID, ShareCookieSecret: actor.CookieSecret}, now)
+	identity, err := d.httpVisitorDecision(ctx, q, url, HTTPVisitorRequest{SourceIP: actor.SourceIP, BrowserCookieSecret: token, ShareID: actor.ShareID, ShareCookieSecret: actor.CookieSecret, ShareSecret: actor.ShareSecret}, now)
 	if err != nil {
 		return FeedbackActor{}, "", err
 	}
 	actor.IdentityID, actor.DisplayName = identity.IdentityID, identity.DisplayName
-	reference := "allowed_ip"
+	reference := identity.Reason
 	if identity.Reason == "anonymous_share" {
 		reference = actor.ShareID
 	}
@@ -34,6 +34,6 @@ func (d *Database) currentReviewer(ctx context.Context, q *controlstatedb.Querie
 	if identity.IdentityID != "" {
 		reference = "identity:" + identity.IdentityID
 	}
-	actor.AllowedIP = identity.VisitAllowed
+	actor.VisitAllowed = identity.VisitAllowed
 	return actor, reference, nil
 }

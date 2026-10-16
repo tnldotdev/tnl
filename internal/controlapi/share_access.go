@@ -14,7 +14,7 @@ import (
 
 func (h *handler) EnableShareAccess(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID) {
 	var body controlv1.EnableShareAccessRequest
-	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber < 1 || body.PreviewId == "" {
+	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber < 1 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid share access request")
 		return
 	}
@@ -26,7 +26,11 @@ func (h *handler) EnableShareAccess(response http.ResponseWriter, request *http.
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "share access is unavailable")
 		return
 	}
-	if err := h.shareAccess.EnableShareAccess(request.Context(), auth, body.PreviewId); err != nil {
+	previewID := ""
+	if body.PreviewId != nil {
+		previewID = *body.PreviewId
+	}
+	if err := h.shareAccess.EnableShareAccess(request.Context(), auth, previewID); err != nil {
 		writeControlStateProblem(response, "enable share access", err)
 		return
 	}

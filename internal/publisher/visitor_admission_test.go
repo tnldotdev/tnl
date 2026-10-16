@@ -3,6 +3,7 @@ package publisher
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"math"
@@ -459,6 +460,48 @@ func (f certificateAuthorizerFunc) AuthorizeVisitorCertificate(ctx context.Conte
 	return f(ctx, scope, state)
 }
 
+type cachedCertificateAuthorizer struct{ calls int }
+
+func (a *cachedCertificateAuthorizer) AuthorizeVisitorCertificate(ctx context.Context, scope controlclient.VisitorCertificateScope, state tls.ConnectionState) error {
+	_, err := a.AuthorizeVisitorCertificateDecision(ctx, scope, state)
+	return err
+}
+
+func (a *cachedCertificateAuthorizer) AuthorizeVisitorCertificateDecision(context.Context, controlclient.VisitorCertificateScope, tls.ConnectionState) (time.Time, error) {
+	a.calls++
+	return time.Now().Add(time.Minute), nil
+}
+
+func TestVisitorCertificateDecisionCacheBindsRunCertificateAndSource(t *testing.T) {
+	scope := controlclient.VisitorCertificateScope{PublishRunID: "run-1", PublicURLID: "url-1", PublishRunNumber: 7, PublishRunToken: credentials.PublishRunToken("private-run-token")}
+	client := &cachedCertificateAuthorizer{}
+	authorize := VisitorCertificateAuthorization(client, scope)
+	now := time.Now()
+	state := tls.ConnectionState{HandshakeComplete: true, PeerCertificates: []*x509.Certificate{{Raw: []byte("one certificate"), NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour)}}}
+	visitor := Visitor{Run: PublishRunIdentity{PublicURLID: scope.PublicURLID, PublishRunID: scope.PublishRunID, Number: scope.PublishRunNumber}, Source: netip.MustParseAddrPort("192.0.2.10:1234")}
+	for range 2 {
+		if err := authorize(t.Context(), visitor, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if client.calls != 1 {
+		t.Fatalf("two connections with the same proof made %d control checks", client.calls)
+	}
+	visitor.Source = netip.MustParseAddrPort("192.0.2.11:1234")
+	if err := authorize(t.Context(), visitor, state); err != nil || client.calls != 2 {
+		t.Fatalf("different source reused a certificate decision: %v, %d checks", err, client.calls)
+	}
+	visitor.Run.PublishRunID = "another-run"
+	if err := authorize(t.Context(), visitor, state); err == nil || client.calls != 2 {
+		t.Fatalf("different run reused a certificate decision: %v, %d checks", err, client.calls)
+	}
+	visitor.Run.PublishRunID = scope.PublishRunID
+	state.PeerCertificates[0].NotAfter = now.Add(-time.Second)
+	if err := authorize(t.Context(), visitor, state); err == nil || client.calls != 2 {
+		t.Fatalf("expired certificate reused a decision: %v, %d checks", err, client.calls)
+	}
+}
+
 func TestLiveCertificateAdapterBindsRunAndTrustedSource(t *testing.T) {
 	scope := controlclient.VisitorCertificateScope{PublishRunID: "run-1", PublicURLID: "url-1", PublishRunNumber: 7, PublishRunToken: credentials.PublishRunToken("private-run-token")}
 	var calls int
@@ -491,7 +534,7 @@ func TestDeniedDatabaseVisitorReachesTLSAuthorization(t *testing.T) {
 			var authorized, promoted atomic.Int32
 			route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", ServiceProtocol: protocol, PublicPort: 5432, Target: address, Certificate: certificate,
 				AuthorizeVisitorCertificate: func(_ context.Context, v Visitor, state tls.ConnectionState) error {
-					if !v.Header.IPPolicyDenied || !state.HandshakeComplete {
+					if !v.Header.AccessPending || !state.HandshakeComplete {
 						t.Error("missing trusted denial or TLS")
 					}
 					authorized.Add(1)
