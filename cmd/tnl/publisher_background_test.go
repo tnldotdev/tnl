@@ -153,7 +153,7 @@ func TestBackgroundRejectsNamespaceEphemeralAndImplicitServer(t *testing.T) {
 			case "implicit server":
 				flags.ServerURL = ""
 			case "policy":
-				flags.AllowAllIPs = true
+				flags.Anonymous = true
 			case "open":
 				flags.Open = true
 			}

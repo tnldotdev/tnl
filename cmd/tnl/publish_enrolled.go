@@ -74,9 +74,6 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 	if selected != 1 || flags.Name != "" || flags.PublicURL != "" || flags.Domain != "" || flags.Team != "" || flags.AccessToken != "" || flags.Demo {
 		return publisherCLIError("select one enrollment key, publisher identity, or publisher file; its grant selects the public URL scope")
 	}
-	if flags.AllowAllIPs && len(flags.AllowIP) > 0 {
-		return publisherCLIError("select --allow-all-ips or --allow-ip")
-	}
 	if selection.PublisherFile != "" {
 		f, err := credentialfile.Read(selection.PublisherFile)
 		if err != nil {
@@ -144,10 +141,13 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 			return err
 		}
 		b := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: invocation, Target: target}
-		if flags.AllowAllIPs {
-			b.AllowAllIps = &flags.AllowAllIPs
-		} else if len(flags.AllowIP) > 0 {
-			b.AllowIp = &flags.AllowIP
+		policy, err := resolveVisitorAccess(ctx, control, flags.access, flags.Anonymous, flags.IP)
+		if err != nil {
+			return err
+		}
+		if policy.explicit {
+			b.AccessMode = &policy.access
+			b.Ip = &policy.prefixes
 		}
 		route, err = native.Allocate(ctx, b)
 		if err != nil {
@@ -162,7 +162,7 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 		}()
 	} else if err != nil {
 		return err
-	} else if flags.Ephemeral || flags.AllowAllIPs || len(flags.AllowIP) > 0 {
+	} else if flags.Ephemeral || flags.Anonymous || flags.access != nil || len(flags.IP) > 0 {
 		return publisherCLIError("the saved URL sets visitor policy and lifecycle")
 	}
 	if route.Purpose != controlv1.App || !route.ServiceProtocol.Valid() {

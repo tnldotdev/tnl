@@ -419,14 +419,6 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Available.remoteFlags, false)
 	case "url certificate <url>":
 		apply(&flags.URL.Certificate.remoteFlags, false)
-	case "url ip set <url> <prefixes>", "url ip set <url>":
-		apply(&flags.URL.IP.Set.remoteFlags, false)
-	case "url ip add <url> <prefix>":
-		apply(&flags.URL.IP.Add.remoteFlags, false)
-	case "url ip list <url>":
-		apply(&flags.URL.IP.List.remoteFlags, false)
-	case "url ip remove <url> <grant-id>":
-		apply(&flags.URL.IP.Remove.remoteFlags, false)
 	case "publisher enroll", "publisher enroll <public-url-id>":
 		apply(&flags.Publisher.Enroll.remoteFlags, true)
 	case "publisher list":
