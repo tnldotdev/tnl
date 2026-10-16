@@ -243,7 +243,6 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgresLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
       - go -C tools/testharness run . mysql -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientMySQLLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
       - go -C tools/testharness run . redis -- go test -race -v ./internal/publisher -run='^TestIntegrationRedisClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
-      - go -C tools/testharness run . ssh -- go test -race -v ./internal/publisher -run='^TestIntegrationSSHClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:binary:
     desc: Run Linux binary integration tests
@@ -253,6 +252,31 @@ tasks:
         msg: Binary integration tests require Linux
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestBinaryIntegration' -count=1 -timeout=15m -args -tnl-test-tier=binary
+
+  go:test:integration:managed-ssh-root:
+    desc: Verify publisher mTLS and managed SSH with real nonroot Linux children
+    vars:
+      ARCH:
+        sh: go env GOHOSTARCH
+    cmds:
+      - |
+        set -eu
+        temporary="$(mktemp -d)"
+        trap 'rm -rf "$temporary"' EXIT
+        GOOS=linux GOARCH='{{.ARCH}}' CGO_ENABLED=0 go test -c -o "$temporary/publisher.test" ./internal/publisher
+        GOOS=linux GOARCH='{{.ARCH}}' CGO_ENABLED=0 go build -o "$temporary/tnl" ./cmd/tnl
+        image="$(docker build --quiet -f internal/managedssh/testdata/root.Dockerfile internal/managedssh/testdata)"
+        docker run --rm --network none --security-opt=no-new-privileges --pids-limit=128 --memory=512m \
+          --mount "type=bind,source=$temporary/publisher.test,target=/publisher.test,readonly" \
+          --mount "type=bind,source=$temporary/tnl,target=/tnl,readonly" \
+          --entrypoint /publisher.test "$image" \
+          -test.run='^TestIntegrationManagedSSHPublisherRoot$' -test.v -test.timeout=60s \
+          -tnl-test-tier=integration -tnl-test-managed-ssh-root-user=tnl-ssh-test -tnl-test-managed-ssh-binary=/tnl
+
+  go:test:integration:managed-ssh:
+    desc: Verify tnl ssh through split roles with real nonroot Linux children
+    cmds:
+      - sh internal/tnldruntime/testdata/managed-ssh-full/run.sh
 
   go:test:integration:compose:
     desc: Check disposable host-side Compose HTTP and TCP targets

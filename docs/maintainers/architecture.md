@@ -81,7 +81,7 @@ target service
 Ingress creates one PROXY v2 metadata header with the original source and
 destination. Relay preserves that header and the visitor TLS bytes. On a restricted
 public URL, ingress gives a matching source bounded pending capacity until the
-publisher checks a sign-in, share, or database certificate. An authenticated
+publisher checks a sign-in, share, or URL-bound visitor certificate. An authenticated
 publisher-to-relay-to-ingress sideband binds the exact visitor, run, connection
 assignment, and relay. Ingress reserves ordinary capacity and acknowledges
 promotion before the publisher sends app requests or database authentication to
@@ -96,8 +96,16 @@ unavailable, its last successful decision expires within two minutes or sooner
 at the underlying credential, IP grant, or run expiry. Unknown visitors fail
 closed. Only the first allowed request on a restricted visitor connection
 promotes ingress capacity; subsequent requests still check visitor access.
-Database certificates use the same bounded decision cache for new connections,
-not for commands on an already admitted connection.
+Database connections also acquire a live permission through `internal/livevisitor`,
+which bypasses the new-connection positive cache. The publisher rechecks active
+connections every 30 seconds against current grants, IP filters, and the exact
+publish run, including explicitly anonymous database visitors. Decisions bind the
+public URL, publish run ID and number, trusted source IP, and visitor certificate
+digest when present. An explicit denial closes both visitor and target connections.
+An unavailable recheck rejects new connections for that proof and cannot extend
+an existing decision beyond two minutes or an earlier certificate or grant expiry.
+Concurrent connections with the same proof share a check; releasing the last
+connection joins its checker.
 
 For a TCP public URL, ingress uses the original destination port in the
 trusted outer PROXY v2 header instead of inspecting a ClientHello. A routing
@@ -155,15 +163,6 @@ Compose network can remain plaintext; `--target-tls` instead requires a
 verified TLS handshake to the target and never falls back to plaintext. Redis
 authentication and command authorization remain with the target.
 
-`tnl publish sshd:22 --protocol ssh` forwards the SSH protocol unchanged to an
-existing sshd. An SSH client must check that sshd's host key matches the key it
-expects for the saved public `hostname:port`; the public URL certificate does
-not authenticate the SSH server to the SSH client. Control and the publisher
-still issue and install that certificate before marking the publish run ready.
-The publisher checks it before forwarding new SSH visitors and retains the
-normal certificate expiration and renewal lifecycle. Target TLS remains an
-explicit option for an SSH target behind a separate TLS wrapper.
-
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.
@@ -172,6 +171,45 @@ and connection assignment identities before accepting each visitor stream.
 
 Public URL DNS points to ingress, never to a relay. Placement can therefore
 change without changing public URL DNS.
+
+### serve managed ssh
+
+`tnl ssh enable --name HOST --user ACCOUNT` installs a root-managed host service
+for existing nonroot accounts. SSH is not a project service target or an ordinary
+`tnl publish` protocol: no SSH job accepts an address, target TLS, or an existing
+sshd. The saved public URL still has service protocol `ssh` and a public TCP port
+for discovery. Its `ssh_host_key` binds the host's ed25519 public key; the private
+key and account allowlist stay in protected local job state. A publish run must
+match that saved key and use restricted visitor access.
+
+Ingress and relay carry visitor bytes unchanged to the publisher. `tnl ssh`
+first establishes mutual TLS (mTLS) with a certificate for the exact public URL,
+then carries OpenSSH through that connection. The publisher uses the public URL
+certificate for TLS and asks control to authorize the visitor identity, trusted
+source IP, and exact publish run before admitting SSH. OpenSSH separately checks
+the saved SSH host key. The TLS certificate does not replace that host-key check.
+
+The SSH username selects a host account, never the visitor identity. Control
+checks the current account-specific grant; the host independently checks its
+installed allowlist and resolves the named account, rejecting every uid-0 account
+and numeric user IDs. SSH uses `none` authentication inside authenticated mTLS;
+passwords and SSH user keys cannot grant access. Account decisions refresh every
+30 seconds or sooner at expiry. Explicit denial or account removal closes the
+connection and its work. An unavailable decision rejects new channels and session
+commands; existing work lasts only until the last successful deadline, bounded
+to two minutes and the visitor certificate's expiry.
+
+`internal/managedssh` keeps the serving process at real and effective uid 0.
+Each session or local/dynamic forwarding connection starts the installed
+`runtime ssh-child` entry point. That child resolves the account again, drops
+supplementary groups, gid, and uid, then runs the account shell, SFTP server, or
+forwarding dial. The child receives a bounded setup message and fixed environment,
+without publisher credentials or ambient secrets. Reverse, agent, Unix-socket,
+and X11 forwarding and client environment requests are rejected. Cancellation
+closes the visitor and joins child work. This is a direct credential change,
+without PAM or an OS login session; the account's filesystem and network
+permissions remain its boundary. See the [child boundary](../../internal/managedssh/runtime.md)
+for descriptors, terminal handling, environment, and process-group cleanup.
 
 ## resolve project configuration
 

@@ -49,6 +49,12 @@ jobs:
       - name: Verify TCP clients
         run: task go:test:integration:tcp-clients
 
+      - name: Verify managed SSH privilege boundary
+        run: task go:test:integration:managed-ssh-root
+
+      - name: Verify managed SSH through split roles
+        run: task go:test:integration:managed-ssh
+
   binary:
     name: Binary integration
     runs-on: ubuntu-latest
