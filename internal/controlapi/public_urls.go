@@ -80,15 +80,22 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 	}
 	storedProtocol := controlstate.PublicURLServiceProtocol(protocol)
 	accessMode := controlstate.VisitorAccessRestricted
-	if storedProtocol == controlstate.PublicURLServiceSSH || body.Purpose == controlv1.Oauth || body.Purpose == controlv1.Webhooks {
+	if body.Purpose == controlv1.Oauth || body.Purpose == controlv1.Webhooks {
 		accessMode = controlstate.VisitorAccessAnonymous
 	}
 	if body.AccessMode != nil {
 		accessMode = controlstate.VisitorAccessMode(*body.AccessMode)
 	}
 	if !accessMode.Valid() ||
-		(storedProtocol == controlstate.PublicURLServiceSSH || body.Purpose == controlv1.Oauth || body.Purpose == controlv1.Webhooks) && accessMode != controlstate.VisitorAccessAnonymous {
+		storedProtocol == controlstate.PublicURLServiceSSH && accessMode != controlstate.VisitorAccessRestricted ||
+		(body.Purpose == controlv1.Oauth || body.Purpose == controlv1.Webhooks) && accessMode != controlstate.VisitorAccessAnonymous {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid visitor access mode")
+		return
+	}
+	sshHostKey := optionalFeedbackString(body.SshHostKey)
+	if storedProtocol == controlstate.PublicURLServiceSSH && !authorization.SSHHostKeyValid(sshHostKey) ||
+		storedProtocol != controlstate.PublicURLServiceSSH && body.SshHostKey != nil {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid SSH host public key")
 		return
 	}
 	allowedIPPrefixes := []string(nil)
@@ -125,7 +132,7 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 	digest, err := authorization.CanonicalRequestHash(authorization.OperationRequest{
 		Operation: authorization.OperationPublicURLCreate, TeamID: decision.TeamID, MembershipID: decision.PublicURLMembershipID,
 		DomainID: decision.DomainID, CanonicalHostname: decision.CanonicalHostname, PublicURLScope: decision.PublicURLScope,
-		PublicURLPurpose: string(body.Purpose), ServiceProtocol: hashProtocol,
+		PublicURLPurpose: string(body.Purpose), ServiceProtocol: hashProtocol, SSHHostKey: sshHostKey,
 		Target: body.Target, AllowedIPPrefixes: allowedIPPrefixes, AccessMode: string(accessMode), Ephemeral: ephemeral,
 	})
 	if err != nil {
@@ -149,8 +156,8 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		TeamID:  decision.TeamID, DomainID: decision.DomainID, MembershipID: decision.PublicURLMembershipID,
 		ActingIdentityID: decision.IdentityID, IdempotencyKey: request.Header.Get("Idempotency-Key"),
 		RequestDigest: [32]byte(digest), CanonicalHostname: decision.CanonicalHostname, Target: body.Target,
-		ServiceProtocol: storedProtocol,
-		PublicURLScope:  controlstate.PublicURLScope(decision.PublicURLScope), Purpose: controlstate.PublicURLPurpose(body.Purpose), AccessMode: accessMode, AllowedIPPrefixes: storedIPPrefixes,
+		ServiceProtocol: storedProtocol, SSHHostKey: sshHostKey,
+		PublicURLScope: controlstate.PublicURLScope(decision.PublicURLScope), Purpose: controlstate.PublicURLPurpose(body.Purpose), AccessMode: accessMode, AllowedIPPrefixes: storedIPPrefixes,
 		ManagedURLMode: h.config.ManagedURLMode,
 		DNSState:       dnsState, DNSAuthorityReference: dnsAuthorityReference,
 		PolicyRevision: decision.PolicyRevision,

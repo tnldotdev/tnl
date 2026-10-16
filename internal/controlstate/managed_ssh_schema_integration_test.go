@@ -85,7 +85,8 @@ func newSSHSchemaDatabase(t *testing.T) (*pgxpool.Pool, controlstatedb.InsertPub
 		CanonicalHostname: "ssh.example.test", PublicURLScope: "shared", Purpose: "app", ServiceProtocol: "ssh",
 		SSHHostKey:    pgtype.Text{String: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))), Valid: true},
 		IngressPoolID: "ingress-a", PolicyRevision: 1, IpPolicy: "allow_all", DnsState: "unmanaged",
-		CreatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		AccessMode: "restricted",
+		CreatedAt:  pgtype.Timestamptz{Time: now, Valid: true},
 	}
 }
 

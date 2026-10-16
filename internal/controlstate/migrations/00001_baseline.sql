@@ -368,7 +368,7 @@ CREATE TABLE control.public_urls (
     CHECK (service_protocol = 'http' OR (purpose = 'app' AND target = '')),
     CHECK (service_protocol <> 'http' OR public_port IS NULL),
     CONSTRAINT public_urls_managed_ssh_check CHECK (
-        (service_protocol = 'ssh' AND NOT ephemeral AND target = '' AND ssh_host_key IS NOT NULL
+        (service_protocol = 'ssh' AND NOT ephemeral AND target = '' AND access_mode = 'restricted' AND ssh_host_key IS NOT NULL
             AND btrim(ssh_host_key) <> '' AND octet_length(ssh_host_key) <= 1024)
         OR (service_protocol <> 'ssh' AND ssh_host_key IS NULL)
     ),
@@ -1403,7 +1403,7 @@ RETURNS TABLE(reason text, expires_at timestamptz) LANGUAGE sql STABLE AS $$
         SELECT CASE g.kind WHEN 'team' THEN 'team_grant' ELSE 'identity_grant' END, g.expires_at, 2
         FROM control.visitor_grants g WHERE g.public_url_id = u.id AND g.team_id = u.team_id AND g.revoked_at IS NULL
           AND (g.expires_at IS NULL OR g.expires_at > at_time)
-          AND ((u.service_protocol = 'ssh' AND g.ssh_user IS NOT NULL)
+          AND ((u.service_protocol = 'ssh' AND u.access_mode = 'restricted' AND g.ssh_user IS NOT NULL)
             OR (u.service_protocol <> 'ssh' AND g.ssh_user IS NULL))
           AND ((g.kind = 'team' AND m.id IS NOT NULL) OR (g.kind = 'identity' AND g.identity_id = i.id))
     ) permission

@@ -113,6 +113,7 @@ type OperationRequest struct {
 	PublicURLPurpose          string
 	AccessMode                string
 	ServiceProtocol           string
+	SSHHostKey                string
 	PublicURLID               string
 	PublishRunNumber          uint64
 	PublicURLMutationRevision uint64
@@ -143,9 +144,10 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 			PublicURLScope    string   `json:"public_url_scope"`
 			PublicURLPurpose  string   `json:"purpose,omitempty"`
 			ServiceProtocol   string   `json:"service_protocol,omitempty"`
+			SSHHostKey        string   `json:"ssh_host_key,omitempty"`
 			Target            string   `json:"target"`
 			TeamID            string   `json:"team_id"`
-		}{request.AllowedIPPrefixes, request.AccessMode, request.CanonicalHostname, request.DomainID, request.Ephemeral, request.MembershipID, string(request.PublicURLScope), request.PublicURLPurpose, request.ServiceProtocol, request.Target, request.TeamID}
+		}{request.AllowedIPPrefixes, request.AccessMode, request.CanonicalHostname, request.DomainID, request.Ephemeral, request.MembershipID, string(request.PublicURLScope), request.PublicURLPurpose, request.ServiceProtocol, request.SSHHostKey, request.Target, request.TeamID}
 	case OperationPublicURLUpdate:
 		if request.TeamID == "" || request.DomainID == "" || request.CanonicalHostname == "" || request.PublicURLScope == "" ||
 			request.PublicURLID == "" || request.PublicURLMutationRevision == 0 || request.PolicyRevision == 0 ||

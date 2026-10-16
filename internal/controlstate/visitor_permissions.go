@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
 )
@@ -116,6 +117,7 @@ var ErrVisitorSignIn = errors.New("visitor sign-in required")
 // VisitorPermission is a current decision, not a reusable authorization token.
 type VisitorPermission struct {
 	IdentityID   string
+	SSHUser      string
 	DisplayName  string
 	TeamMember   bool
 	VisitAllowed bool
@@ -172,6 +174,9 @@ func identityPermission(ctx context.Context, q *controlstatedb.Queries, urlID, i
 	url, err := q.GetFeedbackPublicURL(ctx, urlID)
 	if err != nil {
 		return result, err
+	}
+	if url.ServiceProtocol == "ssh" {
+		return result, nil
 	}
 	_, err = q.VisitorCurrentMembership(ctx, controlstatedb.VisitorCurrentMembershipParams{TeamID: url.TeamID, IdentityID: identityID})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -371,6 +376,73 @@ func databaseProtocol(protocol string) bool {
 	return protocol == "postgres" || protocol == "mysql" || protocol == "redis"
 }
 
+// sshIdentityPermission uses only explicit current grants, including for owners.
+// callers hold the team and URL locks before locking the identity and grants.
+func sshIdentityPermission(ctx context.Context, q *controlstatedb.Queries, urlID, identityID, user string, now time.Time) (VisitorPermission, error) {
+	result := VisitorPermission{}
+	if identityID == "" || user != "" && !authorization.SSHUserValid(user) {
+		return result, nil
+	}
+	identity, err := q.LockVisitorIdentity(ctx, identityID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, ErrVisitorSignIn
+	}
+	if err != nil {
+		return result, err
+	}
+	result.IdentityID, result.DisplayName = identity.ID, identity.DisplayName
+	row, err := q.SSHVisitorGrant(ctx, controlstatedb.SSHVisitorGrantParams{PublicURLID: urlID, IdentityID: identityID, SSHUser: user, Now: timestamptz(now)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, nil
+	}
+	if err != nil {
+		return result, err
+	}
+	if !authorization.SSHUserValid(row.SSHUser) {
+		return result, nil
+	}
+	result.VisitAllowed, result.SSHUser, result.Reason, result.ExpiresAt = true, row.SSHUser, row.Reason, optionalTime(row.ExpiresAt)
+	return result, nil
+}
+
+// SSHVisitorPermission rechecks the current run, identity, IP policy and exact
+// account grant for each connection. an empty account selects any active grant.
+func (d *Database) SSHVisitorPermission(ctx context.Context, auth PublishRunAuthentication, identityID, sourceIP, sshUser string, now time.Time) (result VisitorPermission, retErr error) {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer rollback(ctx, tx, "authorize SSH visitor", &retErr)()
+	q := controlstatedb.New(tx)
+	url, err := lockVisitorURL(ctx, q, auth.PublicURLID)
+	if err != nil {
+		return result, err
+	}
+	if url.Purpose != "app" || url.ServiceProtocol != "ssh" || url.AccessMode != string(VisitorAccessRestricted) {
+		return result, ErrPreviewAccess
+	}
+	run, err := d.lockAuthenticatedRun(ctx, q, auth, now)
+	if err != nil {
+		return result, err
+	}
+	ip, ipExpires, err := d.visitorIPAllowed(ctx, q, url, sourceIP, now)
+	if err != nil || !ip {
+		return result, err
+	}
+	result, err = sshIdentityPermission(ctx, q, url.ID, identityID, sshUser, now)
+	if err != nil {
+		return result, err
+	}
+	if result.VisitAllowed {
+		if ipExpires != nil {
+			result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, *ipExpires)
+		}
+		result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, run.PublisherExpiresAt.Time)
+		result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, now.Add(2*time.Minute))
+	}
+	return result, tx.Commit(ctx)
+}
+
 // IssueVisitorCertificateScope keeps issuance authorization and signing in one
 // transaction. the callback receives only control-selected identity and URL IDs.
 func (d *Database) IssueVisitorCertificateScope(ctx context.Context, access credentials.AccessToken, urlID string, now time.Time,
@@ -385,7 +457,7 @@ func (d *Database) IssueVisitorCertificateScope(ctx context.Context, access cred
 	if err != nil {
 		return nil, expires, err
 	}
-	if url.Purpose != "app" || !databaseProtocol(url.ServiceProtocol) {
+	if url.Purpose != "app" || !databaseProtocol(url.ServiceProtocol) && url.ServiceProtocol != "ssh" {
 		return nil, expires, ErrPreviewAccess
 	}
 	id, _, err := credentials.ParseAccessToken(access)
@@ -402,7 +474,12 @@ func (d *Database) IssueVisitorCertificateScope(ctx context.Context, access cred
 	if _, err = currentVisitorSession(ctx, q, access.String(), session.IdentityID, "", now); err != nil {
 		return nil, expires, err
 	}
-	permission, err := identityPermission(ctx, q, urlID, session.IdentityID, "", now)
+	var permission VisitorPermission
+	if url.ServiceProtocol == "ssh" {
+		permission, err = sshIdentityPermission(ctx, q, urlID, session.IdentityID, "", now)
+	} else {
+		permission, err = identityPermission(ctx, q, urlID, session.IdentityID, "", now)
+	}
 	if err != nil {
 		return nil, expires, err
 	}

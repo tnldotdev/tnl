@@ -131,7 +131,7 @@ func (d *Database) ReplaceVisitorAccess(ctx context.Context, urlID, actorID stri
 	if url.Purpose != "app" && url.Purpose != "alias" {
 		return result, ErrPublicURLInvalid
 	}
-	if url.ServiceProtocol == "ssh" && mode != VisitorAccessAnonymous {
+	if url.ServiceProtocol == "ssh" && mode != VisitorAccessRestricted {
 		return result, ErrPublicURLInvalid
 	}
 	if err = visitorManager(ctx, q, url, actorID); err != nil {

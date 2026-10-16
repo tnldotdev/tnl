@@ -67,6 +67,22 @@ UPDATE control.teams SET feedback_authors = $2 WHERE id = $1;
 -- name: VisitorCurrentMembership :one
 SELECT id FROM control.team_memberships WHERE team_id = $1 AND identity_id = $2 AND removed_at IS NULL;
 
+-- name: SSHVisitorGrant :one
+SELECT COALESCE(g.ssh_user, '')::text AS ssh_user, g.expires_at,
+    CASE g.kind WHEN 'team' THEN 'team_grant' ELSE 'identity_grant' END::text AS reason
+FROM control.visitor_grants g
+JOIN control.public_urls u ON u.id = g.public_url_id AND u.team_id = g.team_id
+JOIN control.teams t ON t.id = u.team_id AND t.deleted_at IS NULL
+JOIN control.identities i ON i.id = sqlc.arg(identity_id)::text AND i.disabled_at IS NULL
+WHERE u.id = sqlc.arg(public_url_id)::text AND u.lifecycle_state = 'enabled' AND u.purpose = 'app'
+  AND u.service_protocol = 'ssh' AND u.access_mode = 'restricted'
+  AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > sqlc.arg(now)::timestamptz)
+  AND g.ssh_user IS NOT NULL AND (sqlc.arg(ssh_user)::text = '' OR g.ssh_user = sqlc.arg(ssh_user))
+  AND ((g.kind = 'identity' AND g.identity_id = i.id) OR (g.kind = 'team' AND EXISTS (
+    SELECT 1 FROM control.team_memberships m WHERE m.team_id = u.team_id AND m.identity_id = i.id AND m.removed_at IS NULL)))
+ORDER BY g.expires_at DESC NULLS FIRST, g.id LIMIT 1
+FOR SHARE OF g;
+
 -- name: ReadyBrowserHosts :many
 SELECT u.id AS public_url_id, u.canonical_hostname, r.id AS publish_run_id
 FROM control.public_urls u JOIN control.publish_runs r ON r.public_url_id = u.id
