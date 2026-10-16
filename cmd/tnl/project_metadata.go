@@ -288,11 +288,14 @@ func (r *projectMetadataResolver) reserveTCPMetadata(ctx context.Context, name s
 	}
 	flags := tunnelFlags{}
 	applyTunnelConfiguration(&flags, effective.Tunnel)
-	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
+	policy, err := resolveVisitorAccess(ctx, authenticated.Control, flags.access, flags.Anonymous, flags.IP)
 	if err != nil {
 		return projectmeta.Service{}, err
 	}
 	cfg := services.config("", policy.prefixes, publisher.ApplicationLimits{})
+	if policy.explicit {
+		cfg.AccessMode = policy.access
+	}
 	cfg.ServiceProtocol = protocolForService(r.project.Config.Services[name])
 	route, err := reserveConfiguredURL(ctx, services, cfg)
 	if err != nil {
