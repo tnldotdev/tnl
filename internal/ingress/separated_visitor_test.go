@@ -57,7 +57,13 @@ func startSeparatedIngress(t *testing.T, f *admissionTransportFixture, port uint
 		value := ingressv1.IngressRoutingTableEntryServiceProtocol(protocol)
 		f.entry.ServiceProtocol = &value
 	}
-	hashedRoutingPolicyForTest(t, &f.entry, "203.0.113.0/24")
+	if port == 443 {
+		f.entry.AccessMode = ingressv1.Anonymous
+		hashedRoutingPolicyForTest(t, &f.entry, "203.0.113.0/24")
+	} else {
+		f.entry.AccessMode = ingressv1.Restricted
+		f.entry.IpPolicy = ingressv1.AllowAll
+	}
 	lookup := func() (PublicURL, LookupReason) {
 		route, err := f.forwarder.PublicURL(f.entry)
 		if err != nil {
@@ -87,7 +93,7 @@ func separatedVisitor(t *testing.T, address, source string, port uint16) net.Con
 	return c
 }
 
-func TestSeparatedHTTPDeniedAllowedAndAuthenticatedPromotion(t *testing.T) {
+func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 	f := newAdmissionTransportFixture(t)
 	run := publisher.PublishRunIdentity{Hostname: "route.example", PublicURLID: f.entry.PublicUrlId, Number: uint64(f.entry.PublishRunNumber)}
 	proof, err := publisher.NewReadinessProof(run, "/health")
@@ -95,7 +101,7 @@ func TestSeparatedHTTPDeniedAllowedAndAuthenticatedPromotion(t *testing.T) {
 		t.Fatal(err)
 	}
 	var application atomic.Int32
-	startSeparatedPublisher(t, f, publisher.PublicURLServerConfig{Certificate: testCertificate(t, "route.example"), ReadinessProof: proof, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	startSeparatedPublisher(t, f, publisher.PublicURLServerConfig{Certificate: testCertificate(t, "route.example"), ReadinessProof: proof, Purpose: controlv1.Oauth, AccessMode: controlv1.Anonymous, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(localproxy.ReadinessProbeHeader) != "" {
 			t.Error("proof reached application")
 		}
@@ -103,10 +109,15 @@ func TestSeparatedHTTPDeniedAllowedAndAuthenticatedPromotion(t *testing.T) {
 		w.WriteHeader(204)
 	})})
 	s, address := startSeparatedIngress(t, f, 443, "http")
+	blocked := tls.Client(separatedVisitor(t, address, "198.51.100.1:40001", 443), &tls.Config{ServerName: "route.example", InsecureSkipVerify: true}) // local fixture certificate.
+	if err := blocked.Handshake(); err == nil {
+		t.Fatal("source outside IP filter completed visitor TLS")
+	}
+	_ = blocked.Close()
 	for _, test := range []struct {
 		source, proof string
 		want          int
-	}{{"198.51.100.1:40001", "", 403}, {"203.0.113.1:40002", "", 204}, {"198.51.100.2:40003", proof.HeaderValue(), 204}} {
+	}{{"203.0.113.1:40002", "", 204}, {"203.0.113.2:40003", proof.HeaderValue(), 204}} {
 		c := tls.Client(separatedVisitor(t, address, test.source, 443), &tls.Config{ServerName: "route.example", InsecureSkipVerify: true}) // local fixture certificate.
 		if err := c.Handshake(); err != nil {
 			t.Fatal(err)

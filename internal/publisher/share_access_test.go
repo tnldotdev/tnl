@@ -136,21 +136,23 @@ func TestShareHeaderUsesCurrentDecisionAndIsRemovedBeforeForwarding(t *testing.T
 		t.Fatal(err)
 	}
 	defer route.Close()
-	visit := func() int {
-		request := httptest.NewRequest(http.MethodGet, "https://route.example/", nil)
+	visit := func() (int, string) {
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Host = "route.example"
+		request.TLS = &tls.ConnectionState{ServerName: "route.example"}
 		request = request.WithContext(context.WithValue(request.Context(), denialContextKey{}, true))
 		request.Header.Set(shareAccessHeaderName, shareID+"."+secret)
 		request.Header.Set("Cookie", "app_session=ok; __Host-tnl-share=expired")
 		response := httptest.NewRecorder()
 		route.http.Handler.ServeHTTP(response, request)
-		return response.Code
+		return response.Code, response.Body.String()
 	}
-	if got := visit(); got != http.StatusNoContent {
-		t.Fatalf("valid share header = %d", got)
+	if got, body := visit(); got != http.StatusNoContent {
+		t.Fatalf("valid share header = %d: %s", got, body)
 	}
 	client.revoked = true
-	if got := visit(); got != http.StatusForbidden {
-		t.Fatalf("revoked share header = %d", got)
+	if got, body := visit(); got != http.StatusForbidden {
+		t.Fatalf("revoked share header = %d: %s", got, body)
 	}
 }
 
@@ -294,7 +296,7 @@ func TestShareVisitorClearsDeniedTLSDeadlineAfterRealHandshake(t *testing.T) {
 	if err := access.refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	route, err := NewPublicURLServer(PublicURLServerConfig{
+	route, err := newTestPublicURLServer(PublicURLServerConfig{
 		Hostname: "route.example", Target: upstream.URL, ShareAccess: access,
 		Certificate: publicURLTestCertificate(t, "route.example"),
 	})

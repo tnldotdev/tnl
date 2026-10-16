@@ -65,7 +65,7 @@ func TestFeedbackHTMLInjectionAndPerBrowserFailuresKeepAppCookies(t *testing.T) 
 		client: &feedbackControlStub{}, previewID: "pv_0123456789abcdefghijkl", service: "web",
 		browsers: make(map[[32]byte]*browserTrail), asset: asset, assetPath: assetPath,
 	}
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, Feedback: runtime})
+	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, Feedback: runtime})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -25,13 +25,50 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
+	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/tlschallenge"
 	"github.com/tnldotdev/tnl/internal/tunnel"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 	"golang.org/x/crypto/acme"
 )
+
+// testVisitorControl simulates a current control decision for transport tests;
+// policy-specific tests supply their own browserAccess client instead.
+type testVisitorControl struct{ shares *shareAccess }
+
+func (*testVisitorControl) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+	return controlv1.BrowserHandoffResponse{}, errors.New("browser handoff is unavailable")
+}
+
+func (*testVisitorControl) CheckBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserAccessResponse, error) {
+	return controlv1.BrowserAccessResponse{}, errors.New("browser sign-in is unavailable")
+}
+
+func (*testVisitorControl) RevokeBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
+	return nil
+}
+
+func (c *testVisitorControl) AuthorizeHTTPVisitor(ctx context.Context, _ string, input controlv1.HTTPVisitorRequest, _ credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
+	allowed := ctx.Value(denialContextKey{}) != true
+	if !allowed && c.shares != nil && input.ShareId != nil && input.ShareCookieSecret != nil {
+		request := httptest.NewRequest(http.MethodGet, "https://route.example/", nil)
+		request.Header.Set("Cookie", shareCookieName+"="+*input.ShareId+"."+*input.ShareCookieSecret)
+		_, allowed = c.shares.permission(request)
+	}
+	until := time.Now().Add(time.Minute)
+	return controlv1.HTTPVisitorResponse{VisitAllowed: allowed, ValidUntil: &until}, nil
+}
+
+func newTestPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) {
+	if (config.ServiceProtocol == "" || config.ServiceProtocol == controlv1.Http) && config.BrowserAccess == nil {
+		config.BrowserAccess = &browserAccess{client: &testVisitorControl{shares: config.ShareAccess}, publicURLID: config.PublicURLID,
+			runID: config.PublishRunID, version: config.PublishRunNumber}
+	}
+	return NewPublicURLServer(config)
+}
 
 func TestRouteServerTerminatesTLSAndProxiesLocalHTTP(t *testing.T) {
 	forwarded := make(chan string, 1)
@@ -121,10 +158,10 @@ func TestDeniedVisitorCompletesTLSButCannotReachLocalService(t *testing.T) {
 		}
 		body, readErr := io.ReadAll(response.Body)
 		_ = response.Body.Close()
-		if readErr != nil || response.StatusCode != http.StatusForbidden || response.Header.Get("Tnl-Error-Code") != "TNL_IP_POLICY_DENIED" {
+		if readErr != nil || response.StatusCode != http.StatusForbidden || response.Header.Get("Tnl-Error-Code") != "TNL_VISITOR_ACCESS_DENIED" {
 			t.Fatalf("response = %d, %v, %v", response.StatusCode, response.Header, readErr)
 		}
-		if method == http.MethodGet && !strings.Contains(string(body), "ask the public URL owner") || method == http.MethodHead && len(body) != 0 {
+		if method == http.MethodGet && !strings.Contains(string(body), "ask its owner for a link") || method == http.MethodHead && len(body) != 0 {
 			t.Fatalf("denial body = %q", body)
 		}
 	}
@@ -190,7 +227,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	defer upstream.Close()
 
 	publicURLCertificate := publicURLTestCertificate(t, "route.example")
-	route, err := NewPublicURLServer(PublicURLServerConfig{
+	route, err := newTestPublicURLServer(PublicURLServerConfig{
 		Hostname: "route.example", Target: upstream.URL, Certificate: publicURLCertificate,
 	})
 	if err != nil {
@@ -413,7 +450,7 @@ func TestRouteServerNegotiatesHTTP2AndProxiesLocalHTTP(t *testing.T) {
 
 func TestIntegrationURLHandlerSeesTrustedVisitorSourceAndRejectsOtherAuthorities(t *testing.T) {
 	sources := make(chan string, 1)
-	url, err := NewPublicURLServer(PublicURLServerConfig{
+	url, err := newTestPublicURLServer(PublicURLServerConfig{
 		Hostname: "route.example", Target: "http://127.0.0.1:1",
 		Certificate: publicURLTestCertificate(t, "route.example"),
 		Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -461,7 +498,7 @@ func TestIntegrationURLHandlerSeesTrustedVisitorSourceAndRejectsOtherAuthorities
 
 func startHTTPTestRouteServer(t *testing.T, target string) *PublicURLServer {
 	t.Helper()
-	route, err := NewPublicURLServer(PublicURLServerConfig{
+	route, err := newTestPublicURLServer(PublicURLServerConfig{
 		Hostname: "route.example", Target: target, Certificate: publicURLTestCertificate(t, "route.example"),
 	})
 	if err != nil {

@@ -34,7 +34,7 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 	}
 	entered, release := make(chan struct{}, 4), make(chan struct{})
 	var workers sync.WaitGroup
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Limits: ApplicationLimits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
+	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Limits: ApplicationLimits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if localproxy.IsReadinessProbe(r) {
 				entered <- struct{}{}
@@ -144,7 +144,7 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 					t.Fatal(err)
 				}
 				var app, probes, promoted atomic.Int32
-				route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number,
+				route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number,
 					ReadinessProof: proof, Certificate: publicURLTestCertificate(t, run.Hostname), Limits: ApplicationLimits{Requests: 1, RateRequests: 1, RatePer: time.Hour},
 					PromoteVisitor: func(_ context.Context, v Visitor) error {
 						if v.Readiness {
@@ -223,7 +223,7 @@ func TestReadinessDoesNotCacheRejectedApplicationPromotion(t *testing.T) {
 	for _, h2 := range []bool{false, true} {
 		proof, _ := NewReadinessProof(run, "/health")
 		var calls atomic.Int32
-		route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
+		route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
 			PromoteVisitor: func(context.Context, Visitor) error {
 				calls.Add(1)
 				return &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
@@ -311,7 +311,7 @@ func TestHTTP2CanceledFirstRequestDoesNotPoisonConnection(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	firstDone := make(chan struct{})
 	var calls, forwarded atomic.Int32
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
+	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
 		PromoteVisitor: func(ctx context.Context, _ Visitor) error {
 			calls.Add(1)
 			close(started)
@@ -370,7 +370,7 @@ func TestHTTP2ProofDoesNotWaitForApplicationPromotion(t *testing.T) {
 	proof, _ := NewReadinessProof(run, "/health")
 	started, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
+	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
 		Limits: ApplicationLimits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
 		PromoteVisitor: func(ctx context.Context, _ Visitor) error {
 			calls.Add(1)

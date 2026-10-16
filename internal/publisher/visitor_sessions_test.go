@@ -170,7 +170,7 @@ func TestPromotedDeniedHTTPResponseOutlivesPendingDeadline(t *testing.T) {
 				t.Fatal(err)
 			}
 			var promoted atomic.Int32
-			route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), ShareAccess: access,
+			route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), ShareAccess: access,
 				PromoteVisitor: func(context.Context, Visitor) error { promoted.Add(1); return nil },
 				Handler:        http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { time.Sleep(6 * time.Second); w.WriteHeader(204) })})
 			if err != nil {

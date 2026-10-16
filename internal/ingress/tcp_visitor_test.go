@@ -267,7 +267,7 @@ func TestIngressDeniedDatabasesUseBoundedPendingPath(t *testing.T) {
 				return err
 			})
 			s, address := startIngress(t, Config{RequireProxyHeader: true, LookupPort: func(uint16) (PublicURL, LookupReason) {
-				return PublicURL{ID: "database", PublishRunNumber: 1, ServiceProtocol: protocol, PublicPort: testPublicPort(5432), Backends: []routebackend.Backend{backend}}, LookupCurrent
+				return PublicURL{ID: "database", PublishRunNumber: 1, AccessMode: "restricted", AllowAll: true, ServiceProtocol: protocol, PublicPort: testPublicPort(5432), Backends: []routebackend.Backend{backend}}, LookupCurrent
 			}})
 			client, err := net.Dial("tcp", address)
 			if err != nil {
