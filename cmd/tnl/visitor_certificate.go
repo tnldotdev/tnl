@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -16,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/visitorcert"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -62,21 +65,11 @@ func runVisitorCertificate(ctx context.Context, flags visitorCertificateCommand,
 	if item.ServiceProtocol != "postgres" && item.ServiceProtocol != "mysql" && item.ServiceProtocol != "redis" {
 		return failure.Wrap("select a database public URL", failure.InvalidCommand, errors.New("visitor certificates require a PostgreSQL, MySQL or Redis public URL"))
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	certificate, issued, err := createVisitorCertificate(ctx, session.authenticated.Control, item.Id)
 	if err != nil {
 		return err
 	}
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
-	if err != nil {
-		return err
-	}
-	issued, err := session.authenticated.Control.IssueVisitorCertificate(ctx, item.Id, csr)
-	if err != nil {
-		return err
-	}
-	if issued.PublicUrlId != item.Id {
-		return failure.Wrap("validate visitor certificate", failure.ServerResponseInvalid, errors.New("certificate response has a different public URL"))
-	}
+	key := certificate.PrivateKey.(*ecdsa.PrivateKey)
 	private, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
 		return err
@@ -97,6 +90,69 @@ func runVisitorCertificate(ctx context.Context, flags visitorCertificateCommand,
 		return json.NewEncoder(output).Encode(metadata)
 	}
 	return writeHumanFrame(output, "tnl url certificate", "saved", "", clioutput.Fields(clioutput.Field{Label: "public URL ID", Value: item.Id}, clioutput.Field{Label: "directory", Value: flags.Directory}, clioutput.Field{Label: "expires", Value: issued.ExpiresAt.UTC().Format(time.RFC3339)}))
+}
+
+type visitorCertificateIssuer interface {
+	IssueVisitorCertificate(context.Context, string, []byte) (controlv1.VisitorCertificate, error)
+}
+
+// createVisitorCertificate keeps its fresh private key in memory. control sees
+// only the CSR, and the returned certificate must bind that key to this URL.
+func createVisitorCertificate(ctx context.Context, issuer visitorCertificateIssuer, urlID string) (tls.Certificate, controlv1.VisitorCertificate, error) {
+	if !opaqueid.Valid(urlID, opaqueid.PublicURLPrefix) {
+		return tls.Certificate{}, controlv1.VisitorCertificate{}, failure.Wrap("select visitor public URL", failure.ServerResponseInvalid, visitorcert.ErrInvalidCertificate)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, controlv1.VisitorCertificate{}, err
+	}
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	if err != nil {
+		return tls.Certificate{}, controlv1.VisitorCertificate{}, err
+	}
+	issued, err := issuer.IssueVisitorCertificate(ctx, urlID, csr)
+	if err != nil {
+		return tls.Certificate{}, controlv1.VisitorCertificate{}, err
+	}
+	certificate, err := validateVisitorCertificate(issued, key, urlID, time.Now())
+	if err != nil {
+		return tls.Certificate{}, controlv1.VisitorCertificate{}, failure.Wrap("validate visitor certificate", failure.ServerResponseInvalid, err)
+	}
+	return certificate, issued, nil
+}
+
+// validation mirrors the export boundary without writing a private key to disk.
+// the issuer is trusted only for client credentials, never for visitor TLS.
+func validateVisitorCertificate(issued controlv1.VisitorCertificate, key *ecdsa.PrivateKey, urlID string, now time.Time) (tls.Certificate, error) {
+	invalid := visitorcert.ErrInvalidCertificate
+	if key == nil || issued.PublicUrlId != urlID || !opaqueid.Valid(urlID, opaqueid.PublicURLPrefix) {
+		return tls.Certificate{}, invalid
+	}
+	block, rest := pem.Decode([]byte(issued.CertificatePem))
+	if block == nil || block.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
+		return tls.Certificate{}, invalid
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return tls.Certificate{}, invalid
+	}
+	public, ok := leaf.PublicKey.(*ecdsa.PublicKey)
+	if !ok || !public.Equal(&key.PublicKey) || leaf.IsCA || !leaf.NotAfter.Equal(issued.ExpiresAt) || leaf.NotAfter.Sub(leaf.NotBefore) > visitorcert.MaxLifetime || len(leaf.URIs) != 1 {
+		return tls.Certificate{}, invalid
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(issued.IssuerPem)) {
+		return tls.Certificate{}, invalid
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+		return tls.Certificate{}, invalid
+	}
+	scope := leaf.URIs[0]
+	identity, found := strings.CutPrefix(scope.Path, "/"+urlID+"/")
+	if !found || !opaqueid.Valid(identity, opaqueid.IdentityPrefix) || scope.Scheme != "tnl" || scope.Host != "visitor" || scope.User != nil || scope.RawPath != "" || scope.RawQuery != "" || scope.Fragment != "" || scope.Opaque != "" {
+		return tls.Certificate{}, invalid
+	}
+	return tls.Certificate{Certificate: [][]byte{leaf.Raw}, PrivateKey: key, Leaf: leaf}, nil
 }
 
 // exportVisitorCertificate validates the certificate and proven local key before

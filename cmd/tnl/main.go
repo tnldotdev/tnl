@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/sshclient"
 	"golang.org/x/term"
 )
 
@@ -34,6 +35,7 @@ type cli struct {
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
 	Publisher   publisherCommand `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
 	Service     serviceCommand   `cmd:"" help:"Manage installed system publications." group:"operate"`
+	SSH         sshCommand       `cmd:"" name:"ssh" help:"Visit managed SSH hosts: tnl ssh USER@HOST." group:"start"`
 	Status      statusCommand    `cmd:"" help:"Show local snapshots and fresh signed-in server facts; --all includes other projects." group:"start"`
 	Ping        pingCommand      `cmd:"" help:"Check a public URL from this machine as an unauthenticated visitor." group:"start"`
 	Inspect     inspectCommand   `cmd:"" help:"Inspect recent local HTTP and supported TCP activity." group:"manage"`
@@ -178,6 +180,10 @@ func main() {
 }
 
 func terminalResult(err error) (int, error) {
+	var remoteExit *sshclient.ExitError
+	if errors.As(err, &remoteExit) {
+		return remoteExit.ExitCode(), nil
+	}
 	failures, unowned := 0, 0
 	var visit func(error, bool)
 	visit = func(err error, owned bool) {
@@ -232,6 +238,9 @@ func writeCommandError(output io.Writer, err error) {
 	command := "tnl"
 	if contextual, ok := clioutput.CommandOf(err); ok {
 		command = contextual
+	}
+	if writeSSHCommandError(output, command, err) {
+		return
 	}
 	if text, ok := diagnostic.TextForCommandError(command, err); ok {
 		_, _ = io.WriteString(output, text+"\n")
@@ -494,6 +503,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runServiceList(ctx, flags.Service.List, stdout)
 	case "service serve":
 		return runServiceServe(ctx, flags.Service.Serve)
+	case "ssh <user@host> <command>":
+		return runSSH(ctx, flags.SSH.Run, os.Stdin, stdout, stderr)
+	case "ssh connect":
+		return runSSHConnect(ctx, flags.SSH.Connect, os.Stdin, stdout)
+	case "ssh enable":
+		return runSSHEnable(ctx, flags.SSH.Enable, stdout, stderr)
 	case "status":
 		if !flags.Status.All {
 			flags.Status.Project, err = projectRoot(ctx, flags)
@@ -651,6 +666,8 @@ func commandFailureReason(command string) failure.Reason {
 		return failure.Authentication
 	case strings.HasPrefix(command, "tnl publish"):
 		return failure.TunnelUnavailable
+	case strings.HasPrefix(command, "tnl ssh"):
+		return failure.TransportUnavailable
 	case strings.HasPrefix(command, "tnl team "):
 		return failure.TeamUnavailable
 	case strings.HasPrefix(command, "tnl domain "):
@@ -672,6 +689,8 @@ func commandFailureReason(command string) failure.Reason {
 
 func canonicalParsedCommand(command string) string {
 	switch command {
+	case "ssh run <user@host>", "ssh run <user@host> <command>":
+		return "ssh <user@host> <command>"
 	case "auth login run":
 		return "auth login"
 	case "publish":
