@@ -468,6 +468,7 @@ WHERE id = $4
   AND public_url_id = $5
   AND publish_run_number = $6
   AND closed_at IS NULL
+  AND certificate_cache_key IS NOT NULL
 RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 `
 
@@ -533,7 +534,11 @@ WHERE sessions.id = $2
   AND sessions.public_url_id = $3
   AND sessions.publish_run_number = $4
   AND sessions.closed_at IS NULL
-  AND sessions.certificate_installed_at IS NOT NULL
+  AND (sessions.certificate_installed_at IS NOT NULL OR
+       (sessions.certificate_cache_key IS NULL AND EXISTS (
+           SELECT 1 FROM control.public_urls AS url
+           WHERE url.id = sessions.public_url_id AND url.service_protocol = 'ssh'
+               AND url.lifecycle_state = 'enabled' AND url.dns_state = 'published' AND url.public_port IS NOT NULL)))
   AND (
       SELECT count(*)
       FROM control.publish_run_connection_slots AS connections

@@ -6,15 +6,13 @@ import "github.com/tnldotdev/tnl/internal/authorization"
 type PublicURLServiceProtocol string
 
 const (
-	PublicURLServiceHTTP     PublicURLServiceProtocol = "http"
-	PublicURLServicePostgres PublicURLServiceProtocol = "postgres"
-	PublicURLServiceMySQL    PublicURLServiceProtocol = "mysql"
-	PublicURLServiceRedis    PublicURLServiceProtocol = "redis"
-	PublicURLServiceSSH      PublicURLServiceProtocol = "ssh"
+	PublicURLServiceHTTP PublicURLServiceProtocol = "http"
+	PublicURLServiceTCP  PublicURLServiceProtocol = "tcp"
+	PublicURLServiceSSH  PublicURLServiceProtocol = "ssh"
 )
 
 func (protocol PublicURLServiceProtocol) Valid() bool {
-	return protocol == PublicURLServiceHTTP || protocol == PublicURLServicePostgres || protocol == PublicURLServiceMySQL || protocol == PublicURLServiceRedis || protocol == PublicURLServiceSSH
+	return protocol == PublicURLServiceHTTP || protocol == PublicURLServiceTCP || protocol == PublicURLServiceSSH
 }
 
 // ValidCreateTarget checks how a public URL receives its local target.

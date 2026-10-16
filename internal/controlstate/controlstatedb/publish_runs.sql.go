@@ -148,7 +148,7 @@ WHERE id = $2
   AND mutation_revision = $20
   AND mutation_revision < 9223372036854775807
   AND lifecycle_state = 'enabled'
-RETURNING (next_publish_run_number - 1)::bigint AS publish_run_number
+RETURNING (next_publish_run_number - 1)::bigint AS publish_run_number, service_protocol
 )
 INSERT INTO control.publish_runs (
     id,
@@ -185,10 +185,10 @@ INSERT INTO control.publish_runs (
     $9,
     $10,
     $11,
-    $12,
-    $13,
-    $14,
-    $15,
+    CASE WHEN version.service_protocol = 'ssh' THEN NULL ELSE $12::text END AS certificate_cache_key,
+    CASE WHEN version.service_protocol = 'ssh' THEN NULL ELSE $13::text END AS certificate_scope,
+    CASE WHEN version.service_protocol = 'ssh' THEN NULL ELSE $14::text[] END AS certificate_identifiers,
+    CASE WHEN version.service_protocol = 'ssh' THEN NULL ELSE $15::text END AS certificate_challenge_method,
     convert_from($16::bytea, 'UTF8')::jsonb,
     'starting',
     $17,

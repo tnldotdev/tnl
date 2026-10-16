@@ -27,6 +27,9 @@ type Querier interface {
 	// delta, and update denials atomically. reject any missing required step and
 	// roll back the whole page.
 	ApplyIngressUsageReport(ctx context.Context, arg ApplyIngressUsageReportParams) (ApplyIngressUsageReportRow, error)
+	// control must check current SSH grant, requested OS account, and browser
+	// identity under the team/URL lock before invoking this guarded transition.
+	ApproveSSHAttempt(ctx context.Context, arg ApproveSSHAttemptParams) (ControlSshAttempt, error)
 	AttachPublisherRun(ctx context.Context, arg AttachPublisherRunParams) error
 	BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayDrainParams) (BeginAdminRelayDrainRow, error)
 	BeginDNSAuthorityRelease(ctx context.Context, arg BeginDNSAuthorityReleaseParams) (ControlDnsAuthority, error)
@@ -39,6 +42,7 @@ type Querier interface {
 	CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg CancelOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	CancelPublishRunACMEAuthorizations(ctx context.Context, arg CancelPublishRunACMEAuthorizationsParams) error
 	CancelPublishRunACMEOrders(ctx context.Context, arg CancelPublishRunACMEOrdersParams) error
+	CancelSSHAttempt(ctx context.Context, arg CancelSSHAttemptParams) (int64, error)
 	// claim-time checks can precede a publisher's challenge-ready transition.
 	// recheck the current projection and every live ingress immediately before
 	// asking the CA to validate, while the authorization is still presented.
@@ -55,7 +59,13 @@ type Querier interface {
 	ClaimPublisherConnection(ctx context.Context, arg ClaimPublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
 	ClaimRelayCertificateOrderWork(ctx context.Context, arg ClaimRelayCertificateOrderWorkParams) (ControlRelayCertificateOrder, error)
 	ClaimRelayServiceForCertificateOrder(ctx context.Context, arg ClaimRelayServiceForCertificateOrderParams) (ControlRelayService, error)
+	// claim verifies the original SSH session and source as well as the private
+	// proof; a browser code alone can never start a stream.
+	ClaimSSHAttempt(ctx context.Context, arg ClaimSSHAttemptParams) (ControlSshAttempt, error)
 	CleanupBrowserAccess(ctx context.Context, now pgtype.Timestamptz) error
+	CleanupBrowserIdentityLogins(ctx context.Context, now pgtype.Timestamptz) error
+	CleanupBrowserIdentitySessions(ctx context.Context, now pgtype.Timestamptz) error
+	CleanupSSHAttempts(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupVisitorHandoffs(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupVisitorLogins(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupVisitorSessions(ctx context.Context, now pgtype.Timestamptz) error
@@ -64,6 +74,7 @@ type Querier interface {
 	CompleteACMEAuthorizationCleanup(ctx context.Context, arg CompleteACMEAuthorizationCleanupParams) (int64, error)
 	CompletePublicURLUsageDelivery(ctx context.Context, arg CompletePublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ConsumeBrowserAccessHandoff(ctx context.Context, arg ConsumeBrowserAccessHandoffParams) (ConsumeBrowserAccessHandoffRow, error)
+	ConsumeBrowserIdentityLoginAttempt(ctx context.Context, arg ConsumeBrowserIdentityLoginAttemptParams) (ConsumeBrowserIdentityLoginAttemptRow, error)
 	ConsumeBrowserLoginAttempt(ctx context.Context, arg ConsumeBrowserLoginAttemptParams) (ConsumeBrowserLoginAttemptRow, error)
 	ConsumeOIDCAssertion(ctx context.Context, arg ConsumeOIDCAssertionParams) (int64, error)
 	ConsumeShareHandoff(ctx context.Context, arg ConsumeShareHandoffParams) (ConsumeShareHandoffRow, error)
@@ -102,6 +113,7 @@ type Querier interface {
 	DeleteExpiredShareCookies(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteFinishedShareHandoffs(ctx context.Context, now pgtype.Timestamptz) error
 	DeletePublicURL(ctx context.Context, arg DeletePublicURLParams) (int64, error)
+	DenySSHAttempt(ctx context.Context, arg DenySSHAttemptParams) (ControlSshAttempt, error)
 	DiscardInactiveInvitationEmails(ctx context.Context, now pgtype.Timestamptz) error
 	// close only the exact claim so a late disconnect cannot close its replacement.
 	DisconnectPublisherConnection(ctx context.Context, arg DisconnectPublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
@@ -211,6 +223,10 @@ type Querier interface {
 	InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAuditEventParams) error
 	InsertBrowserAccessHandoff(ctx context.Context, arg InsertBrowserAccessHandoffParams) error
 	InsertBrowserAccessSession(ctx context.Context, arg InsertBrowserAccessSessionParams) error
+	// control-host identity sessions are shared by browser approval pages. the
+	// cookie is random, host-only, Secure and HttpOnly; store only its SHA-256.
+	InsertBrowserIdentityLoginAttempt(ctx context.Context, arg InsertBrowserIdentityLoginAttemptParams) error
+	InsertBrowserIdentitySession(ctx context.Context, arg InsertBrowserIdentitySessionParams) error
 	InsertBrowserLoginAttempt(ctx context.Context, arg InsertBrowserLoginAttemptParams) error
 	InsertCertificateIssuanceAuditEvent(ctx context.Context, arg InsertCertificateIssuanceAuditEventParams) error
 	InsertExpiredEphemeralPublicURLDeleteAuditEvent(ctx context.Context, arg InsertExpiredEphemeralPublicURLDeleteAuditEventParams) error
@@ -237,6 +253,10 @@ type Querier interface {
 	InsertPublisherIdentity(ctx context.Context, arg InsertPublisherIdentityParams) (ControlPublisherIdentity, error)
 	InsertPublisherKey(ctx context.Context, arg InsertPublisherKeyParams) error
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
+	// caller locks the public URL and current run before creating an attempt.
+	// source_ip and session digest come from the trusted publisher connection,
+	// never from a browser or the eight-character code.
+	InsertSSHAttempt(ctx context.Context, arg InsertSSHAttemptParams) (ControlSshAttempt, error)
 	InsertShareCookie(ctx context.Context, arg InsertShareCookieParams) ([]byte, error)
 	InsertShareHandoff(ctx context.Context, arg InsertShareHandoffParams) ([]byte, error)
 	InsertTCPPortClaim(ctx context.Context, arg InsertTCPPortClaimParams) (ControlTcpPortClaim, error)
@@ -287,6 +307,7 @@ type Querier interface {
 	LockACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)
 	LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrderForInstallParams) (ControlAcmeOrder, error)
 	LockBrowserAccessSession(ctx context.Context, tokenDigest []byte) (ControlBrowserAccessSession, error)
+	LockBrowserIdentitySession(ctx context.Context, arg LockBrowserIdentitySessionParams) (ControlBrowserIdentitySession, error)
 	LockCertificateIssuanceControl(ctx context.Context) (bool, error)
 	LockControlSessionByRefreshID(ctx context.Context, refreshTokenID string) (LockControlSessionByRefreshIDRow, error)
 	LockDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error)
@@ -354,6 +375,9 @@ type Querier interface {
 	LockVisitorControlSession(ctx context.Context, accessTokenID string) (ControlControlSession, error)
 	LockVisitorIdentity(ctx context.Context, id string) (ControlIdentity, error)
 	LockVisitorInvitation(ctx context.Context, id string) (ControlVisitorInvitation, error)
+	// only an authenticated control-host identity can inspect or decide. code
+	// lookup reveals no proof and grants no access to the SSH connection.
+	LookupSSHAttemptForBrowser(ctx context.Context, arg LookupSSHAttemptForBrowserParams) (LookupSSHAttemptForBrowserRow, error)
 	MarkACMEAuthorizationsPresented(ctx context.Context, arg MarkACMEAuthorizationsPresentedParams) (int64, error)
 	MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderInstalledParams) (ControlAcmeOrder, error)
 	MarkCustomDomainReleasing(ctx context.Context, arg MarkCustomDomainReleasingParams) (int64, error)
@@ -372,6 +396,7 @@ type Querier interface {
 	OpenPublicURLRecoveryEpisode(ctx context.Context, arg OpenPublicURLRecoveryEpisodeParams) error
 	OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error)
 	OtherTeamAccessForPublicURL(ctx context.Context, arg OtherTeamAccessForPublicURLParams) (string, error)
+	PollSSHAttempt(ctx context.Context, arg PollSSHAttemptParams) (PollSSHAttemptRow, error)
 	PreviewInvitation(ctx context.Context, arg PreviewInvitationParams) (PreviewInvitationRow, error)
 	// bound candidates scanned, even when an anchor cannot be removed. retain the
 	// latest hostname/category projection, including tombstones and expired rows,
@@ -423,6 +448,8 @@ type Querier interface {
 	RetryPublicURLUsageDelivery(ctx context.Context, arg RetryPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ReviewerShareCookieValid(ctx context.Context, arg ReviewerShareCookieValidParams) (string, error)
 	RevokeBrowserAccessSession(ctx context.Context, arg RevokeBrowserAccessSessionParams) error
+	RevokeBrowserIdentitySession(ctx context.Context, arg RevokeBrowserIdentitySessionParams) (int64, error)
+	RevokeChildBrowserIdentitySessions(ctx context.Context, arg RevokeChildBrowserIdentitySessionsParams) error
 	RevokeControlSession(ctx context.Context, arg RevokeControlSessionParams) (int64, error)
 	RevokePublisherGrant(ctx context.Context, arg RevokePublisherGrantParams) (int64, error)
 	RevokePublisherIdentity(ctx context.Context, arg RevokePublisherIdentityParams) (int64, error)
@@ -433,6 +460,7 @@ type Querier interface {
 	RevokeVisitorInvitation(ctx context.Context, arg RevokeVisitorInvitationParams) error
 	RotateACMEAccountKey(ctx context.Context, arg RotateACMEAccountKeyParams) error
 	RotateBrowserAccessSession(ctx context.Context, arg RotateBrowserAccessSessionParams) error
+	RotateBrowserIdentitySession(ctx context.Context, arg RotateBrowserIdentitySessionParams) (int64, error)
 	RotateControlSessionCredentials(ctx context.Context, arg RotateControlSessionCredentialsParams) (int64, error)
 	RotateControlSessionRetrySecret(ctx context.Context, arg RotateControlSessionRetrySecretParams) error
 	RotateControlTLSCacheEntry(ctx context.Context, arg RotateControlTLSCacheEntryParams) error

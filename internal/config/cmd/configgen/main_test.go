@@ -162,7 +162,7 @@ func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
 				t.Fatal("HTTP service lost inference or HTTP settings")
 			}
 		} else {
-			if !reflect.DeepEqual(protocol.Enum, []any{"postgres", "mysql", "redis", "ssh"}) || !slices.Contains(service.Required, "protocol") || !slices.Contains(service.Required, "target") || len(target.OneOf) != 3 || http != jsonschema.FalseSchema {
+			if !reflect.DeepEqual(protocol.Enum, []any{"tcp", "ssh"}) || !slices.Contains(service.Required, "protocol") || !slices.Contains(service.Required, "target") || len(target.OneOf) != 3 || http != jsonschema.FalseSchema {
 				t.Fatal("TCP service does not require its protocol and non-app target or forbids no HTTP settings")
 			}
 		}
@@ -170,6 +170,17 @@ func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
 			kind, _ := variant.Properties.Get("type")
 			if i == 1 && kind.Const == "app" {
 				t.Fatal("TCP service accepts an app target")
+			}
+			if kind.Const != "app" {
+				tls, _ := variant.Properties.Get("tls")
+				mode, _ := tls.Properties.Get("mode")
+				want := []any{"direct"}
+				if i == 1 {
+					want = []any{"direct", "postgres", "mysql"}
+				}
+				if !slices.Contains(tls.Required, "mode") || !reflect.DeepEqual(mode.Enum, want) {
+					t.Fatalf("%s target TLS modes = %v", kind.Const, mode.Enum)
+				}
 			}
 			for _, field := range []string{"address", "project", "file", "service", "port", "container", "tls"} {
 				value, found := variant.Properties.Get(field)

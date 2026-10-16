@@ -9,6 +9,112 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/browser/identity/login:
+    get:
+      operationId: beginBrowserIdentityLogin
+      description: Start OIDC sign-in for the shared control-host browser identity session.
+      security: []
+      responses:
+        "302": { description: Redirect to the identity provider }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/browser/identity/callback:
+    get:
+      operationId: completeBrowserIdentityLogin
+      description: Finish OIDC sign-in; set a random, Secure, HttpOnly, SameSite=Lax __Host-tnl-identity cookie scoped to the control hostname. Store only its digest; the session expires within 24 hours.
+      security: []
+      parameters:
+        - { name: state, in: query, required: true, schema: { type: string } }
+        - { name: code, in: query, required: true, schema: { type: string } }
+      responses:
+        "303": { description: Return to the control-host approval page }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/browser/identity/session:
+    post:
+      operationId: createBrowserIdentitySession
+      description: A CLI administrator may create a browser identity session bound to the parent control session. Revoking the parent invalidates the cookie. Never return authority tokens to the browser.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Set the host-only __Host-tnl-identity cookie }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: revokeBrowserIdentitySession
+      security: [{ browserIdentityCookie: [] }]
+      responses:
+        "204": { description: Session revoked and cookie cleared }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publish-runs/{publish_run_id}/ssh-attempts:
+    post:
+      operationId: createSSHAttempt
+      description: Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+      security: [{ publishRunAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PublishRunID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSSHAttemptRequest" }
+      responses:
+        "201":
+          description: Pending attempt, one-time code and private publisher proof
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SSHAttemptCreated" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/browser/ssh-attempts/lookup:
+    post:
+      operationId: lookupSSHAttempt
+      description: Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+      security: [{ browserIdentityCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SSHAttemptCodeRequest" }
+      responses:
+        "200":
+          description: Bounded attempt details for confirmation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SSHAttemptBrowserView" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/browser/ssh-attempts/{attempt_id}/decision:
+    post:
+      operationId: decideSSHAttempt
+      description: Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+      security: [{ browserIdentityCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/SSHAttemptID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SSHAttemptDecisionRequest" }
+      responses:
+        "200":
+          description: One durable approval or denial
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SSHAttemptState" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id}:
+    parameters:
+      - { $ref: "#/components/parameters/PublishRunID" }
+      - { $ref: "#/components/parameters/SSHAttemptID" }
+    post:
+      operationId: updateSSHAttempt
+      description: Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+      security: [{ publishRunAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateSSHAttemptRequest" }
+      responses:
+        "200":
+          description: Current attempt state; no browser credential or code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SSHAttemptState" }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/publish-runs/{publish_run_id}/visitor-access:
     post:
       operationId: authorizeHTTPVisitor
@@ -203,6 +309,7 @@ paths:
   /v1/public-urls/{public_url_id}/visitor-certificate:
     post:
       operationId: issueVisitorCertificate
+      description: Available for exact HTTP or TLS-first TCP public URLs; SSH is ineligible.
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: "#/components/parameters/PublicURLID" }
@@ -226,6 +333,7 @@ paths:
   /v1/publish-runs/{publish_run_id}/visitor-certificate:
     post:
       operationId: authorizeVisitorCertificate
+      description: Check a visitor certificate on an HTTP or TLS-first TCP public URL; SSH does not issue visitor certificates.
       security: [{ publishRunAuth: [] }]
       parameters:
         - { $ref: "#/components/parameters/PublishRunID" }
@@ -1506,7 +1614,17 @@ components:
       type: http
       scheme: bearer
       bearerFormat: tnl grant-scoped publisher access token
+    browserIdentityCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-tnl-identity
+      description: Digest-only random control-host cookie, backed by encrypted authority tokens; never an SSH code.
   parameters:
+    SSHAttemptID:
+      name: attempt_id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
     PublisherIdentityID:
       name: publisher_identity_id
       in: path
@@ -1610,6 +1728,73 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    SSHAttemptCode:
+      type: string
+      minLength: 8
+      maxLength: 8
+      pattern: "^[A-Z0-9]{8}$"
+    SSHAttemptCodeRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code: { $ref: "#/components/schemas/SSHAttemptCode" }
+    CreateSSHAttemptRequest:
+      type: object
+      additionalProperties: false
+      required: [publish_run_number, visitor_connection_id, source_ip, ssh_user, ssh_session_hash]
+      properties:
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        visitor_connection_id: { type: string, minLength: 1, maxLength: 128 }
+        source_ip: { type: string, maxLength: 64 }
+        ssh_user: { type: string, pattern: "^[a-z_][a-z0-9_-]{0,31}$" }
+        ssh_session_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+    SSHAttemptCreated:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, code, publisher_proof, expires_at]
+      properties:
+        attempt_id: { type: string }
+        code: { $ref: "#/components/schemas/SSHAttemptCode" }
+        publisher_proof: { type: string, minLength: 43, maxLength: 43 }
+        expires_at: { type: string, format: date-time }
+    SSHAttemptBrowserView:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, public_url_id, hostname, source_ip, ssh_user, expires_at]
+      properties:
+        attempt_id: { type: string }
+        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        hostname: { $ref: "#/components/schemas/CanonicalHostname" }
+        source_ip: { type: string }
+        ssh_user: { type: string }
+        expires_at: { type: string, format: date-time }
+    SSHAttemptDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [code, decision]
+      properties:
+        code: { $ref: "#/components/schemas/SSHAttemptCode" }
+        decision: { type: string, enum: [approve, deny] }
+    UpdateSSHAttemptRequest:
+      type: object
+      additionalProperties: false
+      required: [publish_run_number, publisher_proof, action]
+      properties:
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        publisher_proof: { type: string, minLength: 43, maxLength: 43 }
+        action: { type: string, enum: [poll, claim, cancel] }
+        visitor_connection_id: { type: string, minLength: 1, maxLength: 128 }
+        source_ip: { type: string, maxLength: 64 }
+        ssh_user: { type: string, pattern: "^[a-z_][a-z0-9_-]{0,31}$" }
+        ssh_session_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+    SSHAttemptState:
+      type: object
+      additionalProperties: false
+      required: [state, expires_at]
+      properties:
+        state: { type: string, enum: [pending, approved, denied, claimed, canceled] }
+        expires_at: { type: string, format: date-time }
     HTTPVisitorRequest:
       type: object
       additionalProperties: false
@@ -1684,7 +1869,7 @@ components:
         team_id: { type: string }
         team_name: { type: string }
         canonical_hostname: { type: string }
-        service_protocol: { type: string, pattern: "^(http|postgres|mysql|redis)$" }
+        service_protocol: { $ref: "#/components/schemas/PublicURLServiceProtocol" }
         public_port: { type: integer, format: int32, minimum: 1024, maximum: 65535 }
         visitor_access: { type: string, enum: [owner, preview_team, team_grant, identity_grant] }
     VisitorIPGrantInput:
@@ -1987,7 +2172,7 @@ components:
       enum: [app, alias, demo, oauth, webhooks]
     PublicURLServiceProtocol:
       type: string
-      enum: [http, postgres, mysql, redis, ssh]
+      enum: [http, tcp, ssh]
     PublicURLLifecycleState:
       type: string
       enum: [enabled, suspended]
@@ -2032,7 +2217,7 @@ components:
           type: integer
           minimum: 1024
           maximum: 65535
-          description: Stable visitor TCP port for a port-addressed public URL.
+          description: Assigned visitor port for SSH; TCP and HTTP use hostname routing on 443.
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
@@ -3174,8 +3359,19 @@ components:
     PublishRunSetup:
       type: object
       additionalProperties: false
-      required:
-        [public_url, publish_run, publish_run_token, certificate_plan, publisher_connections]
+      allOf:
+        - if:
+            properties:
+              public_url:
+                properties:
+                  service_protocol: { const: ssh }
+                required: [service_protocol]
+            required: [public_url]
+          then:
+            not: { required: [certificate_plan] }
+          else:
+            required: [certificate_plan]
+      required: [public_url, publish_run, publish_run_token, publisher_connections]
       properties:
         traffic:
           $ref: "#/components/schemas/TrafficLimits"
@@ -3189,6 +3385,7 @@ components:
           maxLength: 4096
         certificate_plan:
           $ref: "#/components/schemas/CertificatePlan"
+          description: Required for HTTP and TCP; absent for SSH, which has no visitor TLS certificate or ACME order.
         publisher_connections:
           type: array
           minItems: 2
@@ -3294,6 +3491,7 @@ components:
     PublishRunHeartbeat:
       type: object
       additionalProperties: false
+      description: SSH becomes ready after DNS, an assigned port, and two ready publisher connections; HTTP and TCP additionally require a visitor certificate.
       required: [publish_run, publisher_connections, policy_denials]
       properties:
         publish_run:

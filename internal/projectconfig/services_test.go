@@ -16,11 +16,11 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		{"app default", `{services:{web:{}}}`, true},
 		{"removed directory", `{services:{web:{directory:"apps/web"}}}`, false},
 		{"placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{target:{type:"app"}}}}`, true},
-		{"database placement", `{publisher:{type:"compose",service:"publisher"},services:{db:{protocol:"postgres",target:{type:"address",address:5432}}}}`, true},
-		{"mixed placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{},db:{protocol:"postgres",target:{type:"address",address:5432}}}}`, true},
-		{"private TLS", `{services:{db:{protocol:"mysql",target:{type:"address",address:"db.internal:3306",tls:{serverName:"db.internal",caFile:"./ca.pem"}}}}}`, true},
+		{"database placement", `{publisher:{type:"compose",service:"publisher"},services:{db:{protocol:"tcp",target:{type:"address",address:5432}}}}`, true},
+		{"mixed placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{},db:{protocol:"tcp",target:{type:"address",address:5432}}}}`, true},
+		{"private TLS", `{services:{db:{protocol:"tcp",target:{type:"address",address:"db.internal:3306",tls:{mode:"mysql",serverName:"db.internal",caFile:"./ca.pem"}}}}}`, true},
 		{"compose", `{services:{web:{target:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000}}}}`, true},
-		{"docker", `{services:{cache:{protocol:"redis",target:{type:"docker",container:"shop-cache",port:6379}}}}`, true},
+		{"docker", `{services:{cache:{protocol:"tcp",target:{type:"docker",container:"shop-cache",port:6379}}}}`, true},
 		{"inspection", `{inspection:{mode:"summary",retention:"24h",maxBytes:"64MiB"}}`, true},
 		{"traffic", `{tunnel:{limits:{traffic:{connections:8,rate:5,ratePer:"1s",burst:10,uploadBytes:1048576,downloadBytes:2097152,totalUploadBytes:4194304}}}}`, true},
 		{"old root", `{publish:{target:3000}}`, false},
@@ -89,7 +89,7 @@ func TestComposeDefaultsUseSelectedWorktreeAndProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, protocol, port := "db", "postgres", 5432
+	service, protocol, port := "db", "tcp", 5432
 	project := Project{Root: root, Worktree: Worktree{Label: WorktreeLabel{FullLabel: "shop-worktree-a12345"}}, Config: config.TNL{
 		Publisher: &config.AppPublisher{Type: "compose", Service: "publisher"},
 		Services:  config.Services{"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "compose", Service: &service, Port: &port}}},
@@ -128,7 +128,7 @@ func TestResolveFillsComposeTargetDefaultsPerProject(t *testing.T) {
 			t.Fatal(err)
 		}
 		path := filepath.Join(root, "tnl.json")
-		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{"db":{"protocol":"postgres","target":{"type":"compose","service":"db","port":5432}}}}}`), 0600); err != nil {
+		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{"db":{"protocol":"tcp","target":{"type":"compose","service":"db","port":5432}}}}}`), 0600); err != nil {
 			t.Fatal(err)
 		}
 		project, err := Resolve(t.Context(), Selection{Path: path}, root, [32]byte{})
@@ -147,11 +147,11 @@ func TestResolveFillsComposeTargetDefaultsPerProject(t *testing.T) {
 }
 
 func TestEffectiveServiceKeepsAppAndAddressTargetsIndependent(t *testing.T) {
-	protocol := "postgres"
+	protocol := "tcp"
 	target := config.Target("db.internal:5432")
 	ca := "ca.pem"
 	p := Project{Config: config.TNL{Services: config.Services{
-		"web": {}, "db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{CAFile: &ca}}},
+		"web": {}, "db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{Mode: "postgres", CAFile: &ca}}},
 	}}}
 	web, err := p.EffectiveService("web")
 	if err != nil {
@@ -161,7 +161,7 @@ func TestEffectiveServiceKeepsAppAndAddressTargetsIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.ServiceProtocol(web.Publish) != "http" || web.Publish.Target != nil || web.Publish.TargetCAFile != nil || config.ServiceProtocol(db.Publish) != "postgres" || db.Publish.Target != &target || db.Publish.TargetTLS == nil || !*db.Publish.TargetTLS {
+	if config.ServiceProtocol(web.Publish) != "http" || web.Publish.Target != nil || web.Publish.TargetCAFile != nil || config.ServiceProtocol(db.Publish) != "tcp" || db.Publish.Target != &target || db.Publish.TargetTLS == nil || !*db.Publish.TargetTLS || db.Publish.TargetTLSMode == nil || *db.Publish.TargetTLSMode != "postgres" {
 		t.Fatal("service resolution mixed app and address settings")
 	}
 }
@@ -198,7 +198,7 @@ func TestResolvePublishNormalizesDiscoveryAndProjectCAPaths(t *testing.T) {
 	root := t.TempDir()
 	project, service, file, port, ca := "shop", "web", "compose.yml", 3000, "certs/ca.pem"
 	p := Project{Root: root, Config: config.TNL{Services: config.Services{
-		"web": {Target: &config.ServiceTarget{Type: "compose", Project: &project, Service: &service, File: &file, Port: &port, TLS: &config.TargetTLS{CAFile: &ca}}},
+		"web": {Target: &config.ServiceTarget{Type: "compose", Project: &project, Service: &service, File: &file, Port: &port, TLS: &config.TargetTLS{Mode: "direct", CAFile: &ca}}},
 	}}}
 	resolved, err := p.ResolvePublish("web", "127.0.0.1:49152")
 	if err != nil {
@@ -217,8 +217,8 @@ func TestResolvePublishNormalizesDiscoveryAndProjectCAPaths(t *testing.T) {
 
 func TestHTTPPrivateTLSNameSurvivesConfigurationResolution(t *testing.T) {
 	for _, source := range []string{
-		`{services:{web:{protocol:"http",target:{type:"address",address:"https://127.0.0.1:3000",tls:{serverName:"web.internal",caFile:"certs/ca.pem"}}}}}`,
-		`{services:{web:{target:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000,tls:{serverName:"web.internal",caFile:"certs/ca.pem"}}}}}`,
+		`{services:{web:{protocol:"http",target:{type:"address",address:"https://127.0.0.1:3000",tls:{mode:"direct",serverName:"web.internal",caFile:"certs/ca.pem"}}}}}`,
+		`{services:{web:{target:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000,tls:{mode:"direct",serverName:"web.internal",caFile:"certs/ca.pem"}}}}}`,
 	} {
 		root := t.TempDir()
 		file := filepath.Join(root, "tnl.config.ts")

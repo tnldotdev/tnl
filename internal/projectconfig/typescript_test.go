@@ -383,7 +383,7 @@ func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 }
 
 func TestTypeScriptDatabasePublishUsesTargetTLSNames(t *testing.T) {
-	value, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{"target":{"type":"address","address":3000}},"orders":{"protocol":"postgres","target":{"type":"address","address":"db.internal:5432","tls":{"serverName":"db.internal","caFile":"./ca.pem"}}}}}`))
+	value, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{"target":{"type":"address","address":3000}},"orders":{"protocol":"tcp","target":{"type":"address","address":"db.internal:5432","tls":{"mode":"postgres","serverName":"db.internal","caFile":"./ca.pem"}}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +391,7 @@ func TestTypeScriptDatabasePublishUsesTargetTLSNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	options := config.ServicePublish(value.Services["orders"])
-	if options == nil || options.Protocol == nil || *options.Protocol != "postgres" ||
+	if options == nil || options.Protocol == nil || *options.Protocol != "tcp" || options.TargetTLSMode == nil || *options.TargetTLSMode != "postgres" ||
 		options.Target == nil || string(*options.Target) != "db.internal:5432" ||
 		options.TargetTLS == nil || !*options.TargetTLS ||
 		options.TargetTLSName == nil || *options.TargetTLSName != "db.internal" ||

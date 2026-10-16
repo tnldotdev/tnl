@@ -38,7 +38,7 @@ func TestProjectMetadataConformance(t *testing.T) {
 
 func TestSavedAddressesRenderWithoutPrivateData(t *testing.T) {
 	port := 15432
-	for _, protocol := range []string{"postgres", "mysql", "redis", "ssh"} {
+	for _, protocol := range []string{"ssh"} {
 		service, err := NewService("member.example", "db.member.example", protocol, &port)
 		if err != nil {
 			t.Fatal(err)
@@ -70,8 +70,18 @@ func TestSavedAddressesRenderWithoutPrivateData(t *testing.T) {
 			t.Fatal("HTTP mount into TCP service was accepted")
 		}
 	}
+	tcp, err := NewService("member.example", "db.member.example", "tcp", nil)
+	if err != nil || tcp.Port == nil || *tcp.Port != 443 || tcp.Address != "db.member.example:443" {
+		t.Fatalf("shared tcp metadata = %+v: %v", tcp, err)
+	}
+	if _, err := NewService("member.example", "db.member.example", "tcp", &port); err == nil {
+		t.Fatal("tcp metadata accepted an assigned port")
+	}
+	if _, err := NewService("member.example", "db.member.example", "ssh", nil); err == nil {
+		t.Fatal("ssh metadata was built before port assignment")
+	}
 	if _, err := NewService("member.example", "db.member.example", "postgres", nil); err == nil {
-		t.Fatal("TCP metadata was built before reservation")
+		t.Fatal("old public URL protocol was accepted")
 	}
 	if _, err := NewService("member.example", "web.member.example", "http", &port); err == nil {
 		t.Fatal("HTTP metadata accepted a public TCP port")

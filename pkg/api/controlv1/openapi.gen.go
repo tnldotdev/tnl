@@ -448,11 +448,9 @@ func (e PublicURLScope) Valid() bool {
 
 // Defines values for PublicURLServiceProtocol.
 const (
-	Http     PublicURLServiceProtocol = "http"
-	Mysql    PublicURLServiceProtocol = "mysql"
-	Postgres PublicURLServiceProtocol = "postgres"
-	Redis    PublicURLServiceProtocol = "redis"
-	Ssh      PublicURLServiceProtocol = "ssh"
+	Http PublicURLServiceProtocol = "http"
+	Ssh  PublicURLServiceProtocol = "ssh"
+	Tcp  PublicURLServiceProtocol = "tcp"
 )
 
 // Valid indicates whether the value is a known member of the PublicURLServiceProtocol enum.
@@ -460,13 +458,9 @@ func (e PublicURLServiceProtocol) Valid() bool {
 	switch e {
 	case Http:
 		return true
-	case Mysql:
-		return true
-	case Postgres:
-		return true
-	case Redis:
-		return true
 	case Ssh:
+		return true
+	case Tcp:
 		return true
 	default:
 		return false
@@ -695,6 +689,51 @@ func (e ReadinessResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for SSHAttemptDecisionRequestDecision.
+const (
+	Approve SSHAttemptDecisionRequestDecision = "approve"
+	Deny    SSHAttemptDecisionRequestDecision = "deny"
+)
+
+// Valid indicates whether the value is a known member of the SSHAttemptDecisionRequestDecision enum.
+func (e SSHAttemptDecisionRequestDecision) Valid() bool {
+	switch e {
+	case Approve:
+		return true
+	case Deny:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSHAttemptStateState.
+const (
+	SSHAttemptStateStateApproved SSHAttemptStateState = "approved"
+	SSHAttemptStateStateCanceled SSHAttemptStateState = "canceled"
+	SSHAttemptStateStateClaimed  SSHAttemptStateState = "claimed"
+	SSHAttemptStateStateDenied   SSHAttemptStateState = "denied"
+	SSHAttemptStateStatePending  SSHAttemptStateState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the SSHAttemptStateState enum.
+func (e SSHAttemptStateState) Valid() bool {
+	switch e {
+	case SSHAttemptStateStateApproved:
+		return true
+	case SSHAttemptStateStateCanceled:
+		return true
+	case SSHAttemptStateStateClaimed:
+		return true
+	case SSHAttemptStateStateDenied:
+		return true
+	case SSHAttemptStateStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SourceFileStateStatus.
 const (
 	Added    SourceFileStateStatus = "added"
@@ -710,6 +749,27 @@ func (e SourceFileStateStatus) Valid() bool {
 	case Deleted:
 		return true
 	case Modified:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpdateSSHAttemptRequestAction.
+const (
+	Cancel UpdateSSHAttemptRequestAction = "cancel"
+	Claim  UpdateSSHAttemptRequestAction = "claim"
+	Poll   UpdateSSHAttemptRequestAction = "poll"
+)
+
+// Valid indicates whether the value is a known member of the UpdateSSHAttemptRequestAction enum.
+func (e UpdateSSHAttemptRequestAction) Valid() bool {
+	switch e {
+	case Cancel:
+		return true
+	case Claim:
+		return true
+	case Poll:
 		return true
 	default:
 		return false
@@ -946,7 +1006,7 @@ type AvailablePublicURL struct {
 	CanonicalHostname string                          `json:"canonical_hostname"`
 	Id                string                          `json:"id"`
 	PublicPort        *int32                          `json:"public_port,omitempty"`
-	ServiceProtocol   string                          `json:"service_protocol"`
+	ServiceProtocol   PublicURLServiceProtocol        `json:"service_protocol"`
 	TeamId            string                          `json:"team_id"`
 	TeamName          string                          `json:"team_name"`
 	VisitorAccess     AvailablePublicURLVisitorAccess `json:"visitor_access"`
@@ -1153,6 +1213,15 @@ type CreatePublisherGrantRequest struct {
 	ExpiresAt   *time.Time   `json:"expires_at,omitempty"`
 	PublicUrlId *PublicURLID `json:"public_url_id,omitempty"`
 	TeamId      TeamID       `json:"team_id"`
+}
+
+// CreateSSHAttemptRequest defines model for CreateSSHAttemptRequest.
+type CreateSSHAttemptRequest struct {
+	PublishRunNumber    int64  `json:"publish_run_number"`
+	SourceIp            string `json:"source_ip"`
+	SshSessionHash      string `json:"ssh_session_hash"`
+	SshUser             string `json:"ssh_user"`
+	VisitorConnectionId string `json:"visitor_connection_id"`
 }
 
 // CreateShareRequest defines model for CreateShareRequest.
@@ -1500,7 +1569,7 @@ type PublicURL struct {
 	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
 	PolicyRevision       int64                   `json:"policy_revision"`
 
-	// PublicPort Stable visitor TCP port for a port-addressed public URL.
+	// PublicPort Assigned visitor port for SSH; TCP and HTTP use hostname routing on 443.
 	PublicPort      *int                     `json:"public_port,omitempty"`
 	PublicUrlScope  PublicURLScope           `json:"public_url_scope"`
 	Purpose         PublicURLPurpose         `json:"purpose"`
@@ -1549,7 +1618,7 @@ type PublishRun struct {
 	TeamId                    TeamID          `json:"team_id"`
 }
 
-// PublishRunHeartbeat defines model for PublishRunHeartbeat.
+// PublishRunHeartbeat SSH becomes ready after DNS, an assigned port, and two ready publisher connections; HTTP and TCP additionally require a visitor certificate.
 type PublishRunHeartbeat struct {
 	// PolicyDenials Total IP policy denials reported so far for this publish run number. The total may lag.
 	PolicyDenials        int64                  `json:"policy_denials"`
@@ -1562,7 +1631,8 @@ type PublishRunID = ResourceID
 
 // PublishRunSetup defines model for PublishRunSetup.
 type PublishRunSetup struct {
-	CertificatePlan      CertificatePlan        `json:"certificate_plan"`
+	// CertificatePlan Required for HTTP and TCP; absent for SSH, which has no visitor TLS certificate or ACME order.
+	CertificatePlan      *CertificatePlan       `json:"certificate_plan,omitempty"`
 	PublicUrl            PublicURL              `json:"public_url"`
 	PublishRun           PublishRun             `json:"publish_run"`
 	PublishRunToken      string                 `json:"publish_run_token"`
@@ -1730,6 +1800,50 @@ type ReviewerFeedbackReadRequest struct {
 	PublishRunNumber int64                  `json:"publish_run_number"`
 }
 
+// SSHAttemptBrowserView defines model for SSHAttemptBrowserView.
+type SSHAttemptBrowserView struct {
+	AttemptId   string            `json:"attempt_id"`
+	ExpiresAt   time.Time         `json:"expires_at"`
+	Hostname    CanonicalHostname `json:"hostname"`
+	PublicUrlId PublicURLID       `json:"public_url_id"`
+	SourceIp    string            `json:"source_ip"`
+	SshUser     string            `json:"ssh_user"`
+}
+
+// SSHAttemptCode defines model for SSHAttemptCode.
+type SSHAttemptCode = string
+
+// SSHAttemptCodeRequest defines model for SSHAttemptCodeRequest.
+type SSHAttemptCodeRequest struct {
+	Code SSHAttemptCode `json:"code"`
+}
+
+// SSHAttemptCreated defines model for SSHAttemptCreated.
+type SSHAttemptCreated struct {
+	AttemptId      string         `json:"attempt_id"`
+	Code           SSHAttemptCode `json:"code"`
+	ExpiresAt      time.Time      `json:"expires_at"`
+	PublisherProof string         `json:"publisher_proof"`
+}
+
+// SSHAttemptDecisionRequest defines model for SSHAttemptDecisionRequest.
+type SSHAttemptDecisionRequest struct {
+	Code     SSHAttemptCode                    `json:"code"`
+	Decision SSHAttemptDecisionRequestDecision `json:"decision"`
+}
+
+// SSHAttemptDecisionRequestDecision defines model for SSHAttemptDecisionRequest.Decision.
+type SSHAttemptDecisionRequestDecision string
+
+// SSHAttemptState defines model for SSHAttemptState.
+type SSHAttemptState struct {
+	ExpiresAt time.Time            `json:"expires_at"`
+	State     SSHAttemptStateState `json:"state"`
+}
+
+// SSHAttemptStateState defines model for SSHAttemptState.State.
+type SSHAttemptStateState string
+
 // SetMaintenanceControlRequest defines model for SetMaintenanceControlRequest.
 type SetMaintenanceControlRequest struct {
 	Allowed bool `json:"allowed"`
@@ -1861,6 +1975,20 @@ type UpdatePublicURLRequest struct {
 	Target string `json:"target"`
 }
 
+// UpdateSSHAttemptRequest defines model for UpdateSSHAttemptRequest.
+type UpdateSSHAttemptRequest struct {
+	Action              UpdateSSHAttemptRequestAction `json:"action"`
+	PublishRunNumber    int64                         `json:"publish_run_number"`
+	PublisherProof      string                        `json:"publisher_proof"`
+	SourceIp            *string                       `json:"source_ip,omitempty"`
+	SshSessionHash      *string                       `json:"ssh_session_hash,omitempty"`
+	SshUser             *string                       `json:"ssh_user,omitempty"`
+	VisitorConnectionId *string                       `json:"visitor_connection_id,omitempty"`
+}
+
+// UpdateSSHAttemptRequestAction defines model for UpdateSSHAttemptRequest.Action.
+type UpdateSSHAttemptRequestAction string
+
 // VisitorCertificate defines model for VisitorCertificate.
 type VisitorCertificate struct {
 	CertificatePem string      `json:"certificate_pem"`
@@ -1948,6 +2076,9 @@ type FeedbackAfterCursor = int64
 // PublisherIdentityID defines model for PublisherIdentityID.
 type PublisherIdentityID = ResourceID
 
+// SSHAttemptID defines model for SSHAttemptID.
+type SSHAttemptID = string
+
 // TeamIDQuery defines model for TeamIDQuery.
 type TeamIDQuery = TeamID
 
@@ -1958,6 +2089,12 @@ type ListAdminRelaysParams struct {
 
 // CompletePreviewBrowserLoginParams defines parameters for CompletePreviewBrowserLogin.
 type CompletePreviewBrowserLoginParams struct {
+	State string `form:"state" json:"state"`
+	Code  string `form:"code" json:"code"`
+}
+
+// CompleteBrowserIdentityLoginParams defines parameters for CompleteBrowserIdentityLogin.
+type CompleteBrowserIdentityLoginParams struct {
 	State string `form:"state" json:"state"`
 	Code  string `form:"code" json:"code"`
 }
@@ -2106,6 +2243,12 @@ type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 // DrainAdminRelayJSONRequestBody defines body for DrainAdminRelay for application/json ContentType.
 type DrainAdminRelayJSONRequestBody = AdminDrainRelayRequest
 
+// LookupSSHAttemptJSONRequestBody defines body for LookupSSHAttempt for application/json ContentType.
+type LookupSSHAttemptJSONRequestBody = SSHAttemptCodeRequest
+
+// DecideSSHAttemptJSONRequestBody defines body for DecideSSHAttempt for application/json ContentType.
+type DecideSSHAttemptJSONRequestBody = SSHAttemptDecisionRequest
+
 // AppendFeedbackEventJSONRequestBody defines body for AppendFeedbackEvent for application/json ContentType.
 type AppendFeedbackEventJSONRequestBody = AppendFeedbackEventRequest
 
@@ -2195,6 +2338,12 @@ type RedeemPublishRunShareJSONRequestBody = RedeemShareRequest
 
 // GetPublishRunShareStateJSONRequestBody defines body for GetPublishRunShareState for application/json ContentType.
 type GetPublishRunShareStateJSONRequestBody = PublishRunVersionRequest
+
+// CreateSSHAttemptJSONRequestBody defines body for CreateSSHAttempt for application/json ContentType.
+type CreateSSHAttemptJSONRequestBody = CreateSSHAttemptRequest
+
+// UpdateSSHAttemptJSONRequestBody defines body for UpdateSSHAttempt for application/json ContentType.
+type UpdateSSHAttemptJSONRequestBody = UpdateSSHAttemptRequest
 
 // AuthorizeHTTPVisitorJSONRequestBody defines body for AuthorizeHTTPVisitor for application/json ContentType.
 type AuthorizeHTTPVisitorJSONRequestBody = HTTPVisitorRequest
@@ -2398,10 +2547,52 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
 	CompletePreviewBrowserLogin(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CompleteBrowserIdentityLogin performs a GET /v1/browser/identity/callback (the `CompleteBrowserIdentityLogin` operationId) request.
+	//
+	// Finish OIDC sign-in; set a random, Secure, HttpOnly, SameSite=Lax __Host-tnl-identity cookie scoped to the control hostname. Store only its digest; the session expires within 24 hours.
+	CompleteBrowserIdentityLogin(ctx context.Context, params *CompleteBrowserIdentityLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BeginBrowserIdentityLogin performs a GET /v1/browser/identity/login (the `BeginBrowserIdentityLogin` operationId) request.
+	//
+	// Start OIDC sign-in for the shared control-host browser identity session.
+	BeginBrowserIdentityLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeBrowserIdentitySession performs a DELETE /v1/browser/identity/session (the `RevokeBrowserIdentitySession` operationId) request.
+	RevokeBrowserIdentitySession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateBrowserIdentitySession performs a POST /v1/browser/identity/session (the `CreateBrowserIdentitySession` operationId) request.
+	//
+	// A CLI administrator may create a browser identity session bound to the parent control session. Revoking the parent invalidates the cookie. Never return authority tokens to the browser.
+	CreateBrowserIdentitySession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
 	//
 	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 	BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LookupSSHAttemptWithBody performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+	LookupSSHAttemptWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LookupSSHAttempt performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+	LookupSSHAttempt(ctx context.Context, body LookupSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideSSHAttemptWithBody performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+	DecideSSHAttemptWithBody(ctx context.Context, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideSSHAttempt performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+	DecideSSHAttempt(ctx context.Context, attemptId SSHAttemptID, body DecideSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCertificateIssuance Read one publish-run certificate issuance
 	//
@@ -2610,10 +2801,14 @@ type ClientInterface interface {
 
 	// IssueVisitorCertificateWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request,
 	// with any type of body and a specified content type.
+	//
+	// Available for exact HTTP or TLS-first TCP public URLs; SSH is ineligible.
 	IssueVisitorCertificateWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IssueVisitorCertificate performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request.
 	// Takes a body of the `application/json` content type.
+	//
+	// Available for exact HTTP or TLS-first TCP public URLs; SSH is ineligible.
 	IssueVisitorCertificate(ctx context.Context, publicUrlId PublicURLID, body IssueVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListVisitorGrants performs a GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId) request.
@@ -2895,6 +3090,30 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
 	GetPublishRunShareState(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateSSHAttemptWithBody performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+	CreateSSHAttemptWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSSHAttempt performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+	CreateSSHAttempt(ctx context.Context, publishRunId PublishRunID, body CreateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSSHAttemptWithBody performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+	UpdateSSHAttemptWithBody(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSSHAttempt performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+	UpdateSSHAttempt(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, body UpdateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// AuthorizeHTTPVisitorWithBody performs a POST /v1/publish-runs/{publish_run_id}/visitor-access (the `AuthorizeHTTPVisitor` operationId) request,
 	// with any type of body and a specified content type.
 	AuthorizeHTTPVisitorWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2905,10 +3124,14 @@ type ClientInterface interface {
 
 	// AuthorizeVisitorCertificateWithBody performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request,
 	// with any type of body and a specified content type.
+	//
+	// Check a visitor certificate on an HTTP or TLS-first TCP public URL; SSH does not issue visitor certificates.
 	AuthorizeVisitorCertificateWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizeVisitorCertificate performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request.
 	// Takes a body of the `application/json` content type.
+	//
+	// Check a visitor certificate on an HTTP or TLS-first TCP public URL; SSH does not issue visitor certificates.
 	AuthorizeVisitorCertificate(ctx context.Context, publishRunId PublishRunID, body AuthorizeVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreatePublisherEnrollmentWithBody Issue an expiring one-use publisher enrollment
@@ -3135,11 +3358,133 @@ func (c *Client) CompletePreviewBrowserLogin(ctx context.Context, params *Comple
 	return c.Client.Do(req)
 }
 
+// CompleteBrowserIdentityLogin performs a GET /v1/browser/identity/callback (the `CompleteBrowserIdentityLogin` operationId) request.
+//
+// Finish OIDC sign-in; set a random, Secure, HttpOnly, SameSite=Lax __Host-tnl-identity cookie scoped to the control hostname. Store only its digest; the session expires within 24 hours.
+func (c *Client) CompleteBrowserIdentityLogin(ctx context.Context, params *CompleteBrowserIdentityLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCompleteBrowserIdentityLoginRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BeginBrowserIdentityLogin performs a GET /v1/browser/identity/login (the `BeginBrowserIdentityLogin` operationId) request.
+//
+// Start OIDC sign-in for the shared control-host browser identity session.
+func (c *Client) BeginBrowserIdentityLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBeginBrowserIdentityLoginRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeBrowserIdentitySession performs a DELETE /v1/browser/identity/session (the `RevokeBrowserIdentitySession` operationId) request.
+func (c *Client) RevokeBrowserIdentitySession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeBrowserIdentitySessionRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateBrowserIdentitySession performs a POST /v1/browser/identity/session (the `CreateBrowserIdentitySession` operationId) request.
+//
+// A CLI administrator may create a browser identity session bound to the parent control session. Revoking the parent invalidates the cookie. Never return authority tokens to the browser.
+func (c *Client) CreateBrowserIdentitySession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBrowserIdentitySessionRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // BeginPreviewBrowserLogin Start sign-in for a preview visitor
 //
 // Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 func (c *Client) BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewBeginPreviewBrowserLoginRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LookupSSHAttemptWithBody performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+func (c *Client) LookupSSHAttemptWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLookupSSHAttemptRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LookupSSHAttempt performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+func (c *Client) LookupSSHAttempt(ctx context.Context, body LookupSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLookupSSHAttemptRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideSSHAttemptWithBody performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+func (c *Client) DecideSSHAttemptWithBody(ctx context.Context, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideSSHAttemptRequestWithBody(c.Server, attemptId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideSSHAttempt performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+func (c *Client) DecideSSHAttempt(ctx context.Context, attemptId SSHAttemptID, body DecideSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideSSHAttemptRequest(c.Server, attemptId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3707,6 +4052,8 @@ func (c *Client) CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, 
 
 // IssueVisitorCertificateWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request,
 // with any type of body and a specified content type.
+//
+// Available for exact HTTP or TLS-first TCP public URLs; SSH is ineligible.
 func (c *Client) IssueVisitorCertificateWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueVisitorCertificateRequestWithBody(c.Server, publicUrlId, contentType, body)
 	if err != nil {
@@ -3721,6 +4068,8 @@ func (c *Client) IssueVisitorCertificateWithBody(ctx context.Context, publicUrlI
 
 // IssueVisitorCertificate performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request.
 // Takes a body of the `application/json` content type.
+//
+// Available for exact HTTP or TLS-first TCP public URLs; SSH is ineligible.
 func (c *Client) IssueVisitorCertificate(ctx context.Context, publicUrlId PublicURLID, body IssueVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueVisitorCertificateRequest(c.Server, publicUrlId, body)
 	if err != nil {
@@ -4482,6 +4831,70 @@ func (c *Client) GetPublishRunShareState(ctx context.Context, publishRunId Publi
 	return c.Client.Do(req)
 }
 
+// CreateSSHAttemptWithBody performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+func (c *Client) CreateSSHAttemptWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSSHAttemptRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSSHAttempt performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+func (c *Client) CreateSSHAttempt(ctx context.Context, publishRunId PublishRunID, body CreateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSSHAttemptRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateSSHAttemptWithBody performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+func (c *Client) UpdateSSHAttemptWithBody(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSSHAttemptRequestWithBody(c.Server, publishRunId, attemptId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateSSHAttempt performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+func (c *Client) UpdateSSHAttempt(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, body UpdateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSSHAttemptRequest(c.Server, publishRunId, attemptId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // AuthorizeHTTPVisitorWithBody performs a POST /v1/publish-runs/{publish_run_id}/visitor-access (the `AuthorizeHTTPVisitor` operationId) request,
 // with any type of body and a specified content type.
 func (c *Client) AuthorizeHTTPVisitorWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4512,6 +4925,8 @@ func (c *Client) AuthorizeHTTPVisitor(ctx context.Context, publishRunId PublishR
 
 // AuthorizeVisitorCertificateWithBody performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request,
 // with any type of body and a specified content type.
+//
+// Check a visitor certificate on an HTTP or TLS-first TCP public URL; SSH does not issue visitor certificates.
 func (c *Client) AuthorizeVisitorCertificateWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeVisitorCertificateRequestWithBody(c.Server, publishRunId, contentType, body)
 	if err != nil {
@@ -4526,6 +4941,8 @@ func (c *Client) AuthorizeVisitorCertificateWithBody(ctx context.Context, publis
 
 // AuthorizeVisitorCertificate performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request.
 // Takes a body of the `application/json` content type.
+//
+// Check a visitor certificate on an HTTP or TLS-first TCP public URL; SSH does not issue visitor certificates.
 func (c *Client) AuthorizeVisitorCertificate(ctx context.Context, publishRunId PublishRunID, body AuthorizeVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeVisitorCertificateRequest(c.Server, publishRunId, body)
 	if err != nil {
@@ -5083,6 +5500,145 @@ func NewCompletePreviewBrowserLoginRequest(server string, params *CompletePrevie
 	return req, nil
 }
 
+// NewCompleteBrowserIdentityLoginRequest constructs an http.Request for the CompleteBrowserIdentityLogin method
+func NewCompleteBrowserIdentityLoginRequest(server string, params *CompleteBrowserIdentityLoginParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/identity/callback")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code", params.Code, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBeginBrowserIdentityLoginRequest constructs an http.Request for the BeginBrowserIdentityLogin method
+func NewBeginBrowserIdentityLoginRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/identity/login")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeBrowserIdentitySessionRequest constructs an http.Request for the RevokeBrowserIdentitySession method
+func NewRevokeBrowserIdentitySessionRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/identity/session")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateBrowserIdentitySessionRequest constructs an http.Request for the CreateBrowserIdentitySession method
+func NewCreateBrowserIdentitySessionRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/identity/session")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewBeginPreviewBrowserLoginRequest constructs an http.Request for the BeginPreviewBrowserLogin method
 func NewBeginPreviewBrowserLoginRequest(server string, params *BeginPreviewBrowserLoginParams) (*http.Request, error) {
 	var err error
@@ -5161,6 +5717,93 @@ func NewBeginPreviewBrowserLoginRequest(server string, params *BeginPreviewBrows
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewLookupSSHAttemptRequest calls the generic LookupSSHAttempt builder with application/json body
+func NewLookupSSHAttemptRequest(server string, body LookupSSHAttemptJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewLookupSSHAttemptRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewLookupSSHAttemptRequestWithBody constructs an http.Request for the LookupSSHAttempt method, with any body, and a specified content type
+func NewLookupSSHAttemptRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/ssh-attempts/lookup")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDecideSSHAttemptRequest calls the generic DecideSSHAttempt builder with application/json body
+func NewDecideSSHAttemptRequest(server string, attemptId SSHAttemptID, body DecideSSHAttemptJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDecideSSHAttemptRequestWithBody(server, attemptId, "application/json", bodyReader)
+}
+
+// NewDecideSSHAttemptRequestWithBody constructs an http.Request for the DecideSSHAttempt method, with any body, and a specified content type
+func NewDecideSSHAttemptRequestWithBody(server string, attemptId SSHAttemptID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "attempt_id", attemptId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/ssh-attempts/%s/decision", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -7666,6 +8309,107 @@ func NewGetPublishRunShareStateRequestWithBody(server string, publishRunId Publi
 	return req, nil
 }
 
+// NewCreateSSHAttemptRequest calls the generic CreateSSHAttempt builder with application/json body
+func NewCreateSSHAttemptRequest(server string, publishRunId PublishRunID, body CreateSSHAttemptJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateSSHAttemptRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewCreateSSHAttemptRequestWithBody constructs an http.Request for the CreateSSHAttempt method, with any body, and a specified content type
+func NewCreateSSHAttemptRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/ssh-attempts", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewUpdateSSHAttemptRequest calls the generic UpdateSSHAttempt builder with application/json body
+func NewUpdateSSHAttemptRequest(server string, publishRunId PublishRunID, attemptId SSHAttemptID, body UpdateSSHAttemptJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateSSHAttemptRequestWithBody(server, publishRunId, attemptId, "application/json", bodyReader)
+}
+
+// NewUpdateSSHAttemptRequestWithBody constructs an http.Request for the UpdateSSHAttempt method, with any body, and a specified content type
+func NewUpdateSSHAttemptRequestWithBody(server string, publishRunId PublishRunID, attemptId SSHAttemptID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "attempt_id", attemptId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/ssh-attempts/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewAuthorizeHTTPVisitorRequest calls the generic AuthorizeHTTPVisitor builder with application/json body
 func NewAuthorizeHTTPVisitorRequest(server string, publishRunId PublishRunID, body AuthorizeHTTPVisitorJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -8528,12 +9272,66 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
 	CompletePreviewBrowserLoginWithResponse(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*CompletePreviewBrowserLoginResponse, error)
 
+	// CompleteBrowserIdentityLoginWithResponse performs a GET /v1/browser/identity/callback (the `CompleteBrowserIdentityLogin` operationId) request.
+	//
+	// Finish OIDC sign-in; set a random, Secure, HttpOnly, SameSite=Lax __Host-tnl-identity cookie scoped to the control hostname. Store only its digest; the session expires within 24 hours.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CompleteBrowserIdentityLoginWithResponse(ctx context.Context, params *CompleteBrowserIdentityLoginParams, reqEditors ...RequestEditorFn) (*CompleteBrowserIdentityLoginResponse, error)
+
+	// BeginBrowserIdentityLoginWithResponse performs a GET /v1/browser/identity/login (the `BeginBrowserIdentityLogin` operationId) request.
+	//
+	// Start OIDC sign-in for the shared control-host browser identity session.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	BeginBrowserIdentityLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BeginBrowserIdentityLoginResponse, error)
+
+	// RevokeBrowserIdentitySessionWithResponse performs a DELETE /v1/browser/identity/session (the `RevokeBrowserIdentitySession` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeBrowserIdentitySessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RevokeBrowserIdentitySessionResponse, error)
+
+	// CreateBrowserIdentitySessionWithResponse performs a POST /v1/browser/identity/session (the `CreateBrowserIdentitySession` operationId) request.
+	//
+	// A CLI administrator may create a browser identity session bound to the parent control session. Revoking the parent invalidates the cookie. Never return authority tokens to the browser.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateBrowserIdentitySessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateBrowserIdentitySessionResponse, error)
+
 	// BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 	BeginPreviewBrowserLoginWithResponse(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*BeginPreviewBrowserLoginResponse, error)
+
+	// LookupSSHAttemptWithBodyWithResponse performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	LookupSSHAttemptWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LookupSSHAttemptResponse, error)
+
+	// LookupSSHAttemptWithResponse performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+	LookupSSHAttemptWithResponse(ctx context.Context, body LookupSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*LookupSSHAttemptResponse, error)
+
+	// DecideSSHAttemptWithBodyWithResponse performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	DecideSSHAttemptWithBodyWithResponse(ctx context.Context, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideSSHAttemptResponse, error)
+
+	// DecideSSHAttemptWithResponse performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+	DecideSSHAttemptWithResponse(ctx context.Context, attemptId SSHAttemptID, body DecideSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideSSHAttemptResponse, error)
 
 	// GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
 	//
@@ -8779,11 +9577,15 @@ type ClientWithResponsesInterface interface {
 	// IssueVisitorCertificateWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request,
 	// with any type of body and a specified content type.
 	//
+	// Available for exact HTTP or TLS-first TCP public URLs; SSH is ineligible.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	IssueVisitorCertificateWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueVisitorCertificateResponse, error)
 
 	// IssueVisitorCertificateWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Available for exact HTTP or TLS-first TCP public URLs; SSH is ineligible.
 	IssueVisitorCertificateWithResponse(ctx context.Context, publicUrlId PublicURLID, body IssueVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueVisitorCertificateResponse, error)
 
 	// ListVisitorGrantsWithResponse performs a GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId) request.
@@ -9087,6 +9889,34 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
 	GetPublishRunShareStateWithResponse(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*GetPublishRunShareStateResponse, error)
 
+	// CreateSSHAttemptWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateSSHAttemptWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSSHAttemptResponse, error)
+
+	// CreateSSHAttemptWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+	CreateSSHAttemptWithResponse(ctx context.Context, publishRunId PublishRunID, body CreateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSSHAttemptResponse, error)
+
+	// UpdateSSHAttemptWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	UpdateSSHAttemptWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSSHAttemptResponse, error)
+
+	// UpdateSSHAttemptWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+	UpdateSSHAttemptWithResponse(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, body UpdateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSSHAttemptResponse, error)
+
 	// AuthorizeHTTPVisitorWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/visitor-access (the `AuthorizeHTTPVisitor` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -9100,11 +9930,15 @@ type ClientWithResponsesInterface interface {
 	// AuthorizeVisitorCertificateWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request,
 	// with any type of body and a specified content type.
 	//
+	// Check a visitor certificate on an HTTP or TLS-first TCP public URL; SSH does not issue visitor certificates.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	AuthorizeVisitorCertificateWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeVisitorCertificateResponse, error)
 
 	// AuthorizeVisitorCertificateWithResponse performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Check a visitor certificate on an HTTP or TLS-first TCP public URL; SSH does not issue visitor certificates.
 	AuthorizeVisitorCertificateWithResponse(ctx context.Context, publishRunId PublishRunID, body AuthorizeVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeVisitorCertificateResponse, error)
 
 	// CreatePublisherEnrollmentWithBodyWithResponse Issue an expiring one-use publisher enrollment
@@ -9510,6 +10344,170 @@ func (r CompletePreviewBrowserLoginResponse) ContentType() string {
 	return ""
 }
 
+type CompleteBrowserIdentityLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CompleteBrowserIdentityLoginResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CompleteBrowserIdentityLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CompleteBrowserIdentityLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CompleteBrowserIdentityLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CompleteBrowserIdentityLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type BeginBrowserIdentityLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r BeginBrowserIdentityLoginResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r BeginBrowserIdentityLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BeginBrowserIdentityLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BeginBrowserIdentityLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BeginBrowserIdentityLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeBrowserIdentitySessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeBrowserIdentitySessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeBrowserIdentitySessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeBrowserIdentitySessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeBrowserIdentitySessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeBrowserIdentitySessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateBrowserIdentitySessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateBrowserIdentitySessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateBrowserIdentitySessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateBrowserIdentitySessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateBrowserIdentitySessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateBrowserIdentitySessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type BeginPreviewBrowserLoginResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -9545,6 +10543,102 @@ func (r BeginPreviewBrowserLoginResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r BeginPreviewBrowserLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type LookupSSHAttemptResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SSHAttemptBrowserView
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r LookupSSHAttemptResponse) GetJSON200() *SSHAttemptBrowserView {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r LookupSSHAttemptResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r LookupSSHAttemptResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LookupSSHAttemptResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LookupSSHAttemptResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LookupSSHAttemptResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DecideSSHAttemptResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SSHAttemptState
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DecideSSHAttemptResponse) GetJSON200() *SSHAttemptState {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DecideSSHAttemptResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DecideSSHAttemptResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DecideSSHAttemptResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DecideSSHAttemptResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DecideSSHAttemptResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12094,6 +13188,102 @@ func (r GetPublishRunShareStateResponse) ContentType() string {
 	return ""
 }
 
+type CreateSSHAttemptResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *SSHAttemptCreated
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateSSHAttemptResponse) GetJSON201() *SSHAttemptCreated {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateSSHAttemptResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateSSHAttemptResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateSSHAttemptResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateSSHAttemptResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateSSHAttemptResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateSSHAttemptResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SSHAttemptState
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateSSHAttemptResponse) GetJSON200() *SSHAttemptState {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateSSHAttemptResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateSSHAttemptResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateSSHAttemptResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateSSHAttemptResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateSSHAttemptResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type AuthorizeHTTPVisitorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -13014,6 +14204,56 @@ func (c *ClientWithResponses) CompletePreviewBrowserLoginWithResponse(ctx contex
 	return ParseCompletePreviewBrowserLoginResponse(rsp)
 }
 
+// CompleteBrowserIdentityLoginWithResponse performs a GET /v1/browser/identity/callback (the `CompleteBrowserIdentityLogin` operationId) request.
+//
+// Finish OIDC sign-in; set a random, Secure, HttpOnly, SameSite=Lax __Host-tnl-identity cookie scoped to the control hostname. Store only its digest; the session expires within 24 hours.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CompleteBrowserIdentityLoginWithResponse(ctx context.Context, params *CompleteBrowserIdentityLoginParams, reqEditors ...RequestEditorFn) (*CompleteBrowserIdentityLoginResponse, error) {
+	rsp, err := c.CompleteBrowserIdentityLogin(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCompleteBrowserIdentityLoginResponse(rsp)
+}
+
+// BeginBrowserIdentityLoginWithResponse performs a GET /v1/browser/identity/login (the `BeginBrowserIdentityLogin` operationId) request.
+//
+// Start OIDC sign-in for the shared control-host browser identity session.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) BeginBrowserIdentityLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BeginBrowserIdentityLoginResponse, error) {
+	rsp, err := c.BeginBrowserIdentityLogin(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBeginBrowserIdentityLoginResponse(rsp)
+}
+
+// RevokeBrowserIdentitySessionWithResponse performs a DELETE /v1/browser/identity/session (the `RevokeBrowserIdentitySession` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeBrowserIdentitySessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RevokeBrowserIdentitySessionResponse, error) {
+	rsp, err := c.RevokeBrowserIdentitySession(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeBrowserIdentitySessionResponse(rsp)
+}
+
+// CreateBrowserIdentitySessionWithResponse performs a POST /v1/browser/identity/session (the `CreateBrowserIdentitySession` operationId) request.
+//
+// A CLI administrator may create a browser identity session bound to the parent control session. Revoking the parent invalidates the cookie. Never return authority tokens to the browser.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateBrowserIdentitySessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateBrowserIdentitySessionResponse, error) {
+	rsp, err := c.CreateBrowserIdentitySession(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBrowserIdentitySessionResponse(rsp)
+}
+
 // BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
 //
 // Returns a wrapper object for the known response body format(s).
@@ -13025,6 +14265,58 @@ func (c *ClientWithResponses) BeginPreviewBrowserLoginWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseBeginPreviewBrowserLoginResponse(rsp)
+}
+
+// LookupSSHAttemptWithBodyWithResponse performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) LookupSSHAttemptWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LookupSSHAttemptResponse, error) {
+	rsp, err := c.LookupSSHAttemptWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLookupSSHAttemptResponse(rsp)
+}
+
+// LookupSSHAttemptWithResponse performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+func (c *ClientWithResponses) LookupSSHAttemptWithResponse(ctx context.Context, body LookupSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*LookupSSHAttemptResponse, error) {
+	rsp, err := c.LookupSSHAttempt(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLookupSSHAttemptResponse(rsp)
+}
+
+// DecideSSHAttemptWithBodyWithResponse performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) DecideSSHAttemptWithBodyWithResponse(ctx context.Context, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideSSHAttemptResponse, error) {
+	rsp, err := c.DecideSSHAttemptWithBody(ctx, attemptId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDecideSSHAttemptResponse(rsp)
+}
+
+// DecideSSHAttemptWithResponse performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+func (c *ClientWithResponses) DecideSSHAttemptWithResponse(ctx context.Context, attemptId SSHAttemptID, body DecideSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideSSHAttemptResponse, error) {
+	rsp, err := c.DecideSSHAttempt(ctx, attemptId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDecideSSHAttemptResponse(rsp)
 }
 
 // GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
@@ -13481,6 +14773,8 @@ func (c *ClientWithResponses) CreatePublishRunWithResponse(ctx context.Context, 
 // IssueVisitorCertificateWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request,
 // with any type of body and a specified content type.
 //
+// Available for exact HTTP or TLS-first TCP public URLs; SSH is ineligible.
+//
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) IssueVisitorCertificateWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueVisitorCertificateResponse, error) {
 	rsp, err := c.IssueVisitorCertificateWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
@@ -13492,6 +14786,8 @@ func (c *ClientWithResponses) IssueVisitorCertificateWithBodyWithResponse(ctx co
 
 // IssueVisitorCertificateWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Available for exact HTTP or TLS-first TCP public URLs; SSH is ineligible.
 func (c *ClientWithResponses) IssueVisitorCertificateWithResponse(ctx context.Context, publicUrlId PublicURLID, body IssueVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueVisitorCertificateResponse, error) {
 	rsp, err := c.IssueVisitorCertificate(ctx, publicUrlId, body, reqEditors...)
 	if err != nil {
@@ -14083,6 +15379,58 @@ func (c *ClientWithResponses) GetPublishRunShareStateWithResponse(ctx context.Co
 	return ParseGetPublishRunShareStateResponse(rsp)
 }
 
+// CreateSSHAttemptWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateSSHAttemptWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSSHAttemptResponse, error) {
+	rsp, err := c.CreateSSHAttemptWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSSHAttemptResponse(rsp)
+}
+
+// CreateSSHAttemptWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+func (c *ClientWithResponses) CreateSSHAttemptWithResponse(ctx context.Context, publishRunId PublishRunID, body CreateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSSHAttemptResponse, error) {
+	rsp, err := c.CreateSSHAttempt(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSSHAttemptResponse(rsp)
+}
+
+// UpdateSSHAttemptWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) UpdateSSHAttemptWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSSHAttemptResponse, error) {
+	rsp, err := c.UpdateSSHAttemptWithBody(ctx, publishRunId, attemptId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSSHAttemptResponse(rsp)
+}
+
+// UpdateSSHAttemptWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+func (c *ClientWithResponses) UpdateSSHAttemptWithResponse(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, body UpdateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSSHAttemptResponse, error) {
+	rsp, err := c.UpdateSSHAttempt(ctx, publishRunId, attemptId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSSHAttemptResponse(rsp)
+}
+
 // AuthorizeHTTPVisitorWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/visitor-access (the `AuthorizeHTTPVisitor` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -14108,6 +15456,8 @@ func (c *ClientWithResponses) AuthorizeHTTPVisitorWithResponse(ctx context.Conte
 // AuthorizeVisitorCertificateWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request,
 // with any type of body and a specified content type.
 //
+// Check a visitor certificate on an HTTP or TLS-first TCP public URL; SSH does not issue visitor certificates.
+//
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) AuthorizeVisitorCertificateWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeVisitorCertificateResponse, error) {
 	rsp, err := c.AuthorizeVisitorCertificateWithBody(ctx, publishRunId, contentType, body, reqEditors...)
@@ -14119,6 +15469,8 @@ func (c *ClientWithResponses) AuthorizeVisitorCertificateWithBodyWithResponse(ct
 
 // AuthorizeVisitorCertificateWithResponse performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Check a visitor certificate on an HTTP or TLS-first TCP public URL; SSH does not issue visitor certificates.
 func (c *ClientWithResponses) AuthorizeVisitorCertificateWithResponse(ctx context.Context, publishRunId PublishRunID, body AuthorizeVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeVisitorCertificateResponse, error) {
 	rsp, err := c.AuthorizeVisitorCertificate(ctx, publishRunId, body, reqEditors...)
 	if err != nil {
@@ -14556,6 +15908,122 @@ func ParseCompletePreviewBrowserLoginResponse(rsp *http.Response) (*CompletePrev
 	return response, nil
 }
 
+// ParseCompleteBrowserIdentityLoginResponse parses an HTTP response from a CompleteBrowserIdentityLoginWithResponse call
+func ParseCompleteBrowserIdentityLoginResponse(rsp *http.Response) (*CompleteBrowserIdentityLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CompleteBrowserIdentityLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 303:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBeginBrowserIdentityLoginResponse parses an HTTP response from a BeginBrowserIdentityLoginWithResponse call
+func ParseBeginBrowserIdentityLoginResponse(rsp *http.Response) (*BeginBrowserIdentityLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BeginBrowserIdentityLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 302:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeBrowserIdentitySessionResponse parses an HTTP response from a RevokeBrowserIdentitySessionWithResponse call
+func ParseRevokeBrowserIdentitySessionResponse(rsp *http.Response) (*RevokeBrowserIdentitySessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeBrowserIdentitySessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateBrowserIdentitySessionResponse parses an HTTP response from a CreateBrowserIdentitySessionWithResponse call
+func ParseCreateBrowserIdentitySessionResponse(rsp *http.Response) (*CreateBrowserIdentitySessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateBrowserIdentitySessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseBeginPreviewBrowserLoginResponse parses an HTTP response from a BeginPreviewBrowserLoginWithResponse call
 func ParseBeginPreviewBrowserLoginResponse(rsp *http.Response) (*BeginPreviewBrowserLoginResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -14572,6 +16040,72 @@ func ParseBeginPreviewBrowserLoginResponse(rsp *http.Response) (*BeginPreviewBro
 	switch {
 	case rsp.StatusCode == 302:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLookupSSHAttemptResponse parses an HTTP response from a LookupSSHAttemptWithResponse call
+func ParseLookupSSHAttemptResponse(rsp *http.Response) (*LookupSSHAttemptResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LookupSSHAttemptResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SSHAttemptBrowserView
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDecideSSHAttemptResponse parses an HTTP response from a DecideSSHAttemptWithResponse call
+func ParseDecideSSHAttemptResponse(rsp *http.Response) (*DecideSSHAttemptResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DecideSSHAttemptResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SSHAttemptState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -16339,6 +17873,72 @@ func ParseGetPublishRunShareStateResponse(rsp *http.Response) (*GetPublishRunSha
 	return response, nil
 }
 
+// ParseCreateSSHAttemptResponse parses an HTTP response from a CreateSSHAttemptWithResponse call
+func ParseCreateSSHAttemptResponse(rsp *http.Response) (*CreateSSHAttemptResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateSSHAttemptResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SSHAttemptCreated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateSSHAttemptResponse parses an HTTP response from a UpdateSSHAttemptWithResponse call
+func ParseUpdateSSHAttemptResponse(rsp *http.Response) (*UpdateSSHAttemptResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateSSHAttemptResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SSHAttemptState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseAuthorizeHTTPVisitorResponse parses an HTTP response from a AuthorizeHTTPVisitorWithResponse call
 func ParseAuthorizeHTTPVisitorResponse(rsp *http.Response) (*AuthorizeHTTPVisitorResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -16941,9 +18541,27 @@ type ServerInterface interface {
 	// CompletePreviewBrowserLogin Return a signed-in visitor to the preview
 	// (GET /v1/browser/callback)
 	CompletePreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params CompletePreviewBrowserLoginParams)
+
+	// (GET /v1/browser/identity/callback)
+	CompleteBrowserIdentityLogin(w http.ResponseWriter, r *http.Request, params CompleteBrowserIdentityLoginParams)
+
+	// (GET /v1/browser/identity/login)
+	BeginBrowserIdentityLogin(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /v1/browser/identity/session)
+	RevokeBrowserIdentitySession(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/browser/identity/session)
+	CreateBrowserIdentitySession(w http.ResponseWriter, r *http.Request)
 	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
 	// (GET /v1/browser/login)
 	BeginPreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params BeginPreviewBrowserLoginParams)
+
+	// (POST /v1/browser/ssh-attempts/lookup)
+	LookupSSHAttempt(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/browser/ssh-attempts/{attempt_id}/decision)
+	DecideSSHAttempt(w http.ResponseWriter, r *http.Request, attemptId SSHAttemptID)
 	// GetCertificateIssuance Read one publish-run certificate issuance
 	// (GET /v1/certificate-issuances/{issuance_id})
 	GetCertificateIssuance(w http.ResponseWriter, r *http.Request, issuanceId IssuanceID)
@@ -17106,6 +18724,12 @@ type ServerInterface interface {
 	// GetPublishRunShareState Read short-lived share access state for this publisher
 	// (POST /v1/publish-runs/{publish_run_id}/share-state)
 	GetPublishRunShareState(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+
+	// (POST /v1/publish-runs/{publish_run_id}/ssh-attempts)
+	CreateSSHAttempt(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+
+	// (POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id})
+	UpdateSSHAttempt(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, attemptId SSHAttemptID)
 
 	// (POST /v1/publish-runs/{publish_run_id}/visitor-access)
 	AuthorizeHTTPVisitor(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
@@ -17327,6 +18951,94 @@ func (siw *ServerInterfaceWrapper) CompletePreviewBrowserLogin(w http.ResponseWr
 	handler.ServeHTTP(w, r)
 }
 
+// CompleteBrowserIdentityLogin operation middleware
+func (siw *ServerInterfaceWrapper) CompleteBrowserIdentityLogin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CompleteBrowserIdentityLoginParams
+
+	// ------------- Required query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "code" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "code", r.URL.Query(), &params.Code, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "code"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteBrowserIdentityLogin(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BeginBrowserIdentityLogin operation middleware
+func (siw *ServerInterfaceWrapper) BeginBrowserIdentityLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeginBrowserIdentityLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeBrowserIdentitySession operation middleware
+func (siw *ServerInterfaceWrapper) RevokeBrowserIdentitySession(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeBrowserIdentitySession(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateBrowserIdentitySession operation middleware
+func (siw *ServerInterfaceWrapper) CreateBrowserIdentitySession(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateBrowserIdentitySession(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // BeginPreviewBrowserLogin operation middleware
 func (siw *ServerInterfaceWrapper) BeginPreviewBrowserLogin(w http.ResponseWriter, r *http.Request) {
 
@@ -17390,6 +19102,46 @@ func (siw *ServerInterfaceWrapper) BeginPreviewBrowserLogin(w http.ResponseWrite
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.BeginPreviewBrowserLogin(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LookupSSHAttempt operation middleware
+func (siw *ServerInterfaceWrapper) LookupSSHAttempt(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LookupSSHAttempt(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DecideSSHAttempt operation middleware
+func (siw *ServerInterfaceWrapper) DecideSSHAttempt(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "attempt_id" -------------
+	var attemptId SSHAttemptID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attempt_id", r.PathValue("attempt_id"), &attemptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attempt_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DecideSSHAttempt(w, r, attemptId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19175,6 +20927,67 @@ func (siw *ServerInterfaceWrapper) GetPublishRunShareState(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// CreateSSHAttempt operation middleware
+func (siw *ServerInterfaceWrapper) CreateSSHAttempt(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSSHAttempt(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateSSHAttempt operation middleware
+func (siw *ServerInterfaceWrapper) UpdateSSHAttempt(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "attempt_id" -------------
+	var attemptId SSHAttemptID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attempt_id", r.PathValue("attempt_id"), &attemptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attempt_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateSSHAttempt(w, r, publishRunId, attemptId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // AuthorizeHTTPVisitor operation middleware
 func (siw *ServerInterfaceWrapper) AuthorizeHTTPVisitor(w http.ResponseWriter, r *http.Request) {
 
@@ -19778,6 +21591,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/identity/login", wrapper.BeginBrowserIdentityLogin)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/identity/callback", wrapper.CompleteBrowserIdentityLogin)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/browser/identity/session", wrapper.RevokeBrowserIdentitySession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/browser/identity/session", wrapper.CreateBrowserIdentitySession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/ssh-attempts", wrapper.CreateSSHAttempt)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/browser/ssh-attempts/lookup", wrapper.LookupSSHAttempt)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/browser/ssh-attempts/{attempt_id}/decision", wrapper.DecideSSHAttempt)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id}", wrapper.UpdateSSHAttempt)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/visitor-access", wrapper.AuthorizeHTTPVisitor)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/visitor/public-urls", wrapper.ListAvailablePublicURLs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.ListVisitorGrants)

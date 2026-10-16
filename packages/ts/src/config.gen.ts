@@ -176,6 +176,7 @@ export interface TnlConfig {
                 type: "address";
                 address: string | number;
                 tls?: {
+                  mode: "direct";
                   caFile?: string;
                   serverName?: string;
                 };
@@ -192,6 +193,7 @@ export interface TnlConfig {
                 service: string;
                 port: number;
                 tls?: {
+                  mode: "direct";
                   caFile?: string;
                   serverName?: string;
                 };
@@ -203,6 +205,7 @@ export interface TnlConfig {
                 container: string;
                 port: number;
                 tls?: {
+                  mode: "direct";
                   caFile?: string;
                   serverName?: string;
                 };
@@ -284,12 +287,13 @@ export interface TnlConfig {
              */
             publicURL?: string;
           };
-          protocol: "postgres" | "mysql" | "redis" | "ssh";
+          protocol: "tcp" | "ssh";
           target:
             | {
                 type: "address";
                 address: string | number;
                 tls?: {
+                  mode: "direct" | "postgres" | "mysql";
                   caFile?: string;
                   serverName?: string;
                 };
@@ -306,6 +310,7 @@ export interface TnlConfig {
                 service: string;
                 port: number;
                 tls?: {
+                  mode: "direct" | "postgres" | "mysql";
                   caFile?: string;
                   serverName?: string;
                 };
@@ -317,6 +322,7 @@ export interface TnlConfig {
                 container: string;
                 port: number;
                 tls?: {
+                  mode: "direct" | "postgres" | "mysql";
                   caFile?: string;
                   serverName?: string;
                 };

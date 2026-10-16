@@ -133,8 +133,14 @@ func serviceSchema(tcp bool) *jsonschema.Schema {
 	protocols := []any{"http"}
 	target := targetSchema()
 	if tcp {
-		protocols = []any{"postgres", "mysql", "redis", "ssh"}
+		protocols = []any{"tcp", "ssh"}
 		target.OneOf = target.OneOf[1:]
+	} else {
+		for _, variant := range target.OneOf[1:] {
+			tls, _ := variant.Properties.Get("tls")
+			mode, _ := tls.Properties.Get("mode")
+			mode.Enum = []any{"direct"}
+		}
 	}
 	properties.Set("protocol", &jsonschema.Schema{Type: "string", Enum: protocols})
 	properties.Set("target", target)
@@ -260,9 +266,10 @@ func targetSchema() *jsonschema.Schema {
 		}
 		if kind != "app" {
 			tls := jsonschema.NewProperties()
+			tls.Set("mode", &jsonschema.Schema{Type: "string", Enum: []any{"direct", "postgres", "mysql"}})
 			tls.Set("server_name", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253)})
 			tls.Set("ca_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
-			properties.Set("tls", &jsonschema.Schema{Type: "object", Properties: tls, AdditionalProperties: jsonschema.FalseSchema})
+			properties.Set("tls", &jsonschema.Schema{Type: "object", Properties: tls, Required: []string{"mode"}, AdditionalProperties: jsonschema.FalseSchema})
 		}
 		// explicit forbidden fields also reject structurally inferred mixed targets
 		// in defineConfig, rather than relying on fresh-object excess checks.

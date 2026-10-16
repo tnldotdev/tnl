@@ -21,13 +21,18 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"removed directory", `{"services":{"web":{"directory":"apps/web"}}}`, false},
 		{"app", `{"services":{"web":{"target":{"type":"app"}}}}`, true},
 		{"address", `{"services":{"web":{"target":{"type":"address","address":3000},"http":{"readiness":{"path":"/health"},"open":true}}}}`, true},
-		{"compose", `{"services":{"db":{"protocol":"postgres","target":{"type":"compose","project":"shop-feature","file":"dev/compose.yml","service":"db","port":5432,"tls":{"server_name":"db.internal","ca_file":"certs/ca.pem"}}}}}`, true},
-		{"compose defaults", `{"services":{"db":{"protocol":"postgres","target":{"type":"compose","service":"db","port":5432}}}}`, true},
-		{"docker", `{"services":{"cache":{"protocol":"redis","target":{"type":"docker","container":"shop-cache_1","port":6379}}}}`, true},
+		{"compose", `{"services":{"db":{"protocol":"tcp","target":{"type":"compose","project":"shop-feature","file":"dev/compose.yml","service":"db","port":5432,"tls":{"mode":"postgres","server_name":"db.internal","ca_file":"certs/ca.pem"}}}}}`, true},
+		{"compose defaults", `{"services":{"db":{"protocol":"tcp","target":{"type":"compose","service":"db","port":5432}}}}`, true},
+		{"docker", `{"services":{"cache":{"protocol":"tcp","target":{"type":"docker","container":"shop-cache_1","port":6379}}}}`, true},
 		{"placement", `{"publisher":{"type":"compose","service":"publisher"},"services":{"web":{"target":{"type":"app"}}}}`, true},
-		{"placement file", `{"publisher":{"type":"compose","service":"publisher","file":"dev/compose.yml"},"services":{"db":{"protocol":"postgres","target":{"type":"address","address":5432}}}}`, true},
-		{"mixed placement", `{"publisher":{"type":"compose","service":"publisher"},"services":{"web":{},"db":{"protocol":"postgres","target":{"type":"address","address":5432}}}}`, true},
-		{"HTTPS private TLS name", `{"services":{"web":{"target":{"type":"address","address":"https://127.0.0.1:3000","tls":{"server_name":"web.internal","ca_file":"certs/ca.pem"}}}}}`, true},
+		{"placement file", `{"publisher":{"type":"compose","service":"publisher","file":"dev/compose.yml"},"services":{"db":{"protocol":"tcp","target":{"type":"address","address":5432}}}}`, true},
+		{"mixed placement", `{"publisher":{"type":"compose","service":"publisher"},"services":{"web":{},"db":{"protocol":"tcp","target":{"type":"address","address":5432}}}}`, true},
+		{"HTTPS private TLS name", `{"services":{"web":{"target":{"type":"address","address":"https://127.0.0.1:3000","tls":{"mode":"direct","server_name":"web.internal","ca_file":"certs/ca.pem"}}}}}`, true},
+		{"TCP direct TLS", `{"services":{"db":{"protocol":"tcp","target":{"type":"docker","container":"db","port":6379,"tls":{"mode":"direct"}}}}}`, true},
+		{"TCP MySQL TLS", `{"services":{"db":{"protocol":"tcp","target":{"type":"address","address":3306,"tls":{"mode":"mysql","server_name":"db.internal"}}}}}`, true},
+		{"legacy database protocol", `{"services":{"db":{"protocol":"postgres","target":{"type":"address","address":5432}}}}`, false},
+		{"missing TLS mode", `{"services":{"db":{"protocol":"tcp","target":{"type":"address","address":5432,"tls":{"server_name":"db.internal"}}}}}`, false},
+		{"HTTP database TLS mode", `{"services":{"web":{"target":{"type":"address","address":"https://db.internal","tls":{"mode":"postgres"}}}}}`, false},
 		{"retention", `{"inspection":{"mode":"summary","retention":"720h","max_bytes":"1024MiB"}}`, true},
 		{"traffic", `{"tunnel":{"limits":{"http":{"rate":{"count":5,"per":"1m","burst":10}},"tcp":{"concurrency":4},"traffic":{"connections":8,"rate":5,"rate_per":"1s","burst":10,"upload_bytes":1048576,"download_bytes":2097152,"total_upload_bytes":4194304}}}}`, true},
 		{"old root publish", `{"publish":{"target":3000}}`, false},
@@ -49,13 +54,13 @@ func TestServiceContractAcrossStaticFormats(t *testing.T) {
 		{"docker filter", `{"services":{"web":{"target":{"type":"docker","container":"name=web","port":3000}}}}`, false},
 		{"docker slash", `{"services":{"web":{"target":{"type":"docker","container":"/web","port":3000}}}}`, false},
 		{"docker foreign field", `{"services":{"web":{"target":{"type":"docker","container":"web","port":3000,"file":"compose.yml"}}}}`, false},
-		{"zero port", `{"services":{"db":{"protocol":"mysql","target":{"type":"docker","container":"db","port":0}}}}`, false},
-		{"large port", `{"services":{"db":{"protocol":"mysql","target":{"type":"docker","container":"db","port":65536}}}}`, false},
-		{"TCP app", `{"services":{"db":{"protocol":"postgres","target":{"type":"app"}}}}`, false},
-		{"TCP HTTP", `{"services":{"db":{"protocol":"postgres","target":{"type":"address","address":5432},"http":{"open":false}}}}`, false},
+		{"zero port", `{"services":{"db":{"protocol":"tcp","target":{"type":"docker","container":"db","port":0}}}}`, false},
+		{"large port", `{"services":{"db":{"protocol":"tcp","target":{"type":"docker","container":"db","port":65536}}}}`, false},
+		{"TCP app", `{"services":{"db":{"protocol":"tcp","target":{"type":"app"}}}}`, false},
+		{"TCP HTTP", `{"services":{"db":{"protocol":"tcp","target":{"type":"address","address":5432},"http":{"open":false}}}}`, false},
 		{"HTTP TCP limits", `{"services":{"web":{"tunnel":{"limits":{"tcp":{"total":1}}}}}}`, false},
 		{"TLS plain HTTP", `{"services":{"web":{"target":{"type":"address","address":3000,"tls":{}}}}}`, false},
-		{"TLS invalid name", `{"services":{"db":{"protocol":"postgres","target":{"type":"address","address":5432,"tls":{"server_name":"db/path"}}}}}`, false},
+		{"TLS invalid name", `{"services":{"db":{"protocol":"tcp","target":{"type":"address","address":5432,"tls":{"mode":"direct","server_name":"db/path"}}}}}`, false},
 		{"removed publisher port", `{"publisher":{"type":"compose","service":"publisher","port":8765}}`, false},
 		{"removed publisher root", `{"publisher":{"type":"compose","service":"publisher","project_root":"/project"}}`, false},
 		{"removed publisher descriptors", `{"publisher":{"type":"compose","service":"publisher","app_endpoints":{"web":"/run/web.json"}}}`, false},
@@ -146,14 +151,14 @@ func TestNativeResolutionHelpersSelectProtocolAndInspection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tcp, err := ResolveWorkLimits(limits, "postgres")
+	tcp, err := ResolveWorkLimits(limits, "tcp")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if http.RateRequests != 5 || http.RateBurst != 10 || http.RatePer != time.Second || tcp.Requests != 2 || tcp.RateRequests != 0 {
 		t.Fatalf("HTTP=%+v TCP=%+v", http, tcp)
 	}
-	policy, err := ResolveInspection(nil, "postgres")
+	policy, err := ResolveInspection(nil, "tcp")
 	if err != nil || policy.Mode != "summary" || policy.Retention != 24*time.Hour || policy.MaxBytes != 64<<20 {
 		t.Fatalf("inspection=%+v: %v", policy, err)
 	}

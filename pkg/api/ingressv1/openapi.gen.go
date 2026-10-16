@@ -59,11 +59,9 @@ func (e IngressRoutingTableEntryIpPolicy) Valid() bool {
 
 // Defines values for IngressRoutingTableEntryServiceProtocol.
 const (
-	Http     IngressRoutingTableEntryServiceProtocol = "http"
-	Mysql    IngressRoutingTableEntryServiceProtocol = "mysql"
-	Postgres IngressRoutingTableEntryServiceProtocol = "postgres"
-	Redis    IngressRoutingTableEntryServiceProtocol = "redis"
-	Ssh      IngressRoutingTableEntryServiceProtocol = "ssh"
+	Http IngressRoutingTableEntryServiceProtocol = "http"
+	Ssh  IngressRoutingTableEntryServiceProtocol = "ssh"
+	Tcp  IngressRoutingTableEntryServiceProtocol = "tcp"
 )
 
 // Valid indicates whether the value is a known member of the IngressRoutingTableEntryServiceProtocol enum.
@@ -71,13 +69,9 @@ func (e IngressRoutingTableEntryServiceProtocol) Valid() bool {
 	switch e {
 	case Http:
 		return true
-	case Mysql:
-		return true
-	case Postgres:
-		return true
-	case Redis:
-		return true
 	case Ssh:
+		return true
+	case Tcp:
 		return true
 	default:
 		return false
@@ -251,8 +245,10 @@ type IngressRoutingTableEntry struct {
 	IpPolicy          IngressRoutingTableEntryIpPolicy `json:"ip_policy"`
 
 	// IpPolicyKey Purpose-specific verifier sent only on the authenticated private API; never persisted with routing events.
-	IpPolicyKey          *[]byte                                  `json:"ip_policy_key,omitempty"`
-	PolicyRevision       int64                                    `json:"policy_revision"`
+	IpPolicyKey    *[]byte `json:"ip_policy_key,omitempty"`
+	PolicyRevision int64   `json:"policy_revision"`
+
+	// PublicPort Assigned SSH port; HTTP and TLS-first TCP are selected by hostname on 443.
 	PublicPort           *int                                     `json:"public_port,omitempty"`
 	PublicUrlExpiresAt   time.Time                                `json:"public_url_expires_at"`
 	PublicUrlId          Identifier                               `json:"public_url_id"`

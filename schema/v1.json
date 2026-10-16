@@ -473,6 +473,10 @@
                           },
                           "tls": {
                             "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["direct"]
+                              },
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
@@ -484,7 +488,8 @@
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "required": ["mode"]
                           },
                           "project": false,
                           "file": false,
@@ -522,6 +527,10 @@
                           },
                           "tls": {
                             "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["direct"]
+                              },
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
@@ -533,7 +542,8 @@
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "required": ["mode"]
                           },
                           "address": false,
                           "container": false
@@ -559,6 +569,10 @@
                           },
                           "tls": {
                             "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["direct"]
+                              },
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
@@ -570,7 +584,8 @@
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "required": ["mode"]
                           },
                           "address": false,
                           "project": false,
@@ -795,7 +810,7 @@
                   },
                   "protocol": {
                     "type": "string",
-                    "enum": ["postgres", "mysql", "redis", "ssh"]
+                    "enum": ["tcp", "ssh"]
                   },
                   "target": {
                     "oneOf": [
@@ -820,6 +835,10 @@
                           },
                           "tls": {
                             "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["direct", "postgres", "mysql"]
+                              },
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
@@ -831,7 +850,8 @@
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "required": ["mode"]
                           },
                           "project": false,
                           "file": false,
@@ -869,6 +889,10 @@
                           },
                           "tls": {
                             "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["direct", "postgres", "mysql"]
+                              },
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
@@ -880,7 +904,8 @@
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "required": ["mode"]
                           },
                           "address": false,
                           "container": false
@@ -906,6 +931,10 @@
                           },
                           "tls": {
                             "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["direct", "postgres", "mysql"]
+                              },
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
@@ -917,7 +946,8 @@
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "required": ["mode"]
                           },
                           "address": false,
                           "project": false,

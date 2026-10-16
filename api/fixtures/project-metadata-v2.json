@@ -2,7 +2,7 @@
   "version": 2,
   "cases": [
     {
-      "name": "saved postgres address",
+      "name": "shared tcp address",
       "valid": true,
       "metadata": {
         "version": 2,
@@ -10,17 +10,17 @@
         "dev": false,
         "services": {
           "db": {
-            "protocol": "postgres",
+            "protocol": "tcp",
             "namespace": "member.example",
             "hostname": "db.member.example",
-            "port": 15432,
-            "address": "db.member.example:15432"
+            "port": 443,
+            "address": "db.member.example:443"
           }
         }
       }
     },
     {
-      "name": "saved TCP minimum port",
+      "name": "saved SSH minimum port",
       "valid": true,
       "metadata": {
         "version": 2,
@@ -28,7 +28,7 @@
         "dev": false,
         "services": {
           "cache": {
-            "protocol": "redis",
+            "protocol": "ssh",
             "namespace": "member.example",
             "hostname": "cache.member.example",
             "port": 1024,
@@ -64,7 +64,7 @@
         "dev": false,
         "services": {
           "db": {
-            "protocol": "mysql",
+            "protocol": "ssh",
             "namespace": "member.example",
             "hostname": "db.member.example",
             "port": 1023,
@@ -82,7 +82,7 @@
         "dev": false,
         "services": {
           "db": {
-            "protocol": "mysql",
+            "protocol": "ssh",
             "namespace": "member.example",
             "hostname": "db.member.example",
             "port": 65536,
@@ -100,10 +100,10 @@
         "dev": false,
         "services": {
           "db": {
-            "protocol": "postgres",
+            "protocol": "tcp",
             "namespace": "member.example",
             "hostname": "db.member.example",
-            "port": 15432,
+            "port": 443,
             "address": "db.member.example:5432"
           }
         }
@@ -118,11 +118,11 @@
         "dev": false,
         "services": {
           "db": {
-            "protocol": "postgres",
+            "protocol": "tcp",
             "namespace": "member.example",
             "hostname": "db.member.example",
-            "port": 15432,
-            "address": "db.member.example:15432",
+            "port": 443,
+            "address": "db.member.example:443",
             "url": "https://db.member.example"
           }
         }
@@ -137,11 +137,11 @@
         "dev": false,
         "services": {
           "db": {
-            "protocol": "postgres",
+            "protocol": "tcp",
             "namespace": "member.example",
             "hostname": "db.member.example",
-            "port": 15432,
-            "address": "db.member.example:15432",
+            "port": 443,
+            "address": "db.member.example:443",
             "target": "db.internal:5432"
           }
         }

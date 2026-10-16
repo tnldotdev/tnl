@@ -123,6 +123,30 @@ type ControlBrowserAccessSession struct {
 	ParentControlSessionID pgtype.Text
 }
 
+type ControlBrowserIdentityLoginAttempt struct {
+	StateDigest          []byte
+	BindingDigest        []byte
+	Nonce                string
+	VerifierCiphertext   []byte
+	VerifierStorageKeyID string
+	CreatedAt            pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+	ConsumedAt           pgtype.Timestamptz
+}
+
+type ControlBrowserIdentitySession struct {
+	CookieDigest           []byte
+	IdentityID             string
+	ParentControlSessionID pgtype.Text
+	AccessCiphertext       []byte
+	RefreshCiphertext      []byte
+	StorageKeyID           string
+	AccessExpiresAt        pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+	ExpiresAt              pgtype.Timestamptz
+	RevokedAt              pgtype.Timestamptz
+}
+
 type ControlBrowserLoginAttempt struct {
 	StateDigest          []byte
 	BindingDigest        []byte
@@ -606,10 +630,10 @@ type ControlPublishRun struct {
 	PublishRunTokenDigest      []byte
 	PolicyRevision             int64
 	PolicyDenials              int64
-	CertificateCacheKey        string
-	CertificateScope           string
+	CertificateCacheKey        pgtype.Text
+	CertificateScope           pgtype.Text
 	CertificateIdentifiers     []string
-	CertificateChallengeMethod string
+	CertificateChallengeMethod pgtype.Text
 	TrafficLimits              []byte
 	State                      string
 	CreatedAt                  pgtype.Timestamptz
@@ -856,6 +880,27 @@ type ControlSharePublicUrl struct {
 	ShareID     string
 	TeamID      string
 	PublicURLID string
+}
+
+type ControlSshAttempt struct {
+	ID                   string
+	CodeDigest           []byte
+	PublisherProofDigest []byte
+	PublicURLID          string
+	PublishRunID         string
+	PublishRunNumber     int64
+	VisitorConnectionID  string
+	SourceIp             netip.Addr
+	SSHUser              string
+	SshSessionDigest     []byte
+	State                string
+	IdentityID           pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+	ApprovedAt           pgtype.Timestamptz
+	DeniedAt             pgtype.Timestamptz
+	ClaimedAt            pgtype.Timestamptz
+	CanceledAt           pgtype.Timestamptz
 }
 
 type ControlTcpPortClaim struct {
