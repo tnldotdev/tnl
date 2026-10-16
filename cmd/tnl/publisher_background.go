@@ -34,7 +34,7 @@ func backgroundSelection(flags publishCommand, selection enrolledPublishSelectio
 	if flags.ServerURL == "" || flags.serverFromConfig || background.Job == "" || selected != 1 {
 		return publisherjob.ErrScope
 	}
-	if flags.Name != "" || flags.PublicURL != "" || flags.Domain != "" || flags.Team != "" || flags.AccessToken != "" || flags.Demo || flags.Ephemeral || flags.AllowAllIPs || len(flags.AllowIP) > 0 || flags.Open {
+	if flags.Name != "" || flags.PublicURL != "" || flags.Domain != "" || flags.Team != "" || flags.AccessToken != "" || flags.Demo || flags.Ephemeral || flags.Anonymous || flags.access != nil || len(flags.IP) > 0 || flags.Open {
 		return publisherjob.ErrScope
 	}
 	if flags.inspectionModeFromCLI && string(flags.InspectionMode) != "none" {
