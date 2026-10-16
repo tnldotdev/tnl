@@ -381,7 +381,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		}
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: insert public_url: %w", err)
 	}
-	if request.ServiceProtocol != PublicURLServiceHTTP {
+	if request.ServiceProtocol == PublicURLServiceSSH {
 		claim, err := allocateTCPPortForURL(ctx, queries, publicURLID, ingressPoolID, row.CanonicalHostname, now)
 		if err != nil {
 			return PublicURL{}, err

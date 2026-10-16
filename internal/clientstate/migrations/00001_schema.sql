@@ -57,7 +57,7 @@ CREATE TABLE local_tunnels (
     server_origin TEXT NOT NULL REFERENCES server_profiles (origin) ON DELETE RESTRICT,
     project_root TEXT NOT NULL,
     service TEXT CHECK (service IS NULL OR service <> ''),
-    service_protocol TEXT NOT NULL DEFAULT 'http' CHECK (service_protocol IN ('http', 'postgres', 'mysql', 'redis', 'ssh')),
+    service_protocol TEXT NOT NULL DEFAULT 'http' CHECK (service_protocol IN ('http', 'tcp', 'ssh')),
     public_port INTEGER CHECK (public_port BETWEEN 1024 AND 65535),
     primary_project_root TEXT,
     integration_namespace TEXT,
@@ -82,8 +82,8 @@ CREATE TABLE local_tunnels (
     CHECK ((state IN ('stopped', 'failed')) = (stopped_at IS NOT NULL)),
     CHECK (state NOT IN ('ready', 'draining') OR
            (public_url_id IS NOT NULL AND hostname IS NOT NULL AND publish_run_number IS NOT NULL)),
-    CHECK (service_protocol <> 'http' OR public_port IS NULL),
-    CHECK (state NOT IN ('ready', 'draining') OR service_protocol = 'http' OR public_port IS NOT NULL),
+    CHECK (service_protocol = 'ssh' OR public_port IS NULL),
+    CHECK (state NOT IN ('ready', 'draining') OR service_protocol <> 'ssh' OR public_port IS NOT NULL),
     CHECK (failure_code IS NULL OR state = 'failed'),
     CHECK ((primary_project_root IS NULL AND integration_namespace IS NULL) OR
            (primary_project_root IS NOT NULL AND primary_project_root <> '' AND instr(primary_project_root, char(0)) = 0 AND

@@ -591,7 +591,7 @@ INSERT INTO control.acme_orders (
     available_at,
     created_at,
     updated_at
-) VALUES (
+) SELECT
     $1,
     $2,
     $3,
@@ -609,7 +609,11 @@ INSERT INTO control.acme_orders (
     $14,
     $14,
     $14
-)
+FROM control.publish_runs AS run
+JOIN control.public_urls AS url ON url.id = run.public_url_id
+WHERE run.id = $3 AND run.public_url_id = $4
+  AND run.publish_run_number = $5 AND run.closed_at IS NULL
+  AND run.certificate_cache_key IS NOT NULL AND url.service_protocol IN ('http', 'tcp')
 RETURNING id, account_id, publish_run_id, public_url_id, publish_run_number, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
 `
 

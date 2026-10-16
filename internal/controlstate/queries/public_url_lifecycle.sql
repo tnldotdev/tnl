@@ -21,6 +21,7 @@ WHERE id = sqlc.arg(publish_run_id)
   AND public_url_id = sqlc.arg(public_url_id)
   AND publish_run_number = sqlc.arg(publish_run_number)
   AND closed_at IS NULL
+  AND certificate_cache_key IS NOT NULL
 RETURNING *;
 
 -- name: MarkPublishRunReady :one
@@ -31,7 +32,11 @@ WHERE sessions.id = sqlc.arg(publish_run_id)
   AND sessions.public_url_id = sqlc.arg(public_url_id)
   AND sessions.publish_run_number = sqlc.arg(publish_run_number)
   AND sessions.closed_at IS NULL
-  AND sessions.certificate_installed_at IS NOT NULL
+  AND (sessions.certificate_installed_at IS NOT NULL OR
+       (sessions.certificate_cache_key IS NULL AND EXISTS (
+           SELECT 1 FROM control.public_urls AS url
+           WHERE url.id = sessions.public_url_id AND url.service_protocol = 'ssh'
+               AND url.lifecycle_state = 'enabled' AND url.dns_state = 'published' AND url.public_port IS NOT NULL)))
   AND (
       SELECT count(*)
       FROM control.publish_run_connection_slots AS connections

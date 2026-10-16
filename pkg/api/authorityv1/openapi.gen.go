@@ -214,14 +214,17 @@ func (e PublicURLScope) Valid() bool {
 
 // Defines values for PublisherEnrollmentResultKind.
 const (
-	Namespace PublisherEnrollmentResultKind = "namespace"
-	SavedUrl  PublisherEnrollmentResultKind = "saved_url"
+	Namespace      PublisherEnrollmentResultKind = "namespace"
+	PrivateService PublisherEnrollmentResultKind = "private_service"
+	SavedUrl       PublisherEnrollmentResultKind = "saved_url"
 )
 
 // Valid indicates whether the value is a known member of the PublisherEnrollmentResultKind enum.
 func (e PublisherEnrollmentResultKind) Valid() bool {
 	switch e {
 	case Namespace:
+		return true
+	case PrivateService:
 		return true
 	case SavedUrl:
 		return true
@@ -528,6 +531,9 @@ type OIDCTokenExchangeRequest struct {
 	IdToken string `json:"id_token"`
 }
 
+// PrivateServiceID defines model for PrivateServiceID.
+type PrivateServiceID = string
+
 // Problem defines model for Problem.
 type Problem struct {
 	Code      ProblemCode             `json:"code"`
@@ -551,14 +557,15 @@ type PublicURLScope string
 
 // PublisherEnrollmentResult defines model for PublisherEnrollmentResult.
 type PublisherEnrollmentResult struct {
-	ClientId    string                        `json:"client_id"`
-	DomainId    *string                       `json:"domain_id,omitempty"`
-	GrantId     string                        `json:"grant_id"`
-	KeyId       string                        `json:"key_id"`
-	Kind        PublisherEnrollmentResultKind `json:"kind"`
-	Namespace   *string                       `json:"namespace,omitempty"`
-	PublicUrlId *string                       `json:"public_url_id,omitempty"`
-	TeamId      string                        `json:"team_id"`
+	ClientId         string                        `json:"client_id"`
+	DomainId         *string                       `json:"domain_id,omitempty"`
+	GrantId          string                        `json:"grant_id"`
+	KeyId            string                        `json:"key_id"`
+	Kind             PublisherEnrollmentResultKind `json:"kind"`
+	Namespace        *string                       `json:"namespace,omitempty"`
+	PrivateServiceId *PrivateServiceID             `json:"private_service_id,omitempty"`
+	PublicUrlId      *string                       `json:"public_url_id,omitempty"`
+	TeamId           string                        `json:"team_id"`
 }
 
 // PublisherEnrollmentResultKind defines model for PublisherEnrollmentResult.Kind.

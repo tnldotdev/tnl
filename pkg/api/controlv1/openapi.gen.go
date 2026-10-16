@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for AdminServerStatusRole.
@@ -146,6 +147,24 @@ func (e ControlDiscoveryManagedUrlMode) Valid() bool {
 	case Generated:
 		return true
 	case Simple:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CreatePrivateServiceGrantRequestKind.
+const (
+	CreatePrivateServiceGrantRequestKindIdentity CreatePrivateServiceGrantRequestKind = "identity"
+	CreatePrivateServiceGrantRequestKindTeam     CreatePrivateServiceGrantRequestKind = "team"
+)
+
+// Valid indicates whether the value is a known member of the CreatePrivateServiceGrantRequestKind enum.
+func (e CreatePrivateServiceGrantRequestKind) Valid() bool {
+	switch e {
+	case CreatePrivateServiceGrantRequestKindIdentity:
+		return true
+	case CreatePrivateServiceGrantRequestKindTeam:
 		return true
 	default:
 		return false
@@ -311,6 +330,45 @@ func (e OIDCAuthenticationFactsLoginFlow) Valid() bool {
 	}
 }
 
+// Defines values for PrivateServiceGrantKind.
+const (
+	PrivateServiceGrantKindIdentity PrivateServiceGrantKind = "identity"
+	PrivateServiceGrantKindTeam     PrivateServiceGrantKind = "team"
+)
+
+// Valid indicates whether the value is a known member of the PrivateServiceGrantKind enum.
+func (e PrivateServiceGrantKind) Valid() bool {
+	switch e {
+	case PrivateServiceGrantKindIdentity:
+		return true
+	case PrivateServiceGrantKindTeam:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PrivateServiceRunStateState.
+const (
+	PrivateServiceRunStateStateClosed   PrivateServiceRunStateState = "closed"
+	PrivateServiceRunStateStateReady    PrivateServiceRunStateState = "ready"
+	PrivateServiceRunStateStateStarting PrivateServiceRunStateState = "starting"
+)
+
+// Valid indicates whether the value is a known member of the PrivateServiceRunStateState enum.
+func (e PrivateServiceRunStateState) Valid() bool {
+	switch e {
+	case PrivateServiceRunStateStateClosed:
+		return true
+	case PrivateServiceRunStateStateReady:
+		return true
+	case PrivateServiceRunStateStateStarting:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProblemCode.
 const (
 	Conflict                    ProblemCode = "conflict"
@@ -448,23 +506,14 @@ func (e PublicURLScope) Valid() bool {
 
 // Defines values for PublicURLServiceProtocol.
 const (
-	Http     PublicURLServiceProtocol = "http"
-	Mysql    PublicURLServiceProtocol = "mysql"
-	Postgres PublicURLServiceProtocol = "postgres"
-	Redis    PublicURLServiceProtocol = "redis"
-	Ssh      PublicURLServiceProtocol = "ssh"
+	Http PublicURLServiceProtocol = "http"
+	Ssh  PublicURLServiceProtocol = "ssh"
 )
 
 // Valid indicates whether the value is a known member of the PublicURLServiceProtocol enum.
 func (e PublicURLServiceProtocol) Valid() bool {
 	switch e {
 	case Http:
-		return true
-	case Mysql:
-		return true
-	case Postgres:
-		return true
-	case Redis:
 		return true
 	case Ssh:
 		return true
@@ -529,14 +578,17 @@ func (e PublisherConnectionState) Valid() bool {
 
 // Defines values for PublisherEnrollmentKind.
 const (
-	PublisherEnrollmentKindNamespace PublisherEnrollmentKind = "namespace"
-	PublisherEnrollmentKindSavedUrl  PublisherEnrollmentKind = "saved_url"
+	PublisherEnrollmentKindNamespace      PublisherEnrollmentKind = "namespace"
+	PublisherEnrollmentKindPrivateService PublisherEnrollmentKind = "private_service"
+	PublisherEnrollmentKindSavedUrl       PublisherEnrollmentKind = "saved_url"
 )
 
 // Valid indicates whether the value is a known member of the PublisherEnrollmentKind enum.
 func (e PublisherEnrollmentKind) Valid() bool {
 	switch e {
 	case PublisherEnrollmentKindNamespace:
+		return true
+	case PublisherEnrollmentKindPrivateService:
 		return true
 	case PublisherEnrollmentKindSavedUrl:
 		return true
@@ -547,14 +599,17 @@ func (e PublisherEnrollmentKind) Valid() bool {
 
 // Defines values for PublisherGrantKind.
 const (
-	PublisherGrantKindNamespace PublisherGrantKind = "namespace"
-	PublisherGrantKindSavedUrl  PublisherGrantKind = "saved_url"
+	PublisherGrantKindNamespace      PublisherGrantKind = "namespace"
+	PublisherGrantKindPrivateService PublisherGrantKind = "private_service"
+	PublisherGrantKindSavedUrl       PublisherGrantKind = "saved_url"
 )
 
 // Valid indicates whether the value is a known member of the PublisherGrantKind enum.
 func (e PublisherGrantKind) Valid() bool {
 	switch e {
 	case PublisherGrantKindNamespace:
+		return true
+	case PublisherGrantKindPrivateService:
 		return true
 	case PublisherGrantKindSavedUrl:
 		return true
@@ -695,6 +750,51 @@ func (e ReadinessResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for SSHAttemptDecisionRequestDecision.
+const (
+	Approve SSHAttemptDecisionRequestDecision = "approve"
+	Deny    SSHAttemptDecisionRequestDecision = "deny"
+)
+
+// Valid indicates whether the value is a known member of the SSHAttemptDecisionRequestDecision enum.
+func (e SSHAttemptDecisionRequestDecision) Valid() bool {
+	switch e {
+	case Approve:
+		return true
+	case Deny:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSHAttemptStateState.
+const (
+	SSHAttemptStateStateApproved SSHAttemptStateState = "approved"
+	SSHAttemptStateStateCanceled SSHAttemptStateState = "canceled"
+	SSHAttemptStateStateClaimed  SSHAttemptStateState = "claimed"
+	SSHAttemptStateStateDenied   SSHAttemptStateState = "denied"
+	SSHAttemptStateStatePending  SSHAttemptStateState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the SSHAttemptStateState enum.
+func (e SSHAttemptStateState) Valid() bool {
+	switch e {
+	case SSHAttemptStateStateApproved:
+		return true
+	case SSHAttemptStateStateCanceled:
+		return true
+	case SSHAttemptStateStateClaimed:
+		return true
+	case SSHAttemptStateStateDenied:
+		return true
+	case SSHAttemptStateStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ShareScope.
 const (
 	ShareScopeGuest   ShareScope = "guest"
@@ -737,6 +837,27 @@ func (e SourceFileStateStatus) Valid() bool {
 	}
 }
 
+// Defines values for UpdateSSHAttemptRequestAction.
+const (
+	Cancel UpdateSSHAttemptRequestAction = "cancel"
+	Claim  UpdateSSHAttemptRequestAction = "claim"
+	Poll   UpdateSSHAttemptRequestAction = "poll"
+)
+
+// Valid indicates whether the value is a known member of the UpdateSSHAttemptRequestAction enum.
+func (e UpdateSSHAttemptRequestAction) Valid() bool {
+	switch e {
+	case Cancel:
+		return true
+	case Claim:
+		return true
+	case Poll:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VisitorAccessMode.
 const (
 	Anonymous  VisitorAccessMode = "anonymous"
@@ -757,16 +878,16 @@ func (e VisitorAccessMode) Valid() bool {
 
 // Defines values for VisitorGrantKind.
 const (
-	Identity VisitorGrantKind = "identity"
-	Team     VisitorGrantKind = "team"
+	VisitorGrantKindIdentity VisitorGrantKind = "identity"
+	VisitorGrantKindTeam     VisitorGrantKind = "team"
 )
 
 // Valid indicates whether the value is a known member of the VisitorGrantKind enum.
 func (e VisitorGrantKind) Valid() bool {
 	switch e {
-	case Identity:
+	case VisitorGrantKindIdentity:
 		return true
-	case Team:
+	case VisitorGrantKindTeam:
 		return true
 	default:
 		return false
@@ -985,7 +1106,7 @@ type AvailablePublicURL struct {
 	CanonicalHostname string                          `json:"canonical_hostname"`
 	Id                string                          `json:"id"`
 	PublicPort        *int32                          `json:"public_port,omitempty"`
-	ServiceProtocol   string                          `json:"service_protocol"`
+	ServiceProtocol   PublicURLServiceProtocol        `json:"service_protocol"`
 	TeamId            string                          `json:"team_id"`
 	TeamName          string                          `json:"team_name"`
 	VisitorAccess     AvailablePublicURLVisitorAccess `json:"visitor_access"`
@@ -998,6 +1119,16 @@ type AvailablePublicURLVisitorAccess string
 type AvailablePublicURLPage struct {
 	NextCursor *string              `json:"next_cursor,omitempty"`
 	PublicUrls []AvailablePublicURL `json:"public_urls"`
+}
+
+// BindPrivateServiceRunKeyRequest defines model for BindPrivateServiceRunKeyRequest.
+type BindPrivateServiceRunKeyRequest struct {
+	// BindingSignature Ed25519 signature by the enrolled publisher identity over tunnelv1.PrivateRunBindingDigest for this prepared run.
+	BindingSignature string `json:"binding_signature"`
+	RunNumber        int64  `json:"run_number"`
+
+	// StreamPublicKey Publisher-generated Ed25519 public key; the private key stays with the publisher.
+	StreamPublicKey string `json:"stream_public_key"`
 }
 
 // BrowserAccessRequest defines model for BrowserAccessRequest.
@@ -1152,6 +1283,33 @@ type CreatePreviewRequest struct {
 	TeamId TeamID `json:"team_id"`
 }
 
+// CreatePrivateServiceGrantRequest defines model for CreatePrivateServiceGrantRequest.
+type CreatePrivateServiceGrantRequest struct {
+	ExpiresAt  *time.Time                           `json:"expires_at,omitempty"`
+	IdentityId *IdentityID                          `json:"identity_id,omitempty"`
+	Kind       CreatePrivateServiceGrantRequestKind `json:"kind"`
+}
+
+// CreatePrivateServiceGrantRequestKind defines model for CreatePrivateServiceGrantRequest.Kind.
+type CreatePrivateServiceGrantRequestKind string
+
+// CreatePrivateServiceInvitationRequest defines model for CreatePrivateServiceInvitationRequest.
+type CreatePrivateServiceInvitationRequest struct {
+	Email     openapi_types.Email `json:"email"`
+	ExpiresAt time.Time           `json:"expires_at"`
+}
+
+// CreatePrivateServiceRequest defines model for CreatePrivateServiceRequest.
+type CreatePrivateServiceRequest struct {
+	Name   PrivateServiceName `json:"name"`
+	TeamId TeamID             `json:"team_id"`
+}
+
+// CreatePrivateServiceTicketRequest defines model for CreatePrivateServiceTicketRequest.
+type CreatePrivateServiceTicketRequest struct {
+	ConnectorSessionId PrivateConnectorSessionID `json:"connector_session_id"`
+}
+
 // CreatePublicURLRequest defines model for CreatePublicURLRequest.
 type CreatePublicURLRequest struct {
 	AccessMode        *VisitorAccessMode        `json:"access_mode,omitempty"`
@@ -1175,24 +1333,35 @@ type CreatePublishRunRequest struct {
 	Traffic *TrafficSelection `json:"traffic,omitempty"`
 }
 
-// CreatePublisherEnrollmentRequest defines model for CreatePublisherEnrollmentRequest.
+// CreatePublisherEnrollmentRequest Enroll with one exact saved public URL, HTTP namespace, or private service ID.
 type CreatePublisherEnrollmentRequest struct {
-	DomainId    *DomainID                            `json:"domain_id,omitempty"`
-	Kind        CreatePublisherEnrollmentRequestKind `json:"kind"`
-	Name        string                               `json:"name"`
-	PublicUrlId *PublicURLID                         `json:"public_url_id,omitempty"`
-	TeamId      TeamID                               `json:"team_id"`
+	DomainId         *DomainID                            `json:"domain_id,omitempty"`
+	Kind             CreatePublisherEnrollmentRequestKind `json:"kind"`
+	Name             string                               `json:"name"`
+	PrivateServiceId *PrivateServiceID                    `json:"private_service_id,omitempty"`
+	PublicUrlId      *PublicURLID                         `json:"public_url_id,omitempty"`
+	TeamId           TeamID                               `json:"team_id"`
 }
 
 // CreatePublisherEnrollmentRequestKind defines model for CreatePublisherEnrollmentRequest.Kind.
 type CreatePublisherEnrollmentRequestKind string
 
-// CreatePublisherGrantRequest defines model for CreatePublisherGrantRequest.
+// CreatePublisherGrantRequest Select exactly one saved public URL, HTTP namespace, or private service ID within the team.
 type CreatePublisherGrantRequest struct {
-	DomainId    *DomainID    `json:"domain_id,omitempty"`
-	ExpiresAt   *time.Time   `json:"expires_at,omitempty"`
-	PublicUrlId *PublicURLID `json:"public_url_id,omitempty"`
-	TeamId      TeamID       `json:"team_id"`
+	DomainId         *DomainID         `json:"domain_id,omitempty"`
+	ExpiresAt        *time.Time        `json:"expires_at,omitempty"`
+	PrivateServiceId *PrivateServiceID `json:"private_service_id,omitempty"`
+	PublicUrlId      *PublicURLID      `json:"public_url_id,omitempty"`
+	TeamId           TeamID            `json:"team_id"`
+}
+
+// CreateSSHAttemptRequest defines model for CreateSSHAttemptRequest.
+type CreateSSHAttemptRequest struct {
+	PublishRunNumber    int64  `json:"publish_run_number"`
+	SourceIp            string `json:"source_ip"`
+	SshSessionHash      string `json:"ssh_session_hash"`
+	SshUser             string `json:"ssh_user"`
+	VisitorConnectionId string `json:"visitor_connection_id"`
 }
 
 // CreateShareRequest defines model for CreateShareRequest.
@@ -1514,6 +1683,141 @@ type PreviewPageFeedbackRequest struct {
 	State            *FeedbackThreadState   `json:"state,omitempty"`
 }
 
+// PrivateConnectorSessionID defines model for PrivateConnectorSessionID.
+type PrivateConnectorSessionID = string
+
+// PrivateConnectorSessionSetup defines model for PrivateConnectorSessionSetup.
+type PrivateConnectorSessionSetup struct {
+	ConnectorSessionId PrivateConnectorSessionID `json:"connector_session_id"`
+	ExpiresAt          time.Time                 `json:"expires_at"`
+
+	// IngressAddress Shared ingress infrastructure TLS endpoint
+	IngressAddress    string           `json:"ingress_address"`
+	PrivateServiceId  PrivateServiceID `json:"private_service_id"`
+	SessionCredential string           `json:"session_credential"`
+}
+
+// PrivateRunID defines model for PrivateRunID.
+type PrivateRunID = string
+
+// PrivateService Saved private service. private_run_id and run_number are absent together while offline; their presence identifies a currently ready run, not a ticket.
+type PrivateService struct {
+	CreatedAt time.Time          `json:"created_at"`
+	Enabled   bool               `json:"enabled"`
+	Id        PrivateServiceID   `json:"id"`
+	Name      PrivateServiceName `json:"name"`
+
+	// PrivateRunId Present for a ready run with a live publisher grant and at least one live ready publisher connection; first readiness requires two.
+	PrivateRunId *PrivateRunID `json:"private_run_id,omitempty"`
+
+	// RunNumber Present only alongside private_run_id.
+	RunNumber *int64 `json:"run_number,omitempty"`
+	TeamId    TeamID `json:"team_id"`
+}
+
+// PrivateServiceConnection defines model for PrivateServiceConnection.
+type PrivateServiceConnection struct {
+	ConnectorSessionId PrivateConnectorSessionID `json:"connector_session_id"`
+	ExpiresAt          time.Time                 `json:"expires_at"`
+	IdentityId         IdentityID                `json:"identity_id"`
+
+	// ObservedSourceIp Copied from the source bound by ingress to this authenticated mux session; compare it with PrivateVisitorAccepted.
+	ObservedSourceIp string           `json:"observed_source_ip"`
+	PrivateRunId     PrivateRunID     `json:"private_run_id"`
+	PrivateServiceId PrivateServiceID `json:"private_service_id"`
+	RunNumber        int64            `json:"run_number"`
+
+	// StreamPublicKey Pin the publisher's per-run TLS 1.3 certificate public key and verify the signed connector challenge; no WebPKI certificate is issued for this service.
+	StreamPublicKey string `json:"stream_public_key"`
+	Ticket          string `json:"ticket"`
+}
+
+// PrivateServiceGrant defines model for PrivateServiceGrant.
+type PrivateServiceGrant struct {
+	CreatedAt        time.Time                   `json:"created_at"`
+	ExpiresAt        *time.Time                  `json:"expires_at,omitempty"`
+	Id               PrivateServiceGrantID       `json:"id"`
+	IdentityId       *IdentityID                 `json:"identity_id,omitempty"`
+	InvitationId     *PrivateServiceInvitationID `json:"invitation_id,omitempty"`
+	Kind             PrivateServiceGrantKind     `json:"kind"`
+	PrivateServiceId PrivateServiceID            `json:"private_service_id"`
+	RevokedAt        *time.Time                  `json:"revoked_at,omitempty"`
+}
+
+// PrivateServiceGrantKind defines model for PrivateServiceGrant.Kind.
+type PrivateServiceGrantKind string
+
+// PrivateServiceGrantID defines model for PrivateServiceGrantID.
+type PrivateServiceGrantID = string
+
+// PrivateServiceID defines model for PrivateServiceID.
+type PrivateServiceID = string
+
+// PrivateServiceInvitation defines model for PrivateServiceInvitation.
+type PrivateServiceInvitation struct {
+	AcceptedAt       *time.Time                 `json:"accepted_at,omitempty"`
+	Email            openapi_types.Email        `json:"email"`
+	ExpiresAt        time.Time                  `json:"expires_at"`
+	Id               PrivateServiceInvitationID `json:"id"`
+	PrivateServiceId PrivateServiceID           `json:"private_service_id"`
+	RevokedAt        *time.Time                 `json:"revoked_at,omitempty"`
+
+	// Secret Returned only when the invitation is created; share it with the verified email recipient. Never returned by list.
+	Secret *string `json:"secret,omitempty"`
+}
+
+// PrivateServiceInvitationID defines model for PrivateServiceInvitationID.
+type PrivateServiceInvitationID = string
+
+// PrivateServiceName defines model for PrivateServiceName.
+type PrivateServiceName = string
+
+// PrivateServicePage defines model for PrivateServicePage.
+type PrivateServicePage struct {
+	NextCursor *PrivateServiceID `json:"next_cursor,omitempty"`
+	Services   []PrivateService  `json:"services"`
+}
+
+// PrivateServiceRunPreparation defines model for PrivateServiceRunPreparation.
+type PrivateServiceRunPreparation struct {
+	BindingNonce        string           `json:"binding_nonce"`
+	ExpiresAt           time.Time        `json:"expires_at"`
+	IdempotencyKey      IdempotencyKey   `json:"idempotency_key"`
+	PrivateRunId        PrivateRunID     `json:"private_run_id"`
+	PrivateServiceId    PrivateServiceID `json:"private_service_id"`
+	PublisherGrantId    ResourceID       `json:"publisher_grant_id"`
+	PublisherIdentityId ResourceID       `json:"publisher_identity_id"`
+	PublisherKeyId      ResourceID       `json:"publisher_key_id"`
+	RunNumber           int64            `json:"run_number"`
+	TeamId              TeamID           `json:"team_id"`
+}
+
+// PrivateServiceRunSetup defines model for PrivateServiceRunSetup.
+type PrivateServiceRunSetup struct {
+	PrivateRunId         PrivateRunID           `json:"private_run_id"`
+	PrivateServiceId     PrivateServiceID       `json:"private_service_id"`
+	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
+	RunNumber            int64                  `json:"run_number"`
+	RunToken             string                 `json:"run_token"`
+
+	// StreamPublicKey Exact publisher-generated key pinned for this run; no private TLS key is returned.
+	StreamPublicKey string `json:"stream_public_key"`
+}
+
+// PrivateServiceRunState defines model for PrivateServiceRunState.
+type PrivateServiceRunState struct {
+	PrivateRunId         PrivateRunID                `json:"private_run_id"`
+	PrivateServiceId     PrivateServiceID            `json:"private_service_id"`
+	PublisherConnections []ConnectionAssignment      `json:"publisher_connections"`
+	PublisherExpiresAt   time.Time                   `json:"publisher_expires_at"`
+	RunNumber            int64                       `json:"run_number"`
+	State                PrivateServiceRunStateState `json:"state"`
+	StreamPublicKey      string                      `json:"stream_public_key"`
+}
+
+// PrivateServiceRunStateState defines model for PrivateServiceRunState.State.
+type PrivateServiceRunStateState string
+
 // Problem defines model for Problem.
 type Problem struct {
 	Code      ProblemCode             `json:"code"`
@@ -1546,7 +1850,7 @@ type PublicURL struct {
 	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
 	PolicyRevision       int64                   `json:"policy_revision"`
 
-	// PublicPort Stable visitor TCP port for a port-addressed public URL.
+	// PublicPort Assigned visitor port for SSH; HTTP uses hostname routing on 443.
 	PublicPort      *int                     `json:"public_port,omitempty"`
 	PublicUrlScope  PublicURLScope           `json:"public_url_scope"`
 	Purpose         PublicURLPurpose         `json:"purpose"`
@@ -1595,7 +1899,7 @@ type PublishRun struct {
 	TeamId                    TeamID          `json:"team_id"`
 }
 
-// PublishRunHeartbeat defines model for PublishRunHeartbeat.
+// PublishRunHeartbeat SSH becomes ready after DNS, an assigned port, and two ready publisher connections; HTTP additionally requires a visitor certificate.
 type PublishRunHeartbeat struct {
 	// PolicyDenials Total IP policy denials reported so far for this publish run number. The total may lag.
 	PolicyDenials        int64                  `json:"policy_denials"`
@@ -1608,7 +1912,8 @@ type PublishRunID = ResourceID
 
 // PublishRunSetup defines model for PublishRunSetup.
 type PublishRunSetup struct {
-	CertificatePlan      CertificatePlan        `json:"certificate_plan"`
+	// CertificatePlan Required for HTTP; absent for SSH, which has no visitor TLS certificate or ACME order.
+	CertificatePlan      *CertificatePlan       `json:"certificate_plan,omitempty"`
 	PublicUrl            PublicURL              `json:"public_url"`
 	PublishRun           PublishRun             `json:"publish_run"`
 	PublishRunToken      string                 `json:"publish_run_token"`
@@ -1652,14 +1957,15 @@ type PublisherConnectionState string
 
 // PublisherEnrollment defines model for PublisherEnrollment.
 type PublisherEnrollment struct {
-	DomainId      *DomainID               `json:"domain_id,omitempty"`
-	EnrollmentKey string                  `json:"enrollment_key"`
-	ExpiresAt     time.Time               `json:"expires_at"`
-	Id            ResourceID              `json:"id"`
-	Kind          PublisherEnrollmentKind `json:"kind"`
-	Namespace     *string                 `json:"namespace,omitempty"`
-	PublicUrlId   *PublicURLID            `json:"public_url_id,omitempty"`
-	TeamId        TeamID                  `json:"team_id"`
+	DomainId         *DomainID               `json:"domain_id,omitempty"`
+	EnrollmentKey    string                  `json:"enrollment_key"`
+	ExpiresAt        time.Time               `json:"expires_at"`
+	Id               ResourceID              `json:"id"`
+	Kind             PublisherEnrollmentKind `json:"kind"`
+	Namespace        *string                 `json:"namespace,omitempty"`
+	PrivateServiceId *PrivateServiceID       `json:"private_service_id,omitempty"`
+	PublicUrlId      *PublicURLID            `json:"public_url_id,omitempty"`
+	TeamId           TeamID                  `json:"team_id"`
 }
 
 // PublisherEnrollmentKind defines model for PublisherEnrollment.Kind.
@@ -1667,15 +1973,16 @@ type PublisherEnrollmentKind string
 
 // PublisherGrant defines model for PublisherGrant.
 type PublisherGrant struct {
-	CreatedAt   time.Time          `json:"created_at"`
-	DomainId    *DomainID          `json:"domain_id,omitempty"`
-	ExpiresAt   *time.Time         `json:"expires_at,omitempty"`
-	Id          ResourceID         `json:"id"`
-	Kind        PublisherGrantKind `json:"kind"`
-	Namespace   *string            `json:"namespace,omitempty"`
-	PublicUrlId *PublicURLID       `json:"public_url_id,omitempty"`
-	RevokedAt   *time.Time         `json:"revoked_at,omitempty"`
-	TeamId      *TeamID            `json:"team_id,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	DomainId         *DomainID          `json:"domain_id,omitempty"`
+	ExpiresAt        *time.Time         `json:"expires_at,omitempty"`
+	Id               ResourceID         `json:"id"`
+	Kind             PublisherGrantKind `json:"kind"`
+	Namespace        *string            `json:"namespace,omitempty"`
+	PrivateServiceId *PrivateServiceID  `json:"private_service_id,omitempty"`
+	PublicUrlId      *PublicURLID       `json:"public_url_id,omitempty"`
+	RevokedAt        *time.Time         `json:"revoked_at,omitempty"`
+	TeamId           *TeamID            `json:"team_id,omitempty"`
 }
 
 // PublisherGrantKind defines model for PublisherGrant.Kind.
@@ -1782,6 +2089,50 @@ type ReviewerFeedbackReadRequest struct {
 	PreviewId        PreviewID              `json:"preview_id"`
 	PublishRunNumber int64                  `json:"publish_run_number"`
 }
+
+// SSHAttemptBrowserView defines model for SSHAttemptBrowserView.
+type SSHAttemptBrowserView struct {
+	AttemptId   string            `json:"attempt_id"`
+	ExpiresAt   time.Time         `json:"expires_at"`
+	Hostname    CanonicalHostname `json:"hostname"`
+	PublicUrlId PublicURLID       `json:"public_url_id"`
+	SourceIp    string            `json:"source_ip"`
+	SshUser     string            `json:"ssh_user"`
+}
+
+// SSHAttemptCode defines model for SSHAttemptCode.
+type SSHAttemptCode = string
+
+// SSHAttemptCodeRequest defines model for SSHAttemptCodeRequest.
+type SSHAttemptCodeRequest struct {
+	Code SSHAttemptCode `json:"code"`
+}
+
+// SSHAttemptCreated defines model for SSHAttemptCreated.
+type SSHAttemptCreated struct {
+	AttemptId      string         `json:"attempt_id"`
+	Code           SSHAttemptCode `json:"code"`
+	ExpiresAt      time.Time      `json:"expires_at"`
+	PublisherProof string         `json:"publisher_proof"`
+}
+
+// SSHAttemptDecisionRequest defines model for SSHAttemptDecisionRequest.
+type SSHAttemptDecisionRequest struct {
+	Code     SSHAttemptCode                    `json:"code"`
+	Decision SSHAttemptDecisionRequestDecision `json:"decision"`
+}
+
+// SSHAttemptDecisionRequestDecision defines model for SSHAttemptDecisionRequest.Decision.
+type SSHAttemptDecisionRequestDecision string
+
+// SSHAttemptState defines model for SSHAttemptState.
+type SSHAttemptState struct {
+	ExpiresAt time.Time            `json:"expires_at"`
+	State     SSHAttemptStateState `json:"state"`
+}
+
+// SSHAttemptStateState defines model for SSHAttemptState.State.
+type SSHAttemptStateState string
 
 // SetMaintenanceControlRequest defines model for SetMaintenanceControlRequest.
 type SetMaintenanceControlRequest struct {
@@ -1919,6 +2270,20 @@ type UpdatePublicURLRequest struct {
 	Target string `json:"target"`
 }
 
+// UpdateSSHAttemptRequest defines model for UpdateSSHAttemptRequest.
+type UpdateSSHAttemptRequest struct {
+	Action              UpdateSSHAttemptRequestAction `json:"action"`
+	PublishRunNumber    int64                         `json:"publish_run_number"`
+	PublisherProof      string                        `json:"publisher_proof"`
+	SourceIp            *string                       `json:"source_ip,omitempty"`
+	SshSessionHash      *string                       `json:"ssh_session_hash,omitempty"`
+	SshUser             *string                       `json:"ssh_user,omitempty"`
+	VisitorConnectionId *string                       `json:"visitor_connection_id,omitempty"`
+}
+
+// UpdateSSHAttemptRequestAction defines model for UpdateSSHAttemptRequest.Action.
+type UpdateSSHAttemptRequestAction string
+
 // VisitorAccessMode defines model for VisitorAccessMode.
 type VisitorAccessMode string
 
@@ -1993,8 +2358,14 @@ type Cursor = ResourceID
 // FeedbackAfterCursor defines model for FeedbackAfterCursor.
 type FeedbackAfterCursor = int64
 
+// PrivateServiceCursor defines model for PrivateServiceCursor.
+type PrivateServiceCursor = PrivateServiceID
+
 // PublisherIdentityID defines model for PublisherIdentityID.
 type PublisherIdentityID = ResourceID
+
+// SSHAttemptID defines model for SSHAttemptID.
+type SSHAttemptID = string
 
 // TeamIDQuery defines model for TeamIDQuery.
 type TeamIDQuery = TeamID
@@ -2006,6 +2377,12 @@ type ListAdminRelaysParams struct {
 
 // CompletePreviewBrowserLoginParams defines parameters for CompletePreviewBrowserLogin.
 type CompletePreviewBrowserLoginParams struct {
+	State string `form:"state" json:"state"`
+	Code  string `form:"code" json:"code"`
+}
+
+// CompleteBrowserIdentityLoginParams defines parameters for CompleteBrowserIdentityLogin.
+type CompleteBrowserIdentityLoginParams struct {
 	State string `form:"state" json:"state"`
 	Code  string `form:"code" json:"code"`
 }
@@ -2052,6 +2429,37 @@ type ListSharesParams struct {
 
 // CreateShareParams defines parameters for CreateShare.
 type CreateShareParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// AcceptPrivateServiceInvitationJSONBody defines parameters for AcceptPrivateServiceInvitation.
+type AcceptPrivateServiceInvitationJSONBody struct {
+	Secret string `json:"secret"`
+}
+
+// ListPrivateServicesParams defines parameters for ListPrivateServices.
+type ListPrivateServicesParams struct {
+	TeamId TeamIDQuery           `form:"team_id" json:"team_id"`
+	Cursor *PrivateServiceCursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// CreatePrivateServiceParams defines parameters for CreatePrivateService.
+type CreatePrivateServiceParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// CreatePrivateServiceGrantParams defines parameters for CreatePrivateServiceGrant.
+type CreatePrivateServiceGrantParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// InvitePrivateServiceVisitorParams defines parameters for InvitePrivateServiceVisitor.
+type InvitePrivateServiceVisitorParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// PreparePrivateServiceRunParams defines parameters for PreparePrivateServiceRun.
+type PreparePrivateServiceRunParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
@@ -2144,6 +2552,11 @@ type AcceptVisitorInvitationJSONBody struct {
 	Secret string `json:"secret"`
 }
 
+// ListAvailablePrivateServicesParams defines parameters for ListAvailablePrivateServices.
+type ListAvailablePrivateServicesParams struct {
+	Cursor *PrivateServiceCursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // ListAvailablePublicURLsParams defines parameters for ListAvailablePublicURLs.
 type ListAvailablePublicURLsParams struct {
 	TeamId *string `form:"team_id,omitempty" json:"team_id,omitempty"`
@@ -2155,6 +2568,12 @@ type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 
 // DrainAdminRelayJSONRequestBody defines body for DrainAdminRelay for application/json ContentType.
 type DrainAdminRelayJSONRequestBody = AdminDrainRelayRequest
+
+// LookupSSHAttemptJSONRequestBody defines body for LookupSSHAttempt for application/json ContentType.
+type LookupSSHAttemptJSONRequestBody = SSHAttemptCodeRequest
+
+// DecideSSHAttemptJSONRequestBody defines body for DecideSSHAttempt for application/json ContentType.
+type DecideSSHAttemptJSONRequestBody = SSHAttemptDecisionRequest
 
 // AppendFeedbackEventJSONRequestBody defines body for AppendFeedbackEvent for application/json ContentType.
 type AppendFeedbackEventJSONRequestBody = AppendFeedbackEventRequest
@@ -2173,6 +2592,24 @@ type CreateShareJSONRequestBody = CreateShareRequest
 
 // SetPreviewTeamAccessJSONRequestBody defines body for SetPreviewTeamAccess for application/json ContentType.
 type SetPreviewTeamAccessJSONRequestBody = SetPreviewTeamAccessRequest
+
+// AcceptPrivateServiceInvitationJSONRequestBody defines body for AcceptPrivateServiceInvitation for application/json ContentType.
+type AcceptPrivateServiceInvitationJSONRequestBody AcceptPrivateServiceInvitationJSONBody
+
+// CreatePrivateServiceJSONRequestBody defines body for CreatePrivateService for application/json ContentType.
+type CreatePrivateServiceJSONRequestBody = CreatePrivateServiceRequest
+
+// CreatePrivateServiceTicketJSONRequestBody defines body for CreatePrivateServiceTicket for application/json ContentType.
+type CreatePrivateServiceTicketJSONRequestBody = CreatePrivateServiceTicketRequest
+
+// CreatePrivateServiceGrantJSONRequestBody defines body for CreatePrivateServiceGrant for application/json ContentType.
+type CreatePrivateServiceGrantJSONRequestBody = CreatePrivateServiceGrantRequest
+
+// InvitePrivateServiceVisitorJSONRequestBody defines body for InvitePrivateServiceVisitor for application/json ContentType.
+type InvitePrivateServiceVisitorJSONRequestBody = CreatePrivateServiceInvitationRequest
+
+// BindPrivateServiceRunKeyJSONRequestBody defines body for BindPrivateServiceRunKey for application/json ContentType.
+type BindPrivateServiceRunKeyJSONRequestBody = BindPrivateServiceRunKeyRequest
 
 // CreatePublicURLJSONRequestBody defines body for CreatePublicURL for application/json ContentType.
 type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
@@ -2242,6 +2679,12 @@ type RedeemPublishRunShareJSONRequestBody = RedeemShareRequest
 
 // GetPublishRunShareStateJSONRequestBody defines body for GetPublishRunShareState for application/json ContentType.
 type GetPublishRunShareStateJSONRequestBody = PublishRunVersionRequest
+
+// CreateSSHAttemptJSONRequestBody defines body for CreateSSHAttempt for application/json ContentType.
+type CreateSSHAttemptJSONRequestBody = CreateSSHAttemptRequest
+
+// UpdateSSHAttemptJSONRequestBody defines body for UpdateSSHAttempt for application/json ContentType.
+type UpdateSSHAttemptJSONRequestBody = UpdateSSHAttemptRequest
 
 // AuthorizeHTTPVisitorJSONRequestBody defines body for AuthorizeHTTPVisitor for application/json ContentType.
 type AuthorizeHTTPVisitorJSONRequestBody = HTTPVisitorRequest
@@ -2448,10 +2891,52 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
 	CompletePreviewBrowserLogin(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CompleteBrowserIdentityLogin performs a GET /v1/browser/identity/callback (the `CompleteBrowserIdentityLogin` operationId) request.
+	//
+	// Finish OIDC sign-in; set a random, Secure, HttpOnly, SameSite=Lax __Host-tnl-identity cookie scoped to the control hostname. Store only its digest; the session expires within 24 hours.
+	CompleteBrowserIdentityLogin(ctx context.Context, params *CompleteBrowserIdentityLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BeginBrowserIdentityLogin performs a GET /v1/browser/identity/login (the `BeginBrowserIdentityLogin` operationId) request.
+	//
+	// Start OIDC sign-in for the shared control-host browser identity session.
+	BeginBrowserIdentityLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeBrowserIdentitySession performs a DELETE /v1/browser/identity/session (the `RevokeBrowserIdentitySession` operationId) request.
+	RevokeBrowserIdentitySession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateBrowserIdentitySession performs a POST /v1/browser/identity/session (the `CreateBrowserIdentitySession` operationId) request.
+	//
+	// A CLI administrator may create a browser identity session bound to the parent control session. Revoking the parent invalidates the cookie. Never return authority tokens to the browser.
+	CreateBrowserIdentitySession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
 	//
 	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 	BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LookupSSHAttemptWithBody performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+	LookupSSHAttemptWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LookupSSHAttempt performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+	LookupSSHAttempt(ctx context.Context, body LookupSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideSSHAttemptWithBody performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+	DecideSSHAttemptWithBody(ctx context.Context, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideSSHAttempt performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+	DecideSSHAttempt(ctx context.Context, attemptId SSHAttemptID, body DecideSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCertificateIssuance Read one publish-run certificate issuance
 	//
@@ -2601,6 +3086,111 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
 	SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AcceptPrivateServiceInvitationWithBody performs a POST /v1/private-service-invitations/accept (the `AcceptPrivateServiceInvitation` operationId) request,
+	// with any type of body and a specified content type.
+	AcceptPrivateServiceInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcceptPrivateServiceInvitation performs a POST /v1/private-service-invitations/accept (the `AcceptPrivateServiceInvitation` operationId) request.
+	// Takes a body of the `application/json` content type.
+	AcceptPrivateServiceInvitation(ctx context.Context, body AcceptPrivateServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPrivateServices performs a GET /v1/private-services (the `ListPrivateServices` operationId) request.
+	//
+	// Team-owned saved services; never return target addresses or stream keys.
+	ListPrivateServices(ctx context.Context, params *ListPrivateServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePrivateServiceWithBody performs a POST /v1/private-services (the `CreatePrivateService` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+	CreatePrivateServiceWithBody(ctx context.Context, params *CreatePrivateServiceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePrivateService performs a POST /v1/private-services (the `CreatePrivateService` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+	CreatePrivateService(ctx context.Context, params *CreatePrivateServiceParams, body CreatePrivateServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeletePrivateService performs a DELETE /v1/private-services/{private_service_id} (the `DeletePrivateService` operationId) request.
+	//
+	// Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+	DeletePrivateService(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPrivateService performs a GET /v1/private-services/{private_service_id} (the `GetPrivateService` operationId) request.
+	GetPrivateService(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePrivateServiceTicketWithBody performs a POST /v1/private-services/{private_service_id}/connect (the `CreatePrivateServiceTicket` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+	CreatePrivateServiceTicketWithBody(ctx context.Context, privateServiceId PrivateServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePrivateServiceTicket performs a POST /v1/private-services/{private_service_id}/connect (the `CreatePrivateServiceTicket` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+	CreatePrivateServiceTicket(ctx context.Context, privateServiceId PrivateServiceID, body CreatePrivateServiceTicketJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePrivateConnectorSession performs a POST /v1/private-services/{private_service_id}/connector-sessions (the `CreatePrivateConnectorSession` operationId) request.
+	//
+	// Authorize one saved service for an identity and return a one-use credential for a shared ingress mux session. The ingress-observed source is bound when the session connects. This does not authorize visitor streams.
+	CreatePrivateConnectorSession(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPrivateServiceGrants performs a GET /v1/private-services/{private_service_id}/grants (the `ListPrivateServiceGrants` operationId) request.
+	ListPrivateServiceGrants(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePrivateServiceGrantWithBody performs a POST /v1/private-services/{private_service_id}/grants (the `CreatePrivateServiceGrant` operationId) request,
+	// with any type of body and a specified content type.
+	CreatePrivateServiceGrantWithBody(ctx context.Context, privateServiceId PrivateServiceID, params *CreatePrivateServiceGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePrivateServiceGrant performs a POST /v1/private-services/{private_service_id}/grants (the `CreatePrivateServiceGrant` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CreatePrivateServiceGrant(ctx context.Context, privateServiceId PrivateServiceID, params *CreatePrivateServiceGrantParams, body CreatePrivateServiceGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokePrivateServiceGrant performs a DELETE /v1/private-services/{private_service_id}/grants/{grant_id} (the `RevokePrivateServiceGrant` operationId) request.
+	RevokePrivateServiceGrant(ctx context.Context, privateServiceId PrivateServiceID, grantId PrivateServiceGrantID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPrivateServiceInvitations performs a GET /v1/private-services/{private_service_id}/invitations (the `ListPrivateServiceInvitations` operationId) request.
+	ListPrivateServiceInvitations(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InvitePrivateServiceVisitorWithBody performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	InvitePrivateServiceVisitorWithBody(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InvitePrivateServiceVisitor performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type.
+	InvitePrivateServiceVisitor(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, body InvitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokePrivateServiceInvitation performs a DELETE /v1/private-services/{private_service_id}/invitations/{invitation_id} (the `RevokePrivateServiceInvitation` operationId) request.
+	RevokePrivateServiceInvitation(ctx context.Context, privateServiceId PrivateServiceID, invitationId PrivateServiceInvitationID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PreparePrivateServiceRun performs a POST /v1/private-services/{private_service_id}/runs (the `PreparePrivateServiceRun` operationId) request.
+	//
+	// Reserve a new run ID, number and binding nonce under the exact publisher grant and enrolled signing key. Retrying the same idempotency key returns the same preparation; control does not generate or store a private TLS key.
+	PreparePrivateServiceRun(ctx context.Context, privateServiceId PrivateServiceID, params *PreparePrivateServiceRunParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClosePrivateServiceRun performs a DELETE /v1/private-services/{private_service_id}/runs/{private_run_id} (the `ClosePrivateServiceRun` operationId) request.
+	//
+	// Close the exact run, invalidate tickets and its pinned public key, and publish a private-service tombstone. The publisher discards its local private key.
+	ClosePrivateServiceRun(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// HeartbeatPrivateServiceRun performs a POST /v1/private-services/{private_service_id}/runs/{private_run_id} (the `HeartbeatPrivateServiceRun` operationId) request.
+	//
+	// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	HeartbeatPrivateServiceRun(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BindPrivateServiceRunKeyWithBody performs a POST /v1/private-services/{private_service_id}/runs/{private_run_id}/bind (the `BindPrivateServiceRunKey` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Verify an Ed25519 signature from the enrolled, current publisher identity key over the exact prepared team/service/run/number/nonce/grant/key/idempotency tuple and the publisher-generated public TLS key. A retry must repeat the same proof and pin; it may rotate only the run token.
+	BindPrivateServiceRunKeyWithBody(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BindPrivateServiceRunKey performs a POST /v1/private-services/{private_service_id}/runs/{private_run_id}/bind (the `BindPrivateServiceRunKey` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Verify an Ed25519 signature from the enrolled, current publisher identity key over the exact prepared team/service/run/number/nonce/grant/key/idempotency tuple and the publisher-generated public TLS key. A retry must repeat the same proof and pin; it may rotate only the run token.
+	BindPrivateServiceRunKey(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, body BindPrivateServiceRunKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListPublicURLs List public URLs for one team
 	//
 	// Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
@@ -2674,10 +3264,14 @@ type ClientInterface interface {
 
 	// IssueVisitorCertificateWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request,
 	// with any type of body and a specified content type.
+	//
+	// Available for exact HTTP public URLs; SSH is ineligible.
 	IssueVisitorCertificateWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IssueVisitorCertificate performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request.
 	// Takes a body of the `application/json` content type.
+	//
+	// Available for exact HTTP public URLs; SSH is ineligible.
 	IssueVisitorCertificate(ctx context.Context, publicUrlId PublicURLID, body IssueVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListVisitorGrants performs a GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId) request.
@@ -2937,6 +3531,30 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
 	GetPublishRunShareState(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateSSHAttemptWithBody performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+	CreateSSHAttemptWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSSHAttempt performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+	CreateSSHAttempt(ctx context.Context, publishRunId PublishRunID, body CreateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSSHAttemptWithBody performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+	UpdateSSHAttemptWithBody(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSSHAttempt performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+	UpdateSSHAttempt(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, body UpdateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// AuthorizeHTTPVisitorWithBody performs a POST /v1/publish-runs/{publish_run_id}/visitor-access (the `AuthorizeHTTPVisitor` operationId) request,
 	// with any type of body and a specified content type.
 	AuthorizeHTTPVisitorWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2947,10 +3565,14 @@ type ClientInterface interface {
 
 	// AuthorizeVisitorCertificateWithBody performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request,
 	// with any type of body and a specified content type.
+	//
+	// Check a visitor certificate on an HTTP public URL; SSH does not issue visitor certificates.
 	AuthorizeVisitorCertificateWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizeVisitorCertificate performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request.
 	// Takes a body of the `application/json` content type.
+	//
+	// Check a visitor certificate on an HTTP public URL; SSH does not issue visitor certificates.
 	AuthorizeVisitorCertificate(ctx context.Context, publishRunId PublishRunID, body AuthorizeVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreatePublisherEnrollmentWithBody Issue an expiring one-use publisher enrollment
@@ -3057,6 +3679,11 @@ type ClientInterface interface {
 	// AcceptVisitorInvitation performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request.
 	// Takes a body of the `application/json` content type.
 	AcceptVisitorInvitation(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAvailablePrivateServices performs a GET /v1/visitor/private-services (the `ListAvailablePrivateServices` operationId) request.
+	//
+	// Authorized saved private services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+	ListAvailablePrivateServices(ctx context.Context, params *ListAvailablePrivateServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAvailablePublicURLs performs a GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId) request.
 	ListAvailablePublicURLs(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3195,11 +3822,133 @@ func (c *Client) CompletePreviewBrowserLogin(ctx context.Context, params *Comple
 	return c.Client.Do(req)
 }
 
+// CompleteBrowserIdentityLogin performs a GET /v1/browser/identity/callback (the `CompleteBrowserIdentityLogin` operationId) request.
+//
+// Finish OIDC sign-in; set a random, Secure, HttpOnly, SameSite=Lax __Host-tnl-identity cookie scoped to the control hostname. Store only its digest; the session expires within 24 hours.
+func (c *Client) CompleteBrowserIdentityLogin(ctx context.Context, params *CompleteBrowserIdentityLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCompleteBrowserIdentityLoginRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BeginBrowserIdentityLogin performs a GET /v1/browser/identity/login (the `BeginBrowserIdentityLogin` operationId) request.
+//
+// Start OIDC sign-in for the shared control-host browser identity session.
+func (c *Client) BeginBrowserIdentityLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBeginBrowserIdentityLoginRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeBrowserIdentitySession performs a DELETE /v1/browser/identity/session (the `RevokeBrowserIdentitySession` operationId) request.
+func (c *Client) RevokeBrowserIdentitySession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeBrowserIdentitySessionRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateBrowserIdentitySession performs a POST /v1/browser/identity/session (the `CreateBrowserIdentitySession` operationId) request.
+//
+// A CLI administrator may create a browser identity session bound to the parent control session. Revoking the parent invalidates the cookie. Never return authority tokens to the browser.
+func (c *Client) CreateBrowserIdentitySession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBrowserIdentitySessionRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // BeginPreviewBrowserLogin Start sign-in for a preview visitor
 //
 // Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 func (c *Client) BeginPreviewBrowserLogin(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewBeginPreviewBrowserLoginRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LookupSSHAttemptWithBody performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+func (c *Client) LookupSSHAttemptWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLookupSSHAttemptRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LookupSSHAttempt performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+func (c *Client) LookupSSHAttempt(ctx context.Context, body LookupSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLookupSSHAttemptRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideSSHAttemptWithBody performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+func (c *Client) DecideSSHAttemptWithBody(ctx context.Context, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideSSHAttemptRequestWithBody(c.Server, attemptId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideSSHAttempt performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+func (c *Client) DecideSSHAttempt(ctx context.Context, attemptId SSHAttemptID, body DecideSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideSSHAttemptRequest(c.Server, attemptId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3618,6 +4367,341 @@ func (c *Client) SetPreviewTeamAccess(ctx context.Context, previewId PreviewID, 
 	return c.Client.Do(req)
 }
 
+// AcceptPrivateServiceInvitationWithBody performs a POST /v1/private-service-invitations/accept (the `AcceptPrivateServiceInvitation` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) AcceptPrivateServiceInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcceptPrivateServiceInvitationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcceptPrivateServiceInvitation performs a POST /v1/private-service-invitations/accept (the `AcceptPrivateServiceInvitation` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) AcceptPrivateServiceInvitation(ctx context.Context, body AcceptPrivateServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcceptPrivateServiceInvitationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPrivateServices performs a GET /v1/private-services (the `ListPrivateServices` operationId) request.
+//
+// Team-owned saved services; never return target addresses or stream keys.
+func (c *Client) ListPrivateServices(ctx context.Context, params *ListPrivateServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPrivateServicesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePrivateServiceWithBody performs a POST /v1/private-services (the `CreatePrivateService` operationId) request,
+// with any type of body and a specified content type.
+//
+// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+func (c *Client) CreatePrivateServiceWithBody(ctx context.Context, params *CreatePrivateServiceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePrivateServiceRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePrivateService performs a POST /v1/private-services (the `CreatePrivateService` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+func (c *Client) CreatePrivateService(ctx context.Context, params *CreatePrivateServiceParams, body CreatePrivateServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePrivateServiceRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeletePrivateService performs a DELETE /v1/private-services/{private_service_id} (the `DeletePrivateService` operationId) request.
+//
+// Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+func (c *Client) DeletePrivateService(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeletePrivateServiceRequest(c.Server, privateServiceId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPrivateService performs a GET /v1/private-services/{private_service_id} (the `GetPrivateService` operationId) request.
+func (c *Client) GetPrivateService(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPrivateServiceRequest(c.Server, privateServiceId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePrivateServiceTicketWithBody performs a POST /v1/private-services/{private_service_id}/connect (the `CreatePrivateServiceTicket` operationId) request,
+// with any type of body and a specified content type.
+//
+// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+func (c *Client) CreatePrivateServiceTicketWithBody(ctx context.Context, privateServiceId PrivateServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePrivateServiceTicketRequestWithBody(c.Server, privateServiceId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePrivateServiceTicket performs a POST /v1/private-services/{private_service_id}/connect (the `CreatePrivateServiceTicket` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+func (c *Client) CreatePrivateServiceTicket(ctx context.Context, privateServiceId PrivateServiceID, body CreatePrivateServiceTicketJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePrivateServiceTicketRequest(c.Server, privateServiceId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePrivateConnectorSession performs a POST /v1/private-services/{private_service_id}/connector-sessions (the `CreatePrivateConnectorSession` operationId) request.
+//
+// Authorize one saved service for an identity and return a one-use credential for a shared ingress mux session. The ingress-observed source is bound when the session connects. This does not authorize visitor streams.
+func (c *Client) CreatePrivateConnectorSession(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePrivateConnectorSessionRequest(c.Server, privateServiceId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPrivateServiceGrants performs a GET /v1/private-services/{private_service_id}/grants (the `ListPrivateServiceGrants` operationId) request.
+func (c *Client) ListPrivateServiceGrants(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPrivateServiceGrantsRequest(c.Server, privateServiceId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePrivateServiceGrantWithBody performs a POST /v1/private-services/{private_service_id}/grants (the `CreatePrivateServiceGrant` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CreatePrivateServiceGrantWithBody(ctx context.Context, privateServiceId PrivateServiceID, params *CreatePrivateServiceGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePrivateServiceGrantRequestWithBody(c.Server, privateServiceId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePrivateServiceGrant performs a POST /v1/private-services/{private_service_id}/grants (the `CreatePrivateServiceGrant` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CreatePrivateServiceGrant(ctx context.Context, privateServiceId PrivateServiceID, params *CreatePrivateServiceGrantParams, body CreatePrivateServiceGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePrivateServiceGrantRequest(c.Server, privateServiceId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokePrivateServiceGrant performs a DELETE /v1/private-services/{private_service_id}/grants/{grant_id} (the `RevokePrivateServiceGrant` operationId) request.
+func (c *Client) RevokePrivateServiceGrant(ctx context.Context, privateServiceId PrivateServiceID, grantId PrivateServiceGrantID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokePrivateServiceGrantRequest(c.Server, privateServiceId, grantId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPrivateServiceInvitations performs a GET /v1/private-services/{private_service_id}/invitations (the `ListPrivateServiceInvitations` operationId) request.
+func (c *Client) ListPrivateServiceInvitations(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPrivateServiceInvitationsRequest(c.Server, privateServiceId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// InvitePrivateServiceVisitorWithBody performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) InvitePrivateServiceVisitorWithBody(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInvitePrivateServiceVisitorRequestWithBody(c.Server, privateServiceId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// InvitePrivateServiceVisitor performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) InvitePrivateServiceVisitor(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, body InvitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInvitePrivateServiceVisitorRequest(c.Server, privateServiceId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokePrivateServiceInvitation performs a DELETE /v1/private-services/{private_service_id}/invitations/{invitation_id} (the `RevokePrivateServiceInvitation` operationId) request.
+func (c *Client) RevokePrivateServiceInvitation(ctx context.Context, privateServiceId PrivateServiceID, invitationId PrivateServiceInvitationID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokePrivateServiceInvitationRequest(c.Server, privateServiceId, invitationId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreparePrivateServiceRun performs a POST /v1/private-services/{private_service_id}/runs (the `PreparePrivateServiceRun` operationId) request.
+//
+// Reserve a new run ID, number and binding nonce under the exact publisher grant and enrolled signing key. Retrying the same idempotency key returns the same preparation; control does not generate or store a private TLS key.
+func (c *Client) PreparePrivateServiceRun(ctx context.Context, privateServiceId PrivateServiceID, params *PreparePrivateServiceRunParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreparePrivateServiceRunRequest(c.Server, privateServiceId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClosePrivateServiceRun performs a DELETE /v1/private-services/{private_service_id}/runs/{private_run_id} (the `ClosePrivateServiceRun` operationId) request.
+//
+// Close the exact run, invalidate tickets and its pinned public key, and publish a private-service tombstone. The publisher discards its local private key.
+func (c *Client) ClosePrivateServiceRun(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClosePrivateServiceRunRequest(c.Server, privateServiceId, privateRunId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// HeartbeatPrivateServiceRun performs a POST /v1/private-services/{private_service_id}/runs/{private_run_id} (the `HeartbeatPrivateServiceRun` operationId) request.
+//
+// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+func (c *Client) HeartbeatPrivateServiceRun(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHeartbeatPrivateServiceRunRequest(c.Server, privateServiceId, privateRunId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BindPrivateServiceRunKeyWithBody performs a POST /v1/private-services/{private_service_id}/runs/{private_run_id}/bind (the `BindPrivateServiceRunKey` operationId) request,
+// with any type of body and a specified content type.
+//
+// Verify an Ed25519 signature from the enrolled, current publisher identity key over the exact prepared team/service/run/number/nonce/grant/key/idempotency tuple and the publisher-generated public TLS key. A retry must repeat the same proof and pin; it may rotate only the run token.
+func (c *Client) BindPrivateServiceRunKeyWithBody(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBindPrivateServiceRunKeyRequestWithBody(c.Server, privateServiceId, privateRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BindPrivateServiceRunKey performs a POST /v1/private-services/{private_service_id}/runs/{private_run_id}/bind (the `BindPrivateServiceRunKey` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Verify an Ed25519 signature from the enrolled, current publisher identity key over the exact prepared team/service/run/number/nonce/grant/key/idempotency tuple and the publisher-generated public TLS key. A retry must repeat the same proof and pin; it may rotate only the run token.
+func (c *Client) BindPrivateServiceRunKey(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, body BindPrivateServiceRunKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBindPrivateServiceRunKeyRequest(c.Server, privateServiceId, privateRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListPublicURLs List public URLs for one team
 //
 // Corresponds with GET /v1/public-urls (the `ListPublicURLs` operationId).
@@ -3801,6 +4885,8 @@ func (c *Client) CreatePublishRun(ctx context.Context, publicUrlId PublicURLID, 
 
 // IssueVisitorCertificateWithBody performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request,
 // with any type of body and a specified content type.
+//
+// Available for exact HTTP public URLs; SSH is ineligible.
 func (c *Client) IssueVisitorCertificateWithBody(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueVisitorCertificateRequestWithBody(c.Server, publicUrlId, contentType, body)
 	if err != nil {
@@ -3815,6 +4901,8 @@ func (c *Client) IssueVisitorCertificateWithBody(ctx context.Context, publicUrlI
 
 // IssueVisitorCertificate performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request.
 // Takes a body of the `application/json` content type.
+//
+// Available for exact HTTP public URLs; SSH is ineligible.
 func (c *Client) IssueVisitorCertificate(ctx context.Context, publicUrlId PublicURLID, body IssueVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueVisitorCertificateRequest(c.Server, publicUrlId, body)
 	if err != nil {
@@ -4494,6 +5582,70 @@ func (c *Client) GetPublishRunShareState(ctx context.Context, publishRunId Publi
 	return c.Client.Do(req)
 }
 
+// CreateSSHAttemptWithBody performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+func (c *Client) CreateSSHAttemptWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSSHAttemptRequestWithBody(c.Server, publishRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSSHAttempt performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+func (c *Client) CreateSSHAttempt(ctx context.Context, publishRunId PublishRunID, body CreateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSSHAttemptRequest(c.Server, publishRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateSSHAttemptWithBody performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+func (c *Client) UpdateSSHAttemptWithBody(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSSHAttemptRequestWithBody(c.Server, publishRunId, attemptId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateSSHAttempt performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+func (c *Client) UpdateSSHAttempt(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, body UpdateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSSHAttemptRequest(c.Server, publishRunId, attemptId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // AuthorizeHTTPVisitorWithBody performs a POST /v1/publish-runs/{publish_run_id}/visitor-access (the `AuthorizeHTTPVisitor` operationId) request,
 // with any type of body and a specified content type.
 func (c *Client) AuthorizeHTTPVisitorWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4524,6 +5676,8 @@ func (c *Client) AuthorizeHTTPVisitor(ctx context.Context, publishRunId PublishR
 
 // AuthorizeVisitorCertificateWithBody performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request,
 // with any type of body and a specified content type.
+//
+// Check a visitor certificate on an HTTP public URL; SSH does not issue visitor certificates.
 func (c *Client) AuthorizeVisitorCertificateWithBody(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeVisitorCertificateRequestWithBody(c.Server, publishRunId, contentType, body)
 	if err != nil {
@@ -4538,6 +5692,8 @@ func (c *Client) AuthorizeVisitorCertificateWithBody(ctx context.Context, publis
 
 // AuthorizeVisitorCertificate performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request.
 // Takes a body of the `application/json` content type.
+//
+// Check a visitor certificate on an HTTP public URL; SSH does not issue visitor certificates.
 func (c *Client) AuthorizeVisitorCertificate(ctx context.Context, publishRunId PublishRunID, body AuthorizeVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeVisitorCertificateRequest(c.Server, publishRunId, body)
 	if err != nil {
@@ -4845,6 +6001,21 @@ func (c *Client) AcceptVisitorInvitation(ctx context.Context, body AcceptVisitor
 	return c.Client.Do(req)
 }
 
+// ListAvailablePrivateServices performs a GET /v1/visitor/private-services (the `ListAvailablePrivateServices` operationId) request.
+//
+// Authorized saved private services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+func (c *Client) ListAvailablePrivateServices(ctx context.Context, params *ListAvailablePrivateServicesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAvailablePrivateServicesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListAvailablePublicURLs performs a GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId) request.
 func (c *Client) ListAvailablePublicURLs(ctx context.Context, params *ListAvailablePublicURLsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListAvailablePublicURLsRequest(c.Server, params)
@@ -5133,6 +6304,145 @@ func NewCompletePreviewBrowserLoginRequest(server string, params *CompletePrevie
 	return req, nil
 }
 
+// NewCompleteBrowserIdentityLoginRequest constructs an http.Request for the CompleteBrowserIdentityLogin method
+func NewCompleteBrowserIdentityLoginRequest(server string, params *CompleteBrowserIdentityLoginParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/identity/callback")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code", params.Code, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBeginBrowserIdentityLoginRequest constructs an http.Request for the BeginBrowserIdentityLogin method
+func NewBeginBrowserIdentityLoginRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/identity/login")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeBrowserIdentitySessionRequest constructs an http.Request for the RevokeBrowserIdentitySession method
+func NewRevokeBrowserIdentitySessionRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/identity/session")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateBrowserIdentitySessionRequest constructs an http.Request for the CreateBrowserIdentitySession method
+func NewCreateBrowserIdentitySessionRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/identity/session")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewBeginPreviewBrowserLoginRequest constructs an http.Request for the BeginPreviewBrowserLogin method
 func NewBeginPreviewBrowserLoginRequest(server string, params *BeginPreviewBrowserLoginParams) (*http.Request, error) {
 	var err error
@@ -5211,6 +6521,93 @@ func NewBeginPreviewBrowserLoginRequest(server string, params *BeginPreviewBrows
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewLookupSSHAttemptRequest calls the generic LookupSSHAttempt builder with application/json body
+func NewLookupSSHAttemptRequest(server string, body LookupSSHAttemptJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewLookupSSHAttemptRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewLookupSSHAttemptRequestWithBody constructs an http.Request for the LookupSSHAttempt method, with any body, and a specified content type
+func NewLookupSSHAttemptRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/ssh-attempts/lookup")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDecideSSHAttemptRequest calls the generic DecideSSHAttempt builder with application/json body
+func NewDecideSSHAttemptRequest(server string, attemptId SSHAttemptID, body DecideSSHAttemptJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDecideSSHAttemptRequestWithBody(server, attemptId, "application/json", bodyReader)
+}
+
+// NewDecideSSHAttemptRequestWithBody constructs an http.Request for the DecideSSHAttempt method, with any body, and a specified content type
+func NewDecideSSHAttemptRequestWithBody(server string, attemptId SSHAttemptID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "attempt_id", attemptId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/browser/ssh-attempts/%s/decision", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -6064,6 +7461,763 @@ func NewSetPreviewTeamAccessRequestWithBody(server string, previewId PreviewID, 
 	}
 
 	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAcceptPrivateServiceInvitationRequest calls the generic AcceptPrivateServiceInvitation builder with application/json body
+func NewAcceptPrivateServiceInvitationRequest(server string, body AcceptPrivateServiceInvitationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAcceptPrivateServiceInvitationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAcceptPrivateServiceInvitationRequestWithBody constructs an http.Request for the AcceptPrivateServiceInvitation method, with any body, and a specified content type
+func NewAcceptPrivateServiceInvitationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-service-invitations/accept")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListPrivateServicesRequest constructs an http.Request for the ListPrivateServices method
+func NewListPrivateServicesRequest(server string, params *ListPrivateServicesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreatePrivateServiceRequest calls the generic CreatePrivateService builder with application/json body
+func NewCreatePrivateServiceRequest(server string, params *CreatePrivateServiceParams, body CreatePrivateServiceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePrivateServiceRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreatePrivateServiceRequestWithBody constructs an http.Request for the CreatePrivateService method, with any body, and a specified content type
+func NewCreatePrivateServiceRequestWithBody(server string, params *CreatePrivateServiceParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewDeletePrivateServiceRequest constructs an http.Request for the DeletePrivateService method
+func NewDeletePrivateServiceRequest(server string, privateServiceId PrivateServiceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetPrivateServiceRequest constructs an http.Request for the GetPrivateService method
+func NewGetPrivateServiceRequest(server string, privateServiceId PrivateServiceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreatePrivateServiceTicketRequest calls the generic CreatePrivateServiceTicket builder with application/json body
+func NewCreatePrivateServiceTicketRequest(server string, privateServiceId PrivateServiceID, body CreatePrivateServiceTicketJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePrivateServiceTicketRequestWithBody(server, privateServiceId, "application/json", bodyReader)
+}
+
+// NewCreatePrivateServiceTicketRequestWithBody constructs an http.Request for the CreatePrivateServiceTicket method, with any body, and a specified content type
+func NewCreatePrivateServiceTicketRequestWithBody(server string, privateServiceId PrivateServiceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/connect", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCreatePrivateConnectorSessionRequest constructs an http.Request for the CreatePrivateConnectorSession method
+func NewCreatePrivateConnectorSessionRequest(server string, privateServiceId PrivateServiceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/connector-sessions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListPrivateServiceGrantsRequest constructs an http.Request for the ListPrivateServiceGrants method
+func NewListPrivateServiceGrantsRequest(server string, privateServiceId PrivateServiceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/grants", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreatePrivateServiceGrantRequest calls the generic CreatePrivateServiceGrant builder with application/json body
+func NewCreatePrivateServiceGrantRequest(server string, privateServiceId PrivateServiceID, params *CreatePrivateServiceGrantParams, body CreatePrivateServiceGrantJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePrivateServiceGrantRequestWithBody(server, privateServiceId, params, "application/json", bodyReader)
+}
+
+// NewCreatePrivateServiceGrantRequestWithBody constructs an http.Request for the CreatePrivateServiceGrant method, with any body, and a specified content type
+func NewCreatePrivateServiceGrantRequestWithBody(server string, privateServiceId PrivateServiceID, params *CreatePrivateServiceGrantParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/grants", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewRevokePrivateServiceGrantRequest constructs an http.Request for the RevokePrivateServiceGrant method
+func NewRevokePrivateServiceGrantRequest(server string, privateServiceId PrivateServiceID, grantId PrivateServiceGrantID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "grant_id", grantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/grants/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListPrivateServiceInvitationsRequest constructs an http.Request for the ListPrivateServiceInvitations method
+func NewListPrivateServiceInvitationsRequest(server string, privateServiceId PrivateServiceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/invitations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewInvitePrivateServiceVisitorRequest calls the generic InvitePrivateServiceVisitor builder with application/json body
+func NewInvitePrivateServiceVisitorRequest(server string, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, body InvitePrivateServiceVisitorJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewInvitePrivateServiceVisitorRequestWithBody(server, privateServiceId, params, "application/json", bodyReader)
+}
+
+// NewInvitePrivateServiceVisitorRequestWithBody constructs an http.Request for the InvitePrivateServiceVisitor method, with any body, and a specified content type
+func NewInvitePrivateServiceVisitorRequestWithBody(server string, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/invitations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewRevokePrivateServiceInvitationRequest constructs an http.Request for the RevokePrivateServiceInvitation method
+func NewRevokePrivateServiceInvitationRequest(server string, privateServiceId PrivateServiceID, invitationId PrivateServiceInvitationID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "invitation_id", invitationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/invitations/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPreparePrivateServiceRunRequest constructs an http.Request for the PreparePrivateServiceRun method
+func NewPreparePrivateServiceRunRequest(server string, privateServiceId PrivateServiceID, params *PreparePrivateServiceRunParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/runs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewClosePrivateServiceRunRequest constructs an http.Request for the ClosePrivateServiceRun method
+func NewClosePrivateServiceRunRequest(server string, privateServiceId PrivateServiceID, privateRunId PrivateRunID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "private_run_id", privateRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/runs/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewHeartbeatPrivateServiceRunRequest constructs an http.Request for the HeartbeatPrivateServiceRun method
+func NewHeartbeatPrivateServiceRunRequest(server string, privateServiceId PrivateServiceID, privateRunId PrivateRunID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "private_run_id", privateRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/runs/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBindPrivateServiceRunKeyRequest calls the generic BindPrivateServiceRunKey builder with application/json body
+func NewBindPrivateServiceRunKeyRequest(server string, privateServiceId PrivateServiceID, privateRunId PrivateRunID, body BindPrivateServiceRunKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBindPrivateServiceRunKeyRequestWithBody(server, privateServiceId, privateRunId, "application/json", bodyReader)
+}
+
+// NewBindPrivateServiceRunKeyRequestWithBody constructs an http.Request for the BindPrivateServiceRunKey method, with any body, and a specified content type
+func NewBindPrivateServiceRunKeyRequestWithBody(server string, privateServiceId PrivateServiceID, privateRunId PrivateRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "private_service_id", privateServiceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "private_run_id", privateRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/private-services/%s/runs/%s/bind", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -7594,6 +9748,107 @@ func NewGetPublishRunShareStateRequestWithBody(server string, publishRunId Publi
 	return req, nil
 }
 
+// NewCreateSSHAttemptRequest calls the generic CreateSSHAttempt builder with application/json body
+func NewCreateSSHAttemptRequest(server string, publishRunId PublishRunID, body CreateSSHAttemptJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateSSHAttemptRequestWithBody(server, publishRunId, "application/json", bodyReader)
+}
+
+// NewCreateSSHAttemptRequestWithBody constructs an http.Request for the CreateSSHAttempt method, with any body, and a specified content type
+func NewCreateSSHAttemptRequestWithBody(server string, publishRunId PublishRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/ssh-attempts", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewUpdateSSHAttemptRequest calls the generic UpdateSSHAttempt builder with application/json body
+func NewUpdateSSHAttemptRequest(server string, publishRunId PublishRunID, attemptId SSHAttemptID, body UpdateSSHAttemptJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateSSHAttemptRequestWithBody(server, publishRunId, attemptId, "application/json", bodyReader)
+}
+
+// NewUpdateSSHAttemptRequestWithBody constructs an http.Request for the UpdateSSHAttempt method, with any body, and a specified content type
+func NewUpdateSSHAttemptRequestWithBody(server string, publishRunId PublishRunID, attemptId SSHAttemptID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publish_run_id", publishRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "attempt_id", attemptId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publish-runs/%s/ssh-attempts/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewAuthorizeHTTPVisitorRequest calls the generic AuthorizeHTTPVisitor builder with application/json body
 func NewAuthorizeHTTPVisitorRequest(server string, publishRunId PublishRunID, body AuthorizeHTTPVisitorJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -8309,6 +10564,60 @@ func NewAcceptVisitorInvitationRequestWithBody(server string, contentType string
 	return req, nil
 }
 
+// NewListAvailablePrivateServicesRequest constructs an http.Request for the ListAvailablePrivateServices method
+func NewListAvailablePrivateServicesRequest(server string, params *ListAvailablePrivateServicesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/visitor/private-services")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListAvailablePublicURLsRequest constructs an http.Request for the ListAvailablePublicURLs method
 func NewListAvailablePublicURLsRequest(server string, params *ListAvailablePublicURLsParams) (*http.Request, error) {
 	var err error
@@ -8509,12 +10818,66 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/browser/callback (the `CompletePreviewBrowserLogin` operationId).
 	CompletePreviewBrowserLoginWithResponse(ctx context.Context, params *CompletePreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*CompletePreviewBrowserLoginResponse, error)
 
+	// CompleteBrowserIdentityLoginWithResponse performs a GET /v1/browser/identity/callback (the `CompleteBrowserIdentityLogin` operationId) request.
+	//
+	// Finish OIDC sign-in; set a random, Secure, HttpOnly, SameSite=Lax __Host-tnl-identity cookie scoped to the control hostname. Store only its digest; the session expires within 24 hours.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CompleteBrowserIdentityLoginWithResponse(ctx context.Context, params *CompleteBrowserIdentityLoginParams, reqEditors ...RequestEditorFn) (*CompleteBrowserIdentityLoginResponse, error)
+
+	// BeginBrowserIdentityLoginWithResponse performs a GET /v1/browser/identity/login (the `BeginBrowserIdentityLogin` operationId) request.
+	//
+	// Start OIDC sign-in for the shared control-host browser identity session.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	BeginBrowserIdentityLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BeginBrowserIdentityLoginResponse, error)
+
+	// RevokeBrowserIdentitySessionWithResponse performs a DELETE /v1/browser/identity/session (the `RevokeBrowserIdentitySession` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeBrowserIdentitySessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RevokeBrowserIdentitySessionResponse, error)
+
+	// CreateBrowserIdentitySessionWithResponse performs a POST /v1/browser/identity/session (the `CreateBrowserIdentitySession` operationId) request.
+	//
+	// A CLI administrator may create a browser identity session bound to the parent control session. Revoking the parent invalidates the cookie. Never return authority tokens to the browser.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateBrowserIdentitySessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateBrowserIdentitySessionResponse, error)
+
 	// BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/browser/login (the `BeginPreviewBrowserLogin` operationId).
 	BeginPreviewBrowserLoginWithResponse(ctx context.Context, params *BeginPreviewBrowserLoginParams, reqEditors ...RequestEditorFn) (*BeginPreviewBrowserLoginResponse, error)
+
+	// LookupSSHAttemptWithBodyWithResponse performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	LookupSSHAttemptWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LookupSSHAttemptResponse, error)
+
+	// LookupSSHAttemptWithResponse performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+	LookupSSHAttemptWithResponse(ctx context.Context, body LookupSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*LookupSSHAttemptResponse, error)
+
+	// DecideSSHAttemptWithBodyWithResponse performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	DecideSSHAttemptWithBodyWithResponse(ctx context.Context, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideSSHAttemptResponse, error)
+
+	// DecideSSHAttemptWithResponse performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+	DecideSSHAttemptWithResponse(ctx context.Context, attemptId SSHAttemptID, body DecideSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideSSHAttemptResponse, error)
 
 	// GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
 	//
@@ -8694,6 +11057,145 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/previews/{preview_id}/team-access (the `SetPreviewTeamAccess` operationId).
 	SetPreviewTeamAccessWithResponse(ctx context.Context, previewId PreviewID, body SetPreviewTeamAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPreviewTeamAccessResponse, error)
 
+	// AcceptPrivateServiceInvitationWithBodyWithResponse performs a POST /v1/private-service-invitations/accept (the `AcceptPrivateServiceInvitation` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	AcceptPrivateServiceInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptPrivateServiceInvitationResponse, error)
+
+	// AcceptPrivateServiceInvitationWithResponse performs a POST /v1/private-service-invitations/accept (the `AcceptPrivateServiceInvitation` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	AcceptPrivateServiceInvitationWithResponse(ctx context.Context, body AcceptPrivateServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptPrivateServiceInvitationResponse, error)
+
+	// ListPrivateServicesWithResponse performs a GET /v1/private-services (the `ListPrivateServices` operationId) request.
+	//
+	// Team-owned saved services; never return target addresses or stream keys.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListPrivateServicesWithResponse(ctx context.Context, params *ListPrivateServicesParams, reqEditors ...RequestEditorFn) (*ListPrivateServicesResponse, error)
+
+	// CreatePrivateServiceWithBodyWithResponse performs a POST /v1/private-services (the `CreatePrivateService` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreatePrivateServiceWithBodyWithResponse(ctx context.Context, params *CreatePrivateServiceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePrivateServiceResponse, error)
+
+	// CreatePrivateServiceWithResponse performs a POST /v1/private-services (the `CreatePrivateService` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+	CreatePrivateServiceWithResponse(ctx context.Context, params *CreatePrivateServiceParams, body CreatePrivateServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePrivateServiceResponse, error)
+
+	// DeletePrivateServiceWithResponse performs a DELETE /v1/private-services/{private_service_id} (the `DeletePrivateService` operationId) request.
+	//
+	// Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	DeletePrivateServiceWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*DeletePrivateServiceResponse, error)
+
+	// GetPrivateServiceWithResponse performs a GET /v1/private-services/{private_service_id} (the `GetPrivateService` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetPrivateServiceWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*GetPrivateServiceResponse, error)
+
+	// CreatePrivateServiceTicketWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/connect (the `CreatePrivateServiceTicket` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreatePrivateServiceTicketWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePrivateServiceTicketResponse, error)
+
+	// CreatePrivateServiceTicketWithResponse performs a POST /v1/private-services/{private_service_id}/connect (the `CreatePrivateServiceTicket` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+	CreatePrivateServiceTicketWithResponse(ctx context.Context, privateServiceId PrivateServiceID, body CreatePrivateServiceTicketJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePrivateServiceTicketResponse, error)
+
+	// CreatePrivateConnectorSessionWithResponse performs a POST /v1/private-services/{private_service_id}/connector-sessions (the `CreatePrivateConnectorSession` operationId) request.
+	//
+	// Authorize one saved service for an identity and return a one-use credential for a shared ingress mux session. The ingress-observed source is bound when the session connects. This does not authorize visitor streams.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreatePrivateConnectorSessionWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*CreatePrivateConnectorSessionResponse, error)
+
+	// ListPrivateServiceGrantsWithResponse performs a GET /v1/private-services/{private_service_id}/grants (the `ListPrivateServiceGrants` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListPrivateServiceGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*ListPrivateServiceGrantsResponse, error)
+
+	// CreatePrivateServiceGrantWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/grants (the `CreatePrivateServiceGrant` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreatePrivateServiceGrantWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *CreatePrivateServiceGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePrivateServiceGrantResponse, error)
+
+	// CreatePrivateServiceGrantWithResponse performs a POST /v1/private-services/{private_service_id}/grants (the `CreatePrivateServiceGrant` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CreatePrivateServiceGrantWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *CreatePrivateServiceGrantParams, body CreatePrivateServiceGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePrivateServiceGrantResponse, error)
+
+	// RevokePrivateServiceGrantWithResponse performs a DELETE /v1/private-services/{private_service_id}/grants/{grant_id} (the `RevokePrivateServiceGrant` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokePrivateServiceGrantWithResponse(ctx context.Context, privateServiceId PrivateServiceID, grantId PrivateServiceGrantID, reqEditors ...RequestEditorFn) (*RevokePrivateServiceGrantResponse, error)
+
+	// ListPrivateServiceInvitationsWithResponse performs a GET /v1/private-services/{private_service_id}/invitations (the `ListPrivateServiceInvitations` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListPrivateServiceInvitationsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*ListPrivateServiceInvitationsResponse, error)
+
+	// InvitePrivateServiceVisitorWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	InvitePrivateServiceVisitorWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InvitePrivateServiceVisitorResponse, error)
+
+	// InvitePrivateServiceVisitorWithResponse performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	InvitePrivateServiceVisitorWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, body InvitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InvitePrivateServiceVisitorResponse, error)
+
+	// RevokePrivateServiceInvitationWithResponse performs a DELETE /v1/private-services/{private_service_id}/invitations/{invitation_id} (the `RevokePrivateServiceInvitation` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokePrivateServiceInvitationWithResponse(ctx context.Context, privateServiceId PrivateServiceID, invitationId PrivateServiceInvitationID, reqEditors ...RequestEditorFn) (*RevokePrivateServiceInvitationResponse, error)
+
+	// PreparePrivateServiceRunWithResponse performs a POST /v1/private-services/{private_service_id}/runs (the `PreparePrivateServiceRun` operationId) request.
+	//
+	// Reserve a new run ID, number and binding nonce under the exact publisher grant and enrolled signing key. Retrying the same idempotency key returns the same preparation; control does not generate or store a private TLS key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	PreparePrivateServiceRunWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *PreparePrivateServiceRunParams, reqEditors ...RequestEditorFn) (*PreparePrivateServiceRunResponse, error)
+
+	// ClosePrivateServiceRunWithResponse performs a DELETE /v1/private-services/{private_service_id}/runs/{private_run_id} (the `ClosePrivateServiceRun` operationId) request.
+	//
+	// Close the exact run, invalidate tickets and its pinned public key, and publish a private-service tombstone. The publisher discards its local private key.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ClosePrivateServiceRunWithResponse(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, reqEditors ...RequestEditorFn) (*ClosePrivateServiceRunResponse, error)
+
+	// HeartbeatPrivateServiceRunWithResponse performs a POST /v1/private-services/{private_service_id}/runs/{private_run_id} (the `HeartbeatPrivateServiceRun` operationId) request.
+	//
+	// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	HeartbeatPrivateServiceRunWithResponse(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, reqEditors ...RequestEditorFn) (*HeartbeatPrivateServiceRunResponse, error)
+
+	// BindPrivateServiceRunKeyWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/runs/{private_run_id}/bind (the `BindPrivateServiceRunKey` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Verify an Ed25519 signature from the enrolled, current publisher identity key over the exact prepared team/service/run/number/nonce/grant/key/idempotency tuple and the publisher-generated public TLS key. A retry must repeat the same proof and pin; it may rotate only the run token.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	BindPrivateServiceRunKeyWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BindPrivateServiceRunKeyResponse, error)
+
+	// BindPrivateServiceRunKeyWithResponse performs a POST /v1/private-services/{private_service_id}/runs/{private_run_id}/bind (the `BindPrivateServiceRunKey` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Verify an Ed25519 signature from the enrolled, current publisher identity key over the exact prepared team/service/run/number/nonce/grant/key/idempotency tuple and the publisher-generated public TLS key. A retry must repeat the same proof and pin; it may rotate only the run token.
+	BindPrivateServiceRunKeyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, body BindPrivateServiceRunKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*BindPrivateServiceRunKeyResponse, error)
+
 	// ListPublicURLsWithResponse List public URLs for one team
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -8774,11 +11276,15 @@ type ClientWithResponsesInterface interface {
 	// IssueVisitorCertificateWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request,
 	// with any type of body and a specified content type.
 	//
+	// Available for exact HTTP public URLs; SSH is ineligible.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	IssueVisitorCertificateWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueVisitorCertificateResponse, error)
 
 	// IssueVisitorCertificateWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Available for exact HTTP public URLs; SSH is ineligible.
 	IssueVisitorCertificateWithResponse(ctx context.Context, publicUrlId PublicURLID, body IssueVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueVisitorCertificateResponse, error)
 
 	// ListVisitorGrantsWithResponse performs a GET /v1/public-urls/{public_url_id}/visitor-grants (the `ListVisitorGrants` operationId) request.
@@ -9052,6 +11558,34 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/publish-runs/{publish_run_id}/share-state (the `GetPublishRunShareState` operationId).
 	GetPublishRunShareStateWithResponse(ctx context.Context, publishRunId PublishRunID, body GetPublishRunShareStateJSONRequestBody, reqEditors ...RequestEditorFn) (*GetPublishRunShareStateResponse, error)
 
+	// CreateSSHAttemptWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateSSHAttemptWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSSHAttemptResponse, error)
+
+	// CreateSSHAttemptWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+	CreateSSHAttemptWithResponse(ctx context.Context, publishRunId PublishRunID, body CreateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSSHAttemptResponse, error)
+
+	// UpdateSSHAttemptWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	UpdateSSHAttemptWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSSHAttemptResponse, error)
+
+	// UpdateSSHAttemptWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+	UpdateSSHAttemptWithResponse(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, body UpdateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSSHAttemptResponse, error)
+
 	// AuthorizeHTTPVisitorWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/visitor-access (the `AuthorizeHTTPVisitor` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -9065,11 +11599,15 @@ type ClientWithResponsesInterface interface {
 	// AuthorizeVisitorCertificateWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request,
 	// with any type of body and a specified content type.
 	//
+	// Check a visitor certificate on an HTTP public URL; SSH does not issue visitor certificates.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	AuthorizeVisitorCertificateWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeVisitorCertificateResponse, error)
 
 	// AuthorizeVisitorCertificateWithResponse performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Check a visitor certificate on an HTTP public URL; SSH does not issue visitor certificates.
 	AuthorizeVisitorCertificateWithResponse(ctx context.Context, publishRunId PublishRunID, body AuthorizeVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeVisitorCertificateResponse, error)
 
 	// CreatePublisherEnrollmentWithBodyWithResponse Issue an expiring one-use publisher enrollment
@@ -9198,6 +11736,13 @@ type ClientWithResponsesInterface interface {
 	// AcceptVisitorInvitationWithResponse performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	AcceptVisitorInvitationWithResponse(ctx context.Context, body AcceptVisitorInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptVisitorInvitationResponse, error)
+
+	// ListAvailablePrivateServicesWithResponse performs a GET /v1/visitor/private-services (the `ListAvailablePrivateServices` operationId) request.
+	//
+	// Authorized saved private services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListAvailablePrivateServicesWithResponse(ctx context.Context, params *ListAvailablePrivateServicesParams, reqEditors ...RequestEditorFn) (*ListAvailablePrivateServicesResponse, error)
 
 	// ListAvailablePublicURLsWithResponse performs a GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId) request.
 	//
@@ -9493,6 +12038,170 @@ func (r CompletePreviewBrowserLoginResponse) ContentType() string {
 	return ""
 }
 
+type CompleteBrowserIdentityLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CompleteBrowserIdentityLoginResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CompleteBrowserIdentityLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CompleteBrowserIdentityLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CompleteBrowserIdentityLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CompleteBrowserIdentityLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type BeginBrowserIdentityLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r BeginBrowserIdentityLoginResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r BeginBrowserIdentityLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BeginBrowserIdentityLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BeginBrowserIdentityLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BeginBrowserIdentityLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeBrowserIdentitySessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeBrowserIdentitySessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeBrowserIdentitySessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeBrowserIdentitySessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeBrowserIdentitySessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeBrowserIdentitySessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateBrowserIdentitySessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateBrowserIdentitySessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateBrowserIdentitySessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateBrowserIdentitySessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateBrowserIdentitySessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateBrowserIdentitySessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type BeginPreviewBrowserLoginResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -9528,6 +12237,102 @@ func (r BeginPreviewBrowserLoginResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r BeginPreviewBrowserLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type LookupSSHAttemptResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SSHAttemptBrowserView
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r LookupSSHAttemptResponse) GetJSON200() *SSHAttemptBrowserView {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r LookupSSHAttemptResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r LookupSSHAttemptResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LookupSSHAttemptResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LookupSSHAttemptResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LookupSSHAttemptResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DecideSSHAttemptResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SSHAttemptState
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DecideSSHAttemptResponse) GetJSON200() *SSHAttemptState {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DecideSSHAttemptResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DecideSSHAttemptResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DecideSSHAttemptResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DecideSSHAttemptResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DecideSSHAttemptResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -10488,6 +13293,794 @@ func (r SetPreviewTeamAccessResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SetPreviewTeamAccessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AcceptPrivateServiceInvitationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServiceGrant
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AcceptPrivateServiceInvitationResponse) GetJSON200() *PrivateServiceGrant {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AcceptPrivateServiceInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AcceptPrivateServiceInvitationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AcceptPrivateServiceInvitationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AcceptPrivateServiceInvitationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AcceptPrivateServiceInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPrivateServicesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServicePage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPrivateServicesResponse) GetJSON200() *PrivateServicePage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPrivateServicesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPrivateServicesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPrivateServicesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPrivateServicesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPrivateServicesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreatePrivateServiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PrivateService
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePrivateServiceResponse) GetJSON201() *PrivateService {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePrivateServiceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePrivateServiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePrivateServiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePrivateServiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePrivateServiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeletePrivateServiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeletePrivateServiceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeletePrivateServiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeletePrivateServiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeletePrivateServiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeletePrivateServiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPrivateServiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateService
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPrivateServiceResponse) GetJSON200() *PrivateService {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPrivateServiceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPrivateServiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPrivateServiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPrivateServiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPrivateServiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreatePrivateServiceTicketResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PrivateServiceConnection
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePrivateServiceTicketResponse) GetJSON201() *PrivateServiceConnection {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePrivateServiceTicketResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePrivateServiceTicketResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePrivateServiceTicketResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePrivateServiceTicketResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePrivateServiceTicketResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreatePrivateConnectorSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PrivateConnectorSessionSetup
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePrivateConnectorSessionResponse) GetJSON201() *PrivateConnectorSessionSetup {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePrivateConnectorSessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePrivateConnectorSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePrivateConnectorSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePrivateConnectorSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePrivateConnectorSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPrivateServiceGrantsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]PrivateServiceGrant
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPrivateServiceGrantsResponse) GetJSON200() *[]PrivateServiceGrant {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPrivateServiceGrantsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPrivateServiceGrantsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPrivateServiceGrantsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPrivateServiceGrantsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPrivateServiceGrantsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreatePrivateServiceGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PrivateServiceGrant
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePrivateServiceGrantResponse) GetJSON201() *PrivateServiceGrant {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePrivateServiceGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePrivateServiceGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePrivateServiceGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePrivateServiceGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePrivateServiceGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokePrivateServiceGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokePrivateServiceGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokePrivateServiceGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokePrivateServiceGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokePrivateServiceGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokePrivateServiceGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPrivateServiceInvitationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]PrivateServiceInvitation
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPrivateServiceInvitationsResponse) GetJSON200() *[]PrivateServiceInvitation {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPrivateServiceInvitationsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPrivateServiceInvitationsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPrivateServiceInvitationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPrivateServiceInvitationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPrivateServiceInvitationsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type InvitePrivateServiceVisitorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PrivateServiceInvitation
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r InvitePrivateServiceVisitorResponse) GetJSON201() *PrivateServiceInvitation {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r InvitePrivateServiceVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r InvitePrivateServiceVisitorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r InvitePrivateServiceVisitorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InvitePrivateServiceVisitorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r InvitePrivateServiceVisitorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokePrivateServiceInvitationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokePrivateServiceInvitationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokePrivateServiceInvitationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokePrivateServiceInvitationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokePrivateServiceInvitationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokePrivateServiceInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PreparePrivateServiceRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PrivateServiceRunPreparation
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r PreparePrivateServiceRunResponse) GetJSON201() *PrivateServiceRunPreparation {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PreparePrivateServiceRunResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PreparePrivateServiceRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PreparePrivateServiceRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PreparePrivateServiceRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PreparePrivateServiceRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ClosePrivateServiceRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClosePrivateServiceRunResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ClosePrivateServiceRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClosePrivateServiceRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClosePrivateServiceRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClosePrivateServiceRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type HeartbeatPrivateServiceRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServiceRunState
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r HeartbeatPrivateServiceRunResponse) GetJSON200() *PrivateServiceRunState {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r HeartbeatPrivateServiceRunResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r HeartbeatPrivateServiceRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r HeartbeatPrivateServiceRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r HeartbeatPrivateServiceRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r HeartbeatPrivateServiceRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type BindPrivateServiceRunKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServiceRunSetup
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r BindPrivateServiceRunKeyResponse) GetJSON200() *PrivateServiceRunSetup {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r BindPrivateServiceRunKeyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r BindPrivateServiceRunKeyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BindPrivateServiceRunKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BindPrivateServiceRunKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BindPrivateServiceRunKeyResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -11940,6 +15533,102 @@ func (r GetPublishRunShareStateResponse) ContentType() string {
 	return ""
 }
 
+type CreateSSHAttemptResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *SSHAttemptCreated
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateSSHAttemptResponse) GetJSON201() *SSHAttemptCreated {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateSSHAttemptResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateSSHAttemptResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateSSHAttemptResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateSSHAttemptResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateSSHAttemptResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateSSHAttemptResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SSHAttemptState
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateSSHAttemptResponse) GetJSON200() *SSHAttemptState {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateSSHAttemptResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateSSHAttemptResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateSSHAttemptResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateSSHAttemptResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateSSHAttemptResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type AuthorizeHTTPVisitorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12702,6 +16391,54 @@ func (r AcceptVisitorInvitationResponse) ContentType() string {
 	return ""
 }
 
+type ListAvailablePrivateServicesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServicePage
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAvailablePrivateServicesResponse) GetJSON200() *PrivateServicePage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAvailablePrivateServicesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAvailablePrivateServicesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAvailablePrivateServicesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAvailablePrivateServicesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAvailablePrivateServicesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListAvailablePublicURLsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12910,6 +16647,56 @@ func (c *ClientWithResponses) CompletePreviewBrowserLoginWithResponse(ctx contex
 	return ParseCompletePreviewBrowserLoginResponse(rsp)
 }
 
+// CompleteBrowserIdentityLoginWithResponse performs a GET /v1/browser/identity/callback (the `CompleteBrowserIdentityLogin` operationId) request.
+//
+// Finish OIDC sign-in; set a random, Secure, HttpOnly, SameSite=Lax __Host-tnl-identity cookie scoped to the control hostname. Store only its digest; the session expires within 24 hours.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CompleteBrowserIdentityLoginWithResponse(ctx context.Context, params *CompleteBrowserIdentityLoginParams, reqEditors ...RequestEditorFn) (*CompleteBrowserIdentityLoginResponse, error) {
+	rsp, err := c.CompleteBrowserIdentityLogin(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCompleteBrowserIdentityLoginResponse(rsp)
+}
+
+// BeginBrowserIdentityLoginWithResponse performs a GET /v1/browser/identity/login (the `BeginBrowserIdentityLogin` operationId) request.
+//
+// Start OIDC sign-in for the shared control-host browser identity session.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) BeginBrowserIdentityLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BeginBrowserIdentityLoginResponse, error) {
+	rsp, err := c.BeginBrowserIdentityLogin(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBeginBrowserIdentityLoginResponse(rsp)
+}
+
+// RevokeBrowserIdentitySessionWithResponse performs a DELETE /v1/browser/identity/session (the `RevokeBrowserIdentitySession` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeBrowserIdentitySessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RevokeBrowserIdentitySessionResponse, error) {
+	rsp, err := c.RevokeBrowserIdentitySession(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeBrowserIdentitySessionResponse(rsp)
+}
+
+// CreateBrowserIdentitySessionWithResponse performs a POST /v1/browser/identity/session (the `CreateBrowserIdentitySession` operationId) request.
+//
+// A CLI administrator may create a browser identity session bound to the parent control session. Revoking the parent invalidates the cookie. Never return authority tokens to the browser.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateBrowserIdentitySessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateBrowserIdentitySessionResponse, error) {
+	rsp, err := c.CreateBrowserIdentitySession(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBrowserIdentitySessionResponse(rsp)
+}
+
 // BeginPreviewBrowserLoginWithResponse Start sign-in for a preview visitor
 //
 // Returns a wrapper object for the known response body format(s).
@@ -12921,6 +16708,58 @@ func (c *ClientWithResponses) BeginPreviewBrowserLoginWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseBeginPreviewBrowserLoginResponse(rsp)
+}
+
+// LookupSSHAttemptWithBodyWithResponse performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) LookupSSHAttemptWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LookupSSHAttemptResponse, error) {
+	rsp, err := c.LookupSSHAttemptWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLookupSSHAttemptResponse(rsp)
+}
+
+// LookupSSHAttemptWithResponse performs a POST /v1/browser/ssh-attempts/lookup (the `LookupSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+func (c *ClientWithResponses) LookupSSHAttemptWithResponse(ctx context.Context, body LookupSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*LookupSSHAttemptResponse, error) {
+	rsp, err := c.LookupSSHAttempt(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLookupSSHAttemptResponse(rsp)
+}
+
+// DecideSSHAttemptWithBodyWithResponse performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) DecideSSHAttemptWithBodyWithResponse(ctx context.Context, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideSSHAttemptResponse, error) {
+	rsp, err := c.DecideSSHAttemptWithBody(ctx, attemptId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDecideSSHAttemptResponse(rsp)
+}
+
+// DecideSSHAttemptWithResponse performs a POST /v1/browser/ssh-attempts/{attempt_id}/decision (the `DecideSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+func (c *ClientWithResponses) DecideSSHAttemptWithResponse(ctx context.Context, attemptId SSHAttemptID, body DecideSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideSSHAttemptResponse, error) {
+	rsp, err := c.DecideSSHAttempt(ctx, attemptId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDecideSSHAttemptResponse(rsp)
 }
 
 // GetCertificateIssuanceWithResponse Read one publish-run certificate issuance
@@ -13257,6 +17096,283 @@ func (c *ClientWithResponses) SetPreviewTeamAccessWithResponse(ctx context.Conte
 	return ParseSetPreviewTeamAccessResponse(rsp)
 }
 
+// AcceptPrivateServiceInvitationWithBodyWithResponse performs a POST /v1/private-service-invitations/accept (the `AcceptPrivateServiceInvitation` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AcceptPrivateServiceInvitationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcceptPrivateServiceInvitationResponse, error) {
+	rsp, err := c.AcceptPrivateServiceInvitationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcceptPrivateServiceInvitationResponse(rsp)
+}
+
+// AcceptPrivateServiceInvitationWithResponse performs a POST /v1/private-service-invitations/accept (the `AcceptPrivateServiceInvitation` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AcceptPrivateServiceInvitationWithResponse(ctx context.Context, body AcceptPrivateServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptPrivateServiceInvitationResponse, error) {
+	rsp, err := c.AcceptPrivateServiceInvitation(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcceptPrivateServiceInvitationResponse(rsp)
+}
+
+// ListPrivateServicesWithResponse performs a GET /v1/private-services (the `ListPrivateServices` operationId) request.
+//
+// Team-owned saved services; never return target addresses or stream keys.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListPrivateServicesWithResponse(ctx context.Context, params *ListPrivateServicesParams, reqEditors ...RequestEditorFn) (*ListPrivateServicesResponse, error) {
+	rsp, err := c.ListPrivateServices(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPrivateServicesResponse(rsp)
+}
+
+// CreatePrivateServiceWithBodyWithResponse performs a POST /v1/private-services (the `CreatePrivateService` operationId) request,
+// with any type of body and a specified content type.
+//
+// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreatePrivateServiceWithBodyWithResponse(ctx context.Context, params *CreatePrivateServiceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePrivateServiceResponse, error) {
+	rsp, err := c.CreatePrivateServiceWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePrivateServiceResponse(rsp)
+}
+
+// CreatePrivateServiceWithResponse performs a POST /v1/private-services (the `CreatePrivateService` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+func (c *ClientWithResponses) CreatePrivateServiceWithResponse(ctx context.Context, params *CreatePrivateServiceParams, body CreatePrivateServiceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePrivateServiceResponse, error) {
+	rsp, err := c.CreatePrivateService(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePrivateServiceResponse(rsp)
+}
+
+// DeletePrivateServiceWithResponse performs a DELETE /v1/private-services/{private_service_id} (the `DeletePrivateService` operationId) request.
+//
+// Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) DeletePrivateServiceWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*DeletePrivateServiceResponse, error) {
+	rsp, err := c.DeletePrivateService(ctx, privateServiceId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeletePrivateServiceResponse(rsp)
+}
+
+// GetPrivateServiceWithResponse performs a GET /v1/private-services/{private_service_id} (the `GetPrivateService` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetPrivateServiceWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*GetPrivateServiceResponse, error) {
+	rsp, err := c.GetPrivateService(ctx, privateServiceId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPrivateServiceResponse(rsp)
+}
+
+// CreatePrivateServiceTicketWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/connect (the `CreatePrivateServiceTicket` operationId) request,
+// with any type of body and a specified content type.
+//
+// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreatePrivateServiceTicketWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePrivateServiceTicketResponse, error) {
+	rsp, err := c.CreatePrivateServiceTicketWithBody(ctx, privateServiceId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePrivateServiceTicketResponse(rsp)
+}
+
+// CreatePrivateServiceTicketWithResponse performs a POST /v1/private-services/{private_service_id}/connect (the `CreatePrivateServiceTicket` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+func (c *ClientWithResponses) CreatePrivateServiceTicketWithResponse(ctx context.Context, privateServiceId PrivateServiceID, body CreatePrivateServiceTicketJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePrivateServiceTicketResponse, error) {
+	rsp, err := c.CreatePrivateServiceTicket(ctx, privateServiceId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePrivateServiceTicketResponse(rsp)
+}
+
+// CreatePrivateConnectorSessionWithResponse performs a POST /v1/private-services/{private_service_id}/connector-sessions (the `CreatePrivateConnectorSession` operationId) request.
+//
+// Authorize one saved service for an identity and return a one-use credential for a shared ingress mux session. The ingress-observed source is bound when the session connects. This does not authorize visitor streams.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreatePrivateConnectorSessionWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*CreatePrivateConnectorSessionResponse, error) {
+	rsp, err := c.CreatePrivateConnectorSession(ctx, privateServiceId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePrivateConnectorSessionResponse(rsp)
+}
+
+// ListPrivateServiceGrantsWithResponse performs a GET /v1/private-services/{private_service_id}/grants (the `ListPrivateServiceGrants` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListPrivateServiceGrantsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*ListPrivateServiceGrantsResponse, error) {
+	rsp, err := c.ListPrivateServiceGrants(ctx, privateServiceId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPrivateServiceGrantsResponse(rsp)
+}
+
+// CreatePrivateServiceGrantWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/grants (the `CreatePrivateServiceGrant` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreatePrivateServiceGrantWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *CreatePrivateServiceGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePrivateServiceGrantResponse, error) {
+	rsp, err := c.CreatePrivateServiceGrantWithBody(ctx, privateServiceId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePrivateServiceGrantResponse(rsp)
+}
+
+// CreatePrivateServiceGrantWithResponse performs a POST /v1/private-services/{private_service_id}/grants (the `CreatePrivateServiceGrant` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreatePrivateServiceGrantWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *CreatePrivateServiceGrantParams, body CreatePrivateServiceGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePrivateServiceGrantResponse, error) {
+	rsp, err := c.CreatePrivateServiceGrant(ctx, privateServiceId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePrivateServiceGrantResponse(rsp)
+}
+
+// RevokePrivateServiceGrantWithResponse performs a DELETE /v1/private-services/{private_service_id}/grants/{grant_id} (the `RevokePrivateServiceGrant` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokePrivateServiceGrantWithResponse(ctx context.Context, privateServiceId PrivateServiceID, grantId PrivateServiceGrantID, reqEditors ...RequestEditorFn) (*RevokePrivateServiceGrantResponse, error) {
+	rsp, err := c.RevokePrivateServiceGrant(ctx, privateServiceId, grantId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokePrivateServiceGrantResponse(rsp)
+}
+
+// ListPrivateServiceInvitationsWithResponse performs a GET /v1/private-services/{private_service_id}/invitations (the `ListPrivateServiceInvitations` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListPrivateServiceInvitationsWithResponse(ctx context.Context, privateServiceId PrivateServiceID, reqEditors ...RequestEditorFn) (*ListPrivateServiceInvitationsResponse, error) {
+	rsp, err := c.ListPrivateServiceInvitations(ctx, privateServiceId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPrivateServiceInvitationsResponse(rsp)
+}
+
+// InvitePrivateServiceVisitorWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) InvitePrivateServiceVisitorWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InvitePrivateServiceVisitorResponse, error) {
+	rsp, err := c.InvitePrivateServiceVisitorWithBody(ctx, privateServiceId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInvitePrivateServiceVisitorResponse(rsp)
+}
+
+// InvitePrivateServiceVisitorWithResponse performs a POST /v1/private-services/{private_service_id}/invitations (the `InvitePrivateServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) InvitePrivateServiceVisitorWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *InvitePrivateServiceVisitorParams, body InvitePrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*InvitePrivateServiceVisitorResponse, error) {
+	rsp, err := c.InvitePrivateServiceVisitor(ctx, privateServiceId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInvitePrivateServiceVisitorResponse(rsp)
+}
+
+// RevokePrivateServiceInvitationWithResponse performs a DELETE /v1/private-services/{private_service_id}/invitations/{invitation_id} (the `RevokePrivateServiceInvitation` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokePrivateServiceInvitationWithResponse(ctx context.Context, privateServiceId PrivateServiceID, invitationId PrivateServiceInvitationID, reqEditors ...RequestEditorFn) (*RevokePrivateServiceInvitationResponse, error) {
+	rsp, err := c.RevokePrivateServiceInvitation(ctx, privateServiceId, invitationId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokePrivateServiceInvitationResponse(rsp)
+}
+
+// PreparePrivateServiceRunWithResponse performs a POST /v1/private-services/{private_service_id}/runs (the `PreparePrivateServiceRun` operationId) request.
+//
+// Reserve a new run ID, number and binding nonce under the exact publisher grant and enrolled signing key. Retrying the same idempotency key returns the same preparation; control does not generate or store a private TLS key.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) PreparePrivateServiceRunWithResponse(ctx context.Context, privateServiceId PrivateServiceID, params *PreparePrivateServiceRunParams, reqEditors ...RequestEditorFn) (*PreparePrivateServiceRunResponse, error) {
+	rsp, err := c.PreparePrivateServiceRun(ctx, privateServiceId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreparePrivateServiceRunResponse(rsp)
+}
+
+// ClosePrivateServiceRunWithResponse performs a DELETE /v1/private-services/{private_service_id}/runs/{private_run_id} (the `ClosePrivateServiceRun` operationId) request.
+//
+// Close the exact run, invalidate tickets and its pinned public key, and publish a private-service tombstone. The publisher discards its local private key.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ClosePrivateServiceRunWithResponse(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, reqEditors ...RequestEditorFn) (*ClosePrivateServiceRunResponse, error) {
+	rsp, err := c.ClosePrivateServiceRun(ctx, privateServiceId, privateRunId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClosePrivateServiceRunResponse(rsp)
+}
+
+// HeartbeatPrivateServiceRunWithResponse performs a POST /v1/private-services/{private_service_id}/runs/{private_run_id} (the `HeartbeatPrivateServiceRun` operationId) request.
+//
+// Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) HeartbeatPrivateServiceRunWithResponse(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, reqEditors ...RequestEditorFn) (*HeartbeatPrivateServiceRunResponse, error) {
+	rsp, err := c.HeartbeatPrivateServiceRun(ctx, privateServiceId, privateRunId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseHeartbeatPrivateServiceRunResponse(rsp)
+}
+
+// BindPrivateServiceRunKeyWithBodyWithResponse performs a POST /v1/private-services/{private_service_id}/runs/{private_run_id}/bind (the `BindPrivateServiceRunKey` operationId) request,
+// with any type of body and a specified content type.
+//
+// Verify an Ed25519 signature from the enrolled, current publisher identity key over the exact prepared team/service/run/number/nonce/grant/key/idempotency tuple and the publisher-generated public TLS key. A retry must repeat the same proof and pin; it may rotate only the run token.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) BindPrivateServiceRunKeyWithBodyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BindPrivateServiceRunKeyResponse, error) {
+	rsp, err := c.BindPrivateServiceRunKeyWithBody(ctx, privateServiceId, privateRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBindPrivateServiceRunKeyResponse(rsp)
+}
+
+// BindPrivateServiceRunKeyWithResponse performs a POST /v1/private-services/{private_service_id}/runs/{private_run_id}/bind (the `BindPrivateServiceRunKey` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Verify an Ed25519 signature from the enrolled, current publisher identity key over the exact prepared team/service/run/number/nonce/grant/key/idempotency tuple and the publisher-generated public TLS key. A retry must repeat the same proof and pin; it may rotate only the run token.
+func (c *ClientWithResponses) BindPrivateServiceRunKeyWithResponse(ctx context.Context, privateServiceId PrivateServiceID, privateRunId PrivateRunID, body BindPrivateServiceRunKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*BindPrivateServiceRunKeyResponse, error) {
+	rsp, err := c.BindPrivateServiceRunKey(ctx, privateServiceId, privateRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBindPrivateServiceRunKeyResponse(rsp)
+}
+
 // ListPublicURLsWithResponse List public URLs for one team
 //
 // Returns a wrapper object for the known response body format(s).
@@ -13403,6 +17519,8 @@ func (c *ClientWithResponses) CreatePublishRunWithResponse(ctx context.Context, 
 // IssueVisitorCertificateWithBodyWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request,
 // with any type of body and a specified content type.
 //
+// Available for exact HTTP public URLs; SSH is ineligible.
+//
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) IssueVisitorCertificateWithBodyWithResponse(ctx context.Context, publicUrlId PublicURLID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueVisitorCertificateResponse, error) {
 	rsp, err := c.IssueVisitorCertificateWithBody(ctx, publicUrlId, contentType, body, reqEditors...)
@@ -13414,6 +17532,8 @@ func (c *ClientWithResponses) IssueVisitorCertificateWithBodyWithResponse(ctx co
 
 // IssueVisitorCertificateWithResponse performs a POST /v1/public-urls/{public_url_id}/visitor-certificate (the `IssueVisitorCertificate` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Available for exact HTTP public URLs; SSH is ineligible.
 func (c *ClientWithResponses) IssueVisitorCertificateWithResponse(ctx context.Context, publicUrlId PublicURLID, body IssueVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueVisitorCertificateResponse, error) {
 	rsp, err := c.IssueVisitorCertificate(ctx, publicUrlId, body, reqEditors...)
 	if err != nil {
@@ -13939,6 +18059,58 @@ func (c *ClientWithResponses) GetPublishRunShareStateWithResponse(ctx context.Co
 	return ParseGetPublishRunShareStateResponse(rsp)
 }
 
+// CreateSSHAttemptWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateSSHAttemptWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSSHAttemptResponse, error) {
+	rsp, err := c.CreateSSHAttemptWithBody(ctx, publishRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSSHAttemptResponse(rsp)
+}
+
+// CreateSSHAttemptWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts (the `CreateSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+func (c *ClientWithResponses) CreateSSHAttemptWithResponse(ctx context.Context, publishRunId PublishRunID, body CreateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSSHAttemptResponse, error) {
+	rsp, err := c.CreateSSHAttempt(ctx, publishRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSSHAttemptResponse(rsp)
+}
+
+// UpdateSSHAttemptWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request,
+// with any type of body and a specified content type.
+//
+// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) UpdateSSHAttemptWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSSHAttemptResponse, error) {
+	rsp, err := c.UpdateSSHAttemptWithBody(ctx, publishRunId, attemptId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSSHAttemptResponse(rsp)
+}
+
+// UpdateSSHAttemptWithResponse performs a POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id} (the `UpdateSSHAttempt` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+func (c *ClientWithResponses) UpdateSSHAttemptWithResponse(ctx context.Context, publishRunId PublishRunID, attemptId SSHAttemptID, body UpdateSSHAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSSHAttemptResponse, error) {
+	rsp, err := c.UpdateSSHAttempt(ctx, publishRunId, attemptId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSSHAttemptResponse(rsp)
+}
+
 // AuthorizeHTTPVisitorWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/visitor-access (the `AuthorizeHTTPVisitor` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -13964,6 +18136,8 @@ func (c *ClientWithResponses) AuthorizeHTTPVisitorWithResponse(ctx context.Conte
 // AuthorizeVisitorCertificateWithBodyWithResponse performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request,
 // with any type of body and a specified content type.
 //
+// Check a visitor certificate on an HTTP public URL; SSH does not issue visitor certificates.
+//
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) AuthorizeVisitorCertificateWithBodyWithResponse(ctx context.Context, publishRunId PublishRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeVisitorCertificateResponse, error) {
 	rsp, err := c.AuthorizeVisitorCertificateWithBody(ctx, publishRunId, contentType, body, reqEditors...)
@@ -13975,6 +18149,8 @@ func (c *ClientWithResponses) AuthorizeVisitorCertificateWithBodyWithResponse(ct
 
 // AuthorizeVisitorCertificateWithResponse performs a POST /v1/publish-runs/{publish_run_id}/visitor-certificate (the `AuthorizeVisitorCertificate` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Check a visitor certificate on an HTTP public URL; SSH does not issue visitor certificates.
 func (c *ClientWithResponses) AuthorizeVisitorCertificateWithResponse(ctx context.Context, publishRunId PublishRunID, body AuthorizeVisitorCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeVisitorCertificateResponse, error) {
 	rsp, err := c.AuthorizeVisitorCertificate(ctx, publishRunId, body, reqEditors...)
 	if err != nil {
@@ -14224,6 +18400,19 @@ func (c *ClientWithResponses) AcceptVisitorInvitationWithResponse(ctx context.Co
 	return ParseAcceptVisitorInvitationResponse(rsp)
 }
 
+// ListAvailablePrivateServicesWithResponse performs a GET /v1/visitor/private-services (the `ListAvailablePrivateServices` operationId) request.
+//
+// Authorized saved private services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListAvailablePrivateServicesWithResponse(ctx context.Context, params *ListAvailablePrivateServicesParams, reqEditors ...RequestEditorFn) (*ListAvailablePrivateServicesResponse, error) {
+	rsp, err := c.ListAvailablePrivateServices(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAvailablePrivateServicesResponse(rsp)
+}
+
 // ListAvailablePublicURLsWithResponse performs a GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -14442,6 +18631,122 @@ func ParseCompletePreviewBrowserLoginResponse(rsp *http.Response) (*CompletePrev
 	return response, nil
 }
 
+// ParseCompleteBrowserIdentityLoginResponse parses an HTTP response from a CompleteBrowserIdentityLoginWithResponse call
+func ParseCompleteBrowserIdentityLoginResponse(rsp *http.Response) (*CompleteBrowserIdentityLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CompleteBrowserIdentityLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 303:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBeginBrowserIdentityLoginResponse parses an HTTP response from a BeginBrowserIdentityLoginWithResponse call
+func ParseBeginBrowserIdentityLoginResponse(rsp *http.Response) (*BeginBrowserIdentityLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BeginBrowserIdentityLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 302:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeBrowserIdentitySessionResponse parses an HTTP response from a RevokeBrowserIdentitySessionWithResponse call
+func ParseRevokeBrowserIdentitySessionResponse(rsp *http.Response) (*RevokeBrowserIdentitySessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeBrowserIdentitySessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateBrowserIdentitySessionResponse parses an HTTP response from a CreateBrowserIdentitySessionWithResponse call
+func ParseCreateBrowserIdentitySessionResponse(rsp *http.Response) (*CreateBrowserIdentitySessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateBrowserIdentitySessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseBeginPreviewBrowserLoginResponse parses an HTTP response from a BeginPreviewBrowserLoginWithResponse call
 func ParseBeginPreviewBrowserLoginResponse(rsp *http.Response) (*BeginPreviewBrowserLoginResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -14458,6 +18763,72 @@ func ParseBeginPreviewBrowserLoginResponse(rsp *http.Response) (*BeginPreviewBro
 	switch {
 	case rsp.StatusCode == 302:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLookupSSHAttemptResponse parses an HTTP response from a LookupSSHAttemptWithResponse call
+func ParseLookupSSHAttemptResponse(rsp *http.Response) (*LookupSSHAttemptResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LookupSSHAttemptResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SSHAttemptBrowserView
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDecideSSHAttemptResponse parses an HTTP response from a DecideSSHAttemptWithResponse call
+func ParseDecideSSHAttemptResponse(rsp *http.Response) (*DecideSSHAttemptResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DecideSSHAttemptResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SSHAttemptState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -15114,6 +19485,551 @@ func ParseSetPreviewTeamAccessResponse(rsp *http.Response) (*SetPreviewTeamAcces
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Preview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAcceptPrivateServiceInvitationResponse parses an HTTP response from a AcceptPrivateServiceInvitationWithResponse call
+func ParseAcceptPrivateServiceInvitationResponse(rsp *http.Response) (*AcceptPrivateServiceInvitationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AcceptPrivateServiceInvitationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServiceGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPrivateServicesResponse parses an HTTP response from a ListPrivateServicesWithResponse call
+func ParseListPrivateServicesResponse(rsp *http.Response) (*ListPrivateServicesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPrivateServicesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServicePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePrivateServiceResponse parses an HTTP response from a CreatePrivateServiceWithResponse call
+func ParseCreatePrivateServiceResponse(rsp *http.Response) (*CreatePrivateServiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePrivateServiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PrivateService
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeletePrivateServiceResponse parses an HTTP response from a DeletePrivateServiceWithResponse call
+func ParseDeletePrivateServiceResponse(rsp *http.Response) (*DeletePrivateServiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeletePrivateServiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPrivateServiceResponse parses an HTTP response from a GetPrivateServiceWithResponse call
+func ParseGetPrivateServiceResponse(rsp *http.Response) (*GetPrivateServiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPrivateServiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateService
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePrivateServiceTicketResponse parses an HTTP response from a CreatePrivateServiceTicketWithResponse call
+func ParseCreatePrivateServiceTicketResponse(rsp *http.Response) (*CreatePrivateServiceTicketResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePrivateServiceTicketResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PrivateServiceConnection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePrivateConnectorSessionResponse parses an HTTP response from a CreatePrivateConnectorSessionWithResponse call
+func ParseCreatePrivateConnectorSessionResponse(rsp *http.Response) (*CreatePrivateConnectorSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePrivateConnectorSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PrivateConnectorSessionSetup
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPrivateServiceGrantsResponse parses an HTTP response from a ListPrivateServiceGrantsWithResponse call
+func ParseListPrivateServiceGrantsResponse(rsp *http.Response) (*ListPrivateServiceGrantsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPrivateServiceGrantsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []PrivateServiceGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePrivateServiceGrantResponse parses an HTTP response from a CreatePrivateServiceGrantWithResponse call
+func ParseCreatePrivateServiceGrantResponse(rsp *http.Response) (*CreatePrivateServiceGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePrivateServiceGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PrivateServiceGrant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokePrivateServiceGrantResponse parses an HTTP response from a RevokePrivateServiceGrantWithResponse call
+func ParseRevokePrivateServiceGrantResponse(rsp *http.Response) (*RevokePrivateServiceGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokePrivateServiceGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPrivateServiceInvitationsResponse parses an HTTP response from a ListPrivateServiceInvitationsWithResponse call
+func ParseListPrivateServiceInvitationsResponse(rsp *http.Response) (*ListPrivateServiceInvitationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPrivateServiceInvitationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []PrivateServiceInvitation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseInvitePrivateServiceVisitorResponse parses an HTTP response from a InvitePrivateServiceVisitorWithResponse call
+func ParseInvitePrivateServiceVisitorResponse(rsp *http.Response) (*InvitePrivateServiceVisitorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InvitePrivateServiceVisitorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PrivateServiceInvitation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokePrivateServiceInvitationResponse parses an HTTP response from a RevokePrivateServiceInvitationWithResponse call
+func ParseRevokePrivateServiceInvitationResponse(rsp *http.Response) (*RevokePrivateServiceInvitationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokePrivateServiceInvitationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePreparePrivateServiceRunResponse parses an HTTP response from a PreparePrivateServiceRunWithResponse call
+func ParsePreparePrivateServiceRunResponse(rsp *http.Response) (*PreparePrivateServiceRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PreparePrivateServiceRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PrivateServiceRunPreparation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseClosePrivateServiceRunResponse parses an HTTP response from a ClosePrivateServiceRunWithResponse call
+func ParseClosePrivateServiceRunResponse(rsp *http.Response) (*ClosePrivateServiceRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClosePrivateServiceRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseHeartbeatPrivateServiceRunResponse parses an HTTP response from a HeartbeatPrivateServiceRunWithResponse call
+func ParseHeartbeatPrivateServiceRunResponse(rsp *http.Response) (*HeartbeatPrivateServiceRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &HeartbeatPrivateServiceRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServiceRunState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBindPrivateServiceRunKeyResponse parses an HTTP response from a BindPrivateServiceRunKeyWithResponse call
+func ParseBindPrivateServiceRunKeyResponse(rsp *http.Response) (*BindPrivateServiceRunKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BindPrivateServiceRunKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServiceRunSetup
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -16130,6 +21046,72 @@ func ParseGetPublishRunShareStateResponse(rsp *http.Response) (*GetPublishRunSha
 	return response, nil
 }
 
+// ParseCreateSSHAttemptResponse parses an HTTP response from a CreateSSHAttemptWithResponse call
+func ParseCreateSSHAttemptResponse(rsp *http.Response) (*CreateSSHAttemptResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateSSHAttemptResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SSHAttemptCreated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateSSHAttemptResponse parses an HTTP response from a UpdateSSHAttemptWithResponse call
+func ParseUpdateSSHAttemptResponse(rsp *http.Response) (*UpdateSSHAttemptResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateSSHAttemptResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SSHAttemptState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseAuthorizeHTTPVisitorResponse parses an HTTP response from a AuthorizeHTTPVisitorWithResponse call
 func ParseAuthorizeHTTPVisitorResponse(rsp *http.Response) (*AuthorizeHTTPVisitorResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -16657,6 +21639,39 @@ func ParseAcceptVisitorInvitationResponse(rsp *http.Response) (*AcceptVisitorInv
 	return response, nil
 }
 
+// ParseListAvailablePrivateServicesResponse parses an HTTP response from a ListAvailablePrivateServicesWithResponse call
+func ParseListAvailablePrivateServicesResponse(rsp *http.Response) (*ListAvailablePrivateServicesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAvailablePrivateServicesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServicePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListAvailablePublicURLsResponse parses an HTTP response from a ListAvailablePublicURLsWithResponse call
 func ParseListAvailablePublicURLsResponse(rsp *http.Response) (*ListAvailablePublicURLsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -16766,9 +21781,27 @@ type ServerInterface interface {
 	// CompletePreviewBrowserLogin Return a signed-in visitor to the preview
 	// (GET /v1/browser/callback)
 	CompletePreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params CompletePreviewBrowserLoginParams)
+
+	// (GET /v1/browser/identity/callback)
+	CompleteBrowserIdentityLogin(w http.ResponseWriter, r *http.Request, params CompleteBrowserIdentityLoginParams)
+
+	// (GET /v1/browser/identity/login)
+	BeginBrowserIdentityLogin(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /v1/browser/identity/session)
+	RevokeBrowserIdentitySession(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/browser/identity/session)
+	CreateBrowserIdentitySession(w http.ResponseWriter, r *http.Request)
 	// BeginPreviewBrowserLogin Start sign-in for a preview visitor
 	// (GET /v1/browser/login)
 	BeginPreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params BeginPreviewBrowserLoginParams)
+
+	// (POST /v1/browser/ssh-attempts/lookup)
+	LookupSSHAttempt(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/browser/ssh-attempts/{attempt_id}/decision)
+	DecideSSHAttempt(w http.ResponseWriter, r *http.Request, attemptId SSHAttemptID)
 	// GetCertificateIssuance Read one publish-run certificate issuance
 	// (GET /v1/certificate-issuances/{issuance_id})
 	GetCertificateIssuance(w http.ResponseWriter, r *http.Request, issuanceId IssuanceID)
@@ -16829,6 +21862,57 @@ type ServerInterface interface {
 	// SetPreviewTeamAccess Enable or disable team visitor access for this preview
 	// (PUT /v1/previews/{preview_id}/team-access)
 	SetPreviewTeamAccess(w http.ResponseWriter, r *http.Request, previewId PreviewID)
+
+	// (POST /v1/private-service-invitations/accept)
+	AcceptPrivateServiceInvitation(w http.ResponseWriter, r *http.Request)
+
+	// (GET /v1/private-services)
+	ListPrivateServices(w http.ResponseWriter, r *http.Request, params ListPrivateServicesParams)
+
+	// (POST /v1/private-services)
+	CreatePrivateService(w http.ResponseWriter, r *http.Request, params CreatePrivateServiceParams)
+
+	// (DELETE /v1/private-services/{private_service_id})
+	DeletePrivateService(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID)
+
+	// (GET /v1/private-services/{private_service_id})
+	GetPrivateService(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID)
+
+	// (POST /v1/private-services/{private_service_id}/connect)
+	CreatePrivateServiceTicket(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID)
+
+	// (POST /v1/private-services/{private_service_id}/connector-sessions)
+	CreatePrivateConnectorSession(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID)
+
+	// (GET /v1/private-services/{private_service_id}/grants)
+	ListPrivateServiceGrants(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID)
+
+	// (POST /v1/private-services/{private_service_id}/grants)
+	CreatePrivateServiceGrant(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params CreatePrivateServiceGrantParams)
+
+	// (DELETE /v1/private-services/{private_service_id}/grants/{grant_id})
+	RevokePrivateServiceGrant(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, grantId PrivateServiceGrantID)
+
+	// (GET /v1/private-services/{private_service_id}/invitations)
+	ListPrivateServiceInvitations(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID)
+
+	// (POST /v1/private-services/{private_service_id}/invitations)
+	InvitePrivateServiceVisitor(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params InvitePrivateServiceVisitorParams)
+
+	// (DELETE /v1/private-services/{private_service_id}/invitations/{invitation_id})
+	RevokePrivateServiceInvitation(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, invitationId PrivateServiceInvitationID)
+
+	// (POST /v1/private-services/{private_service_id}/runs)
+	PreparePrivateServiceRun(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, params PreparePrivateServiceRunParams)
+
+	// (DELETE /v1/private-services/{private_service_id}/runs/{private_run_id})
+	ClosePrivateServiceRun(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, privateRunId PrivateRunID)
+
+	// (POST /v1/private-services/{private_service_id}/runs/{private_run_id})
+	HeartbeatPrivateServiceRun(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, privateRunId PrivateRunID)
+
+	// (POST /v1/private-services/{private_service_id}/runs/{private_run_id}/bind)
+	BindPrivateServiceRunKey(w http.ResponseWriter, r *http.Request, privateServiceId PrivateServiceID, privateRunId PrivateRunID)
 	// ListPublicURLs List public URLs for one team
 	// (GET /v1/public-urls)
 	ListPublicURLs(w http.ResponseWriter, r *http.Request, params ListPublicURLsParams)
@@ -16923,6 +22007,12 @@ type ServerInterface interface {
 	// (POST /v1/publish-runs/{publish_run_id}/share-state)
 	GetPublishRunShareState(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
 
+	// (POST /v1/publish-runs/{publish_run_id}/ssh-attempts)
+	CreateSSHAttempt(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
+
+	// (POST /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id})
+	UpdateSSHAttempt(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID, attemptId SSHAttemptID)
+
 	// (POST /v1/publish-runs/{publish_run_id}/visitor-access)
 	AuthorizeHTTPVisitor(w http.ResponseWriter, r *http.Request, publishRunId PublishRunID)
 
@@ -16970,6 +22060,9 @@ type ServerInterface interface {
 
 	// (POST /v1/visitor-invitations/accept)
 	AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request)
+
+	// (GET /v1/visitor/private-services)
+	ListAvailablePrivateServices(w http.ResponseWriter, r *http.Request, params ListAvailablePrivateServicesParams)
 
 	// (GET /v1/visitor/public-urls)
 	ListAvailablePublicURLs(w http.ResponseWriter, r *http.Request, params ListAvailablePublicURLsParams)
@@ -17146,6 +22239,94 @@ func (siw *ServerInterfaceWrapper) CompletePreviewBrowserLogin(w http.ResponseWr
 	handler.ServeHTTP(w, r)
 }
 
+// CompleteBrowserIdentityLogin operation middleware
+func (siw *ServerInterfaceWrapper) CompleteBrowserIdentityLogin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CompleteBrowserIdentityLoginParams
+
+	// ------------- Required query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "code" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "code", r.URL.Query(), &params.Code, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "code"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteBrowserIdentityLogin(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BeginBrowserIdentityLogin operation middleware
+func (siw *ServerInterfaceWrapper) BeginBrowserIdentityLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeginBrowserIdentityLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeBrowserIdentitySession operation middleware
+func (siw *ServerInterfaceWrapper) RevokeBrowserIdentitySession(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeBrowserIdentitySession(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateBrowserIdentitySession operation middleware
+func (siw *ServerInterfaceWrapper) CreateBrowserIdentitySession(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateBrowserIdentitySession(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // BeginPreviewBrowserLogin operation middleware
 func (siw *ServerInterfaceWrapper) BeginPreviewBrowserLogin(w http.ResponseWriter, r *http.Request) {
 
@@ -17209,6 +22390,46 @@ func (siw *ServerInterfaceWrapper) BeginPreviewBrowserLogin(w http.ResponseWrite
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.BeginPreviewBrowserLogin(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LookupSSHAttempt operation middleware
+func (siw *ServerInterfaceWrapper) LookupSSHAttempt(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LookupSSHAttempt(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DecideSSHAttempt operation middleware
+func (siw *ServerInterfaceWrapper) DecideSSHAttempt(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "attempt_id" -------------
+	var attemptId SSHAttemptID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attempt_id", r.PathValue("attempt_id"), &attemptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attempt_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DecideSSHAttempt(w, r, attemptId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -17804,6 +23025,604 @@ func (siw *ServerInterfaceWrapper) SetPreviewTeamAccess(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetPreviewTeamAccess(w, r, previewId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptPrivateServiceInvitation operation middleware
+func (siw *ServerInterfaceWrapper) AcceptPrivateServiceInvitation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptPrivateServiceInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPrivateServices operation middleware
+func (siw *ServerInterfaceWrapper) ListPrivateServices(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListPrivateServicesParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPrivateServices(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePrivateService operation middleware
+func (siw *ServerInterfaceWrapper) CreatePrivateService(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreatePrivateServiceParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePrivateService(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeletePrivateService operation middleware
+func (siw *ServerInterfaceWrapper) DeletePrivateService(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeletePrivateService(w, r, privateServiceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPrivateService operation middleware
+func (siw *ServerInterfaceWrapper) GetPrivateService(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPrivateService(w, r, privateServiceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePrivateServiceTicket operation middleware
+func (siw *ServerInterfaceWrapper) CreatePrivateServiceTicket(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePrivateServiceTicket(w, r, privateServiceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePrivateConnectorSession operation middleware
+func (siw *ServerInterfaceWrapper) CreatePrivateConnectorSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePrivateConnectorSession(w, r, privateServiceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPrivateServiceGrants operation middleware
+func (siw *ServerInterfaceWrapper) ListPrivateServiceGrants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPrivateServiceGrants(w, r, privateServiceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePrivateServiceGrant operation middleware
+func (siw *ServerInterfaceWrapper) CreatePrivateServiceGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreatePrivateServiceGrantParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePrivateServiceGrant(w, r, privateServiceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokePrivateServiceGrant operation middleware
+func (siw *ServerInterfaceWrapper) RevokePrivateServiceGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "grant_id" -------------
+	var grantId PrivateServiceGrantID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "grant_id", r.PathValue("grant_id"), &grantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "grant_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokePrivateServiceGrant(w, r, privateServiceId, grantId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPrivateServiceInvitations operation middleware
+func (siw *ServerInterfaceWrapper) ListPrivateServiceInvitations(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPrivateServiceInvitations(w, r, privateServiceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// InvitePrivateServiceVisitor operation middleware
+func (siw *ServerInterfaceWrapper) InvitePrivateServiceVisitor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params InvitePrivateServiceVisitorParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.InvitePrivateServiceVisitor(w, r, privateServiceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokePrivateServiceInvitation operation middleware
+func (siw *ServerInterfaceWrapper) RevokePrivateServiceInvitation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "invitation_id" -------------
+	var invitationId PrivateServiceInvitationID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "invitation_id", r.PathValue("invitation_id"), &invitationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "invitation_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokePrivateServiceInvitation(w, r, privateServiceId, invitationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreparePrivateServiceRun operation middleware
+func (siw *ServerInterfaceWrapper) PreparePrivateServiceRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PreparePrivateServiceRunParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreparePrivateServiceRun(w, r, privateServiceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ClosePrivateServiceRun operation middleware
+func (siw *ServerInterfaceWrapper) ClosePrivateServiceRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "private_run_id" -------------
+	var privateRunId PrivateRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_run_id", r.PathValue("private_run_id"), &privateRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ClosePrivateServiceRun(w, r, privateServiceId, privateRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// HeartbeatPrivateServiceRun operation middleware
+func (siw *ServerInterfaceWrapper) HeartbeatPrivateServiceRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "private_run_id" -------------
+	var privateRunId PrivateRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_run_id", r.PathValue("private_run_id"), &privateRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.HeartbeatPrivateServiceRun(w, r, privateServiceId, privateRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BindPrivateServiceRunKey operation middleware
+func (siw *ServerInterfaceWrapper) BindPrivateServiceRunKey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "private_service_id" -------------
+	var privateServiceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_service_id", r.PathValue("private_service_id"), &privateServiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "private_run_id" -------------
+	var privateRunId PrivateRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "private_run_id", r.PathValue("private_run_id"), &privateRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "private_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BindPrivateServiceRunKey(w, r, privateServiceId, privateRunId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -18907,6 +24726,67 @@ func (siw *ServerInterfaceWrapper) GetPublishRunShareState(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// CreateSSHAttempt operation middleware
+func (siw *ServerInterfaceWrapper) CreateSSHAttempt(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSSHAttempt(w, r, publishRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateSSHAttempt operation middleware
+func (siw *ServerInterfaceWrapper) UpdateSSHAttempt(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publish_run_id" -------------
+	var publishRunId PublishRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publish_run_id", r.PathValue("publish_run_id"), &publishRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publish_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "attempt_id" -------------
+	var attemptId SSHAttemptID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attempt_id", r.PathValue("attempt_id"), &attemptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attempt_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateSSHAttempt(w, r, publishRunId, attemptId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // AuthorizeHTTPVisitor operation middleware
 func (siw *ServerInterfaceWrapper) AuthorizeHTTPVisitor(w http.ResponseWriter, r *http.Request) {
 
@@ -19363,6 +25243,39 @@ func (siw *ServerInterfaceWrapper) AcceptVisitorInvitation(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// ListAvailablePrivateServices operation middleware
+func (siw *ServerInterfaceWrapper) ListAvailablePrivateServices(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAvailablePrivateServicesParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAvailablePrivateServices(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListAvailablePublicURLs operation middleware
 func (siw *ServerInterfaceWrapper) ListAvailablePublicURLs(w http.ResponseWriter, r *http.Request) {
 
@@ -19555,6 +25468,32 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/private-services", wrapper.ListPrivateServices)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services", wrapper.CreatePrivateService)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/private-services/{private_service_id}", wrapper.DeletePrivateService)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/private-services/{private_service_id}", wrapper.GetPrivateService)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/private-services/{private_service_id}/grants", wrapper.ListPrivateServiceGrants)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services/{private_service_id}/grants", wrapper.CreatePrivateServiceGrant)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/private-services/{private_service_id}/grants/{grant_id}", wrapper.RevokePrivateServiceGrant)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/private-services/{private_service_id}/invitations", wrapper.ListPrivateServiceInvitations)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services/{private_service_id}/invitations", wrapper.InvitePrivateServiceVisitor)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/private-services/{private_service_id}/invitations/{invitation_id}", wrapper.RevokePrivateServiceInvitation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-service-invitations/accept", wrapper.AcceptPrivateServiceInvitation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/visitor/private-services", wrapper.ListAvailablePrivateServices)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services/{private_service_id}/connector-sessions", wrapper.CreatePrivateConnectorSession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services/{private_service_id}/connect", wrapper.CreatePrivateServiceTicket)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services/{private_service_id}/runs", wrapper.PreparePrivateServiceRun)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services/{private_service_id}/runs/{private_run_id}/bind", wrapper.BindPrivateServiceRunKey)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/private-services/{private_service_id}/runs/{private_run_id}", wrapper.ClosePrivateServiceRun)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services/{private_service_id}/runs/{private_run_id}", wrapper.HeartbeatPrivateServiceRun)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/identity/login", wrapper.BeginBrowserIdentityLogin)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/identity/callback", wrapper.CompleteBrowserIdentityLogin)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/browser/identity/session", wrapper.RevokeBrowserIdentitySession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/browser/identity/session", wrapper.CreateBrowserIdentitySession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/ssh-attempts", wrapper.CreateSSHAttempt)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/browser/ssh-attempts/lookup", wrapper.LookupSSHAttempt)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/browser/ssh-attempts/{attempt_id}/decision", wrapper.DecideSSHAttempt)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id}", wrapper.UpdateSSHAttempt)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{publish_run_id}/visitor-access", wrapper.AuthorizeHTTPVisitor)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/visitor/public-urls", wrapper.ListAvailablePublicURLs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/public-urls/{public_url_id}/visitor-grants", wrapper.ListVisitorGrants)

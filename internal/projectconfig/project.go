@@ -150,7 +150,16 @@ func (p Project) EffectiveService(name string) (config.TNL, error) {
 		return config.TNL{}, fmt.Errorf("service %q is not configured", name)
 	}
 	result.Inspection = config.MergeInspection(result.Inspection, service.Inspection)
-	result.Tunnel = mergeTunnel(result.Tunnel, service.Tunnel)
+	if config.Protocol(service) == "tcp" {
+		if service.Tunnel != nil {
+			return config.TNL{}, fmt.Errorf("service %q: private tcp cannot use public tunnel settings", name)
+		}
+		// private services never inherit public URL policy, even when the
+		// project also publishes HTTP or SSH services.
+		result.Tunnel = nil
+	} else {
+		result.Tunnel = mergeTunnel(result.Tunnel, service.Tunnel)
+	}
 	result.Publish = config.ServicePublish(service)
 	if service.HTTP != nil {
 		result.Readiness = service.HTTP.Readiness

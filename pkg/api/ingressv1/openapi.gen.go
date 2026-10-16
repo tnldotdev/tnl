@@ -77,23 +77,14 @@ func (e IngressRoutingTableEntryIpPolicy) Valid() bool {
 
 // Defines values for IngressRoutingTableEntryServiceProtocol.
 const (
-	Http     IngressRoutingTableEntryServiceProtocol = "http"
-	Mysql    IngressRoutingTableEntryServiceProtocol = "mysql"
-	Postgres IngressRoutingTableEntryServiceProtocol = "postgres"
-	Redis    IngressRoutingTableEntryServiceProtocol = "redis"
-	Ssh      IngressRoutingTableEntryServiceProtocol = "ssh"
+	Http IngressRoutingTableEntryServiceProtocol = "http"
+	Ssh  IngressRoutingTableEntryServiceProtocol = "ssh"
 )
 
 // Valid indicates whether the value is a known member of the IngressRoutingTableEntryServiceProtocol enum.
 func (e IngressRoutingTableEntryServiceProtocol) Valid() bool {
 	switch e {
 	case Http:
-		return true
-	case Mysql:
-		return true
-	case Postgres:
-		return true
-	case Redis:
 		return true
 	case Ssh:
 		return true
@@ -120,6 +111,24 @@ func (e IngressRoutingTableEventKind) Valid() bool {
 	case PublicUrlTombstone:
 		return true
 	case PublicUrlUpsert:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PrivateServiceProjectionKind.
+const (
+	Tombstone PrivateServiceProjectionKind = "tombstone"
+	Upsert    PrivateServiceProjectionKind = "upsert"
+)
+
+// Valid indicates whether the value is a known member of the PrivateServiceProjectionKind enum.
+func (e PrivateServiceProjectionKind) Valid() bool {
+	switch e {
+	case Tombstone:
+		return true
+	case Upsert:
 		return true
 	default:
 		return false
@@ -270,8 +279,10 @@ type IngressRoutingTableEntry struct {
 	IpPolicy          IngressRoutingTableEntryIpPolicy   `json:"ip_policy"`
 
 	// IpPolicyKey Purpose-specific verifier sent only on the authenticated private API; never persisted with routing events.
-	IpPolicyKey          *[]byte                                  `json:"ip_policy_key,omitempty"`
-	PolicyRevision       int64                                    `json:"policy_revision"`
+	IpPolicyKey    *[]byte `json:"ip_policy_key,omitempty"`
+	PolicyRevision int64   `json:"policy_revision"`
+
+	// PublicPort Assigned SSH port; HTTP is selected by hostname on 443.
 	PublicPort           *int                                     `json:"public_port,omitempty"`
 	PublicUrlExpiresAt   time.Time                                `json:"public_url_expires_at"`
 	PublicUrlId          Identifier                               `json:"public_url_id"`
@@ -369,6 +380,125 @@ type IngressUsageReportBatch struct {
 	Reports              []IngressUsageReport `json:"reports"`
 }
 
+// PrivateConnectorSessionClaim defines model for PrivateConnectorSessionClaim.
+type PrivateConnectorSessionClaim struct {
+	ConnectorSessionId   PrivateConnectorSessionID `json:"connector_session_id"`
+	IngressLeaseRevision int64                     `json:"ingress_lease_revision"`
+	IngressRunId         Identifier                `json:"ingress_run_id"`
+
+	// ObservedSourceIp Trusted original source observed by ingress on this mux socket. The connector never supplies this value.
+	ObservedSourceIp  string           `json:"observed_source_ip"`
+	PrivateServiceId  PrivateServiceID `json:"private_service_id"`
+	SessionCredential string           `json:"session_credential"`
+}
+
+// PrivateConnectorSessionID defines model for PrivateConnectorSessionID.
+type PrivateConnectorSessionID = string
+
+// PrivateConnectorSessionResult defines model for PrivateConnectorSessionResult.
+type PrivateConnectorSessionResult struct {
+	ConnectorSessionId PrivateConnectorSessionID `json:"connector_session_id"`
+	ExpiresAt          time.Time                 `json:"expires_at"`
+	IdentityId         Identifier                `json:"identity_id"`
+	ObservedSourceIp   string                    `json:"observed_source_ip"`
+	PrivateServiceId   PrivateServiceID          `json:"private_service_id"`
+}
+
+// PrivateRunID defines model for PrivateRunID.
+type PrivateRunID = string
+
+// PrivateServiceID defines model for PrivateServiceID.
+type PrivateServiceID = string
+
+// PrivateServiceProjection defines model for PrivateServiceProjection.
+type PrivateServiceProjection struct {
+	ConnectedRelays  *[]PrivateServiceRelay       `json:"connected_relays,omitempty"`
+	ExpiresAt        time.Time                    `json:"expires_at"`
+	Kind             PrivateServiceProjectionKind `json:"kind"`
+	PrivateRunId     *PrivateRunID                `json:"private_run_id,omitempty"`
+	PrivateServiceId PrivateServiceID             `json:"private_service_id"`
+	Revision         int64                        `json:"revision"`
+	RunNumber        *int64                       `json:"run_number,omitempty"`
+}
+
+// PrivateServiceProjectionKind defines model for PrivateServiceProjection.Kind.
+type PrivateServiceProjectionKind string
+
+// PrivateServiceRelay defines model for PrivateServiceRelay.
+type PrivateServiceRelay struct {
+	ConnectionAssignmentRevision int64      `json:"connection_assignment_revision"`
+	ConnectionSlot               int        `json:"connection_slot"`
+	InternalRelayAddress         string     `json:"internal_relay_address"`
+	LeaseExpiresAt               time.Time  `json:"lease_expires_at"`
+	PublisherConnectionId        Identifier `json:"publisher_connection_id"`
+	RelayId                      Identifier `json:"relay_id"`
+	RelayLeaseRevision           int64      `json:"relay_lease_revision"`
+	RelayRunId                   Identifier `json:"relay_run_id"`
+	RelayServiceId               Identifier `json:"relay_service_id"`
+}
+
+// PrivateServiceSnapshot defines model for PrivateServiceSnapshot.
+type PrivateServiceSnapshot struct {
+	Entries  []PrivateServiceProjection `json:"entries"`
+	Revision int64                      `json:"revision"`
+}
+
+// PrivateServiceTicketClaim defines model for PrivateServiceTicketClaim.
+type PrivateServiceTicketClaim struct {
+	ConnectorSessionId   PrivateConnectorSessionID `json:"connector_session_id"`
+	IngressLeaseRevision int64                     `json:"ingress_lease_revision"`
+	IngressRunId         Identifier                `json:"ingress_run_id"`
+
+	// ObservedSourceIp Copied by ingress from the authenticated mux socket
+	ObservedSourceIp    string              `json:"observed_source_ip"`
+	PrivateRunId        PrivateRunID        `json:"private_run_id"`
+	PrivateServiceId    PrivateServiceID    `json:"private_service_id"`
+	RunNumber           int64               `json:"run_number"`
+	Ticket              string              `json:"ticket"`
+	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
+}
+
+// PrivateServiceTicketResult defines model for PrivateServiceTicketResult.
+type PrivateServiceTicketResult struct {
+	ConnectorSessionId PrivateConnectorSessionID `json:"connector_session_id"`
+	ExpiresAt          time.Time                 `json:"expires_at"`
+	IdentityId         Identifier                `json:"identity_id"`
+	ObservedSourceIp   string                    `json:"observed_source_ip"`
+	PrivateRunId       PrivateRunID              `json:"private_run_id"`
+	PrivateServiceId   PrivateServiceID          `json:"private_service_id"`
+	RunNumber          int64                     `json:"run_number"`
+
+	// ValidUntil Hard bound for an admitted stream from the current grant, publisher run, ingress and live relay deadlines, and at most two minutes. Connector-session credential expiry applies only to new streams.
+	ValidUntil          time.Time           `json:"valid_until"`
+	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
+}
+
+// PrivateServiceVisitorRecheck defines model for PrivateServiceVisitorRecheck.
+type PrivateServiceVisitorRecheck struct {
+	ConnectorSessionId   PrivateConnectorSessionID `json:"connector_session_id"`
+	IdentityId           Identifier                `json:"identity_id"`
+	IngressLeaseRevision int64                     `json:"ingress_lease_revision"`
+	IngressRunId         Identifier                `json:"ingress_run_id"`
+
+	// ObservedSourceIp Copied from the original ingress-observed mux source; never supplied by a visitor.
+	ObservedSourceIp    string              `json:"observed_source_ip"`
+	PrivateRunId        PrivateRunID        `json:"private_run_id"`
+	PrivateServiceId    PrivateServiceID    `json:"private_service_id"`
+	RunNumber           int64               `json:"run_number"`
+	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
+}
+
+// PrivateServiceVisitorRecheckResult defines model for PrivateServiceVisitorRecheckResult.
+type PrivateServiceVisitorRecheckResult struct {
+	Allowed bool `json:"allowed"`
+
+	// RecheckAt Ingress must check again no later than this time
+	RecheckAt time.Time `json:"recheck_at"`
+
+	// ValidUntil Current hard deadline, including grant and run expiration; never later than two minutes from this decision.
+	ValidUntil time.Time `json:"valid_until"`
+}
+
 // Problem defines model for Problem.
 type Problem struct {
 	Code      ProblemCode             `json:"code"`
@@ -404,6 +534,9 @@ type PublicURLRecoveryObservationRequest struct {
 	PublishRunNumber     int64      `json:"publish_run_number"`
 }
 
+// VisitorConnectionID defines model for VisitorConnectionID.
+type VisitorConnectionID = string
+
 // VisitorNetworkHashKey defines model for VisitorNetworkHashKey.
 type VisitorNetworkHashKey struct {
 	Key     []byte             `json:"key"`
@@ -418,6 +551,19 @@ type IngressLeaseRevision = int64
 
 // IngressRunID defines model for IngressRunID.
 type IngressRunID = Identifier
+
+// GetPrivateServiceEventsParams defines parameters for GetPrivateServiceEvents.
+type GetPrivateServiceEventsParams struct {
+	IngressRunId         IngressRunID         `form:"ingress_run_id" json:"ingress_run_id"`
+	IngressLeaseRevision IngressLeaseRevision `form:"ingress_lease_revision" json:"ingress_lease_revision"`
+	After                int64                `form:"after" json:"after"`
+}
+
+// GetPrivateServiceSnapshotParams defines parameters for GetPrivateServiceSnapshot.
+type GetPrivateServiceSnapshotParams struct {
+	IngressRunId         IngressRunID         `form:"ingress_run_id" json:"ingress_run_id"`
+	IngressLeaseRevision IngressLeaseRevision `form:"ingress_lease_revision" json:"ingress_lease_revision"`
+}
 
 // GetIngressRoutingTableEventsParams defines parameters for GetIngressRoutingTableEvents.
 type GetIngressRoutingTableEventsParams struct {
@@ -441,6 +587,15 @@ type RegisterIngressJSONRequestBody = IngressRegistration
 
 // DrainIngressJSONRequestBody defines body for DrainIngress for application/json ContentType.
 type DrainIngressJSONRequestBody = IngressDrainRequest
+
+// ClaimPrivateConnectorSessionJSONRequestBody defines body for ClaimPrivateConnectorSession for application/json ContentType.
+type ClaimPrivateConnectorSessionJSONRequestBody = PrivateConnectorSessionClaim
+
+// ClaimPrivateServiceTicketJSONRequestBody defines body for ClaimPrivateServiceTicket for application/json ContentType.
+type ClaimPrivateServiceTicketJSONRequestBody = PrivateServiceTicketClaim
+
+// RecheckPrivateServiceVisitorJSONRequestBody defines body for RecheckPrivateServiceVisitor for application/json ContentType.
+type RecheckPrivateServiceVisitorJSONRequestBody = PrivateServiceVisitorRecheck
 
 // ObservePublicURLRecoveryJSONRequestBody defines body for ObservePublicURLRecovery for application/json ContentType.
 type ObservePublicURLRecoveryJSONRequestBody = PublicURLRecoveryObservationRequest
@@ -553,6 +708,50 @@ type ClientInterface interface {
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 	DrainIngress(ctx context.Context, ingressId IngressID, body DrainIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ClaimPrivateConnectorSessionWithBody performs a POST /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim (the `ClaimPrivateConnectorSession` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Authenticate the mux session once against an ingress lease and bind the identity, selected service and ingress-observed socket source. The source is supplied by ingress from trusted connection metadata, never by the connector. No visitor stream is authorized by this claim.
+	ClaimPrivateConnectorSessionWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimPrivateConnectorSession performs a POST /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim (the `ClaimPrivateConnectorSession` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Authenticate the mux session once against an ingress lease and bind the identity, selected service and ingress-observed socket source. The source is supplied by ingress from trusted connection metadata, never by the connector. No visitor stream is authorized by this claim.
+	ClaimPrivateConnectorSession(ctx context.Context, ingressId IngressID, body ClaimPrivateConnectorSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimPrivateServiceTicketWithBody performs a POST /internal/v1/ingresses/{ingress_id}/private-services/claim (the `ClaimPrivateServiceTicket` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// For EACH visitor stream on an authenticated mux session, consume one exact-service/run/identity/source-bound ticket under a current ingress lease before forwarding. The observed source and session identity come from ingress state, never a visitor field or SNI.
+	ClaimPrivateServiceTicketWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimPrivateServiceTicket performs a POST /internal/v1/ingresses/{ingress_id}/private-services/claim (the `ClaimPrivateServiceTicket` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// For EACH visitor stream on an authenticated mux session, consume one exact-service/run/identity/source-bound ticket under a current ingress lease before forwarding. The observed source and session identity come from ingress state, never a visitor field or SNI.
+	ClaimPrivateServiceTicket(ctx context.Context, ingressId IngressID, body ClaimPrivateServiceTicketJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPrivateServiceEvents performs a GET /internal/v1/ingresses/{ingress_id}/private-services/events (the `GetPrivateServiceEvents` operationId) request.
+	GetPrivateServiceEvents(ctx context.Context, ingressId IngressID, params *GetPrivateServiceEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RecheckPrivateServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+	RecheckPrivateServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RecheckPrivateServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+	RecheckPrivateServiceVisitor(ctx context.Context, ingressId IngressID, body RecheckPrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPrivateServiceSnapshot performs a GET /internal/v1/ingresses/{ingress_id}/private-services/snapshot (the `GetPrivateServiceSnapshot` operationId) request.
+	//
+	// ID-keyed private projections for a current ingress lease. These contain no stream key, ticket or service hostname.
+	GetPrivateServiceSnapshot(ctx context.Context, ingressId IngressID, params *GetPrivateServiceSnapshotParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ObservePublicURLRecoveryWithBody Record the first publisher byte after public URL recovery
 	//
 	// Takes any type of body and a specified content type.
@@ -664,6 +863,130 @@ func (c *Client) DrainIngressWithBody(ctx context.Context, ingressId IngressID, 
 // Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 func (c *Client) DrainIngress(ctx context.Context, ingressId IngressID, body DrainIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDrainIngressRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimPrivateConnectorSessionWithBody performs a POST /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim (the `ClaimPrivateConnectorSession` operationId) request,
+// with any type of body and a specified content type.
+//
+// Authenticate the mux session once against an ingress lease and bind the identity, selected service and ingress-observed socket source. The source is supplied by ingress from trusted connection metadata, never by the connector. No visitor stream is authorized by this claim.
+func (c *Client) ClaimPrivateConnectorSessionWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimPrivateConnectorSessionRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimPrivateConnectorSession performs a POST /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim (the `ClaimPrivateConnectorSession` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Authenticate the mux session once against an ingress lease and bind the identity, selected service and ingress-observed socket source. The source is supplied by ingress from trusted connection metadata, never by the connector. No visitor stream is authorized by this claim.
+func (c *Client) ClaimPrivateConnectorSession(ctx context.Context, ingressId IngressID, body ClaimPrivateConnectorSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimPrivateConnectorSessionRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimPrivateServiceTicketWithBody performs a POST /internal/v1/ingresses/{ingress_id}/private-services/claim (the `ClaimPrivateServiceTicket` operationId) request,
+// with any type of body and a specified content type.
+//
+// For EACH visitor stream on an authenticated mux session, consume one exact-service/run/identity/source-bound ticket under a current ingress lease before forwarding. The observed source and session identity come from ingress state, never a visitor field or SNI.
+func (c *Client) ClaimPrivateServiceTicketWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimPrivateServiceTicketRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimPrivateServiceTicket performs a POST /internal/v1/ingresses/{ingress_id}/private-services/claim (the `ClaimPrivateServiceTicket` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// For EACH visitor stream on an authenticated mux session, consume one exact-service/run/identity/source-bound ticket under a current ingress lease before forwarding. The observed source and session identity come from ingress state, never a visitor field or SNI.
+func (c *Client) ClaimPrivateServiceTicket(ctx context.Context, ingressId IngressID, body ClaimPrivateServiceTicketJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimPrivateServiceTicketRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPrivateServiceEvents performs a GET /internal/v1/ingresses/{ingress_id}/private-services/events (the `GetPrivateServiceEvents` operationId) request.
+func (c *Client) GetPrivateServiceEvents(ctx context.Context, ingressId IngressID, params *GetPrivateServiceEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPrivateServiceEventsRequest(c.Server, ingressId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RecheckPrivateServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+//
+// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+func (c *Client) RecheckPrivateServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRecheckPrivateServiceVisitorRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RecheckPrivateServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+func (c *Client) RecheckPrivateServiceVisitor(ctx context.Context, ingressId IngressID, body RecheckPrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRecheckPrivateServiceVisitorRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPrivateServiceSnapshot performs a GET /internal/v1/ingresses/{ingress_id}/private-services/snapshot (the `GetPrivateServiceSnapshot` operationId) request.
+//
+// ID-keyed private projections for a current ingress lease. These contain no stream key, ticket or service hostname.
+func (c *Client) GetPrivateServiceSnapshot(ctx context.Context, ingressId IngressID, params *GetPrivateServiceSnapshotParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPrivateServiceSnapshotRequest(c.Server, ingressId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -889,6 +1212,285 @@ func NewDrainIngressRequestWithBody(server string, ingressId IngressID, contentT
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewClaimPrivateConnectorSessionRequest calls the generic ClaimPrivateConnectorSession builder with application/json body
+func NewClaimPrivateConnectorSessionRequest(server string, ingressId IngressID, body ClaimPrivateConnectorSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClaimPrivateConnectorSessionRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewClaimPrivateConnectorSessionRequestWithBody constructs an http.Request for the ClaimPrivateConnectorSession method, with any body, and a specified content type
+func NewClaimPrivateConnectorSessionRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/private-connector-sessions/claim", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewClaimPrivateServiceTicketRequest calls the generic ClaimPrivateServiceTicket builder with application/json body
+func NewClaimPrivateServiceTicketRequest(server string, ingressId IngressID, body ClaimPrivateServiceTicketJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClaimPrivateServiceTicketRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewClaimPrivateServiceTicketRequestWithBody constructs an http.Request for the ClaimPrivateServiceTicket method, with any body, and a specified content type
+func NewClaimPrivateServiceTicketRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/private-services/claim", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetPrivateServiceEventsRequest constructs an http.Request for the GetPrivateServiceEvents method
+func NewGetPrivateServiceEventsRequest(server string, ingressId IngressID, params *GetPrivateServiceEventsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/private-services/events", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ingress_run_id", params.IngressRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ingress_lease_revision", params.IngressLeaseRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRecheckPrivateServiceVisitorRequest calls the generic RecheckPrivateServiceVisitor builder with application/json body
+func NewRecheckPrivateServiceVisitorRequest(server string, ingressId IngressID, body RecheckPrivateServiceVisitorJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRecheckPrivateServiceVisitorRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewRecheckPrivateServiceVisitorRequestWithBody constructs an http.Request for the RecheckPrivateServiceVisitor method, with any body, and a specified content type
+func NewRecheckPrivateServiceVisitorRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/private-services/recheck", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetPrivateServiceSnapshotRequest constructs an http.Request for the GetPrivateServiceSnapshot method
+func NewGetPrivateServiceSnapshotRequest(server string, ingressId IngressID, params *GetPrivateServiceSnapshotParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/private-services/snapshot", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ingress_run_id", params.IngressRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ingress_lease_revision", params.IngressLeaseRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -1275,6 +1877,60 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 	DrainIngressWithResponse(ctx context.Context, ingressId IngressID, body DrainIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainIngressResponse, error)
 
+	// ClaimPrivateConnectorSessionWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim (the `ClaimPrivateConnectorSession` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Authenticate the mux session once against an ingress lease and bind the identity, selected service and ingress-observed socket source. The source is supplied by ingress from trusted connection metadata, never by the connector. No visitor stream is authorized by this claim.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ClaimPrivateConnectorSessionWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimPrivateConnectorSessionResponse, error)
+
+	// ClaimPrivateConnectorSessionWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim (the `ClaimPrivateConnectorSession` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Authenticate the mux session once against an ingress lease and bind the identity, selected service and ingress-observed socket source. The source is supplied by ingress from trusted connection metadata, never by the connector. No visitor stream is authorized by this claim.
+	ClaimPrivateConnectorSessionWithResponse(ctx context.Context, ingressId IngressID, body ClaimPrivateConnectorSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimPrivateConnectorSessionResponse, error)
+
+	// ClaimPrivateServiceTicketWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-services/claim (the `ClaimPrivateServiceTicket` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// For EACH visitor stream on an authenticated mux session, consume one exact-service/run/identity/source-bound ticket under a current ingress lease before forwarding. The observed source and session identity come from ingress state, never a visitor field or SNI.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ClaimPrivateServiceTicketWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimPrivateServiceTicketResponse, error)
+
+	// ClaimPrivateServiceTicketWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-services/claim (the `ClaimPrivateServiceTicket` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// For EACH visitor stream on an authenticated mux session, consume one exact-service/run/identity/source-bound ticket under a current ingress lease before forwarding. The observed source and session identity come from ingress state, never a visitor field or SNI.
+	ClaimPrivateServiceTicketWithResponse(ctx context.Context, ingressId IngressID, body ClaimPrivateServiceTicketJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimPrivateServiceTicketResponse, error)
+
+	// GetPrivateServiceEventsWithResponse performs a GET /internal/v1/ingresses/{ingress_id}/private-services/events (the `GetPrivateServiceEvents` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetPrivateServiceEventsWithResponse(ctx context.Context, ingressId IngressID, params *GetPrivateServiceEventsParams, reqEditors ...RequestEditorFn) (*GetPrivateServiceEventsResponse, error)
+
+	// RecheckPrivateServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RecheckPrivateServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecheckPrivateServiceVisitorResponse, error)
+
+	// RecheckPrivateServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+	RecheckPrivateServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body RecheckPrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*RecheckPrivateServiceVisitorResponse, error)
+
+	// GetPrivateServiceSnapshotWithResponse performs a GET /internal/v1/ingresses/{ingress_id}/private-services/snapshot (the `GetPrivateServiceSnapshot` operationId) request.
+	//
+	// ID-keyed private projections for a current ingress lease. These contain no stream key, ticket or service hostname.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetPrivateServiceSnapshotWithResponse(ctx context.Context, ingressId IngressID, params *GetPrivateServiceSnapshotParams, reqEditors ...RequestEditorFn) (*GetPrivateServiceSnapshotResponse, error)
+
 	// ObservePublicURLRecoveryWithBodyWithResponse Record the first publisher byte after public URL recovery
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -1422,6 +2078,246 @@ func (r DrainIngressResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DrainIngressResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ClaimPrivateConnectorSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateConnectorSessionResult
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ClaimPrivateConnectorSessionResponse) GetJSON200() *PrivateConnectorSessionResult {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClaimPrivateConnectorSessionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ClaimPrivateConnectorSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClaimPrivateConnectorSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClaimPrivateConnectorSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClaimPrivateConnectorSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ClaimPrivateServiceTicketResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServiceTicketResult
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ClaimPrivateServiceTicketResponse) GetJSON200() *PrivateServiceTicketResult {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClaimPrivateServiceTicketResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ClaimPrivateServiceTicketResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClaimPrivateServiceTicketResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClaimPrivateServiceTicketResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClaimPrivateServiceTicketResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPrivateServiceEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServiceSnapshot
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPrivateServiceEventsResponse) GetJSON200() *PrivateServiceSnapshot {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPrivateServiceEventsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPrivateServiceEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPrivateServiceEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPrivateServiceEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPrivateServiceEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RecheckPrivateServiceVisitorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServiceVisitorRecheckResult
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RecheckPrivateServiceVisitorResponse) GetJSON200() *PrivateServiceVisitorRecheckResult {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RecheckPrivateServiceVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RecheckPrivateServiceVisitorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RecheckPrivateServiceVisitorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RecheckPrivateServiceVisitorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RecheckPrivateServiceVisitorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPrivateServiceSnapshotResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServiceSnapshot
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPrivateServiceSnapshotResponse) GetJSON200() *PrivateServiceSnapshot {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPrivateServiceSnapshotResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPrivateServiceSnapshotResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPrivateServiceSnapshotResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPrivateServiceSnapshotResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPrivateServiceSnapshotResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1720,6 +2616,108 @@ func (c *ClientWithResponses) DrainIngressWithResponse(ctx context.Context, ingr
 	return ParseDrainIngressResponse(rsp)
 }
 
+// ClaimPrivateConnectorSessionWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim (the `ClaimPrivateConnectorSession` operationId) request,
+// with any type of body and a specified content type.
+//
+// Authenticate the mux session once against an ingress lease and bind the identity, selected service and ingress-observed socket source. The source is supplied by ingress from trusted connection metadata, never by the connector. No visitor stream is authorized by this claim.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ClaimPrivateConnectorSessionWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimPrivateConnectorSessionResponse, error) {
+	rsp, err := c.ClaimPrivateConnectorSessionWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimPrivateConnectorSessionResponse(rsp)
+}
+
+// ClaimPrivateConnectorSessionWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim (the `ClaimPrivateConnectorSession` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Authenticate the mux session once against an ingress lease and bind the identity, selected service and ingress-observed socket source. The source is supplied by ingress from trusted connection metadata, never by the connector. No visitor stream is authorized by this claim.
+func (c *ClientWithResponses) ClaimPrivateConnectorSessionWithResponse(ctx context.Context, ingressId IngressID, body ClaimPrivateConnectorSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimPrivateConnectorSessionResponse, error) {
+	rsp, err := c.ClaimPrivateConnectorSession(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimPrivateConnectorSessionResponse(rsp)
+}
+
+// ClaimPrivateServiceTicketWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-services/claim (the `ClaimPrivateServiceTicket` operationId) request,
+// with any type of body and a specified content type.
+//
+// For EACH visitor stream on an authenticated mux session, consume one exact-service/run/identity/source-bound ticket under a current ingress lease before forwarding. The observed source and session identity come from ingress state, never a visitor field or SNI.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ClaimPrivateServiceTicketWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimPrivateServiceTicketResponse, error) {
+	rsp, err := c.ClaimPrivateServiceTicketWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimPrivateServiceTicketResponse(rsp)
+}
+
+// ClaimPrivateServiceTicketWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-services/claim (the `ClaimPrivateServiceTicket` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// For EACH visitor stream on an authenticated mux session, consume one exact-service/run/identity/source-bound ticket under a current ingress lease before forwarding. The observed source and session identity come from ingress state, never a visitor field or SNI.
+func (c *ClientWithResponses) ClaimPrivateServiceTicketWithResponse(ctx context.Context, ingressId IngressID, body ClaimPrivateServiceTicketJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimPrivateServiceTicketResponse, error) {
+	rsp, err := c.ClaimPrivateServiceTicket(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimPrivateServiceTicketResponse(rsp)
+}
+
+// GetPrivateServiceEventsWithResponse performs a GET /internal/v1/ingresses/{ingress_id}/private-services/events (the `GetPrivateServiceEvents` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetPrivateServiceEventsWithResponse(ctx context.Context, ingressId IngressID, params *GetPrivateServiceEventsParams, reqEditors ...RequestEditorFn) (*GetPrivateServiceEventsResponse, error) {
+	rsp, err := c.GetPrivateServiceEvents(ctx, ingressId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPrivateServiceEventsResponse(rsp)
+}
+
+// RecheckPrivateServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+//
+// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RecheckPrivateServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecheckPrivateServiceVisitorResponse, error) {
+	rsp, err := c.RecheckPrivateServiceVisitorWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRecheckPrivateServiceVisitorResponse(rsp)
+}
+
+// RecheckPrivateServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/private-services/recheck (the `RecheckPrivateServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Check an already consumed, exact visitor connection against its current service, run, connector session, identity, ingress-observed source, grant and ingress lease. The source comes from ingress's trusted connection metadata, never from a connector field. An explicit denial closes the active stream; an unavailable control response never extends its hard admission deadline.
+func (c *ClientWithResponses) RecheckPrivateServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body RecheckPrivateServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*RecheckPrivateServiceVisitorResponse, error) {
+	rsp, err := c.RecheckPrivateServiceVisitor(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRecheckPrivateServiceVisitorResponse(rsp)
+}
+
+// GetPrivateServiceSnapshotWithResponse performs a GET /internal/v1/ingresses/{ingress_id}/private-services/snapshot (the `GetPrivateServiceSnapshot` operationId) request.
+//
+// ID-keyed private projections for a current ingress lease. These contain no stream key, ticket or service hostname.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetPrivateServiceSnapshotWithResponse(ctx context.Context, ingressId IngressID, params *GetPrivateServiceSnapshotParams, reqEditors ...RequestEditorFn) (*GetPrivateServiceSnapshotResponse, error) {
+	rsp, err := c.GetPrivateServiceSnapshot(ctx, ingressId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPrivateServiceSnapshotResponse(rsp)
+}
+
 // ObservePublicURLRecoveryWithBodyWithResponse Record the first publisher byte after public URL recovery
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -1873,6 +2871,171 @@ func ParseDrainIngressResponse(rsp *http.Response) (*DrainIngressResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest IngressLease
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseClaimPrivateConnectorSessionResponse parses an HTTP response from a ClaimPrivateConnectorSessionWithResponse call
+func ParseClaimPrivateConnectorSessionResponse(rsp *http.Response) (*ClaimPrivateConnectorSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClaimPrivateConnectorSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateConnectorSessionResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseClaimPrivateServiceTicketResponse parses an HTTP response from a ClaimPrivateServiceTicketWithResponse call
+func ParseClaimPrivateServiceTicketResponse(rsp *http.Response) (*ClaimPrivateServiceTicketResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClaimPrivateServiceTicketResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServiceTicketResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPrivateServiceEventsResponse parses an HTTP response from a GetPrivateServiceEventsWithResponse call
+func ParseGetPrivateServiceEventsResponse(rsp *http.Response) (*GetPrivateServiceEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPrivateServiceEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServiceSnapshot
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRecheckPrivateServiceVisitorResponse parses an HTTP response from a RecheckPrivateServiceVisitorWithResponse call
+func ParseRecheckPrivateServiceVisitorResponse(rsp *http.Response) (*RecheckPrivateServiceVisitorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RecheckPrivateServiceVisitorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServiceVisitorRecheckResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPrivateServiceSnapshotResponse parses an HTTP response from a GetPrivateServiceSnapshotWithResponse call
+func ParseGetPrivateServiceSnapshotResponse(rsp *http.Response) (*GetPrivateServiceSnapshotResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPrivateServiceSnapshotResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServiceSnapshot
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -2066,6 +3229,21 @@ type ServerInterface interface {
 	// DrainIngress Stop a matching ingress process from accepting new visitors
 	// (POST /internal/v1/ingresses/{ingress_id}/drain)
 	DrainIngress(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
+	// (POST /internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim)
+	ClaimPrivateConnectorSession(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
+	// (POST /internal/v1/ingresses/{ingress_id}/private-services/claim)
+	ClaimPrivateServiceTicket(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
+	// (GET /internal/v1/ingresses/{ingress_id}/private-services/events)
+	GetPrivateServiceEvents(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetPrivateServiceEventsParams)
+
+	// (POST /internal/v1/ingresses/{ingress_id}/private-services/recheck)
+	RecheckPrivateServiceVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
+	// (GET /internal/v1/ingresses/{ingress_id}/private-services/snapshot)
+	GetPrivateServiceSnapshot(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetPrivateServiceSnapshotParams)
 	// ObservePublicURLRecovery Record the first publisher byte after public URL recovery
 	// (POST /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed)
 	ObservePublicURLRecovery(w http.ResponseWriter, r *http.Request, ingressId IngressID, recoveryEpisodeId int64)
@@ -2123,6 +3301,207 @@ func (siw *ServerInterfaceWrapper) DrainIngress(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DrainIngress(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ClaimPrivateConnectorSession operation middleware
+func (siw *ServerInterfaceWrapper) ClaimPrivateConnectorSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ClaimPrivateConnectorSession(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ClaimPrivateServiceTicket operation middleware
+func (siw *ServerInterfaceWrapper) ClaimPrivateServiceTicket(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ClaimPrivateServiceTicket(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPrivateServiceEvents operation middleware
+func (siw *ServerInterfaceWrapper) GetPrivateServiceEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPrivateServiceEventsParams
+
+	// ------------- Required query parameter "ingress_run_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "ingress_run_id", r.URL.Query(), &params.IngressRunId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ingress_run_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_run_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "ingress_lease_revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "ingress_lease_revision", r.URL.Query(), &params.IngressLeaseRevision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ingress_lease_revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_lease_revision", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPrivateServiceEvents(w, r, ingressId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RecheckPrivateServiceVisitor operation middleware
+func (siw *ServerInterfaceWrapper) RecheckPrivateServiceVisitor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RecheckPrivateServiceVisitor(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPrivateServiceSnapshot operation middleware
+func (siw *ServerInterfaceWrapper) GetPrivateServiceSnapshot(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPrivateServiceSnapshotParams
+
+	// ------------- Required query parameter "ingress_run_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "ingress_run_id", r.URL.Query(), &params.IngressRunId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ingress_run_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_run_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "ingress_lease_revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "ingress_lease_revision", r.URL.Query(), &params.IngressLeaseRevision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ingress_lease_revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_lease_revision", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPrivateServiceSnapshot(w, r, ingressId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2488,6 +3867,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/private-connector-sessions/claim", wrapper.ClaimPrivateConnectorSession)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/private-services/snapshot", wrapper.GetPrivateServiceSnapshot)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/private-services/events", wrapper.GetPrivateServiceEvents)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/private-services/claim", wrapper.ClaimPrivateServiceTicket)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/private-services/recheck", wrapper.RecheckPrivateServiceVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/register", wrapper.RegisterIngress)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/renew", wrapper.RenewIngress)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/drain", wrapper.DrainIngress)

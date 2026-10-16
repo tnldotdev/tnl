@@ -13,6 +13,7 @@ const (
 	DefaultChallengeHostnameConnectionLimit = 8
 	DefaultControlConnectionLimit           = 1024
 	DefaultRelayConnectionLimit             = 4096
+	DefaultPrivateConnectionLimit           = 256
 	challengeConnectionTimeout              = 10 * time.Second
 )
 
@@ -24,6 +25,7 @@ const (
 	challengeConnection
 	controlConnection
 	relayConnection
+	privateConnection
 	connectionKinds
 )
 
@@ -37,6 +39,7 @@ func admissionDefaults(config *Config) error {
 		{&config.MaxHostnameChallengeConnections, DefaultChallengeHostnameConnectionLimit},
 		{&config.MaxControlConnections, DefaultControlConnectionLimit},
 		{&config.MaxRelayConnections, DefaultRelayConnectionLimit},
+		{&config.MaxPrivateConnections, DefaultPrivateConnectionLimit},
 	} {
 		if *setting.value == 0 {
 			*setting.value = setting.fallback
@@ -75,6 +78,8 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 		limit, resource = s.config.MaxControlConnections, "control_connections"
 	case relayConnection:
 		limit, resource = s.config.MaxRelayConnections, "relay_tcp_connections"
+	case privateConnection:
+		limit, resource = s.config.MaxPrivateConnections, "private_connector_sessions"
 	}
 	if s.admitted[kind] >= limit {
 		return nil, resource
@@ -121,7 +126,7 @@ func (s *Server) reportAdmittedLocked() {
 	if s.config.Metrics == nil {
 		return
 	}
-	for kind, class := range []string{"public", "denied", "challenge", "control", "relay_tcp"} {
+	for kind, class := range []string{"public", "denied", "challenge", "control", "relay_tcp", "private_connector"} {
 		s.config.Metrics.SetIngressConnections(class, s.admitted[kind])
 	}
 }

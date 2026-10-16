@@ -84,6 +84,48 @@ func TestServiceAccessPolicyReplacesProjectDefault(t *testing.T) {
 	}
 }
 
+func TestMixedPublicDefaultsNeverReachPrivateTCPService(t *testing.T) {
+	ephemeral := true
+	domain, dbTarget, sshTarget := "member.example", config.Target("db.internal:5432"), config.Target("22")
+	tcp, ssh := "tcp", "ssh"
+	connections := 4
+	project := Project{Config: config.TNL{
+		Tunnel: &config.Tunnel{Domain: &domain, Access: &config.Access{Mode: "anonymous"}, Ephemeral: &ephemeral,
+			Limits: &config.Limits{Traffic: &config.TrafficLimits{Connections: &connections}}},
+		Services: config.Services{
+			"web":    {},
+			"orders": {Protocol: &tcp, Target: &config.ServiceTarget{Type: "address", Address: &dbTarget}},
+			"shell":  {Protocol: &ssh, Target: &config.ServiceTarget{Type: "address", Address: &sshTarget}},
+		},
+	}}
+	if err := config.ValidateTNL(project.Config); err != nil {
+		t.Fatalf("mixed HTTP, SSH and private TCP project: %v", err)
+	}
+	for _, name := range []string{"web", "shell"} {
+		service, err := project.EffectiveService(name)
+		if err != nil || service.Tunnel == nil || service.Tunnel.Access == nil || service.Tunnel.Access.VisitorMode() != "anonymous" ||
+			service.Tunnel.Domain == nil || *service.Tunnel.Domain != domain || service.Tunnel.Limits == nil ||
+			service.Tunnel.Limits.Traffic == nil || service.Tunnel.Limits.Traffic.Connections == nil ||
+			*service.Tunnel.Limits.Traffic.Connections != connections {
+			t.Fatalf("public %s lost root defaults: %+v: %v", name, service.Tunnel, err)
+		}
+	}
+	private, err := project.EffectiveService("orders")
+	if err != nil || private.Tunnel != nil || private.Publish == nil || config.ServiceProtocol(private.Publish) != "tcp" ||
+		private.Publish.Target != &dbTarget || config.PrivateServiceName("orders", project.Config.Services["orders"]) != "orders" {
+		t.Fatalf("private orders inherited public access or lost target: %+v: %v", private, err)
+	}
+	if project.Config.Tunnel.Access == nil || project.Config.Tunnel.Access.VisitorMode() != "anonymous" {
+		t.Fatal("resolving private service mutated public defaults")
+	}
+	orders := project.Config.Services["orders"]
+	orders.Tunnel = &config.Tunnel{Access: &config.Access{Mode: "anonymous"}}
+	project.Config.Services["orders"] = orders
+	if _, err := project.EffectiveService("orders"); err == nil {
+		t.Fatal("private TCP service accepted per-service public access")
+	}
+}
+
 func TestServiceLimitsOverrideEachFieldWithoutChangingRoot(t *testing.T) {
 	requests, rateRequests, concurrency := 20, 5, 3
 	period := config.Duration(time.Minute)

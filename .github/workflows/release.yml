@@ -123,7 +123,7 @@ jobs:
           test "${#sboms[@]}" -eq 4
           for archive in "${archives[@]}"; do
             tar -tzf "$archive" LICENSE NOTICE THIRD_PARTY_LICENSES.txt tnl tnld >/dev/null
-            tar -xOzf "$archive" LICENSE | grep -F -x 'MIT License' >/dev/null
+            tar -xOzf "$archive" LICENSE | grep -F -x 'BSD 3-Clause License' >/dev/null
           done
           (cd dist && sha256sum --check checksums.txt)
 
