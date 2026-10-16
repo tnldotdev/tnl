@@ -92,6 +92,8 @@ type Config struct {
 	Logf                        func(string, ...any)
 	Observe                     func(Event) error
 	heartbeatInterval           time.Duration
+
+	RevalidateVisitorCertificate RevalidateVisitorCertificate
 }
 
 type EventType string

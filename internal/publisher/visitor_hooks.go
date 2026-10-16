@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/livevisitor"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -45,6 +46,65 @@ type AdmitVisitor func(context.Context, Visitor) error
 // AuthorizeVisitorCertificate runs after visitor TLS and before database auth.
 // the caller owns certificate issuance, trust, and current control authorization.
 type AuthorizeVisitorCertificate func(context.Context, Visitor, tls.ConnectionState) error
+
+// RevalidateVisitorCertificate returns a fresh database permission and its hard
+// deadline. the publisher shares it only across exact active proofs and keeps
+// checking established connections, including explicitly anonymous visitors.
+type RevalidateVisitorCertificate func(context.Context, Visitor, tls.ConnectionState) (livevisitor.Decision, error)
+
+type VisitorCertificateDecisionAuthorizer interface {
+	AuthorizeVisitorCertificateDecision(context.Context, controlclient.VisitorCertificateScope, tls.ConnectionState) (time.Time, error)
+}
+
+// LiveVisitorCertificateAuthorization bypasses the new-connection positive
+// cache. control owns current grant, IP filter, and publish-run checks.
+func LiveVisitorCertificateAuthorization(client VisitorCertificateDecisionAuthorizer, scope controlclient.VisitorCertificateScope) RevalidateVisitorCertificate {
+	return func(ctx context.Context, visitor Visitor, state tls.ConnectionState) (livevisitor.Decision, error) {
+		if client == nil || scope.PublicURLID == "" || scope.PublishRunID == "" || scope.PublishRunNumber == 0 || scope.PublishRunToken == "" ||
+			visitor.Run.PublicURLID != scope.PublicURLID || visitor.Run.Number != scope.PublishRunNumber ||
+			visitor.Run.PublishRunID != "" && visitor.Run.PublishRunID != scope.PublishRunID ||
+			visitor.Header.PublishRunID != "" && visitor.Header.PublishRunID != scope.PublishRunID ||
+			visitor.Header.PublicURLID != "" && visitor.Header.PublicURLID != scope.PublicURLID ||
+			visitor.Header.PublishRunNumber != 0 && visitor.Header.PublishRunNumber != scope.PublishRunNumber {
+			return livevisitor.Decision{}, livevisitor.ErrDenied
+		}
+		if _, err := visitorAuthorizationKey(visitor, state); err != nil {
+			return livevisitor.Decision{}, err
+		}
+		bound := scope
+		bound.SourceIP = visitor.Source.Addr().Unmap()
+		until, err := client.AuthorizeVisitorCertificateDecision(ctx, bound, state)
+		if err != nil {
+			var problem *controlclient.ProblemError
+			if errors.Is(err, controlclient.ErrUnauthenticated) || errors.Is(err, controlclient.ErrNotFound) || errors.Is(err, controlclient.ErrStatusConflict) ||
+				errors.As(err, &problem) && (problem.Status == http.StatusUnauthorized || problem.Status == http.StatusForbidden || problem.Status == http.StatusNotFound || problem.Status == http.StatusConflict) {
+				return livevisitor.Decision{}, nil
+			}
+			return livevisitor.Decision{}, err
+		}
+		if len(state.PeerCertificates) != 0 && state.PeerCertificates[0].NotAfter.Before(until) {
+			until = state.PeerCertificates[0].NotAfter
+		}
+		return livevisitor.Decision{Allowed: true, ValidUntil: until}, nil
+	}
+}
+
+func visitorAuthorizationKey(visitor Visitor, state tls.ConnectionState) (livevisitor.Key, error) {
+	if !visitor.Source.IsValid() || visitor.Source.Addr().Zone() != "" || !state.HandshakeComplete || len(state.PeerCertificates) > 4 {
+		return livevisitor.Key{}, livevisitor.ErrDenied
+	}
+	key := livevisitor.Key{PublicURLID: visitor.Run.PublicURLID, PublishRunID: visitor.Run.PublishRunID,
+		PublishRunNumber: visitor.Run.Number, SourceIP: visitor.Source.Addr().Unmap()}
+	if len(state.PeerCertificates) != 0 {
+		leaf := state.PeerCertificates[0]
+		now := time.Now()
+		if leaf == nil || !now.Before(leaf.NotAfter) || now.Before(leaf.NotBefore) {
+			return livevisitor.Key{}, livevisitor.ErrDenied
+		}
+		key.CertificateSHA256 = sha256.Sum256(leaf.Raw)
+	}
+	return key, nil
+}
 
 type VisitorCertificateAuthorizer interface {
 	AuthorizeVisitorCertificate(context.Context, controlclient.VisitorCertificateScope, tls.ConnectionState) error
@@ -121,6 +181,42 @@ type visitorSession struct {
 	promotion  *visitorPromotion
 	closed     bool
 	workers    sync.WaitGroup
+}
+
+// watchAuthorization is bounded by the owning visitor stream. stopping it joins
+// both the connection closer and, for the last exact proof, the control checker.
+func (v *visitorSession) watchAuthorization(lease *livevisitor.Lease, visitor, backend net.Conn) (func(), error) {
+	if secured, ok := backend.(*tls.Conn); ok {
+		backend = secured.NetConn()
+	}
+	v.mu.Lock()
+	if v.closed {
+		v.mu.Unlock()
+		lease.Close()
+		return nil, net.ErrClosed
+	}
+	base := v.life
+	if base == nil {
+		base = context.Background()
+	}
+	ctx, cancel := context.WithCancel(base)
+	done := make(chan struct{})
+	v.workers.Go(func() {
+		defer close(done)
+		select {
+		case <-ctx.Done():
+		case <-lease.Done():
+		}
+		// close both raw sockets; neither a blocked Copy nor a database startup
+		// read may outlive a denied permission or its owning publish run.
+		_ = visitor.Close()
+		_ = backend.Close()
+	})
+	v.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() { cancel(); <-done; lease.Close() })
+	}, nil
 }
 
 func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {

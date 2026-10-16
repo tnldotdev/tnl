@@ -65,6 +65,8 @@ type PublicURLServerConfig struct {
 	InspectionMode              inspection.Mode
 	Certificate                 tls.Certificate
 	CertificatePlan             controlv1.CertificatePlan
+
+	RevalidateVisitorCertificate RevalidateVisitorCertificate
 }
 
 type PublicURLServer struct {
@@ -153,6 +155,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	config.Limits = admission.limits
 	if forwarding != nil {
 		forwarding.admission = admission
+		forwarding.liveSlots = make(chan struct{}, admission.limits.Concurrency)
 	}
 	if config.CertificatePlan.Identifiers != nil || config.CertificatePlan.CacheKey != "" || config.CertificatePlan.Scope != "" || config.CertificatePlan.ChallengeMethod != "" {
 		config.CertificatePlan, err = certificateidentity.CanonicalPlan(config.CertificatePlan)

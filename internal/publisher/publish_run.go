@@ -184,12 +184,17 @@ func runSession(
 	var material clientstate.Material
 	identity := PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, Number: version}
 	authorizeVisitor := config.AuthorizeVisitorCertificate
-	if authorizeVisitor == nil {
+	revalidateVisitor := config.RevalidateVisitorCertificate
+	if revalidateVisitor == nil {
 		var candidate any = config.Control
 		if config.VisitorControl != nil {
 			candidate = config.VisitorControl
 		}
-		if client, ok := candidate.(VisitorCertificateAuthorizer); ok {
+		if client, ok := candidate.(VisitorCertificateDecisionAuthorizer); ok {
+			revalidateVisitor = LiveVisitorCertificateAuthorization(client, controlclient.VisitorCertificateScope{
+				PublishRunID: setup.PublishRun.Id, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version, PublishRunToken: publishRunToken,
+			})
+		} else if client, ok := candidate.(VisitorCertificateAuthorizer); ok && authorizeVisitor == nil {
 			authorizeVisitor = VisitorCertificateAuthorization(client, controlclient.VisitorCertificateScope{
 				PublishRunID: setup.PublishRun.Id, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version, PublishRunToken: publishRunToken,
 			})
@@ -204,6 +209,8 @@ func runSession(
 		return err
 	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
+		RevalidateVisitorCertificate: revalidateVisitor,
+
 		BrowserAccess:         browserAccessForRun(config, setup, publishRunToken, shareRuntime),
 		BrowserLoginAvailable: config.BrowserLoginAvailable,
 		PreviewID:             config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, PublishRunNumber: version,
