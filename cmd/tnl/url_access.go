@@ -50,11 +50,23 @@ func runURLAccessShow(ctx context.Context, flags urlAccessShowCommand, out, diag
 		return err
 	}
 	defer session.Close()
-	item, err := resolveVisitorPublicURL(ctx, session, flags.URL)
+	item, err := resolveManagedPublicURL(ctx, session, flags.URL)
 	if err != nil {
 		return err
 	}
 	return writeAccessPolicy(out, "tnl url access show", item)
+}
+
+func resolveManagedPublicURL(ctx context.Context, session *teamSession, selector string) (controlv1.PublicURL, error) {
+	current, err := session.current(ctx)
+	if err != nil {
+		return controlv1.PublicURL{}, err
+	}
+	routes, err := session.authenticated.Control.ListPublicURLs(ctx, current.team.Id)
+	if err != nil {
+		return controlv1.PublicURL{}, err
+	}
+	return selectSharePublicURL(selector, routes)
 }
 
 func accessIPPrefixes(ctx context.Context, control interface {
@@ -89,7 +101,7 @@ func runURLAccessSet(ctx context.Context, flags urlAccessSetCommand, out, diagno
 		return err
 	}
 	defer session.Close()
-	item, err := resolveVisitorPublicURL(ctx, session, flags.URL)
+	item, err := resolveManagedPublicURL(ctx, session, flags.URL)
 	if err != nil {
 		return err
 	}
