@@ -241,7 +241,8 @@ type schemaVersionQuerier interface {
 func readSchemaVersion(ctx context.Context, database schemaVersionQuerier) (int64, error) {
 	var version int64
 	if err := database.QueryRow(ctx, `
-		SELECT COALESCE(MAX(version_id) FILTER (WHERE is_applied), 0)
+		SELECT CASE WHEN to_regclass('control.publish_run_publisher_grants') IS NULL THEN 0
+		    ELSE COALESCE(MAX(version_id) FILTER (WHERE is_applied), 0) END
 		FROM control.goose_db_version
 	`).Scan(&version); err != nil {
 		return 0, fmt.Errorf("controlstate: read schema version: %w", err)
