@@ -71,7 +71,7 @@ func prepareSSHHostInstall(ctx context.Context, diagnostics io.Writer) error {
 		args = []string{"-n", "-v"}
 	}
 	if err := executeSSHInstaller(ctx, "/usr/bin/sudo", args, os.Stdin, diagnostics); err != nil {
-		return &sshCommandError{message: "SSH host setup needs root service installation", action: "run sudo -v from a terminal, then retry tnl ssh enable", reason: failure.InvalidSetupInput, cause: err}
+		return &sshCommandError{message: "SSH host setup needs root service installation", action: "run sudo -v from a terminal, then retry tnl service ssh enable", reason: failure.InvalidSetupInput, cause: err}
 	}
 	return nil
 }
@@ -125,9 +125,9 @@ func invokeSSHHostInstall(ctx context.Context, payload sshHostInstallPayload, bi
 	if err != nil || len(data) > maxSSHHostInstallPayload {
 		return invalidSSHInstallPayload(err)
 	}
-	program, args := binary, []string{"ssh", "install"}
+	program, args := binary, []string{"service", "ssh", "install"}
 	if !root {
-		program, args = "/usr/bin/sudo", []string{"-n", "--", binary, "ssh", "install"}
+		program, args = "/usr/bin/sudo", []string{"-n", "--", binary, "service", "ssh", "install"}
 	}
 	return run(ctx, program, args, bytes.NewReader(data), diagnostics)
 }
@@ -161,6 +161,9 @@ func decodeSSHHostInstallPayload(input io.Reader) (sshHostInstallPayload, error)
 }
 
 func validateSSHHostInstallPayload(payload sshHostInstallPayload) error {
+	if !validSSHHostPublicPort(payload.PublicPort) {
+		return invalidSSHInstallPayload(nil)
+	}
 	server, err := naming.CanonicalControlURL(payload.Server)
 	hostname, hostErr := naming.CanonicalizeHostname(payload.Hostname)
 	parts := strings.Split(payload.EnrollmentKey, ".")
@@ -181,9 +184,11 @@ func validateSSHHostInstallPayload(payload sshHostInstallPayload) error {
 	return nil
 }
 
+func validSSHHostPublicPort(port int) bool { return port >= 1024 && port <= 65535 }
+
 func runSSHInstall(ctx context.Context, input io.Reader) error {
 	if os.Getuid() != 0 || os.Geteuid() != 0 {
-		return &sshCommandError{message: "the SSH installer must run as root", action: "run tnl ssh enable from your signed-in account", reason: failure.InvalidSetupInput}
+		return &sshCommandError{message: "the SSH installer must run as root", action: "run tnl service ssh enable from your signed-in account", reason: failure.InvalidSetupInput}
 	}
 	payload, err := decodeSSHHostInstallPayload(input)
 	if err != nil {
@@ -238,9 +243,12 @@ func installSSHHostJob(ctx context.Context, registry *publisherjob.Registry, pay
 		if !existing.Enabled {
 			return &sshCommandError{message: "this SSH host is installed but stopped", action: "start it with sudo tnl service start " + payload.Name, reason: failure.ServerConflict}
 		}
+		if existing.PublicHostname != payload.Hostname || existing.PublicPort != payload.PublicPort {
+			return publisherjob.ErrScope
+		}
 		return nil
 	}
-	job := publisherjob.Job{ID: payload.Name, Server: payload.Server, PublicURLID: payload.PublicURLID, Protocol: controlv1.Ssh, Target: "", SSHUsers: payload.Users, SSHHostKey: payload.HostPrivateKey}
+	job := publisherjob.Job{ID: payload.Name, Server: payload.Server, PublicURLID: payload.PublicURLID, PublicHostname: payload.Hostname, PublicPort: payload.PublicPort, Protocol: controlv1.Ssh, Target: "", SSHUsers: payload.Users, SSHHostKey: payload.HostPrivateKey}
 	control, authority, err := clients(job)
 	if err != nil {
 		return err
@@ -295,7 +303,7 @@ func installSSHHostJob(ctx context.Context, registry *publisherjob.Registry, pay
 	if err != nil {
 		return err
 	}
-	if saved.Id != payload.PublicURLID || saved.TeamId != payload.TeamID || saved.CanonicalHostname != payload.Hostname || saved.ServiceProtocol != controlv1.Ssh || saved.Target != "" || saved.AccessMode != controlv1.Restricted || saved.LifecycleState != controlv1.Enabled || saved.Purpose != controlv1.App || saved.Ephemeral || saved.SshHostKey == nil {
+	if saved.Id != payload.PublicURLID || saved.TeamId != payload.TeamID || saved.CanonicalHostname != payload.Hostname || saved.PublicPort == nil || !validSSHHostPublicPort(*saved.PublicPort) || *saved.PublicPort != payload.PublicPort || saved.ServiceProtocol != controlv1.Ssh || saved.Target != "" || saved.AccessMode != controlv1.Restricted || saved.LifecycleState != controlv1.Enabled || saved.Purpose != controlv1.App || saved.Ephemeral || saved.SshHostKey == nil {
 		return publisherjob.ErrScope
 	}
 	signer, err := managedssh.ParseHostKey(payload.HostPrivateKey)

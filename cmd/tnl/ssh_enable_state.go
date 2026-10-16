@@ -29,6 +29,7 @@ type sshHostSetup struct {
 	Users                       []string
 	HostPrivateKey              []byte
 	URLKey, PublicURLID         string
+	PublicPort                  int
 	GrantKeys                   map[string]string
 	Granted                     map[string]bool
 	EnrollmentKey               string
@@ -122,7 +123,7 @@ func openSSHHostSetup(ctx context.Context, state *clientstate.SSHHostSetupState,
 	if err != nil || signer.PublicKey().Type() != ssh.KeyAlgoED25519 {
 		return nil, invalidSSHSetupState()
 	}
-	if record.PublicURLID != "" && !opaqueid.Valid(record.PublicURLID, opaqueid.PublicURLPrefix) {
+	if record.PublicURLID == "" && record.PublicPort != 0 || record.PublicURLID != "" && (!opaqueid.Valid(record.PublicURLID, opaqueid.PublicURLPrefix) || record.PublicPort != 0 && !validSSHHostPublicPort(record.PublicPort)) {
 		return nil, invalidSSHSetupState()
 	}
 	for _, account := range record.Users {
@@ -179,7 +180,7 @@ func completeSSHHostSetup(ctx context.Context, api sshHostSetupAPI, journal *ssh
 }
 
 func sshHostSetupPayload(record *sshHostSetup) sshHostInstallPayload {
-	return sshHostInstallPayload{Version: 1, Name: record.Name, Server: record.Server, PublicURLID: record.PublicURLID, TeamID: record.Request.TeamId, Hostname: record.Request.CanonicalHostname, Users: slices.Clone(record.Users), EnrollmentKey: record.EnrollmentKey, EnrollmentExpiresAt: record.EnrollmentExpiresAt, HostPrivateKey: bytes.Clone(record.HostPrivateKey)}
+	return sshHostInstallPayload{Version: 1, Name: record.Name, Server: record.Server, PublicURLID: record.PublicURLID, TeamID: record.Request.TeamId, Hostname: record.Request.CanonicalHostname, PublicPort: record.PublicPort, Users: slices.Clone(record.Users), EnrollmentKey: record.EnrollmentKey, EnrollmentExpiresAt: record.EnrollmentExpiresAt, HostPrivateKey: bytes.Clone(record.HostPrivateKey)}
 }
 
 func issueSSHHostEnrollment(ctx context.Context, api sshHostSetupAPI, journal *sshHostSetupJournal) error {

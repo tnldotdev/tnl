@@ -102,8 +102,8 @@ func selectPublishInspection(_ *publishCommand, protocol controlv1.PublicURLServ
 
 func managedSSHEnableRequired() error {
 	return &sshCommandError{
-		message: "SSH cannot use a private target; enable managed SSH with tnl ssh enable",
-		action:  "run tnl ssh enable --name HOST --user ACCOUNT to install the root-managed host service",
+		message: "SSH cannot use a private target; enable managed SSH with tnl service ssh enable",
+		action:  "run tnl service ssh enable --name HOST --user ACCOUNT to install the root-managed host service",
 		reason:  failure.InvalidTunnelFlags,
 	}
 }

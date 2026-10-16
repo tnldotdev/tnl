@@ -84,7 +84,7 @@ func ResolveServiceTarget(service Service, discovered string) (*Publish, error) 
 func validateTarget(service Service) error {
 	protocol := Protocol(service)
 	if protocol == "ssh" {
-		return errors.New("SSH cannot use a project service target; run tnl ssh enable --name HOST --user ACCOUNT to install managed SSH")
+		return errors.New("SSH cannot use a project service target; run tnl service ssh enable --name HOST --user ACCOUNT to install managed SSH")
 	}
 	if !ValidProtocol(protocol) {
 		return errors.New("protocol must be http, postgres, mysql, or redis")

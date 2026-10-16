@@ -56,7 +56,8 @@ func (f *sshSetupRetryAPI) CreatePublicURL(_ context.Context, request controlv1.
 	if f.urlID == "" {
 		f.urlID = "url_0123456789abcdefghijkl"
 	}
-	return controlv1.PublicURL{Id: f.urlID, TeamId: request.TeamId, CanonicalHostname: request.CanonicalHostname, ServiceProtocol: controlv1.Ssh, AccessMode: controlv1.Restricted, SshHostKey: request.SshHostKey}, nil
+	port := 2222
+	return controlv1.PublicURL{Id: f.urlID, TeamId: request.TeamId, CanonicalHostname: request.CanonicalHostname, PublicPort: &port, ServiceProtocol: controlv1.Ssh, AccessMode: controlv1.Restricted, SshHostKey: request.SshHostKey}, nil
 }
 
 func (f *sshSetupRetryAPI) CreatePublisherEnrollment(_ context.Context, request controlv1.CreatePublisherEnrollmentRequest) (controlv1.PublisherEnrollment, error) {
@@ -246,7 +247,7 @@ func TestSSHEnableLostInstallResponseReusesActualRootIdentity(t *testing.T) {
 			return err
 		}
 		pin := string(ssh.MarshalAuthorizedKey(signer.PublicKey()))
-		control.publicURL = controlv1.PublicURL{Id: payload.PublicURLID, TeamId: payload.TeamID, CanonicalHostname: payload.Hostname, ServiceProtocol: controlv1.Ssh, AccessMode: controlv1.Restricted, LifecycleState: controlv1.Enabled, Purpose: controlv1.App, SshHostKey: &pin}
+		control.publicURL = controlv1.PublicURL{Id: payload.PublicURLID, TeamId: payload.TeamID, CanonicalHostname: payload.Hostname, PublicPort: &payload.PublicPort, ServiceProtocol: controlv1.Ssh, AccessMode: controlv1.Restricted, LifecycleState: controlv1.Enabled, Purpose: controlv1.App, SshHostKey: &pin}
 		if err := installSSHHostJob(ctx, registry, payload, func(publisherjob.Job) (nativeauth.NativeControl, nativeauth.EnrollmentAuthority, error) {
 			return control, authority, nil
 		}); err != nil {
@@ -271,6 +272,28 @@ func TestSSHEnableLostInstallResponseReusesActualRootIdentity(t *testing.T) {
 	jobs, err := registry.List(t.Context())
 	if err != nil || len(jobs) != 1 || jobs[0].PublisherID != authority.identity.ClientId || jobs[0].Revision != 1 || authority.redemptions != 1 || api.enrollments != 1 || api.creates != 1 {
 		t.Fatalf("retry created or replaced a publisher identity: err=%v jobs=%d redemptions=%d enrollments=%d", err, len(jobs), authority.redemptions, api.enrollments)
+	}
+}
+
+func TestSSHEnableOlderPendingSetupRecoversPortWithoutReplacingCredentials(t *testing.T) {
+	_, store, request := sshSetupRetryState(t)
+	api := &sshSetupRetryAPI{}
+	journal, state := loadSSHRetryJournal(t, store, request, []string{"deploy"})
+	grant := func(context.Context, string, string) error { return nil }
+	original, err := prepareSSHHost(t.Context(), api, request, "workstation", journal.record.Users, retrySSHServer, grant, journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.record.PublicPort = 0
+	if err := journal.save(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	state.Close()
+	journal, state = loadSSHRetryJournal(t, store, request, []string{"deploy"})
+	defer state.Close()
+	recovered, err := prepareSSHHost(t.Context(), api, request, "workstation", journal.record.Users, retrySSHServer, grant, journal)
+	if err != nil || !reflect.DeepEqual(original, recovered) || api.creates != 2 || api.enrollments != 1 {
+		t.Fatalf("older setup retry replaced its scope or credentials: %v", err)
 	}
 }
 

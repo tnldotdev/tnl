@@ -34,7 +34,7 @@ func sshInstallFixture(t *testing.T) sshHostInstallPayload {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return sshHostInstallPayload{Version: 1, Name: "workstation", Server: "https://control.example.test", PublicURLID: "url_0123456789abcdefghijkl", TeamID: "tm_0123456789abcdefghijkl", Hostname: "workstation.example.test", Users: []string{"deploy"}, EnrollmentKey: "pen_0123456789abcdefghijkl.one-use", HostPrivateKey: key}
+	return sshHostInstallPayload{Version: 1, Name: "workstation", Server: "https://control.example.test", PublicURLID: "url_0123456789abcdefghijkl", TeamID: "tm_0123456789abcdefghijkl", Hostname: "workstation.example.test", PublicPort: 2222, Users: []string{"deploy"}, EnrollmentKey: "pen_0123456789abcdefghijkl.one-use", HostPrivateKey: key}
 }
 
 func TestSSHInstallInputIsBoundedAndStrict(t *testing.T) {
@@ -71,6 +71,9 @@ func TestSSHInstallInputIsBoundedAndStrict(t *testing.T) {
 		func(p *sshHostInstallPayload) { p.Name = "../job" },
 		func(p *sshHostInstallPayload) { p.Server = "https://token@control.example.test" },
 		func(p *sshHostInstallPayload) { p.PublicURLID += "%h" },
+		func(p *sshHostInstallPayload) { p.PublicPort = 0 },
+		func(p *sshHostInstallPayload) { p.PublicPort = 1023 },
+		func(p *sshHostInstallPayload) { p.PublicPort = 65536 },
 		func(p *sshHostInstallPayload) { p.Users = []string{"root"} },
 		func(p *sshHostInstallPayload) { p.Users = []string{"deploy", "deploy"} },
 		func(p *sshHostInstallPayload) { p.HostPrivateKey = []byte("private-key-secret") },
@@ -89,9 +92,9 @@ func TestSSHInstallerUsesPrivateStdinAndFixedArguments(t *testing.T) {
 		calls := 0
 		err := invokeSSHHostInstall(t.Context(), payload, "/absolute/tnl's binary", root, io.Discard, func(_ context.Context, program string, args []string, input io.Reader, _ io.Writer) error {
 			calls++
-			wantProgram, wantArgs := "/usr/bin/sudo", []string{"-n", "--", "/absolute/tnl's binary", "ssh", "install"}
+			wantProgram, wantArgs := "/usr/bin/sudo", []string{"-n", "--", "/absolute/tnl's binary", "service", "ssh", "install"}
 			if root {
-				wantProgram, wantArgs = "/absolute/tnl's binary", []string{"ssh", "install"}
+				wantProgram, wantArgs = "/absolute/tnl's binary", []string{"service", "ssh", "install"}
 			}
 			if program != wantProgram || !reflect.DeepEqual(args, wantArgs) {
 				t.Fatalf("installer command: %s %q", program, args)
@@ -136,7 +139,7 @@ func TestSSHHostJobEnrolledOnlyIntoItsExactRootProfile(t *testing.T) {
 	if account == "" {
 		t.Skip("no existing nonroot local account is available")
 	}
-	for _, mismatch := range []string{"", "host key", "url", "team", "target", "anonymous", "namespace"} {
+	for _, mismatch := range []string{"", "host key", "url", "team", "hostname", "missing port", "low port", "high port", "different port", "target", "anonymous", "namespace"} {
 		t.Run(mismatch, func(t *testing.T) {
 			registry, authority, control, _ := backgroundFixture(t)
 			payload := sshInstallFixture(t)
@@ -148,7 +151,8 @@ func TestSSHHostJobEnrolledOnlyIntoItsExactRootProfile(t *testing.T) {
 				t.Fatal(err)
 			}
 			pin := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))
-			control.publicURL = controlv1.PublicURL{Id: payload.PublicURLID, TeamId: payload.TeamID, CanonicalHostname: payload.Hostname, LifecycleState: controlv1.Enabled, Purpose: controlv1.App, ServiceProtocol: controlv1.Ssh, AccessMode: controlv1.Restricted, SshHostKey: &pin}
+			port := payload.PublicPort
+			control.publicURL = controlv1.PublicURL{Id: payload.PublicURLID, TeamId: payload.TeamID, CanonicalHostname: payload.Hostname, PublicPort: &port, LifecycleState: controlv1.Enabled, Purpose: controlv1.App, ServiceProtocol: controlv1.Ssh, AccessMode: controlv1.Restricted, SshHostKey: &pin}
 			switch mismatch {
 			case "host key":
 				_, other, err := managedssh.GenerateHostKey()
@@ -160,6 +164,16 @@ func TestSSHHostJobEnrolledOnlyIntoItsExactRootProfile(t *testing.T) {
 				control.publicURL.Id = "url_abcdefghijkl0123456789"
 			case "team":
 				authority.identity.TeamId = "tm_abcdefghijkl0123456789"
+			case "hostname":
+				control.publicURL.CanonicalHostname = "other.example.test"
+			case "missing port":
+				control.publicURL.PublicPort = nil
+			case "low port":
+				port = 1023
+			case "high port":
+				port = 65536
+			case "different port":
+				port++
 			case "target":
 				control.publicURL.Target = "localhost:22"
 			case "anonymous":
@@ -215,7 +229,7 @@ func TestSSHHostJobEnrolledOnlyIntoItsExactRootProfile(t *testing.T) {
 				t.Fatalf("root state acquired an operator session: %v", err)
 			}
 			var output bytes.Buffer
-			if err := renderSystemJobs(&output, "tnl service status", jobs, payload.Name); err != nil || bytes.Contains(output.Bytes(), payload.HostPrivateKey) || !strings.Contains(output.String(), account) {
+			if err := renderSystemJobs(&output, "tnl service status", jobs, payload.Name); err != nil || bytes.Contains(output.Bytes(), payload.HostPrivateKey) || !strings.Contains(output.String(), account) || !strings.Contains(output.String(), ssh.FingerprintSHA256(signer.PublicKey())) {
 				t.Fatalf("unsafe or missing SSH job status: %v", err)
 			}
 		})

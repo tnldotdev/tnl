@@ -127,14 +127,14 @@ func TestSSHPublishRequiresManagedEnable(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			err := check()
 			var authored *sshCommandError
-			if !errors.As(err, &authored) || !strings.Contains(authored.action, "tnl ssh enable") {
+			if !errors.As(err, &authored) || !strings.Contains(authored.action, "tnl service ssh enable") {
 				t.Fatalf("raw SSH error = %v, want managed SSH setup hint", err)
 			}
 			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.InvalidTunnelFlags {
 				t.Fatalf("raw SSH reason = %q, %v", reason, ok)
 			}
 			var output bytes.Buffer
-			if !writeSSHCommandError(&output, "tnl publish", err) || !strings.Contains(output.String(), "tnl ssh enable") || strings.Contains(output.String(), "sshd:22") {
+			if !writeSSHCommandError(&output, "tnl publish", err) || !strings.Contains(output.String(), "tnl service ssh enable") || strings.Contains(output.String(), "sshd:22") {
 				t.Fatalf("raw SSH diagnostic = %q", output.String())
 			}
 		})

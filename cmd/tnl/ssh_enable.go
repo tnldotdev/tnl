@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os/user"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +36,7 @@ type sshHostInstallPayload struct {
 	PublicURLID         string    `json:"public_url_id"`
 	TeamID              string    `json:"team_id"`
 	Hostname            string    `json:"hostname"`
+	PublicPort          int       `json:"public_port"`
 	Users               []string  `json:"users"`
 	EnrollmentKey       string    `json:"enrollment_key"`
 	EnrollmentExpiresAt time.Time `json:"enrollment_expires_at,omitempty"`
@@ -65,7 +67,7 @@ func runSSHEnableWithHooks(ctx context.Context, flags sshEnableCommand, output, 
 	if hooks.GrantSelf == nil || hooks.Install == nil {
 		return failure.Wrap("prepare SSH installer", failure.InvalidSetupInput, errors.New("SSH installer adapters are required"))
 	}
-	session, err := openTeamSession(ctx, flags.selection(), "tnl ssh enable", diagnostics)
+	session, err := openTeamSession(ctx, flags.selection(), "tnl service ssh enable", diagnostics)
 	if err != nil {
 		return err
 	}
@@ -102,19 +104,30 @@ func runSSHEnableWithHooks(ctx context.Context, flags sshEnableCommand, output, 
 	if err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl ssh enable", "installed", "", clioutput.Fields(
-		clioutput.Field{Label: "hostname", Value: hostname},
+	return writeSSHHostInstalled(output, payload)
+}
+
+func writeSSHHostInstalled(output io.Writer, payload sshHostInstallPayload) error {
+	signer, err := managedssh.ParseHostKey(payload.HostPrivateKey)
+	if err != nil {
+		return invalidSSHInstallPayload(err)
+	}
+	port := strconv.Itoa(payload.PublicPort)
+	return writeHumanFrame(output, "tnl service ssh enable", "installed", "", clioutput.Fields(
+		clioutput.Field{Label: "hostname", Value: payload.Hostname},
+		clioutput.Field{Label: "public port", Value: port},
 		clioutput.Field{Label: "accounts", Value: strings.Join(payload.Users, ", ")},
-		clioutput.Field{Label: "connect", Value: "tnl ssh " + payload.Users[0] + "@" + hostname},
+	), clioutput.Section("host key", clioutput.Text(ssh.FingerprintSHA256(signer.PublicKey()))), clioutput.Fields(
+		clioutput.Field{Label: "connect", Value: "ssh " + payload.Users[0] + "@" + payload.Hostname + " -p " + port},
 		clioutput.Field{Label: "status", Value: "sudo tnl service status " + payload.Name},
 		clioutput.Field{Label: "stop", Value: "sudo tnl service stop " + payload.Name},
-	))
+	), clioutput.Text("visitor access awaits server integration."))
 }
 
 func validateSSHEnable(flags sshEnableCommand, lookup func(string) (*user.User, error)) error {
 	canonical, err := naming.CanonicalizeHostname(flags.Name)
 	if err != nil || canonical != flags.Name || !naming.ValidServiceName(flags.Name) || strings.Contains(flags.Name, ".") || len(flags.Users) == 0 {
-		return &sshCommandError{message: "SSH host setup needs a hostname label and nonroot accounts", action: "run tnl ssh enable --name workstation --user ACCOUNT", reason: failure.InvalidSetupInput, cause: err}
+		return &sshCommandError{message: "SSH host setup needs a hostname label and nonroot accounts", action: "run tnl service ssh enable --name workstation --user ACCOUNT", reason: failure.InvalidSetupInput, cause: err}
 	}
 	seen := map[string]bool{}
 	for _, account := range flags.Users {
@@ -159,7 +172,9 @@ func prepareSSHHost(ctx context.Context, api sshHostSetupAPI, request controlv1.
 	pin := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))
 	protocol, access := controlv1.Ssh, controlv1.Restricted
 	request.Target, request.ServiceProtocol, request.AccessMode, request.SshHostKey = "", &protocol, &access, &pin
-	if record.PublicURLID == "" {
+	// a setup saved before the public port was recorded can recover it through
+	// the original idempotent create without replacing its host key or grant.
+	if record.PublicURLID == "" || record.PublicPort == 0 {
 		saved, err := api.CreatePublicURL(ctx, request, record.URLKey)
 		if err != nil {
 			if errors.Is(err, controlclient.ErrNameUnavailable) {
@@ -167,10 +182,11 @@ func prepareSSHHost(ctx context.Context, api sshHostSetupAPI, request controlv1.
 			}
 			return empty, err
 		}
-		if !opaqueid.Valid(saved.Id, opaqueid.PublicURLPrefix) || saved.TeamId != request.TeamId || saved.CanonicalHostname != request.CanonicalHostname || saved.Target != "" || saved.ServiceProtocol != controlv1.Ssh || saved.AccessMode != controlv1.Restricted || saved.SshHostKey == nil || *saved.SshHostKey != pin || saved.Ephemeral {
+		if !opaqueid.Valid(saved.Id, opaqueid.PublicURLPrefix) || record.PublicURLID != "" && saved.Id != record.PublicURLID || saved.TeamId != request.TeamId || saved.CanonicalHostname != request.CanonicalHostname || saved.Target != "" || saved.ServiceProtocol != controlv1.Ssh || saved.AccessMode != controlv1.Restricted || saved.SshHostKey == nil || *saved.SshHostKey != pin || saved.PublicPort == nil || !validSSHHostPublicPort(*saved.PublicPort) || saved.Ephemeral {
 			return empty, failure.Wrap("read SSH public URL", failure.ServerResponseInvalid, errors.New("control returned a different SSH host"))
 		}
 		record.PublicURLID = saved.Id
+		record.PublicPort = *saved.PublicPort
 		if err := journal.save(ctx); err != nil {
 			return empty, err
 		}

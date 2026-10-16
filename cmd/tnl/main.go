@@ -21,7 +21,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/managedssh"
-	"github.com/tnldotdev/tnl/internal/sshclient"
 	"golang.org/x/term"
 )
 
@@ -34,9 +33,9 @@ type cli struct {
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
 	Watch       watchCommand     `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
+	Connect     connectCommand   `cmd:"" help:"Connect one loopback TCP client to a saved Redis public URL." group:"start"`
 	Publisher   publisherCommand `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
 	Service     serviceCommand   `cmd:"" help:"Manage installed system publications." group:"operate"`
-	SSH         sshCommand       `cmd:"" name:"ssh" help:"Visit managed SSH hosts: tnl ssh USER@HOST." group:"start"`
 	Status      statusCommand    `cmd:"" help:"Show local snapshots and fresh signed-in server facts; --all includes other projects." group:"start"`
 	Ping        pingCommand      `cmd:"" help:"Check a public URL from this machine as an unauthenticated visitor." group:"start"`
 	Inspect     inspectCommand   `cmd:"" help:"Inspect recent local HTTP and supported TCP activity." group:"manage"`
@@ -151,6 +150,10 @@ type aliasChoiceCommand struct {
 	Name            string `arg:"" name:"name" help:"Configured project alias name."`
 }
 
+func isSSHChildCommand(args []string) bool {
+	return len(args) == 2 && args[0] == "runtime" && args[1] == "ssh-child"
+}
+
 func main() {
 	// the private child reads setup only from fd 3. it must run before cli state,
 	// telemetry, output adapters, or argument parsing can touch the session.
@@ -189,10 +192,6 @@ func main() {
 }
 
 func terminalResult(err error) (int, error) {
-	var remoteExit *sshclient.ExitError
-	if errors.As(err, &remoteExit) {
-		return remoteExit.ExitCode(), nil
-	}
 	failures, unowned := 0, 0
 	var visit func(error, bool)
 	visit = func(err error, owned bool) {
@@ -486,6 +485,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return err
 	case "publish <service-or-target>":
 		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
+	case "connect <url>":
+		return runConnect(ctx, flags.Connect, stderr)
 	case "publisher enroll <public-url-id>", "publisher enroll":
 		return runPublisherEnroll(ctx, flags.Publisher.Enroll, stdout, stderr)
 	case "publisher current":
@@ -514,18 +515,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runServiceStatus(ctx, flags.Service.Status, stdout)
 	case "service serve":
 		return runServiceServe(ctx, flags.Service.Serve)
-	case "ssh <user@host> <command>":
-		return runSSH(ctx, flags.SSH.Run, os.Stdin, stdout, stderr)
-	case "ssh connect":
-		return runSSHConnect(ctx, flags.SSH.Connect, os.Stdin, stdout)
-	case "ssh enable":
-		return runSSHEnable(ctx, flags.SSH.Enable, stdout, stderr)
-	case "ssh install":
+	case "service ssh enable":
+		return runSSHEnable(ctx, flags.Service.SSH.Enable, stdout, stderr)
+	case "service ssh install":
 		return runSSHInstall(ctx, os.Stdin)
-	case "ssh copy <source> <destination>":
-		return runSSHCopy(ctx, flags.SSH.Copy, os.Stdin, stdout, stderr)
-	case "ssh sftp <user@host>":
-		return runSSHSFTP(ctx, flags.SSH.SFTP, os.Stdin, stdout, stderr)
 	case "status":
 		if !flags.Status.All {
 			flags.Status.Project, err = projectRoot(ctx, flags)
@@ -683,8 +676,8 @@ func commandFailureReason(command string) failure.Reason {
 		return failure.Authentication
 	case strings.HasPrefix(command, "tnl publish"):
 		return failure.TunnelUnavailable
-	case strings.HasPrefix(command, "tnl ssh"):
-		return failure.TransportUnavailable
+	case strings.HasPrefix(command, "tnl service ssh "):
+		return failure.InvalidSetupInput
 	case strings.HasPrefix(command, "tnl team "):
 		return failure.TeamUnavailable
 	case strings.HasPrefix(command, "tnl domain "):
@@ -706,8 +699,6 @@ func commandFailureReason(command string) failure.Reason {
 
 func canonicalParsedCommand(command string) string {
 	switch command {
-	case "ssh run <user@host>", "ssh run <user@host> <command>":
-		return "ssh <user@host> <command>"
 	case "auth login run":
 		return "auth login"
 	case "publish":
