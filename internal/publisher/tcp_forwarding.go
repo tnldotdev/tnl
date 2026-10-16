@@ -29,7 +29,8 @@ const mysqlClientSSL = 1 << 11
 type tcpForwarding struct {
 	protocol        controlv1.PublicURLServiceProtocol
 	ssh             *SSHConfig
-	authorizeSSH    AuthorizeSSHVisitor
+	attempts        PublisherSSHAttempt
+	controlURL      string
 	admission       *applicationAdmission
 	publicPort      uint16
 	target          string
@@ -56,10 +57,10 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 		if err := validateManagedSSH(config.SSH, config.Target, config.TargetTLS, config.TargetTLSName, config.TargetOptions); err != nil {
 			return nil, err
 		}
-		if config.AccessMode != controlv1.Restricted || config.AuthorizeSSHVisitor == nil || !tcpport.Valid(int(config.PublicPort)) || config.Handler != nil || len(config.Mounts) != 0 || config.ResolveTarget != nil {
+		if config.AccessMode != controlv1.Restricted || config.SSHAttempts == nil || !tcpport.Valid(int(config.PublicPort)) || config.Handler != nil || len(config.Mounts) != 0 || config.ResolveTarget != nil {
 			return nil, errors.New("managed SSH requires restricted, account-authorized publication")
 		}
-		return &tcpForwarding{protocol: controlv1.Ssh, publicPort: config.PublicPort, ssh: config.SSH, authorizeSSH: config.AuthorizeSSHVisitor}, nil
+		return &tcpForwarding{protocol: controlv1.Ssh, publicPort: config.PublicPort, ssh: config.SSH, attempts: config.SSHAttempts, controlURL: config.ControlURL}, nil
 	}
 	host, err := validateTCPForwarding(config)
 	if err != nil {
@@ -121,7 +122,7 @@ func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config, session
 	ctx, cancel := context.WithTimeout(base, 10*time.Second)
 	defer cancel()
 	if d.protocol == controlv1.Ssh {
-		_ = d.serveSSH(ctx, visitor, publicTLS, session)
+		_ = d.serveSSH(visitor, session)
 		return
 	}
 	target := d.target

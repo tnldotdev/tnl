@@ -45,26 +45,29 @@ type PublicURLControlClient interface {
 }
 
 type Config struct {
-	Control                     PublicURLControlClient
-	VisitorControl              *controlclient.Client
-	ControlURL                  string
-	BrowserLoginAvailable       bool
-	TeamID                      string
-	DomainID                    string
-	MembershipID                string
-	PolicyRevision              uint64
-	PublicURLScope              controlv1.PublicURLScope
-	Purpose                     controlv1.PublicURLPurpose
-	Hostname                    string
-	PreviewID                   string
-	Feedback                    bool
-	Demo                        bool
-	ProjectRoot                 string
-	Service                     string
-	Target                      string
-	ResolveTarget               func(context.Context) (string, string, error)
-	ServiceProtocol             controlv1.PublicURLServiceProtocol
-	SSH                         *SSHConfig
+	Control               PublicURLControlClient
+	VisitorControl        *controlclient.Client
+	ControlURL            string
+	BrowserLoginAvailable bool
+	TeamID                string
+	DomainID              string
+	MembershipID          string
+	PolicyRevision        uint64
+	PublicURLScope        controlv1.PublicURLScope
+	Purpose               controlv1.PublicURLPurpose
+	Hostname              string
+	PreviewID             string
+	Feedback              bool
+	Demo                  bool
+	ProjectRoot           string
+	Service               string
+	Target                string
+	ResolveTarget         func(context.Context) (string, string, error)
+	ServiceProtocol       controlv1.PublicURLServiceProtocol
+	SSH                   *SSHConfig
+	// SSHAttemptsForRun constructs an authenticated adapter bound to this run's
+	// token. a server API implementation must be injected before SSH can publish.
+	SSHAttemptsForRun           func(credentials.PublishRunToken) PublisherSSHAttempt
 	AccessMode                  controlv1.VisitorAccessMode
 	TargetTLSName               string
 	TargetTLS                   bool

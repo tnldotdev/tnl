@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,41 @@ import (
 type protocolRunner struct {
 	run  func(context.Context, Request, Streams) (int, error)
 	dial func(context.Context, string, string) (net.Conn, error)
+}
+
+type approvedAttempt struct{ bound Binding }
+
+func (a *approvedAttempt) StartSSHAttempt(_ context.Context, b Binding) (Attempt, error) {
+	a.bound = b
+	return Attempt{ID: "attempt", Code: "ABCDEFG2", ApprovalURL: "https://control.example/ssh/attempt", ValidUntil: time.Now().Add(time.Minute)}, nil
+}
+func (a *approvedAttempt) WaitSSHAttempt(context.Context, string) (AttemptDecision, error) {
+	return a.decision(), nil
+}
+func (a *approvedAttempt) ClaimSSHAttempt(_ context.Context, _ string, b Binding) (AttemptDecision, error) {
+	if b != a.bound {
+		return AttemptDecision{}, ErrUnauthorized
+	}
+	return a.decision(), nil
+}
+func (a *approvedAttempt) CancelSSHAttempt(context.Context, string) error { return nil }
+func (a *approvedAttempt) RecheckSSHSession(_ context.Context, b Binding, identity string) (AttemptDecision, error) {
+	if b != a.bound || identity != "identity-a" {
+		return AttemptDecision{}, ErrUnauthorized
+	}
+	return a.decision(), nil
+}
+func (a *approvedAttempt) decision() AttemptDecision {
+	return AttemptDecision{Binding: a.bound, IdentityID: "identity-a", Approved: true, ValidUntil: time.Now().Add(time.Minute)}
+}
+
+func protocolClientConfig(c Config, user string) *ssh.ClientConfig {
+	return &ssh.ClientConfig{User: user, HostKeyCallback: ssh.FixedHostKey(c.HostKey.PublicKey()), Auth: []ssh.AuthMethod{ssh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
+		if len(questions) != 0 {
+			return nil, errors.New("unexpected keyboard prompt")
+		}
+		return nil, nil
+	})}, Timeout: 3 * time.Second}
 }
 
 func (r protocolRunner) Run(ctx context.Context, req Request, streams Streams) (int, error) {
@@ -39,7 +75,7 @@ func protocolConfig(t *testing.T) Config {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Config{HostKey: signer, Users: []string{"worker"}, Authorize: func(_ context.Context, identity Identity, user string) (Decision, error) {
+	return Config{HostKey: signer, Users: []string{"worker"}, ControlURL: "https://control.example", Binding: Binding{Hostname: "shell.example", PublicURLID: "url-a", PublishRunID: "run-a", PublishRunNumber: 1, VisitorConnectionID: "visitor-a", Source: netip.MustParseAddrPort("192.0.2.1:1234")}, Attempts: &approvedAttempt{}, Promote: func(context.Context) error { return nil }, Authorize: func(_ context.Context, identity Identity, user string) (Decision, error) {
 		return Decision{IdentityID: identity.IdentityID, PublicURLID: identity.PublicURLID, SSHUser: user, ValidUntil: time.Now().Add(time.Minute)}, nil
 	}}
 }
@@ -52,7 +88,7 @@ func protocolServer(t *testing.T, config Config, runner childRunner) (*ssh.Clien
 	}
 	server.runner = runner
 	address, done := protocolListen(t, server)
-	client, err := ssh.Dial("tcp", address, &ssh.ClientConfig{User: config.Users[0], HostKeyCallback: ssh.FixedHostKey(config.HostKey.PublicKey()), Timeout: 3 * time.Second})
+	client, err := ssh.Dial("tcp", address, protocolClientConfig(config, config.Users[0]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +107,7 @@ func protocolListen(t *testing.T, server *Server) (string, <-chan error) {
 	go func() {
 		connection, err := listener.Accept()
 		if err == nil {
-			err = server.ServeConn(ctx, connection, Identity{IdentityID: "identity-a", PublicURLID: "url-a"})
+			err = server.ServeConn(ctx, connection)
 		}
 		done <- err
 	}()
@@ -125,7 +161,7 @@ func TestSSHExactIdentityAndHostAllowlist(t *testing.T) {
 			if test == "host-user" {
 				user = "other"
 			}
-			client, err := ssh.Dial("tcp", address, &ssh.ClientConfig{User: user, HostKeyCallback: ssh.FixedHostKey(config.HostKey.PublicKey()), Timeout: time.Second})
+			client, err := ssh.Dial("tcp", address, protocolClientConfig(config, user))
 			if err == nil {
 				client.Close()
 				t.Fatal("accepted denied SSH user")

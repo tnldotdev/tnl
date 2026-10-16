@@ -47,7 +47,7 @@ func rootSSHClient(t *testing.T, runner *Runner, recheck time.Duration) (*ssh.Cl
 		t.Fatal(err)
 	}
 	address, done := protocolListen(t, server)
-	client, err := ssh.Dial("tcp", address, &ssh.ClientConfig{User: *rootUser, HostKeyCallback: ssh.FixedHostKey(config.HostKey.PublicKey()), Timeout: time.Second})
+	client, err := ssh.Dial("tcp", address, protocolClientConfig(config, *rootUser))
 	if err != nil {
 		t.Fatal(err)
 	}

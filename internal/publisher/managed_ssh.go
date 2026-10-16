@@ -2,7 +2,6 @@ package publisher
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
@@ -35,70 +34,57 @@ func validateManagedSSH(c *SSHConfig, target string, targetTLS bool, tlsName str
 	return nil
 }
 
-type AuthorizeSSHVisitor func(context.Context, Visitor, tls.ConnectionState, string) (controlclient.SSHVisitorDecision, error)
+// PublisherSSHAttempt is implemented by a client scoped to one publish run
+// token. the generated API adapter belongs with the control API integration;
+// a missing adapter fails publication closed.
+type PublisherSSHAttempt = managedssh.PublisherSSHAttempt
 
-type SSHVisitorAuthorizer interface {
-	AuthorizeSSHVisitor(context.Context, controlclient.VisitorCertificateScope, tls.ConnectionState, string) (controlclient.SSHVisitorDecision, error)
-}
-
-func sshVisitorAuthorization(client SSHVisitorAuthorizer, scope controlclient.VisitorCertificateScope) AuthorizeSSHVisitor {
-	return func(ctx context.Context, visitor Visitor, state tls.ConnectionState, username string) (controlclient.SSHVisitorDecision, error) {
-		if _, err := visitorAuthorizationKey(visitor, state); err != nil || client == nil || scope.PublicURLID != visitor.Run.PublicURLID || scope.PublishRunID != visitor.Run.PublishRunID || scope.PublishRunNumber != visitor.Run.Number || len(state.PeerCertificates) == 0 {
-			return controlclient.SSHVisitorDecision{}, livevisitor.ErrDenied
-		}
-		bound := scope
-		bound.SourceIP = visitor.Source.Addr().Unmap()
-		decision, err := client.AuthorizeSSHVisitor(ctx, bound, state, username)
-		if err != nil {
-			var problem *controlclient.ProblemError
-			if errors.Is(err, controlclient.ErrUnauthenticated) || errors.Is(err, controlclient.ErrNotFound) || errors.Is(err, controlclient.ErrStatusConflict) || errors.As(err, &problem) && (problem.Status == http.StatusForbidden || problem.Status == http.StatusUnauthorized || problem.Status == http.StatusNotFound || problem.Status == http.StatusConflict) {
-				return controlclient.SSHVisitorDecision{}, errors.Join(livevisitor.ErrDenied, err)
-			}
-			return controlclient.SSHVisitorDecision{}, err
-		}
-		if decision.IdentityID == "" || decision.PublicURLID != scope.PublicURLID || decision.SSHUser != username || !time.Now().Before(decision.ValidUntil) || decision.ValidUntil.After(state.PeerCertificates[0].NotAfter) {
-			return controlclient.SSHVisitorDecision{}, livevisitor.ErrDenied
-		}
-		return decision, nil
+func (d *tcpForwarding) serveSSH(conn net.Conn, session *visitorSession) error {
+	v := session.visitor
+	if !v.Header.AccessPending || v.Run.Hostname == "" || v.Run.PublicURLID == "" || v.Run.PublishRunID == "" || v.Run.Number == 0 ||
+		v.Header.PublicURLID != v.Run.PublicURLID || v.Header.PublishRunID != v.Run.PublishRunID || v.Header.PublishRunNumber != v.Run.Number ||
+		v.Header.VisitorConnectionID == "" || !v.Source.IsValid() || v.Source.Addr().Zone() != "" || d.attempts == nil || session.promote == nil {
+		return livevisitor.ErrDenied
 	}
-}
-
-func (d *tcpForwarding) serveSSH(ctx context.Context, visitor net.Conn, config *tls.Config, session *visitorSession) error {
-	visitorTLS := config.Clone()
-	visitorTLS.NextProtos = nil
-	visitorTLS.ClientAuth = tls.RequireAnyClientCert
-	visitorTLS.SessionTicketsDisabled = true
-	secured := tls.Server(visitor, visitorTLS)
-	if err := secured.HandshakeContext(ctx); err != nil {
-		return err
-	}
-	state := secured.ConnectionState()
-	decision, err := d.authorizeSSH(ctx, session.visitor, state, "")
-	if err != nil {
-		return err
-	}
+	bound := managedssh.Binding{Hostname: v.Run.Hostname, PublicURLID: v.Run.PublicURLID, PublishRunID: v.Run.PublishRunID, PublishRunNumber: v.Run.Number,
+		VisitorConnectionID: v.Header.VisitorConnectionID, Source: v.Source}
+	var release func()
 	runtime, err := managedssh.New(managedssh.Config{
-		HostKey: d.ssh.HostKey, Users: d.ssh.Users, Runner: d.ssh.Runner,
-		Authorize: func(ctx context.Context, identity managedssh.Identity, user string) (managedssh.Decision, error) {
-			if identity.IdentityID != decision.IdentityID || identity.PublicURLID != decision.PublicURLID {
-				return managedssh.Decision{}, livevisitor.ErrDenied
-			}
-			allowed, err := d.authorizeSSH(ctx, session.visitor, state, user)
-			if err != nil {
-				return managedssh.Decision{}, err
-			}
-			return managedssh.Decision{IdentityID: allowed.IdentityID, PublicURLID: allowed.PublicURLID, SSHUser: allowed.SSHUser, ValidUntil: allowed.ValidUntil}, nil
+		HostKey: d.ssh.HostKey, Users: d.ssh.Users, Runner: d.ssh.Runner, Binding: bound, Attempts: d.attempts, ControlURL: d.controlURL,
+		Authorize: sshSessionAuthorization(d.attempts, bound),
+		Promote: func(ctx context.Context) error {
+			var err error
+			release, err = d.admit(ctx, session)
+			return err
 		},
 	})
 	if err != nil {
 		return err
 	}
-	release, err := d.admit(ctx, session)
-	if err != nil {
-		return err
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
+	return runtime.ServeConn(session.life, conn)
+}
+
+func sshSessionAuthorization(client PublisherSSHAttempt, bound managedssh.Binding) func(context.Context, managedssh.Identity, string) (managedssh.Decision, error) {
+	return func(ctx context.Context, identity managedssh.Identity, user string) (managedssh.Decision, error) {
+		check := bound
+		check.Username = user
+		check.SessionID = identity.SessionID
+		current, err := client.RecheckSSHSession(ctx, check, identity.IdentityID)
+		if err != nil {
+			var problem *controlclient.ProblemError
+			if errors.Is(err, controlclient.ErrUnauthenticated) || errors.Is(err, controlclient.ErrNotFound) || errors.Is(err, controlclient.ErrStatusConflict) || errors.As(err, &problem) && (problem.Status == http.StatusUnauthorized || problem.Status == http.StatusForbidden || problem.Status == http.StatusNotFound || problem.Status == http.StatusConflict) {
+				return managedssh.Decision{}, errors.Join(livevisitor.ErrDenied, err)
+			}
+			return managedssh.Decision{}, err
+		}
+		if !current.Approved || current.IdentityID != identity.IdentityID || current.Binding != check || !time.Now().Before(current.ValidUntil) {
+			return managedssh.Decision{}, livevisitor.ErrDenied
+		}
+		return managedssh.Decision{IdentityID: identity.IdentityID, PublicURLID: bound.PublicURLID, SSHUser: user, ValidUntil: current.ValidUntil}, nil
 	}
-	defer release()
-	_ = visitor.SetDeadline(time.Time{})
-	// only connection setup uses ctx's short deadline. the run owns the session.
-	return runtime.ServeConn(session.life, secured, managedssh.Identity{IdentityID: decision.IdentityID, PublicURLID: decision.PublicURLID})
 }

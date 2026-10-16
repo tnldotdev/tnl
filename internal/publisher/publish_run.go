@@ -63,14 +63,24 @@ func runSession(
 		}
 		publicPort = uint16(*setup.PublicUrl.PublicPort)
 	}
-	plan, err := certificateidentity.CanonicalPlan(setup.CertificatePlan)
-	if err != nil || !certificateidentity.Covers(plan.Identifiers, setup.PublicUrl.CanonicalHostname) {
-		return errors.New("publisher: server returned an invalid certificate plan")
-	}
-	setup.CertificatePlan = plan
-	state, err := config.State.Certificates(setup.PublicUrl.TeamId, plan)
-	if err != nil {
-		return err
+	sshRun := setup.PublicUrl.ServiceProtocol == controlv1.Ssh
+	var plan controlv1.CertificatePlan
+	var state *clientstate.CertificateCache
+	var err error
+	if sshRun {
+		if setup.CertificatePlan.Identifiers != nil || setup.CertificatePlan.CacheKey != "" || setup.CertificatePlan.Scope != "" || setup.CertificatePlan.ChallengeMethod != "" {
+			return errors.New("publisher: SSH run must not have a public URL certificate plan")
+		}
+	} else {
+		plan, err = certificateidentity.CanonicalPlan(setup.CertificatePlan)
+		if err != nil || !certificateidentity.Covers(plan.Identifiers, setup.PublicUrl.CanonicalHostname) {
+			return errors.New("publisher: server returned an invalid certificate plan")
+		}
+		setup.CertificatePlan = plan
+		state, err = config.State.Certificates(setup.PublicUrl.TeamId, plan)
+		if err != nil {
+			return err
+		}
 	}
 	publishRunToken := credentials.PublishRunToken(setup.PublishRunToken)
 	if _, _, err := credentials.ParsePublishRunToken(publishRunToken); err != nil {
@@ -184,17 +194,15 @@ func runSession(
 	var material clientstate.Material
 	identity := PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, Number: version}
 	authorizeVisitor := config.AuthorizeVisitorCertificate
-	var authorizeSSH AuthorizeSSHVisitor
-	if config.ServiceProtocol == controlv1.Ssh {
-		var candidate any = config.Control
-		if config.VisitorControl != nil {
-			candidate = config.VisitorControl
+	var sshAttempts PublisherSSHAttempt
+	if sshRun {
+		if config.SSHAttemptsForRun == nil {
+			return errors.New("managed SSH requires a publisher SSH attempt client")
 		}
-		client, ok := candidate.(SSHVisitorAuthorizer)
-		if !ok {
-			return errors.New("managed SSH requires current visitor authorization")
+		sshAttempts = config.SSHAttemptsForRun(publishRunToken)
+		if sshAttempts == nil {
+			return errors.New("managed SSH requires a publisher SSH attempt client")
 		}
-		authorizeSSH = sshVisitorAuthorization(client, controlclient.VisitorCertificateScope{PublishRunID: setup.PublishRun.Id, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version, PublishRunToken: publishRunToken})
 	}
 	revalidateVisitor := config.RevalidateVisitorCertificate
 	if revalidateVisitor == nil {
@@ -221,13 +229,13 @@ func runSession(
 		return err
 	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
-		SSH: config.SSH, AuthorizeSSHVisitor: authorizeSSH,
+		SSH: config.SSH, SSHAttempts: sshAttempts,
 		RevalidateVisitorCertificate: revalidateVisitor,
 
 		BrowserAccess:         browserAccessForRun(config, setup, publishRunToken, shareRuntime),
 		BrowserLoginAvailable: config.BrowserLoginAvailable,
 		PreviewID:             config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, PublishRunNumber: version,
-		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, ResolveTarget: config.ResolveTarget, TargetOptions: config.TargetOptions, CertificatePlan: plan,
+		Hostname: setup.PublicUrl.CanonicalHostname, ControlURL: config.ControlURL, Target: config.Target, ResolveTarget: config.ResolveTarget, TargetOptions: config.TargetOptions, CertificatePlan: plan,
 		ServiceProtocol: setup.PublicUrl.ServiceProtocol, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS,
 		Purpose:                     setup.PublicUrl.Purpose,
 		AccessMode:                  setup.PublicUrl.AccessMode,
@@ -351,12 +359,14 @@ func runSession(
 	if err := connections.WaitReady(ctx, 1); err != nil {
 		return err
 	}
-	if err := progress("certificate"); err != nil {
-		return err
-	}
-	material, err = issueInitialCertificate(ctx, config.Control, route, state, setup)
-	if err != nil {
-		return err
+	if !sshRun {
+		if err := progress("certificate"); err != nil {
+			return err
+		}
+		material, err = issueInitialCertificate(ctx, config.Control, route, state, setup)
+		if err != nil {
+			return err
+		}
 	}
 	if err := connections.WaitReady(ctx, 2); err != nil {
 		return err
@@ -376,6 +386,14 @@ func runSession(
 		return err
 	}
 	cancelProvisioning()
+	if sshRun {
+		select {
+		case <-route.admission.completed:
+			return nil
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
+	}
 	return runCertificateRenewals(ctx, config, setup, route, state, material)
 }
 
@@ -389,13 +407,19 @@ func confirmPublishRunReady(
 ) error {
 	for {
 		confirmed := false
-		err := route.withValidCertificate(func() error {
+		confirm := func() error {
 			if err := control.MarkPublishRunReady(ctx, setup.PublishRun.Id, uint64(setup.PublishRun.PublishRunNumber), token); err != nil {
 				return err
 			}
 			confirmed = true
 			return ready()
-		})
+		}
+		var err error
+		if route.tcp != nil && route.tcp.protocol == controlv1.Ssh {
+			err = confirm()
+		} else {
+			err = route.withValidCertificate(confirm)
+		}
 		if err == nil || confirmed {
 			return err
 		}

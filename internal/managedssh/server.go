@@ -6,9 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
+	"net/url"
 	"os"
+	"regexp"
 	"slices"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gliderssh "github.com/tailscale/gliderssh"
@@ -22,11 +27,60 @@ var (
 	ErrUnavailable   = errors.New("managed SSH child is unavailable")
 )
 
-// identity comes from the authenticated outer visitor TLS connection, never
-// from the SSH username, environment, key, or channel payload.
+// identity is returned by control for this exact SSH attempt.
 type Identity struct {
 	IdentityID  string
 	PublicURLID string
+	SessionID   string
+}
+
+// binding is built from the trusted relay stream and the completed SSH key
+// exchange. session id is the hex-encoded SSH transport session hash.
+type Binding struct {
+	Hostname, PublicURLID, PublishRunID, VisitorConnectionID string
+	PublishRunNumber                                         uint64
+	Source                                                   netip.AddrPort
+	Username, SessionID                                      string
+}
+
+type Attempt struct {
+	ID, ApprovalURL, Code string
+	ValidUntil            time.Time
+}
+
+type AttemptDecision struct {
+	Binding    Binding
+	IdentityID string
+	Approved   bool
+	ValidUntil time.Time
+}
+
+// PublisherSSHAttempt is the expected publisher-to-control boundary. start
+// returns an opaque ID, a control-host HTTPS URL without the code, a separate
+// eight-character base32 code, and a deadline at most five minutes away. wait
+// returns only a terminal decision. claim atomically consumes the approved
+// attempt for the supplied exact binding; cancel invalidates it on exit.
+// recheck returns current access for the claimed identity and account. decision
+// responses echo the exact binding and give a hard permission deadline. all
+// calls must honor cancellation and authenticate the scoped publish run token.
+type PublisherSSHAttempt interface {
+	StartSSHAttempt(context.Context, Binding) (Attempt, error)
+	WaitSSHAttempt(context.Context, string) (AttemptDecision, error)
+	ClaimSSHAttempt(context.Context, string, Binding) (AttemptDecision, error)
+	CancelSSHAttempt(context.Context, string) error
+	RecheckSSHSession(context.Context, Binding, string) (AttemptDecision, error)
+}
+
+var approvalCode = regexp.MustCompile(`^[A-Z2-7]{8}$`)
+
+func validAttempt(a Attempt, controlOrigin string) bool {
+	u, err := url.Parse(a.ApprovalURL)
+	origin, originErr := url.Parse(controlOrigin)
+	return a.ID != "" && len(a.ID) <= 128 && len(a.ApprovalURL) <= 2048 && approvalCode.MatchString(a.Code) && err == nil && originErr == nil && origin.Scheme == "https" && origin.Host != "" && origin.User == nil && origin.Path == "" && origin.RawQuery == "" && origin.Fragment == "" && u.Scheme == origin.Scheme && u.Host == origin.Host && u.User == nil && u.Fragment == "" && u.RawQuery == "" && !strings.Contains(a.ApprovalURL, a.Code) && time.Now().Before(a.ValidUntil) && !a.ValidUntil.After(time.Now().Add(5*time.Minute))
+}
+
+func validDecision(d AttemptDecision, bound Binding) bool {
+	return d.Approved && d.Binding == bound && d.IdentityID != "" && time.Now().Before(d.ValidUntil)
 }
 
 type Decision struct {
@@ -37,10 +91,15 @@ type Decision struct {
 }
 
 type Config struct {
-	HostKey ssh.Signer
-	Users   []string
-	// Authorize must honor context cancellation. it checks the current control
-	// grant for the supplied TLS identity and exact requested OS username.
+	HostKey    ssh.Signer
+	Users      []string
+	Attempts   PublisherSSHAttempt
+	ControlURL string
+	// binding contains trusted source, run, visitor id and host-side SSH account.
+	Binding Binding
+	// promote must receive ingress acknowledgement before auth succeeds.
+	Promote func(context.Context) error
+	// Authorize rechecks the live claimed identity and exact account.
 	Authorize func(context.Context, Identity, string) (Decision, error)
 	Runner    *Runner
 	// positive decisions are refreshed at this interval, or earlier at expiry.
@@ -70,7 +129,7 @@ func New(config Config) (*Server, error) {
 
 // validation injection is private to safe same-uid protocol tests.
 func newServer(config Config, euid int, validate func([]string) error) (*Server, error) {
-	if euid != 0 || config.HostKey == nil || config.Authorize == nil || ValidateUserNames(config.Users) != nil || validate == nil || config.RecheckInterval < 0 || config.MaxChannels < 0 || config.MaxChannels > 256 {
+	if euid != 0 || config.HostKey == nil || config.Authorize == nil || config.Attempts == nil || config.Promote == nil || ValidateUserNames(config.Users) != nil || validate == nil || config.RecheckInterval < 0 || config.MaxChannels < 0 || config.MaxChannels > 256 {
 		return nil, ErrConfiguration
 	}
 	if config.RecheckInterval == 0 {
@@ -87,15 +146,18 @@ func newServer(config Config, euid int, validate func([]string) error) (*Server,
 }
 
 // ServeConn takes ownership of conn and joins all child work before returning.
-// the caller must complete and authorize outer mTLS before handing it over.
-func (s *Server) ServeConn(ctx context.Context, conn net.Conn, identity Identity) error {
+// the caller must verify trusted PROXY v2 and relay run metadata first.
+func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 	if conn == nil {
 		return ErrConfiguration
 	}
 	defer conn.Close()
-	if identity.IdentityID == "" || identity.PublicURLID == "" {
+	bound := s.config.Binding
+	if bound.Hostname == "" || bound.PublicURLID == "" || bound.PublishRunID == "" || bound.PublishRunNumber == 0 || bound.VisitorConnectionID == "" || !bound.Source.IsValid() || bound.Source.Addr().Zone() != "" {
 		return ErrUnauthorized
 	}
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	guarded := &approvalConn{Conn: conn}
 	life, cancel := context.WithCancel(ctx)
 	defer cancel()
 	permission := &connectionPermission{}
@@ -105,9 +167,77 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn, identity Identity
 	work := &connectionWork{limit: s.config.MaxChannels}
 	var result error
 	var authDone sync.WaitGroup
+	var pending Attempt
+	var ready bool
+	var identity Identity
+	defer func() {
+		if pending.ID != "" {
+			cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer stop()
+			_ = s.config.Attempts.CancelSSHAttempt(cleanup, pending.ID)
+		}
+	}()
 	server := &gliderssh.Server{
 		HostSigners: []gliderssh.Signer{s.config.HostKey},
-		Version:     "tnl", HandshakeTimeout: 10 * time.Second,
+		Version:     "tnl",
+		BannerHandler: func(metadata gliderssh.Context) string {
+			if pending.ID != "" {
+				return ""
+			}
+			bound.Username, bound.SessionID = metadata.User(), metadata.SessionID()
+			if !slices.Contains(s.config.Users, bound.Username) || s.validateUsers([]string{bound.Username}) != nil || bound.SessionID == "" || life.Err() != nil {
+				return ""
+			}
+			startCtx, stop := context.WithTimeout(life, 5*time.Second)
+			defer stop()
+			a, err := s.config.Attempts.StartSSHAttempt(startCtx, bound)
+			pending = a
+			if err != nil || !validAttempt(a, s.config.ControlURL) || life.Err() != nil {
+				return ""
+			}
+			ready = true
+			_ = conn.SetDeadline(a.ValidUntil)
+			return fmt.Sprintf("open %s\ncode: %s\napprove %s on the control host; this SSH connection will continue automatically\n", a.ApprovalURL, a.Code, bound.Username)
+		},
+		KeyboardInteractiveHandler: func(metadata gliderssh.Context, _ ssh.KeyboardInteractiveChallenge) bool {
+			actual := bound
+			actual.Username, actual.SessionID = metadata.User(), metadata.SessionID()
+			if !ready || actual != bound || life.Err() != nil {
+				return false
+			}
+			// SSH parsing is paused in this callback. any further client input,
+			// including EOF, invalidates the waiting attempt without a prompt.
+			guarded.watch(cancel)
+			waitCtx, stop := context.WithDeadline(life, pending.ValidUntil)
+			defer stop()
+			decision, err := s.config.Attempts.WaitSSHAttempt(waitCtx, pending.ID)
+			if err != nil || !validDecision(decision, bound) || life.Err() != nil || !time.Now().Before(pending.ValidUntil) {
+				return false
+			}
+			claim, err := s.config.Attempts.ClaimSSHAttempt(waitCtx, pending.ID, bound)
+			if err != nil || !validDecision(claim, bound) || claim.IdentityID != decision.IdentityID || life.Err() != nil {
+				return false
+			}
+			identity = Identity{IdentityID: claim.IdentityID, PublicURLID: bound.PublicURLID, SessionID: bound.SessionID}
+			checkCtx, checkStop := context.WithTimeout(waitCtx, 5*time.Second)
+			current, err := s.authorize(checkCtx, identity, bound.Username)
+			checkStop()
+			if err != nil || waitCtx.Err() != nil || life.Err() != nil || !time.Now().Before(current.ValidUntil) {
+				return false
+			}
+			current.ValidUntil = minTime(current.ValidUntil, claim.ValidUntil)
+			promoteCtx, promoteStop := context.WithTimeout(waitCtx, 10*time.Second)
+			err = s.config.Promote(promoteCtx)
+			promoteStop()
+			if err != nil || waitCtx.Err() != nil || life.Err() != nil || !time.Now().Before(current.ValidUntil) {
+				return false
+			}
+			_ = conn.SetDeadline(time.Time{})
+			permission.set(current, true)
+			authDone.Go(func() { s.renew(life, identity, bound.Username, current, permission, cancel) })
+			guarded.resume()
+			return true
+		},
 		// explicit empty maps avoid mutable library defaults and all reverse
 		// forwarding handlers. only session and direct-tcpip are installed.
 		RequestHandlers: map[string]gliderssh.RequestHandler{},
@@ -115,22 +245,7 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn, identity Identity
 		ServerConfigCallback: func(gliderssh.Context) *ssh.ServerConfig {
 			return &ssh.ServerConfig{
 				MaxAuthTries: 1,
-				// use this attempt's exact username. gliderssh's context caches
-				// metadata from the first authentication attempt.
-				NoClientAuthCallback: func(metadata ssh.ConnMetadata) (*ssh.Permissions, error) {
-					username := metadata.User()
-					checkCtx, stop := context.WithTimeout(life, 10*time.Second)
-					decision, err := s.authorize(checkCtx, identity, username)
-					stop()
-					if err != nil {
-						return nil, ErrUnauthorized
-					}
-					permission.set(decision, true)
-					authDone.Go(func() {
-						s.renew(life, identity, username, decision, permission, cancel)
-					})
-					return nil, nil
-				},
+				NoClientAuth: false,
 			}
 		},
 		ConnectionFailedCallback: func(_ net.Conn, err error) { result = err },
@@ -151,7 +266,7 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn, identity Identity
 	}
 	server.ChannelHandlers["session"] = wrap(s.serveSession)
 	server.ChannelHandlers["direct-tcpip"] = wrap(s.serveForward)
-	server.HandleConn(conn)
+	server.HandleConn(guarded)
 	cancel()
 	work.join()
 	authDone.Wait()
@@ -159,6 +274,61 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn, identity Identity
 		return ctx.Err()
 	}
 	return result
+}
+
+// approvalConn reads one post-auth-request byte while control waits. after
+// approval it replays that byte to SSH, avoiding a concurrent read or a
+// deadline interruption of the SSH parser. EOF cancels the pending attempt.
+type approvalConn struct {
+	net.Conn
+	watching     atomic.Bool
+	approved     atomic.Bool
+	preauthBytes atomic.Int64
+	done         chan struct{}
+	first        [1]byte
+	n            int
+	err          error
+	mu           sync.Mutex
+}
+
+func (c *approvalConn) watch(cancel context.CancelFunc) {
+	c.done = make(chan struct{})
+	c.watching.Store(true)
+	go func() {
+		c.n, c.err = c.Conn.Read(c.first[:])
+		if !c.approved.Load() {
+			cancel()
+		}
+		close(c.done)
+	}()
+}
+func (c *approvalConn) resume() { c.approved.Store(true) }
+func (c *approvalConn) Read(b []byte) (int, error) {
+	if len(b) == 0 {
+		return 0, nil
+	}
+	if c.watching.Load() {
+		<-c.done
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.watching.Load() {
+			c.watching.Store(false)
+			if c.n != 0 {
+				if !c.approved.Load() {
+					return 0, ErrUnauthorized
+				}
+				b[0] = c.first[0]
+				return 1, c.err
+			}
+			return 0, c.err
+		}
+	}
+	n, err := c.Conn.Read(b)
+	if !c.approved.Load() && c.preauthBytes.Add(int64(n)) > 64<<10 {
+		_ = c.Conn.Close()
+		return 0, ErrUnauthorized
+	}
+	return n, err
 }
 
 func (s *Server) authorize(ctx context.Context, identity Identity, username string) (Decision, error) {
