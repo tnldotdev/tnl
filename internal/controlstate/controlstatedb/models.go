@@ -489,6 +489,7 @@ type ControlPublicUrl struct {
 	Namespace                   string
 	Purpose                     string
 	ServiceProtocol             string
+	SSHHostKey                  pgtype.Text
 	PublicPort                  pgtype.Int4
 	PublicURLScope              string
 	PolicyRevision              int64
@@ -938,6 +939,7 @@ type ControlVisitorGrant struct {
 	TeamID              string
 	Kind                string
 	IdentityID          pgtype.Text
+	SSHUser             pgtype.Text
 	CreatedByIdentityID string
 	IdempotencyKey      string
 	RequestDigest       []byte
@@ -952,6 +954,7 @@ type ControlVisitorInvitation struct {
 	TeamID              string
 	NormalizedEmail     string
 	TokenDigest         []byte
+	SSHUser             pgtype.Text
 	CreatedByIdentityID string
 	IdempotencyKey      string
 	RequestDigest       []byte
