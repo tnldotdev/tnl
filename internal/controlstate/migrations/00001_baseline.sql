@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-managed-ssh')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-managed-ssh');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -331,6 +331,7 @@ CREATE TABLE control.public_urls (
     namespace text NOT NULL DEFAULT '',
     purpose text NOT NULL CHECK (purpose IN ('app', 'alias', 'demo', 'oauth', 'webhooks')),
     service_protocol text NOT NULL DEFAULT 'http' CHECK (service_protocol IN ('http', 'postgres', 'mysql', 'redis', 'ssh')),
+    ssh_host_key text,
     public_port integer CHECK (public_port BETWEEN 1024 AND 65535),
     public_url_scope text NOT NULL CHECK (public_url_scope IN ('member', 'shared')),
     policy_revision bigint NOT NULL CHECK (policy_revision >= 1),
@@ -366,6 +367,11 @@ CREATE TABLE control.public_urls (
     CHECK (target <> '' OR (purpose = 'app' AND (NOT ephemeral OR service_protocol <> 'http'))),
     CHECK (service_protocol = 'http' OR (purpose = 'app' AND target = '')),
     CHECK (service_protocol <> 'http' OR public_port IS NULL),
+    CONSTRAINT public_urls_managed_ssh_check CHECK (
+        (service_protocol = 'ssh' AND NOT ephemeral AND target = '' AND ssh_host_key IS NOT NULL
+            AND btrim(ssh_host_key) <> '' AND octet_length(ssh_host_key) <= 1024)
+        OR (service_protocol <> 'ssh' AND ssh_host_key IS NULL)
+    ),
     CONSTRAINT public_urls_private_digest_check CHECK (
         (lifecycle_state = 'deleted' AND request_digest_ciphertext IS NULL AND request_digest_storage_key_id IS NULL)
         OR (lifecycle_state <> 'deleted' AND request_digest_ciphertext IS NOT NULL AND request_digest_storage_key_id IS NOT NULL)
@@ -1341,6 +1347,7 @@ CREATE TABLE control.visitor_grants (
     team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
     kind text NOT NULL CHECK (kind IN ('team', 'identity')),
     identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    ssh_user text CHECK (ssh_user IS NULL OR (ssh_user ~ '^[a-z_][a-z0-9_-]{0,31}$' AND ssh_user <> 'root')),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL, request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     created_at timestamptz NOT NULL, expires_at timestamptz, revoked_at timestamptz,
@@ -1354,6 +1361,7 @@ CREATE TABLE control.visitor_invitations (
     id text PRIMARY KEY CHECK (id <> ''), public_url_id text NOT NULL REFERENCES control.public_urls(id) ON DELETE RESTRICT,
     team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
     normalized_email text NOT NULL, token_digest bytea NOT NULL CHECK (octet_length(token_digest) = 32),
+    ssh_user text CHECK (ssh_user IS NULL OR (ssh_user ~ '^[a-z_][a-z0-9_-]{0,31}$' AND ssh_user <> 'root')),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     idempotency_key text NOT NULL, request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL CHECK (expires_at > created_at),
@@ -1383,8 +1391,8 @@ RETURNS TABLE(reason text, expires_at timestamptz) LANGUAGE sql STABLE AS $$
     LEFT JOIN control.team_memberships m ON m.team_id = u.team_id AND m.identity_id = i.id AND m.removed_at IS NULL
     CROSS JOIN LATERAL (
         SELECT 'owner'::text AS reason, NULL::timestamptz AS expires_at, 0 AS priority
-        WHERE (u.public_url_scope = 'member' AND m.id = u.membership_id)
-           OR (u.public_url_scope = 'shared' AND m.role IN ('owner', 'admin'))
+        WHERE u.service_protocol <> 'ssh' AND ((u.public_url_scope = 'member' AND m.id = u.membership_id)
+           OR (u.public_url_scope = 'shared' AND m.role IN ('owner', 'admin')))
         UNION ALL
         SELECT 'preview_team', NULL::timestamptz, 1
         WHERE u.service_protocol = 'http' AND m.id IS NOT NULL AND EXISTS (
@@ -1395,10 +1403,12 @@ RETURNS TABLE(reason text, expires_at timestamptz) LANGUAGE sql STABLE AS $$
         SELECT CASE g.kind WHEN 'team' THEN 'team_grant' ELSE 'identity_grant' END, g.expires_at, 2
         FROM control.visitor_grants g WHERE g.public_url_id = u.id AND g.team_id = u.team_id AND g.revoked_at IS NULL
           AND (g.expires_at IS NULL OR g.expires_at > at_time)
+          AND ((u.service_protocol = 'ssh' AND g.ssh_user IS NOT NULL)
+            OR (u.service_protocol <> 'ssh' AND g.ssh_user IS NULL))
           AND ((g.kind = 'team' AND m.id IS NOT NULL) OR (g.kind = 'identity' AND g.identity_id = i.id))
     ) permission
     WHERE u.id = url_id AND u.lifecycle_state = 'enabled' AND u.purpose IN ('app', 'alias')
-      AND u.service_protocol IN ('http', 'postgres', 'mysql', 'redis')
+      AND u.service_protocol IN ('http', 'postgres', 'mysql', 'redis', 'ssh')
     ORDER BY permission.priority, permission.expires_at DESC NULLS FIRST LIMIT 1;
 $$;
 -- +goose StatementEnd
