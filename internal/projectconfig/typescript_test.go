@@ -202,6 +202,8 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 		"inspection":        {`export default {services: {api: {inspection: {mode: "all"}}}};`, "services.api.inspection: mode must be none or summary"},
 		"retired dev":       {`export default {services: {api: {dev: {startupTimeout: "+1s"}}}};`, "dev"},
 		"target":            {`export default {services: {api: {target: {type: "address", address: "https://example.com/path"}}}};`, "services.api: target.address:"},
+		"raw SSH":           {`export default {services: {shell: {protocol: "ssh", inspection: {mode: "none"}, target: {type: "address", address: "sshd:22"}}}};`, "tnl ssh enable"},
+		"raw SSH TLS":       {`export default () => ({services: {shell: {protocol: ["s", "sh"].join(""), target: {type: "address", address: "sshd:22", tls: {serverName: "sshd", caFile: "ca.pem"}}}}});`, "tnl ssh enable"},
 		"ip":                {`export default {services: {api: {tunnel: {access: {ip: ["192.0.2.7/24"]}}}}};`, "distinct canonical addresses or prefixes"},
 		"duplicate":         {`export default {services: {api: {tunnel: {access: {ip: ["192.0.2.1", "192.0.2.1/32"]}}}}};`, "distinct canonical addresses or prefixes"},
 	} {

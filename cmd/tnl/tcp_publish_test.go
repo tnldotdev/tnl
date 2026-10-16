@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -37,7 +41,7 @@ func TestTCPPublishAndEnrollmentFlags(t *testing.T) {
 	}
 }
 
-func TestTCPInspectionSelectionDefaultsToSummaryExceptSSH(t *testing.T) {
+func TestTCPInspectionSelectionKeepsDatabaseModes(t *testing.T) {
 	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql, controlv1.Redis} {
 		flags := publishCommand{tunnelFlags: tunnelFlags{InspectionMode: config.InspectionSummary}}
 		if err := selectPublishInspection(&flags, protocol); err != nil || flags.InspectionMode != config.InspectionSummary {
@@ -47,17 +51,6 @@ func TestTCPInspectionSelectionDefaultsToSummaryExceptSSH(t *testing.T) {
 		flags.inspectionModeFromCLI = true
 		if err := selectPublishInspection(&flags, protocol); err != nil || flags.InspectionMode != config.InspectionNone {
 			t.Fatalf("%s explicit none inspection = %q, %v", protocol, flags.InspectionMode, err)
-		}
-	}
-	flags := publishCommand{tunnelFlags: tunnelFlags{InspectionMode: config.InspectionSummary}}
-	if err := selectPublishInspection(&flags, controlv1.Ssh); err != nil || flags.InspectionMode != config.InspectionNone {
-		t.Fatalf("SSH default inspection = %q, %v", flags.InspectionMode, err)
-	}
-	for _, explicit := range []tunnelFlags{{InspectionMode: config.InspectionSummary, inspectionModeFromCLI: true},
-		{InspectionMode: config.InspectionSummary, inspectionModeFromConfig: true}} {
-		flags := publishCommand{tunnelFlags: explicit}
-		if err := selectPublishInspection(&flags, controlv1.Ssh); err == nil {
-			t.Fatal("SSH accepted explicit summary inspection")
 		}
 	}
 }
@@ -113,31 +106,45 @@ func TestRedisPublishTargetAndAddress(t *testing.T) {
 	}
 }
 
-func TestSSHPublishTargetAndAddress(t *testing.T) {
-	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
+func TestSSHPublishRequiresManagedEnable(t *testing.T) {
+	for name, check := range map[string]func() error{
+		"protocol": func() error { _, err := publishProtocol("ssh"); return err },
+		"target":   func() error { _, err := normalizePublishTarget("sshd:22", controlv1.Ssh); return err },
+		"options": func() error {
+			return validateTCPPublishOptions(publishCommand{Target: "sshd:22"}, controlv1.Ssh)
+		},
+		"target TLS": func() error {
+			return validateTCPPublishOptions(publishCommand{Target: "sshd:22", TargetTLS: true, TargetTLSName: "sshd"}, controlv1.Ssh)
+		},
+		"saved URL": func() error {
+			_, err := enrolledTarget(controlv1.PublicURL{ServiceProtocol: controlv1.Ssh}, "sshd:22")
+			return err
+		},
+		"inspection": func() error {
+			return selectPublishInspection(&publishCommand{tunnelFlags: tunnelFlags{InspectionMode: config.InspectionNone}}, controlv1.Ssh)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := check()
+			var authored *sshCommandError
+			if !errors.As(err, &authored) || !strings.Contains(authored.action, "tnl ssh enable") {
+				t.Fatalf("raw SSH error = %v, want managed SSH setup hint", err)
+			}
+			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.InvalidTunnelFlags {
+				t.Fatalf("raw SSH reason = %q, %v", reason, ok)
+			}
+			var output bytes.Buffer
+			if !writeSSHCommandError(&output, "tnl publish", err) || !strings.Contains(output.String(), "tnl ssh enable") || strings.Contains(output.String(), "sshd:22") {
+				t.Fatalf("raw SSH diagnostic = %q", output.String())
+			}
+		})
 	}
-	if _, err := parser.Parse([]string{"publish", "sshd:22", "--protocol", "ssh", "--name", "shell"}); err != nil {
-		t.Fatal(err)
-	}
-	protocol, err := publishProtocol(flags.Publish.Protocol)
-	if err != nil || protocol != controlv1.Ssh {
-		t.Fatalf("SSH protocol = %q, %v", protocol, err)
-	}
-	if target, err := normalizePublishTarget(flags.Publish.Target, protocol); err != nil || target != "sshd:22" {
-		t.Fatalf("SSH private target = %q, %v", target, err)
-	}
-	if err := validateTCPPublishOptions(flags.Publish, protocol); err != nil {
-		t.Fatal(err)
-	}
+}
+
+func TestSavedManagedSSHPublicAddress(t *testing.T) {
 	port := 2222
-	if address, err := savedPublicAddress(controlv1.PublicURL{CanonicalHostname: "shell.example", ServiceProtocol: protocol, PublicPort: &port}); err != nil || address != "shell.example:2222" {
+	if address, err := savedPublicAddress(controlv1.PublicURL{CanonicalHostname: "shell.example", ServiceProtocol: controlv1.Ssh, PublicPort: &port}); err != nil || address != "shell.example:2222" {
 		t.Fatalf("SSH public address = %q, %v", address, err)
-	}
-	if err := validateTCPPublishOptions(publishCommand{openOptions: openOptions{Open: true}}, protocol); err == nil {
-		t.Fatal("SSH --open was silently ignored")
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
@@ -20,6 +19,9 @@ func publishProtocol(value string) (controlv1.PublicURLServiceProtocol, error) {
 		return controlv1.Http, nil
 	}
 	protocol := controlv1.PublicURLServiceProtocol(value)
+	if protocol == controlv1.Ssh {
+		return "", managedSSHEnableRequired()
+	}
 	if !protocol.Valid() {
 		return "", failure.Wrap("select service protocol", failure.InvalidTunnelFlags,
 			errors.New("unsupported service protocol"))
@@ -28,6 +30,9 @@ func publishProtocol(value string) (controlv1.PublicURLServiceProtocol, error) {
 }
 
 func normalizePublishTarget(target string, protocol controlv1.PublicURLServiceProtocol) (string, error) {
+	if protocol == controlv1.Ssh {
+		return "", managedSSHEnableRequired()
+	}
 	if protocol == controlv1.Http {
 		return localproxy.NormalizeTarget(target)
 	}
@@ -58,6 +63,9 @@ func savedPublicAddress(route controlv1.PublicURL) (string, error) {
 }
 
 func validateTCPPublishOptions(flags publishCommand, protocol controlv1.PublicURLServiceProtocol) error {
+	if protocol == controlv1.Ssh {
+		return managedSSHEnableRequired()
+	}
 	if protocol == controlv1.Http {
 		if flags.TargetTLS {
 			return failure.Wrap("validate publish options", failure.InvalidTunnelFlags,
@@ -85,16 +93,17 @@ func validateTCPPublishOptions(flags publishCommand, protocol controlv1.PublicUR
 	return nil
 }
 
-func selectPublishInspection(flags *publishCommand, protocol controlv1.PublicURLServiceProtocol) error {
-	if protocol != controlv1.Ssh {
-		return nil
-	}
-	if flags.InspectionMode == config.InspectionSummary && !flags.inspectionModeFromCLI && !flags.inspectionModeFromConfig {
-		flags.InspectionMode = config.InspectionNone
-	}
-	if flags.InspectionMode != config.InspectionNone {
-		return failure.Wrap("validate SSH inspection", failure.InvalidTunnelFlags,
-			errors.New("SSH supports --inspection-mode=none only"))
+func selectPublishInspection(_ *publishCommand, protocol controlv1.PublicURLServiceProtocol) error {
+	if protocol == controlv1.Ssh {
+		return managedSSHEnableRequired()
 	}
 	return nil
+}
+
+func managedSSHEnableRequired() error {
+	return &sshCommandError{
+		message: "SSH cannot use a private target; enable managed SSH with tnl ssh enable",
+		action:  "run tnl ssh enable --name HOST --user ACCOUNT to install the root-managed host service",
+		reason:  failure.InvalidTunnelFlags,
+	}
 }

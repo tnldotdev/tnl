@@ -51,7 +51,7 @@ type Services map[string]Service
 type Service struct {
 	Inspection *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
 	Tunnel     *Tunnel        `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Public URL and tunnel overrides for this service."`
-	Protocol   *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh"`
+	Protocol   *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis"`
 	Target     *ServiceTarget `json:"target,omitempty" yaml:"target,omitempty"`
 	HTTP       *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
 }
@@ -208,7 +208,7 @@ type TrafficLimits struct {
 }
 
 type Publish struct {
-	Protocol      *string `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh" jsonschema_description:"Service protocol for the public URL; defaults to http."`
+	Protocol      *string `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis" jsonschema_description:"Service protocol for the public URL; defaults to http."`
 	Target        *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher."`
 	TargetTLSName *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty" jsonschema_description:"Hostname expected in the target's TLS certificate; defaults to the target host."`
 	TargetTLS     *bool   `json:"target_tls,omitempty" yaml:"target_tls,omitempty" jsonschema_description:"Use verified TLS for the TCP target."`

@@ -748,7 +748,7 @@
                   },
                   "protocol": {
                     "type": "string",
-                    "enum": ["postgres", "mysql", "redis", "ssh"]
+                    "enum": ["postgres", "mysql", "redis"]
                   },
                   "target": {
                     "oneOf": [

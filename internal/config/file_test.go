@@ -311,16 +311,26 @@ func TestTCPInspectionModes(t *testing.T) {
 			t.Fatalf("%s summary inspection: %v", protocol, err)
 		}
 	}
-	protocol, mode := "ssh", InspectionSummary
-	project := TNL{Inspection: &Inspection{Mode: &mode}, Services: Services{"service": {
-		Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: targetPointer("22")},
-	}}}
-	if err := ValidateTNL(project); err == nil {
-		t.Fatal("SSH accepted summary inspection")
-	}
-	mode = InspectionNone
-	if err := ValidateTNL(project); err != nil {
-		t.Fatalf("SSH rejected none mode: %v", err)
+}
+
+func TestSSHProjectTargetsRequireManagedEnable(t *testing.T) {
+	protocol, mode, name, port := "ssh", InspectionNone, "sshd", 22
+	for _, target := range []*ServiceTarget{
+		nil,
+		{Type: "app"},
+		{Type: "address", Address: targetPointer("sshd:22")},
+		{Type: "address", Address: targetPointer("22"), TLS: &TargetTLS{ServerName: &name}},
+		{Type: "compose", Service: &name, Port: &port},
+		{Type: "docker", Container: &name, Port: &port},
+	} {
+		service := Service{Protocol: &protocol, Target: target, Inspection: &Inspection{Mode: &mode}}
+		project := TNL{Services: Services{"shell": service}}
+		if err := ValidateTNL(project); err == nil || !strings.Contains(err.Error(), "tnl ssh enable") {
+			t.Fatalf("SSH target %+v validation = %v, want managed SSH setup hint", target, err)
+		}
+		if _, err := ResolveServiceTarget(service, "127.0.0.1:22"); err == nil || !strings.Contains(err.Error(), "tnl ssh enable") {
+			t.Fatalf("SSH target %+v resolution = %v, want managed SSH setup hint", target, err)
+		}
 	}
 }
 
@@ -357,6 +367,8 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"service feedback":           {`{"version":1,"tnl":{"services":{"web":{"feedback":true}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      feedback: true\n", "feedback"},
 		"obsolete subdomain":         {`{"version":1,"tnl":{"tunnel":{"subdomain":"api"}}}`, "version: 1\ntnl:\n  tunnel:\n    subdomain: api\n", "subdomain"},
 		"target":                     {`{"version":1,"tnl":{"services":{"web":{"target":{"type":"address","address":"https://example.com/path"}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      target: {type: address, address: https://example.com/path}\n", "target.address:"},
+		"raw SSH":                    {`{"version":1,"tnl":{"services":{"shell":{"protocol":"ssh","inspection":{"mode":"none"},"target":{"type":"address","address":"sshd:22"}}}}}`, "version: 1\ntnl:\n  services:\n    shell:\n      protocol: ssh\n      inspection: {mode: none}\n      target: {type: address, address: 'sshd:22'}\n", "tnl ssh enable"},
+		"raw SSH target TLS":         {`{"version":1,"tnl":{"services":{"shell":{"protocol":"ssh","target":{"type":"address","address":"sshd:22","tls":{}}}}}}`, "version: 1\ntnl:\n  services:\n    shell:\n      protocol: ssh\n      target: {type: address, address: 'sshd:22', tls: {}}\n", "tnl ssh enable"},
 		"ip":                         {`{"version":1,"tnl":{"tunnel":{"access":{"ip":["192.0.2.7/24"]}}}}`, "version: 1\ntnl:\n  tunnel:\n    access: {ip: [192.0.2.7/24]}\n", "distinct canonical addresses or prefixes"},
 		"duplicate":                  {`{"version":1,"tnl":{"tunnel":{"access":{"ip":["192.0.2.1","192.0.2.1/32"]}}}}`, "version: 1\ntnl:\n  tunnel:\n    access: {ip: [192.0.2.1, 192.0.2.1/32]}\n", "distinct canonical addresses or prefixes"},
 		"obsolete provider grant":    {`{"version":1,"tnl":{"tunnel":{"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [stripe]\n", "allow_providers"},

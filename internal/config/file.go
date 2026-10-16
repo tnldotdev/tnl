@@ -211,12 +211,6 @@ func ValidateTNL(config TNL) error {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
 		protocol := Protocol(service)
-		if protocol != "http" {
-			selected := MergeInspection(config.Inspection, service.Inspection)
-			if protocol == "ssh" && selected != nil && selected.Mode != nil && *selected.Mode != InspectionNone {
-				return fmt.Errorf("services.%s: SSH inspection supports none only", name)
-			}
-		}
 		if err := validateLimits(tunnelLimits(service.Tunnel), tunnelLimits(config.Tunnel), protocol); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
