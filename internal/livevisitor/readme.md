@@ -36,22 +36,19 @@ database visitors use the same hook with no peer certificate, so current IP
 policy and publish-run checks still apply. Each visitor owns a joined socket
 closer, and pending checks share the application's existing concurrency bound.
 
-## managed ssh takeover
+## managed ssh boundary
 
-The managed SSH runtime can use the same group with a fresh `AuthorizeSSHVisitor`
-callback. Set `Key.SSHUser` to the exact requested account and map the returned
-identity and deadline to `Decision`. Keep transient control errors distinct from
-an explicit denial; the group must never call the positive certificate cache.
-Cancel and join the connection owner on run shutdown, and close the whole SSH
-connection and backend when its lease ends.
+The managed SSH runtime uses a fresh `AuthorizeSSHVisitor` callback, bound to
+the certificate identity and exact requested account. It shares the refresh
+interval, hard lifetime, and explicit-denial semantics defined here. Its
+connection owner also checks account availability and blocks new channels while
+authorization is unknown. It closes the SSH connection and joins its user
+children when the decision expires or is denied. A cached URL-only or database
+permission never authorizes an SSH account.
 
-The native publisher signing adapter currently exposes only the error-returning
-certificate authorizer through `publisheridentity/native.RunControl`. Expose or
-forward `AuthorizeVisitorCertificateDecision` there so app-owned publishers can
-select the live hook automatically. The old raw SSH branch in
-`publisher.PublicURLServer.handleVisitorHeaderContext` still rejects pending SSH
-streams; the managed runtime must replace that branch when it takes ownership.
-Ingress already sends restricted SSH streams through bounded pending capacity.
+The native signing adapter forwards the decision authorizers for both protocols
+through `publisheridentity/native.RunControl`. Ingress sends every restricted
+SSH connection through bounded pending capacity before publisher promotion.
 
 ## focused checks
 

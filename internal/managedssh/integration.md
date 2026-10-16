@@ -65,15 +65,15 @@ line. `ParseHostKey` reads the private PEM. Keep the private value in
 
 ## publisher job boundary
 
-`publisherjob.Engine.ConfigureSSH func(Job, *publisher.Config) error` receives
-the validated job and its protected host key before publication. SSH jobs fail
-closed without this hook. The hook must attach the managed SSH publisher
-handler; an SSH job has no target or target TLS options. `Job` JSON includes
+`publisherjob.publicationConfig` binds the protected host key to the saved
+URL's registered public key and builds `publisher.SSHConfig`. The publisher
+requires current certificate authorization before passing the TLS connection
+to this runtime. An SSH job has no target or target TLS options. `Job` JSON includes
 the private key for the existing encrypted whole-job snapshot, so CLI and API
 adapters must continue selecting approved fields rather than serializing jobs.
 
-Publisher mTLS dispatch, the control-client adapter, public host-key binding,
-and hidden CLI dispatch belong to their integrating callers. Routine tests
+Publisher mTLS dispatch and the control-client adapter live in
+`internal/publisher/managed_ssh.go`; the CLI owns hidden child dispatch. Routine tests
 inject a same-uid child privately. The opt-in disposable Linux test exercises
 the production child entry point, real root-to-user credential changes,
 and the root serving process's unchanged credentials.
