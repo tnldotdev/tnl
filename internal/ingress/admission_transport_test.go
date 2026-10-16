@@ -106,7 +106,7 @@ func openPendingTransport(t *testing.T, f *admissionTransportFixture, id string)
 		return v.Accept()
 	})
 	b := mustOnlyBackend(t, f.forwarder, f.entry).(forwardingBackend)
-	c, err := b.OpenDenied(ingressContext(t), id)
+	c, err := b.OpenPending(ingressContext(t), id)
 	if err != nil {
 		t.Fatal(err)
 	}

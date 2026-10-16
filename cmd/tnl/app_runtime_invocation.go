@@ -33,7 +33,8 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 	finish := a.manager.BeginPreparation()
 	defer finish()
 	canonical, err := localproxy.NormalizeTarget(request.Target)
-	if err != nil || canonical != request.Target || request.PublisherFile != "" && request.PublisherId != "" || request.AllowAllIps != nil && *request.AllowAllIps && request.AllowIp != nil && len(*request.AllowIp) != 0 {
+	if err != nil || canonical != request.Target || request.PublisherFile != "" && request.PublisherId != "" ||
+		request.AccessMode != nil && !request.AccessMode.Valid() || request.Ip != nil && len(*request.Ip) > 32 {
 		return privateprotocol.Registration{}, errors.New("invalid invocation target or policy")
 	}
 	file := request.PublisherFile
@@ -90,7 +91,11 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 		}
 		return privateprotocol.Registration{}, err
 	}
-	allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: request.InvocationId, Target: request.Target, AllowIp: request.AllowIp, AllowAllIps: request.AllowAllIps}
+	allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: request.InvocationId, Target: request.Target, Ip: request.Ip}
+	if request.AccessMode != nil {
+		mode := controlv1.VisitorAccessMode(*request.AccessMode)
+		allocation.AccessMode = &mode
+	}
 	route, err := native.Allocate(ctx, allocation)
 	if err != nil {
 		return privateprotocol.Registration{}, err
@@ -122,6 +127,7 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 	if route.AllowedIpPrefixes != nil {
 		cfg.AllowedIPPrefixes = slices.Clone(*route.AllowedIpPrefixes)
 	}
+	cfg.AccessMode = route.AccessMode
 	configuration := projectpublisher.Configuration{Publisher: cfg, Inspection: policy}
 	configuration.Attach = func(context.Context, *clientstate.Tunnel, *publisher.Config) (func(), error) { return cleanup, nil }
 	if a.AttachPublication != nil {

@@ -12,6 +12,7 @@ import {
 import { closeServer, listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
 import { record, exactKeys } from "./runtime.js";
 import { parseStatus } from "./status.js";
+import type { TnlRatePeriod } from "../config.gen.js";
 
 export type PublisherFile = { readonly publisherFile: string; readonly publisherID?: never };
 export type PublisherID = { readonly publisherID: string; readonly publisherFile?: never };
@@ -23,8 +24,15 @@ interface OpenSettings {
   readonly stateDir?: string;
   /** hostname the publisher uses to reach this listener. */
   readonly targetHostname?: string;
-  readonly allowIP?: readonly string[];
-  readonly allowAllIPs?: boolean;
+  readonly access?:
+    | "restricted"
+    | "anonymous"
+    | { readonly mode?: "restricted" | "anonymous"; readonly ip?: readonly string[] };
+  readonly limits?: {
+    readonly requests?: number;
+    readonly rate?: { readonly requests: number; readonly per: TnlRatePeriod };
+    readonly concurrency?: number;
+  };
   readonly signal?: AbortSignal;
 }
 
@@ -86,8 +94,18 @@ export async function openServer(
     ...(options.server === undefined ? {} : { server_url: options.server }),
     ...(options.publisherID === undefined ? {} : { publisher_id: options.publisherID }),
     ...(publisherFile === undefined ? {} : { publisher_file: publisherFile }),
-    ...(options.allowIP === undefined ? {} : { allow_ip: [...options.allowIP] }),
-    ...(options.allowAllIPs === undefined ? {} : { allow_all_ips: options.allowAllIPs }),
+    ...(options.access === undefined
+      ? {}
+      : {
+          access_mode:
+            typeof options.access === "string"
+              ? options.access
+              : (options.access.mode ?? "restricted"),
+          ...(typeof options.access === "string" || options.access.ip === undefined
+            ? {}
+            : { ip: [...options.access.ip] }),
+        }),
+    ...(options.limits === undefined ? {} : { limits: options.limits }),
   };
   const selection = {
     invocationID,
@@ -313,8 +331,8 @@ function validateOptions(options: OpenOptions): void {
           "directory",
           "stateDir",
           "targetHostname",
-          "allowIP",
-          "allowAllIPs",
+          "access",
+          "limits",
           "signal",
         ].includes(key),
     ) ||
@@ -337,12 +355,7 @@ function validateOptions(options: OpenOptions): void {
         options.stateDir.includes("\0"))) ||
     (options.targetHostname !== undefined &&
       (typeof options.targetHostname !== "string" || options.targetHostname === "")) ||
-    (options.allowAllIPs !== undefined && typeof options.allowAllIPs !== "boolean") ||
-    (options.allowIP !== undefined &&
-      (!Array.isArray(options.allowIP) ||
-        options.allowIP.length > 64 ||
-        options.allowIP.some((value) => !validNetwork(value)))) ||
-    (options.allowAllIPs === true && options.allowIP !== undefined) ||
+    (options.access !== undefined && !validAccess(options.access)) ||
     (options.signal !== undefined && !(options.signal instanceof AbortSignal))
   )
     throw new TnlError("sdk.configuration_invalid");
@@ -381,6 +394,24 @@ function validNetwork(value: unknown): boolean {
     (parts.length === 1 ||
       (/^(0|[1-9][0-9]*)$/.test(parts[1] ?? "") && Number(parts[1]) <= (ip === 4 ? 32 : 128)))
   );
+}
+
+function validAccess(value: unknown): boolean {
+  if (value === "restricted" || value === "anonymous") return true;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const policy = value as Record<string, unknown>;
+  if (Object.keys(policy).some((key) => !["mode", "ip"].includes(key))) return false;
+  if (policy.mode !== undefined && policy.mode !== "restricted" && policy.mode !== "anonymous")
+    return false;
+  if (
+    policy.ip !== undefined &&
+    (!Array.isArray(policy.ip) ||
+      policy.ip.length === 0 ||
+      policy.ip.length > 32 ||
+      policy.ip.some((ip: unknown) => !validNetwork(ip)))
+  )
+    return false;
+  return true;
 }
 
 function aborted(): DOMException {

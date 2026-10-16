@@ -41,15 +41,23 @@ func (d *Database) validatePublisherAllocation(ctx context.Context, q *controlst
 	return p, domain, err
 }
 
-func (d *Database) AllocatePublisherPublicURL(ctx context.Context, p PublisherIdentity, invocation, target string, prefixes []string, binding []byte, now time.Time) (PublicURL, error) {
+func (d *Database) AllocatePublisherPublicURL(ctx context.Context, p PublisherIdentity, invocation, target string, prefixes []string, binding []byte, now time.Time, requestedMode ...VisitorAccessMode) (PublicURL, error) {
 	if p.Scope.Kind != "namespace" || p.GuestID != "" {
 		return PublicURL{}, ErrPublisherIdentity
 	}
+	mode := VisitorAccessRestricted
+	if len(requestedMode) != 0 {
+		mode = requestedMode[0]
+	}
+	if !mode.Valid() || len(requestedMode) > 1 {
+		return PublicURL{}, ErrPublicURLInvalid
+	}
 	encoded, err := json.Marshal(struct {
 		Identity, Grant, Invocation, Target string
+		Mode                                VisitorAccessMode
 		Prefixes                            []string
 		Binding                             []byte
-	}{p.ID, p.GrantID, invocation, target, prefixes, binding})
+	}{p.ID, p.GrantID, invocation, target, mode, prefixes, binding})
 	if err != nil {
 		return PublicURL{}, err
 	}
@@ -70,7 +78,7 @@ func (d *Database) AllocatePublisherPublicURL(ctx context.Context, p PublisherId
 	// hashing the ownership tuple keeps URL idempotency scoped to the exact
 	// grant even when one identity has several namespace grants.
 	idempotency := sha256.Sum256([]byte(p.ID + "\x00" + p.GrantID + "\x00" + invocation))
-	return d.CreatePublicURL(ctx, CreatePublicURLRequest{TeamID: p.Scope.TeamID, DomainID: p.Scope.DomainID, MembershipID: p.Scope.MembershipID, ActingIdentityID: p.CreatorID, IdempotencyKey: base32.StdEncoding.EncodeToString(idempotency[:]), RequestDigest: sha256.Sum256(encoded), Target: target, ServiceProtocol: PublicURLServiceHTTP, Purpose: PublicURLPurposeApp, PublicURLScope: p.Scope.PublicURLScope, AllowedIPPrefixes: prefixes, PolicyRevision: uint64(revision), Ephemeral: true, DNSState: PublicURLDNSPending, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherInvocationID: invocation, PublisherNamespace: p.Scope.Namespace}, now)
+	return d.CreatePublicURL(ctx, CreatePublicURLRequest{TeamID: p.Scope.TeamID, DomainID: p.Scope.DomainID, MembershipID: p.Scope.MembershipID, ActingIdentityID: p.CreatorID, IdempotencyKey: base32.StdEncoding.EncodeToString(idempotency[:]), RequestDigest: sha256.Sum256(encoded), Target: target, ServiceProtocol: PublicURLServiceHTTP, Purpose: PublicURLPurposeApp, PublicURLScope: p.Scope.PublicURLScope, AccessMode: mode, AllowedIPPrefixes: prefixes, PolicyRevision: uint64(revision), Ephemeral: true, DNSState: PublicURLDNSPending, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherInvocationID: invocation, PublisherNamespace: p.Scope.Namespace}, now)
 }
 
 func (d *Database) validatePublisherDeletion(ctx context.Context, q *controlstatedb.Queries, r AuthorizedPublicURLDeleteRequest, u controlstatedb.ControlPublicUrl, now time.Time) error {

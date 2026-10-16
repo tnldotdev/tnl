@@ -234,9 +234,11 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 				return cfg, nil, err
 			}
 			request := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: invocation, Target: cfg.Target}
+			mode := controlv1.Anonymous
+			request.AccessMode = &mode
 			if cfg.AllowedIPPrefixes != nil {
 				prefixes := slices.Clone(cfg.AllowedIPPrefixes)
-				request.AllowIp = &prefixes
+				request.Ip = &prefixes
 			}
 			route, err := worker.Allocate(ctx, request)
 			if err != nil {
@@ -263,11 +265,11 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	return &Publishers{config: config, database: database, ctx: groupCtx, cancel: cancel,
 		namespace: membership.ManagedLabel + "." + domain.CanonicalDomain, failures: make(chan error, 1), run: publisher.Run,
 		prepare: prepare,
-		base: publisher.Config{Control: publicationControl, State: store, Target: config.Target, DrainTime: config.DrainTime,
+		base: publisher.Config{Control: publicationControl, ControlURL: auth.ServerEndpoint, State: store, Target: config.Target, DrainTime: config.DrainTime,
 			Limits:    limits,
 			Ephemeral: config.Ephemeral,
 			TeamID:    team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,
-			PolicyRevision: uint64(team.PolicyRevision), AllowedIPPrefixes: config.AllowedIPPrefixes,
+			PolicyRevision: uint64(team.PolicyRevision), AccessMode: controlv1.Anonymous, AllowedIPPrefixes: config.AllowedIPPrefixes,
 			QUICConnector: muxsession.QUICConnector{TLSConfig: config.RelayTLS, Config: benchmarkQUICConfig(config.QUICDisablePathMTUDiscovery, config.QUICQlog, config.QUICKeepAlive)},
 			TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: config.RelayTLS},
 			FallbackDelay: 250 * time.Millisecond},

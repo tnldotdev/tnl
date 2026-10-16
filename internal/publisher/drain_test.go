@@ -135,6 +135,37 @@ type visitorDrainHarness struct {
 	body                            string
 }
 
+type drainDecisionControl struct{ *certificateTestControl }
+
+func (*drainDecisionControl) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+	return controlv1.BrowserHandoffResponse{}, errors.New("no browser handoff")
+}
+
+func (*drainDecisionControl) CheckBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserAccessResponse, error) {
+	return controlv1.BrowserAccessResponse{}, errors.New("no browser session")
+}
+
+func (*drainDecisionControl) RevokeBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
+	return nil
+}
+
+func (*drainDecisionControl) AuthorizeHTTPVisitor(context.Context, string, controlv1.HTTPVisitorRequest, credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
+	expires := time.Now().Add(time.Minute)
+	return controlv1.HTTPVisitorResponse{VisitAllowed: true, ValidUntil: &expires}, nil
+}
+
+func (*drainDecisionControl) EnableShareAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
+	return nil
+}
+
+func (*drainDecisionControl) GetPublishRunShareState(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunShareState, error) {
+	return controlv1.PublishRunShareState{Shares: []controlv1.PublisherShare{}}, nil
+}
+
+func (*drainDecisionControl) RedeemPublishRunShare(context.Context, string, controlv1.RedeemShareRequest, credentials.PublishRunToken) (controlv1.ShareRedemption, error) {
+	return controlv1.ShareRedemption{}, errors.New("no share")
+}
+
 func newVisitorDrainHarness(t *testing.T, transport string, configure func(*certificateTestControl, *Config)) *visitorDrainHarness {
 	t.Helper()
 	ctx, finish := context.WithTimeout(t.Context(), 15*time.Second)
@@ -154,10 +185,11 @@ func newVisitorDrainHarness(t *testing.T, transport string, configure func(*cert
 	}))
 	t.Cleanup(func() { h.unblock(); upstream.Close() })
 	control := newCertificateTestControl(t, "route.example", publicURLCertificateTestPlan())
+	control.setup.PublicUrl.ServiceProtocol = controlv1.Http
 	h.control = control
 	control.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
 	connector, relays, publishers := drainTestConnections(t, ctx, control, transport)
-	config := Config{Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", PublicURLScope: controlv1.Member, Purpose: controlv1.App,
+	config := Config{Control: &drainDecisionControl{control}, ControlURL: "https://control.example.test", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1", PublicURLScope: controlv1.Member, Purpose: controlv1.App,
 		Hostname: "route.example", Target: upstream.URL, State: control.store, QUICConnector: connector, TCPConnector: connector,
 		FallbackDelay: time.Hour, DrainTime: 5 * time.Second, ProvisioningStalledDelay: time.Hour, heartbeatInterval: 20 * time.Millisecond,
 		Observe: func(event Event) error {

@@ -3,6 +3,7 @@ package publisher
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"math"
@@ -33,7 +34,7 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 	}
 	entered, release := make(chan struct{}, 4), make(chan struct{})
 	var workers sync.WaitGroup
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Limits: ApplicationLimits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
+	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof, Limits: ApplicationLimits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if localproxy.IsReadinessProbe(r) {
 				entered <- struct{}{}
@@ -143,7 +144,7 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 					t.Fatal(err)
 				}
 				var app, probes, promoted atomic.Int32
-				route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number,
+				route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number,
 					ReadinessProof: proof, Certificate: publicURLTestCertificate(t, run.Hostname), Limits: ApplicationLimits{Requests: 1, RateRequests: 1, RatePer: time.Hour},
 					PromoteVisitor: func(_ context.Context, v Visitor) error {
 						if v.Readiness {
@@ -222,7 +223,7 @@ func TestReadinessDoesNotCacheRejectedApplicationPromotion(t *testing.T) {
 	for _, h2 := range []bool{false, true} {
 		proof, _ := NewReadinessProof(run, "/health")
 		var calls atomic.Int32
-		route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
+		route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
 			PromoteVisitor: func(context.Context, Visitor) error {
 				calls.Add(1)
 				return &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
@@ -310,7 +311,7 @@ func TestHTTP2CanceledFirstRequestDoesNotPoisonConnection(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	firstDone := make(chan struct{})
 	var calls, forwarded atomic.Int32
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
+	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
 		PromoteVisitor: func(ctx context.Context, _ Visitor) error {
 			calls.Add(1)
 			close(started)
@@ -369,7 +370,7 @@ func TestHTTP2ProofDoesNotWaitForApplicationPromotion(t *testing.T) {
 	proof, _ := NewReadinessProof(run, "/health")
 	started, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
+	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, Certificate: publicURLTestCertificate(t, run.Hostname), ReadinessProof: proof,
 		Limits: ApplicationLimits{Requests: 1, Concurrency: 1, RateRequests: 1, RatePer: time.Hour},
 		PromoteVisitor: func(ctx context.Context, _ Visitor) error {
 			calls.Add(1)
@@ -459,6 +460,48 @@ func (f certificateAuthorizerFunc) AuthorizeVisitorCertificate(ctx context.Conte
 	return f(ctx, scope, state)
 }
 
+type cachedCertificateAuthorizer struct{ calls int }
+
+func (a *cachedCertificateAuthorizer) AuthorizeVisitorCertificate(ctx context.Context, scope controlclient.VisitorCertificateScope, state tls.ConnectionState) error {
+	_, err := a.AuthorizeVisitorCertificateDecision(ctx, scope, state)
+	return err
+}
+
+func (a *cachedCertificateAuthorizer) AuthorizeVisitorCertificateDecision(context.Context, controlclient.VisitorCertificateScope, tls.ConnectionState) (time.Time, error) {
+	a.calls++
+	return time.Now().Add(time.Minute), nil
+}
+
+func TestVisitorCertificateDecisionCacheBindsRunCertificateAndSource(t *testing.T) {
+	scope := controlclient.VisitorCertificateScope{PublishRunID: "run-1", PublicURLID: "url-1", PublishRunNumber: 7, PublishRunToken: credentials.PublishRunToken("private-run-token")}
+	client := &cachedCertificateAuthorizer{}
+	authorize := VisitorCertificateAuthorization(client, scope)
+	now := time.Now()
+	state := tls.ConnectionState{HandshakeComplete: true, PeerCertificates: []*x509.Certificate{{Raw: []byte("one certificate"), NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour)}}}
+	visitor := Visitor{Run: PublishRunIdentity{PublicURLID: scope.PublicURLID, PublishRunID: scope.PublishRunID, Number: scope.PublishRunNumber}, Source: netip.MustParseAddrPort("192.0.2.10:1234")}
+	for range 2 {
+		if err := authorize(t.Context(), visitor, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if client.calls != 1 {
+		t.Fatalf("two connections with the same proof made %d control checks", client.calls)
+	}
+	visitor.Source = netip.MustParseAddrPort("192.0.2.11:1234")
+	if err := authorize(t.Context(), visitor, state); err != nil || client.calls != 2 {
+		t.Fatalf("different source reused a certificate decision: %v, %d checks", err, client.calls)
+	}
+	visitor.Run.PublishRunID = "another-run"
+	if err := authorize(t.Context(), visitor, state); err == nil || client.calls != 2 {
+		t.Fatalf("different run reused a certificate decision: %v, %d checks", err, client.calls)
+	}
+	visitor.Run.PublishRunID = scope.PublishRunID
+	state.PeerCertificates[0].NotAfter = now.Add(-time.Second)
+	if err := authorize(t.Context(), visitor, state); err == nil || client.calls != 2 {
+		t.Fatalf("expired certificate reused a decision: %v, %d checks", err, client.calls)
+	}
+}
+
 func TestLiveCertificateAdapterBindsRunAndTrustedSource(t *testing.T) {
 	scope := controlclient.VisitorCertificateScope{PublishRunID: "run-1", PublicURLID: "url-1", PublishRunNumber: 7, PublishRunToken: credentials.PublishRunToken("private-run-token")}
 	var calls int
@@ -491,7 +534,7 @@ func TestDeniedDatabaseVisitorReachesTLSAuthorization(t *testing.T) {
 			var authorized, promoted atomic.Int32
 			route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", ServiceProtocol: protocol, PublicPort: 5432, Target: address, Certificate: certificate,
 				AuthorizeVisitorCertificate: func(_ context.Context, v Visitor, state tls.ConnectionState) error {
-					if !v.Header.IPPolicyDenied || !state.HandshakeComplete {
+					if !v.Header.AccessPending || !state.HandshakeComplete {
 						t.Error("missing trusted denial or TLS")
 					}
 					authorized.Add(1)

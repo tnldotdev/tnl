@@ -210,6 +210,26 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 		write(w, controlv1.HTTPVisitorResponse{VisitAllowed: true})
 		return
 	}
+	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/publish-runs/") && (strings.HasSuffix(r.URL.Path, "/share-access") || strings.HasSuffix(r.URL.Path, "/share-state")) {
+		path := strings.TrimPrefix(r.URL.Path, "/v1/publish-runs/")
+		id, _, _ := strings.Cut(path, "/")
+		f.mu.Lock()
+		setup, found := f.setups[id]
+		f.mu.Unlock()
+		var body struct {
+			PublishRunNumber int64 `json:"publish_run_number"`
+		}
+		if !found || json.NewDecoder(r.Body).Decode(&body) != nil || body.PublishRunNumber != setup.PublishRun.PublishRunNumber || r.Header.Get("Authorization") != "Bearer "+setup.PublishRunToken {
+			denied(w)
+			return
+		}
+		if strings.HasSuffix(path, "/share-access") {
+			w.WriteHeader(http.StatusNoContent)
+		} else {
+			write(w, controlv1.PublishRunShareState{SchemaVersion: 1, Shares: []controlv1.PublisherShare{}})
+		}
+		return
+	}
 	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/publish-runs/") && strings.HasSuffix(r.URL.Path, "/ready") {
 		// consume the version body before a hook waits for HTTP/1 cancellation.
 		_, _ = io.Copy(io.Discard, r.Body)

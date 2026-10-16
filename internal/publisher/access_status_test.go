@@ -24,7 +24,7 @@ func TestBrowserAccessStatusSharesTheForwardingDecision(t *testing.T) {
 		response.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	route, err := NewPublicURLServer(PublicURLServerConfig{
+	route, err := newTestPublicURLServer(PublicURLServerConfig{
 		Hostname: "route.example", Target: upstream.URL, Certificate: publicURLTestCertificate(t, "route.example"),
 		PreviewID: "pv_0123456789abcdefghijkl", PublicURLID: "url_0123456789abcdefghijkl", PublishRunNumber: 2,
 	})

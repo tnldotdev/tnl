@@ -170,7 +170,7 @@ type gatedDeniedBackend struct {
 	*gatedOpenBackend
 }
 
-func (b gatedDeniedBackend) OpenDenied(ctx context.Context, id string) (net.Conn, error) {
+func (b gatedDeniedBackend) OpenPending(ctx context.Context, id string) (net.Conn, error) {
 	return b.Open(ctx, id)
 }
 
@@ -186,15 +186,15 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 			if host != "route.example" {
 				return PublicURL{}, "not_found"
 			}
-			return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []routebackend.Backend{backend},
+			return PublicURL{ID: "public_url_test", PublishRunNumber: 1, AccessMode: "restricted", Backends: []routebackend.Backend{backend},
 				HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24")}, ""
 		},
 	}
 	_, address := startIngress(t, config)
-	first := ingressClient(t, address, "route.example", "203.0.113.1:40001")
+	first := ingressClient(t, address, "route.example", "198.51.100.1:40001")
 	result := ingressWorker(t, func() { unblock(); _ = first.Close() }, first.Handshake)
 	ingressAwait(t, backend.entered)
-	second := ingressClient(t, address, "route.example", "203.0.113.2:40002")
+	second := ingressClient(t, address, "route.example", "198.51.100.2:40002")
 	if err := second.Handshake(); err == nil {
 		t.Fatal("denied connection bypassed capacity")
 	}
@@ -205,7 +205,7 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	for range 2 {
 		observed := ingressAwait(t, usage.opened)
 		ingressAwait(t, observed.closed)
-		if observed.policyDenials != 1 || observed.streams != 0 {
+		if observed.policyDenials != 0 || observed.streams != 0 || observed.publisherFailures+observed.capacityDenials != 1 {
 			t.Fatalf("denial usage = %+v", observed)
 		}
 	}

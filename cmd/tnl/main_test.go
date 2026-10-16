@@ -43,7 +43,7 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 		"team current", "team list", "team use", "team create", "team members", "team invite create",
 		"team invite list", "team invite revoke", "team join", "team member set-role", "team member remove",
 		"domain claim", "domain default", "domain list", "domain status", "domain release", "url list", "url inventory", "url available", "url certificate", "url delete",
-		"url ip set", "url ip add", "url ip list", "url ip remove", "auth browser", "team feedback get", "team feedback set",
+		"url access show", "url access set", "auth browser", "team feedback get", "team feedback set",
 		"share invite create", "share invite accept", "share invite list", "share invite revoke",
 		"publisher enroll", "publisher setup", "publisher provision", "publisher current", "publisher list", "publisher revoke", "publisher grant add", "publisher grant revoke",
 		"service install", "service start", "service stop", "service list",
@@ -124,7 +124,7 @@ func TestTunnelHelpExplainsIPPolicyAndTeamSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := strings.Join(strings.Fields(output.String()), " ")
-	for _, want := range []string{"your current IP is also allowed", "every IP", "--team", "--server"} {
+	for _, want := range []string{"--anonymous", "--ip", "--team", "--server"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("publish help missing %q:\n%s", want, output.String())
 		}
@@ -242,11 +242,8 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 		{[]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--namespace"}, "publisher grant add <publisher-id>"},
 		{[]string{"publisher", "grant", "revoke", "pub_0123456789abcdefghijkl", "pgr_0123456789abcdefghijkl"}, "publisher grant revoke <publisher-id> <grant-id>"},
 		{[]string{"url", "certificate", "orders.example", "--directory", "/tmp/visitor"}, "url certificate <url>"},
-		{[]string{"url", "ip", "set", "orders.example"}, "url ip set <url> <prefixes>"},
-		{[]string{"url", "ip", "set", "orders.example", "192.0.2.1", "198.51.100.0/24"}, "url ip set <url> <prefixes>"},
-		{[]string{"url", "ip", "add", "orders.example", "192.0.2.1"}, "url ip add <url> <prefix>"},
-		{[]string{"url", "ip", "list", "orders.example"}, "url ip list <url>"},
-		{[]string{"url", "ip", "remove", "orders.example", "vip_1"}, "url ip remove <url> <grant-id>"},
+		{[]string{"url", "access", "show", "orders.example"}, "url access show <url>"},
+		{[]string{"url", "access", "set", "orders.example", "restricted", "--ip", "192.0.2.1"}, "url access set <url> <mode>"},
 		{[]string{"auth", "browser", "app.example"}, "auth browser <url>"},
 		{[]string{"team", "feedback", "set", "signed_in"}, "team feedback set <authors>"},
 		{[]string{"share", "invite", "create", "app.example", "--email", "reviewer@example.com"}, "share invite create <url>"},
@@ -275,20 +272,19 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 
 func TestTunnelCLIUnitOverridesConflictingEnvironmentUnit(t *testing.T) {
 	t.Setenv("TNL_NAME", "environment-name")
-	t.Setenv("TNL_ALLOW_ALL_IPS", "true")
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"publish", "3000", "--public-url", "https://api.example", "--allow-ip", "192.0.2.1"}
+	args := []string{"publish", "3000", "--public-url", "https://api.example", "--ip", "current"}
 	parsed, err := parser.Parse(args)
 	if err != nil {
 		t.Fatal(err)
 	}
 	applyTunnelCLIUnits(parsed, &flags)
-	if flags.Publish.Name != "" || flags.Publish.PublicURL != "https://api.example" || flags.Publish.AllowAllIPs ||
-		len(flags.Publish.AllowIP) != 1 {
+	if flags.Publish.Name != "" || flags.Publish.PublicURL != "https://api.example" ||
+		len(flags.Publish.IP) != 1 || flags.Publish.IP[0] != "current" {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
 }
@@ -299,7 +295,7 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"publish", "3000", "--allow-all-ips=false", "--ephemeral=false"}
+	args := []string{"publish", "3000", "--ephemeral=false"}
 	parsed, err := parser.Parse(args)
 	if err != nil {
 		t.Fatal(err)
@@ -307,9 +303,9 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	applyTunnelCLIUnits(parsed, &flags)
 	configured := true
 	applyTunnelConfiguration(&flags.Publish.tunnelFlags, &config.Tunnel{
-		AllowAllIPs: &configured, Ephemeral: &configured,
+		Ephemeral: &configured,
 	})
-	if flags.Publish.AllowAllIPs || flags.Publish.Ephemeral {
+	if flags.Publish.Ephemeral {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
 }

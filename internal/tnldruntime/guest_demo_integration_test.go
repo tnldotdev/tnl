@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/netip"
 	"path/filepath"
@@ -305,7 +308,8 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	}
 	handle := startOwnedIntegrationPublisher(t, owner, publisher.Config{
 		Control: integrationGuestPublisherControl{Client: authenticated.Control, native: native, assigned: route}, TeamID: issued.TeamId, MembershipID: issued.MembershipId,
-		DomainID: issued.DomainId, Hostname: hostname, PublicURLScope: controlv1.Member, Purpose: controlv1.Demo,
+		ControlURL: serverURL,
+		DomainID:   issued.DomainId, Hostname: hostname, PublicURLScope: controlv1.Member, Purpose: controlv1.Demo,
 		PolicyRevision: 1, Target: localDemo.Target(),
 		AllowedIPPrefixes: prefixes,
 		Ephemeral:         true, State: store,
@@ -321,6 +325,27 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	waitForIngressRoutingCurrent(t, inspect, 1)
 	localDemo.SetPublicURL(ready.PublicURL)
 	visitor := newIntegrationVisitor(t, pebble.roots, publicAddress, owner)
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := sha256.Sum256(secret)
+	share, err := authenticated.Control.CreateURLShare(t.Context(), "guest-reviewer-share", controlv1.CreateShareRequest{
+		PublicUrlIds: []string{ready.PublicURLID}, ExpiresAt: issued.ExpiresAt, SecretFingerprint: hex.EncodeToString(fingerprint[:]),
+	})
+	if err != nil || share.Scope != controlv1.ShareScopeGuest {
+		t.Fatalf("guest trial share = %+v, %v", share, err)
+	}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visitor.client.Jar = jar
+	entry, err := visitor.client.Get(ready.PublicURL + "/__tnl/share/" + share.Id + "." + base64.RawURLEncoding.EncodeToString(secret))
+	if err != nil || entry.StatusCode != http.StatusOK {
+		t.Fatalf("guest share link = %+v, %v", entry, err)
+	}
+	_ = entry.Body.Close()
 	response, err := visitor.client.Get(ready.PublicURL + "/state")
 	if err != nil {
 		t.Fatalf("guest visitor: %v%s", err, integrationPublisherDiagnostics(inspect, pebble.logPath))

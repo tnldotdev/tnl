@@ -97,7 +97,7 @@ func TestAutomaticPromotionUsesExactCurrentSessionAndWaitsForAck(t *testing.T) {
 		})
 	}()
 	t.Cleanup(func() { cancel(); _ = relay.Close(); awaitPublisherTest(t, worker) })
-	h := tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor-1", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, IPPolicyDenied: true}
+	h := tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor-1", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, AccessPending: true}
 	result := make(chan error, 1)
 	go func() { result <- route.defaultPromote(t.Context(), Visitor{Header: h}) }()
 	awaitPublisherTest(t, entered)
@@ -170,7 +170,7 @@ func TestPromotedDeniedHTTPResponseOutlivesPendingDeadline(t *testing.T) {
 				t.Fatal(err)
 			}
 			var promoted atomic.Int32
-			route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), ShareAccess: access,
+			route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), ShareAccess: access,
 				PromoteVisitor: func(context.Context, Visitor) error { promoted.Add(1); return nil },
 				Handler:        http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { time.Sleep(6 * time.Second); w.WriteHeader(204) })})
 			if err != nil {

@@ -60,8 +60,11 @@ func (c PendingConfig) Resolve() (PendingConfig, error) {
 		value    *int
 		fallback int
 	}{
-		{&c.Connections, 64}, {&c.PublicURLConnections, 8}, {&c.SourceConnections, 4},
-		{&c.PublicURLRate, 5}, {&c.PublicURLBurst, 10}, {&c.SourceRate, 3}, {&c.SourceBurst, 6},
+		// ordinary restricted visitors now use pending capacity until the
+		// publisher can inspect their credential. leave room for browser assets
+		// while keeping independent per-source and per-URL ceilings.
+		{&c.Connections, 256}, {&c.PublicURLConnections, 64}, {&c.SourceConnections, 16},
+		{&c.PublicURLRate, 60}, {&c.PublicURLBurst, 120}, {&c.SourceRate, 30}, {&c.SourceBurst, 60},
 	} {
 		if *p.value == 0 {
 			*p.value = p.fallback

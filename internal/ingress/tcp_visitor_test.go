@@ -231,7 +231,7 @@ func (b *pendingDatabaseBackend) Open(context.Context, string) (net.Conn, error)
 	b.ordinary.Add(1)
 	return nil, errors.New("ordinary backend opened for denied database")
 }
-func (b *pendingDatabaseBackend) OpenDenied(context.Context, string) (net.Conn, error) {
+func (b *pendingDatabaseBackend) OpenPending(context.Context, string) (net.Conn, error) {
 	b.pending.Add(1)
 	return b.connection, nil
 }
@@ -267,7 +267,7 @@ func TestIngressDeniedDatabasesUseBoundedPendingPath(t *testing.T) {
 				return err
 			})
 			s, address := startIngress(t, Config{RequireProxyHeader: true, LookupPort: func(uint16) (PublicURL, LookupReason) {
-				return PublicURL{ID: "database", PublishRunNumber: 1, ServiceProtocol: protocol, PublicPort: testPublicPort(5432), Backends: []routebackend.Backend{backend}}, LookupCurrent
+				return PublicURL{ID: "database", PublishRunNumber: 1, AccessMode: "restricted", AllowAll: true, ServiceProtocol: protocol, PublicPort: testPublicPort(5432), Backends: []routebackend.Backend{backend}}, LookupCurrent
 			}})
 			client, err := net.Dial("tcp", address)
 			if err != nil {

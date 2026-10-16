@@ -116,13 +116,14 @@ func selectForegroundPublisher(ctx context.Context, database *clientstate.Databa
 		if err != nil {
 			return nil, err
 		}
-		allowAll := len(cfg.AllowedIPPrefixes) == 0
 		body := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: invocation, Target: cfg.Target}
-		if allowAll {
-			body.AllowAllIps = &allowAll
-		} else {
+		if cfg.AccessMode != "" {
+			mode := cfg.AccessMode
+			body.AccessMode = &mode
+		}
+		if cfg.AllowedIPPrefixes != nil {
 			prefixes := slices.Clone(cfg.AllowedIPPrefixes)
-			body.AllowIp = &prefixes
+			body.Ip = &prefixes
 		}
 		route, err := native.Allocate(ctx, body)
 		if err != nil {

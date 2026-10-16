@@ -252,6 +252,10 @@ func TestIntegrationControlRestartPreservesDataPlane(t *testing.T) {
 	quicConnector, tcpConnector := fixture.connectors()
 	handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 	ready := fixture.waitReady(t, handle)
+	initial, initialBody, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/before-control-restart", nil)
+	if err != nil || initial.StatusCode != http.StatusOK || string(initialBody) != "control restart" {
+		t.Fatalf("initial visitor did not establish a current access decision: %+v %q %v", initial, initialBody, err)
+	}
 	beforeIngress := readSplitIngressLease(t, fixture.inspect, fixture.ingressConfig.IngressID)
 	beforeRelayA := readSplitRelayLease(t, fixture.inspect, fixture.relayA.config.RelayID)
 	beforeRelayB := readSplitRelayLease(t, fixture.inspect, fixture.relayB.config.RelayID)

@@ -63,6 +63,8 @@ func splitDatabaseVisitorCertificate(t *testing.T, transport string) {
 	}
 	publication := f.identity.publisherConfig(backend.Host, quic, tcp)
 	publication.ServiceProtocol = controlv1.Postgres
+	publication.AccessMode = controlv1.Restricted
+	publication.AllowedIPPrefixes = []string{"127.0.0.1/32"}
 	handle := startOwnedIntegrationPublisher(t, f.owner, publication, func() string { return integrationPublisherDiagnostics(f.inspect, f.pebble.logPath) })
 	ready := waitForPublisherReady(t, handle)
 	publicHost, publicPort, err := net.SplitHostPort(ready.PublicURL)
@@ -130,20 +132,19 @@ func splitDatabaseVisitorCertificate(t *testing.T, transport string) {
 	if publicHost != f.identity.hostname {
 		t.Fatal("database URL hostname changed")
 	}
-	allowed, err := open("127.0.0.1", nil)
-	if err != nil {
-		t.Fatalf("explicit IP policy lost its separate database visitor path: %v", err)
+	if allowed, err := open("127.0.0.1", nil); err == nil {
+		_ = allowed.Close(t.Context())
+		t.Fatal("matching IP replaced a required visitor certificate")
 	}
-	_ = allowed.Close(t.Context())
 	select {
 	case <-handle.done:
 		t.Fatalf("publisher stopped before authenticated visitor: %v", handle.result())
 	default:
 	}
 	waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
-	visitor, err := open("198.51.100.7", &clientCertificate)
+	visitor, err := open("127.0.0.1", &clientCertificate)
 	if err != nil {
-		t.Fatalf("current URL-bound certificate did not promote an outside-IP visitor: %v", err)
+		t.Fatalf("current URL-bound certificate did not promote a permitted visitor: %v", err)
 	}
 	defer visitor.Close(context.Background())
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -153,8 +154,8 @@ func splitDatabaseVisitorCertificate(t *testing.T, transport string) {
 		t.Fatalf("promoted database connection did not reach the target: %d, %v", value, err)
 	}
 	_ = visitor.Close(ctx)
-	if c, err := open("198.51.100.7", nil); err == nil {
+	if c, err := open("198.51.100.7", &clientCertificate); err == nil {
 		_ = c.Close(t.Context())
-		t.Fatal("outside-IP database visitor authenticated without a certificate")
+		t.Fatal("valid certificate bypassed the IP filter")
 	}
 }

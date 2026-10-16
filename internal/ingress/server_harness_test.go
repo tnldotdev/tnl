@@ -65,6 +65,24 @@ func startIngress(t *testing.T, config Config, configure ...func(*Server)) (*Ser
 	if config.Lookup == nil {
 		config.Lookup = func(string) (PublicURL, LookupReason) { return PublicURL{}, LookupNotFound }
 	}
+	lookup := config.Lookup
+	config.Lookup = func(host string) (PublicURL, LookupReason) {
+		route, reason := lookup(host)
+		if reason == LookupCurrent && route.AccessMode == "" {
+			route.AccessMode = "anonymous"
+		}
+		return route, reason
+	}
+	if config.LookupPort != nil {
+		lookupPort := config.LookupPort
+		config.LookupPort = func(port uint16) (PublicURL, LookupReason) {
+			route, reason := lookupPort(port)
+			if reason == LookupCurrent && route.AccessMode == "" {
+				route.AccessMode = "anonymous"
+			}
+			return route, reason
+		}
+	}
 	server, err := New(listener, config)
 	if err != nil {
 		t.Fatal(err)

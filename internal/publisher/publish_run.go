@@ -144,15 +144,19 @@ func runSession(
 		config.PreviewID = preview.Id
 	}
 	var shareRuntime *shareAccess
-	if config.PreviewID != "" && !config.Demo && config.ServiceProtocol == controlv1.Http {
+	if setup.PublicUrl.ServiceProtocol == controlv1.Http && (setup.PublicUrl.Purpose == controlv1.App || setup.PublicUrl.Purpose == controlv1.Alias || setup.PublicUrl.Purpose == controlv1.Demo) {
 		if err := progress("share_access"); err != nil {
 			return err
 		}
 		client, ok := config.Control.(shareAccessClient)
 		if !ok {
-			return errors.New("publisher: share-capable control client is required for this preview")
+			return errors.New("publisher: share-capable control client is required for HTTP public URLs")
 		}
-		if err := client.EnableShareAccess(ctx, setup.PublishRun.Id, version, config.PreviewID, publishRunToken); err != nil {
+		previewID := config.PreviewID
+		if config.Demo {
+			previewID = ""
+		}
+		if err := client.EnableShareAccess(ctx, setup.PublishRun.Id, version, previewID, publishRunToken); err != nil {
 			return fmt.Errorf("publisher: enable share access: %w", err)
 		}
 		shareRuntime = &shareAccess{client: client, runID: setup.PublishRun.Id, version: version, token: publishRunToken}
@@ -181,7 +185,11 @@ func runSession(
 	identity := PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, Number: version}
 	authorizeVisitor := config.AuthorizeVisitorCertificate
 	if authorizeVisitor == nil {
-		if client, ok := config.Control.(VisitorCertificateAuthorizer); ok {
+		var candidate any = config.Control
+		if config.VisitorControl != nil {
+			candidate = config.VisitorControl
+		}
+		if client, ok := candidate.(VisitorCertificateAuthorizer); ok {
 			authorizeVisitor = VisitorCertificateAuthorization(client, controlclient.VisitorCertificateScope{
 				PublishRunID: setup.PublishRun.Id, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version, PublishRunToken: publishRunToken,
 			})
@@ -201,6 +209,8 @@ func runSession(
 		PreviewID:             config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, PublishRunNumber: version,
 		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, ResolveTarget: config.ResolveTarget, TargetOptions: config.TargetOptions, CertificatePlan: plan,
 		ServiceProtocol: setup.PublicUrl.ServiceProtocol, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS,
+		Purpose:                     setup.PublicUrl.Purpose,
+		AccessMode:                  setup.PublicUrl.AccessMode,
 		PromoteVisitor:              config.PromoteVisitor,
 		AdmitVisitor:                config.AdmitVisitor,
 		AuthorizeVisitorCertificate: authorizeVisitor,

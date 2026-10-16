@@ -45,6 +45,7 @@ type PublicURLControlClient interface {
 
 type Config struct {
 	Control                     PublicURLControlClient
+	VisitorControl              *controlclient.Client
 	ControlURL                  string
 	BrowserLoginAvailable       bool
 	TeamID                      string
@@ -62,6 +63,7 @@ type Config struct {
 	Target                      string
 	ResolveTarget               func(context.Context) (string, string, error)
 	ServiceProtocol             controlv1.PublicURLServiceProtocol
+	AccessMode                  controlv1.VisitorAccessMode
 	TargetTLSName               string
 	TargetTLS                   bool
 	PreserveSavedURLTarget      bool
@@ -308,6 +310,14 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 		TeamId: config.TeamID, DomainId: config.DomainID, CanonicalHostname: config.Hostname,
 		PublicUrlScope: config.PublicURLScope, Purpose: config.Purpose,
 	}
+	integration := config.Purpose == controlv1.Oauth || config.Purpose == controlv1.Webhooks
+	if integration {
+		mode := controlv1.Anonymous
+		body.AccessMode = &mode
+	} else if config.AccessMode != "" {
+		mode := config.AccessMode
+		body.AccessMode = &mode
+	}
 	if config.ServiceProtocol == controlv1.Http {
 		body.Target = config.Target
 	} else {
@@ -362,8 +372,28 @@ func reconcilePublicURL(ctx context.Context, config Config, route controlv1.Publ
 		currentPolicy = *route.AllowedIpPrefixes
 	}
 	desiredPolicy := config.AllowedIPPrefixes
-	if desiredPolicy == nil {
-		desiredPolicy = []string{}
+	integration := config.Purpose == controlv1.Oauth || config.Purpose == controlv1.Webhooks
+	if (desiredPolicy == nil || config.AccessMode != "") && !integration {
+		// a saved public URL retains live access edits when project config omits
+		// access. a configured mode is reconciled separately below.
+		desiredPolicy = slices.Clone(currentPolicy)
+	}
+	if !integration && config.AccessMode != "" && (route.AccessMode != config.AccessMode || !slices.Equal(currentPolicy, config.AllowedIPPrefixes)) {
+		client, ok := config.Control.(interface {
+			ReplaceVisitorAccess(context.Context, string, controlv1.ReplaceVisitorAccessRequest) (controlv1.PublicURL, error)
+		})
+		if !ok {
+			return controlv1.PublicURL{}, errors.New("publisher: current visitor policy client is required")
+		}
+		updated, err := client.ReplaceVisitorAccess(ctx, route.Id, controlv1.ReplaceVisitorAccessRequest{
+			Mode: config.AccessMode, Ip: append([]string{}, config.AllowedIPPrefixes...), ExpectedRevision: route.MutationRevision,
+		})
+		if err != nil {
+			return controlv1.PublicURL{}, err
+		}
+		route = updated
+		currentPolicy = slices.Clone(config.AllowedIPPrefixes)
+		desiredPolicy = slices.Clone(currentPolicy)
 	}
 	if supportsTCPForwarding(config.ServiceProtocol) {
 		if slices.Equal(currentPolicy, desiredPolicy) {

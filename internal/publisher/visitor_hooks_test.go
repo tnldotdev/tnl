@@ -238,7 +238,7 @@ func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 	var forwarded int
 	var promoted int
 	var checked int
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof,
+	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number, ReadinessProof: proof,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get(localproxy.ReadinessProbeHeader) != "" || !localproxy.IsReadinessProbe(r) {
 				t.Error("unverified or unstripped readiness proof")
@@ -289,7 +289,7 @@ func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 
 func TestHTTPPromotionRunsOncePerVisitorAndBeforeTarget(t *testing.T) {
 	var promoted atomic.Int32
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
+	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"),
 		PromoteVisitor: func(_ context.Context, v Visitor) error {
 			if v.Source.Addr().String() != "192.0.2.10" {
 				t.Error("lost trusted visitor source")
@@ -337,7 +337,7 @@ func TestHTTPPublisherAcceptsVerifiedTargetTLSServerName(t *testing.T) {
 	target.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}}
 	target.StartTLS()
 	defer target.Close()
-	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: target.URL, TargetTLSName: "target.internal", TargetOptions: localproxy.TargetOptions{RootCAs: rootsForCertificate(t, certificate)}})
+	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: target.URL, TargetTLSName: "target.internal", TargetOptions: localproxy.TargetOptions{RootCAs: rootsForCertificate(t, certificate)}})
 	if err != nil {
 		t.Fatal(err)
 	}

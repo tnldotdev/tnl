@@ -29,7 +29,7 @@ func TestVisitorPromoterWaitsForAcknowledgementAndUsesSeparateStreams(t *testing
 	})
 	promote := NewVisitorPromoter(func(h tunnelv1.VisitorStreamHeader) tunnelv1.VisitorStreamHeader { return h }, func(string) *Session { return publisher })
 	h := visitorStreamHeader()
-	h.IPPolicyDenied = true
+	h.AccessPending = true
 	result := tunnelWorker(t, func() { _ = publisher.Close() }, func() error { return promote(ctx, h) })
 	await(t, entered)
 	select {
@@ -46,7 +46,7 @@ func TestVisitorPromoterWaitsForAcknowledgementAndUsesSeparateStreams(t *testing
 	if err := promote(ctx, h); !errors.As(err, &protocolError) || protocolError.Code != tunnelv1.StaleConnectionAssignment {
 		t.Fatal(err)
 	}
-	h.IPPolicyDenied = false
+	h.AccessPending = false
 	if err := promote(ctx, h); err != nil {
 		t.Fatal(err)
 	}
