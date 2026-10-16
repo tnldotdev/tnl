@@ -428,6 +428,7 @@
                     "type": "object",
                     "description": "PublicURL and tunnel overrides for this service."
                   },
+                  "private": false,
                   "protocol": {
                     "type": "string",
                     "enum": ["http"]
@@ -473,6 +474,10 @@
                           },
                           "tls": {
                             "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["direct"]
+                              },
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
@@ -484,7 +489,8 @@
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "required": ["mode"]
                           },
                           "project": false,
                           "file": false,
@@ -522,6 +528,10 @@
                           },
                           "tls": {
                             "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["direct"]
+                              },
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
@@ -533,7 +543,8 @@
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "required": ["mode"]
                           },
                           "address": false,
                           "container": false
@@ -559,6 +570,10 @@
                           },
                           "tls": {
                             "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["direct"]
+                              },
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
@@ -570,7 +585,8 @@
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "required": ["mode"]
                           },
                           "address": false,
                           "project": false,
@@ -633,6 +649,180 @@
                 },
                 "additionalProperties": false,
                 "type": "object"
+              },
+              {
+                "properties": {
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "tunnel": false,
+                  "private": {
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  "protocol": {
+                    "type": "string",
+                    "enum": ["tcp"]
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["direct", "postgres", "mysql"]
+                              },
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["mode"]
+                          },
+                          "project": false,
+                          "file": false,
+                          "service": false,
+                          "port": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "compose"
+                          },
+                          "project": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
+                          },
+                          "file": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^(?!/)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[^\\\\\\u0000]+$"
+                          },
+                          "service": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["direct", "postgres", "mysql"]
+                              },
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["mode"]
+                          },
+                          "address": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "service", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "docker"
+                          },
+                          "container": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "enum": ["direct", "postgres", "mysql"]
+                              },
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": ["mode"]
+                          },
+                          "address": false,
+                          "project": false,
+                          "file": false,
+                          "service": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container", "port"]
+                      }
+                    ]
+                  },
+                  "http": false
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["protocol", "target"]
               },
               {
                 "properties": {
@@ -793,9 +983,10 @@
                     "type": "object",
                     "description": "PublicURL and tunnel overrides for this service."
                   },
+                  "private": false,
                   "protocol": {
                     "type": "string",
-                    "enum": ["postgres", "mysql", "redis", "ssh"]
+                    "enum": ["ssh"]
                   },
                   "target": {
                     "oneOf": [
@@ -818,21 +1009,7 @@
                               }
                             ]
                           },
-                          "tls": {
-                            "properties": {
-                              "server_name": {
-                                "type": "string",
-                                "maxLength": 253,
-                                "minLength": 1
-                              },
-                              "ca_file": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": false,
-                            "type": "object"
-                          },
+                          "tls": false,
                           "project": false,
                           "file": false,
                           "service": false,
@@ -867,21 +1044,7 @@
                             "maximum": 65535,
                             "minimum": 1
                           },
-                          "tls": {
-                            "properties": {
-                              "server_name": {
-                                "type": "string",
-                                "maxLength": 253,
-                                "minLength": 1
-                              },
-                              "ca_file": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": false,
-                            "type": "object"
-                          },
+                          "tls": false,
                           "address": false,
                           "container": false
                         },
@@ -904,21 +1067,7 @@
                             "maximum": 65535,
                             "minimum": 1
                           },
-                          "tls": {
-                            "properties": {
-                              "server_name": {
-                                "type": "string",
-                                "maxLength": 253,
-                                "minLength": 1
-                              },
-                              "ca_file": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "additionalProperties": false,
-                            "type": "object"
-                          },
+                          "tls": false,
                           "address": false,
                           "project": false,
                           "file": false,

@@ -181,7 +181,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 		setup := controlv1.PublishRunSetup{
 			PublicUrl: route, PublishRunToken: token.String(),
 			PublishRun:      controlv1.PublishRun{Id: id, PublicUrlId: route.Id, TeamId: teamID, PublishRunNumber: 1, ExpiresAt: now.Add(time.Hour), State: controlv1.PublishRunStateStarting},
-			CertificatePlan: controlv1.CertificatePlan{CacheKey: route.CanonicalHostname, Scope: route.CanonicalHostname, Identifiers: []string{route.CanonicalHostname}, ChallengeMethod: controlv1.TlsAlpn01},
+			CertificatePlan: &controlv1.CertificatePlan{CacheKey: route.CanonicalHostname, Scope: route.CanonicalHostname, Identifiers: []string{route.CanonicalHostname}, ChallengeMethod: controlv1.TlsAlpn01},
 		}
 		for slot := range 2 {
 			setup.PublisherConnections = append(setup.PublisherConnections, controlv1.ConnectionAssignment{
@@ -225,7 +225,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 			return
 		}
 		chain := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})) + string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}))
-		writeJSON(w, controlv1.CertificateIssuance{Id: "iss_0000000000000000000001", PublicUrlId: setup.PublicUrl.Id, PublishRunId: setup.PublishRun.Id, PublishRunNumber: 1, CertificatePlan: setup.CertificatePlan, CertificatePem: &chain, NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter, State: controlv1.CertificateIssuanceStateWaitingForInstall})
+		writeJSON(w, controlv1.CertificateIssuance{Id: "iss_0000000000000000000001", PublicUrlId: setup.PublicUrl.Id, PublishRunId: setup.PublishRun.Id, PublishRunNumber: 1, CertificatePlan: *setup.CertificatePlan, CertificatePem: &chain, NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter, State: controlv1.CertificateIssuanceStateWaitingForInstall})
 	})
 	mux.HandleFunc("POST /v1/publish-runs/{session}/certificate-installed", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, lookup(r).PublishRun) })
 	mux.HandleFunc("POST /v1/publish-runs/{session}/ready", func(w http.ResponseWriter, r *http.Request) {

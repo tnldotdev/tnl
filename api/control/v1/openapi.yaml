@@ -3,12 +3,452 @@ info:
   title: tnl control API
   version: 1.0.0
   license:
-    name: MIT
-    identifier: MIT
+    name: BSD-3-Clause
+    identifier: BSD-3-Clause
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/private-services:
+    get:
+      operationId: listPrivateServices
+      description: Team-owned saved services; never return target addresses or stream keys.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamIDQuery" },
+          { $ref: "#/components/parameters/PrivateServiceCursor" },
+        ]
+      responses:
+        "200":
+          {
+            description: Team inventory,
+            content:
+              { application/json: { schema: { $ref: "#/components/schemas/PrivateServicePage" } } },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createPrivateService
+      description: Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/CreatePrivateServiceRequest" } },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: Saved private service,
+            content:
+              { application/json: { schema: { $ref: "#/components/schemas/PrivateService" } } },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}:
+    get:
+      operationId: getPrivateService
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      responses:
+        "200":
+          {
+            description: Saved service for an authorized team administrator,
+            content:
+              { application/json: { schema: { $ref: "#/components/schemas/PrivateService" } } },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deletePrivateService
+      description: Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      responses:
+        "204": { description: Service deleted }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/grants:
+    get:
+      operationId: listPrivateServiceGrants
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      responses:
+        "200":
+          {
+            description: Exact service grants,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { type: array, items: { $ref: "#/components/schemas/PrivateServiceGrant" } },
+                  },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createPrivateServiceGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/PrivateServiceID" },
+          { $ref: "#/components/parameters/IdempotencyKey" },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/CreatePrivateServiceGrantRequest" } },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: Revocable team or identity grant,
+            content:
+              {
+                application/json: { schema: { $ref: "#/components/schemas/PrivateServiceGrant" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/grants/{grant_id}:
+    delete:
+      operationId: revokePrivateServiceGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/PrivateServiceID" },
+          {
+            name: grant_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateServiceGrantID" },
+          },
+        ]
+      responses:
+        "204": { description: Grant revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/invitations:
+    get:
+      operationId: listPrivateServiceInvitations
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      responses:
+        "200":
+          description: Invitations for service administrators
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PrivateServiceInvitation" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: invitePrivateServiceVisitor
+      security: [{ bearerAuth: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/PrivateServiceID" },
+          { $ref: "#/components/parameters/IdempotencyKey" },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/CreatePrivateServiceInvitationRequest" } },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: One-use verified-email invitation,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PrivateServiceInvitation" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/invitations/{invitation_id}:
+    delete:
+      operationId: revokePrivateServiceInvitation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - name: invitation_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/PrivateServiceInvitationID" }
+      responses:
+        "204": { description: Invitation and accepted identity grant revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-service-invitations/accept:
+    post:
+      operationId: acceptPrivateServiceInvitation
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      additionalProperties: false,
+                      required: [secret],
+                      properties: { secret: { type: string, minLength: 32, maxLength: 128 } },
+                    },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Exact identity grant,
+            content:
+              {
+                application/json: { schema: { $ref: "#/components/schemas/PrivateServiceGrant" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/visitor/private-services:
+    get:
+      operationId: listAvailablePrivateServices
+      description: Authorized saved private services for tnl connect, including offline services. Current ready run fields are absent when no ready run with two ready publisher connections is available. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceCursor" }]
+      responses:
+        "200":
+          {
+            description: Authorized visitor inventory,
+            content:
+              { application/json: { schema: { $ref: "#/components/schemas/PrivateServicePage" } } },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/connector-sessions:
+    post:
+      operationId: createPrivateConnectorSession
+      description: Authorize one saved service for an identity and return a one-use credential for a shared ingress mux session. The ingress-observed source is bound when the session connects. This does not authorize visitor streams.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      responses:
+        "201":
+          description: Infrastructure session setup; no service run key or stream ticket
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateConnectorSessionSetup" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/connect:
+    post:
+      operationId: createPrivateServiceTicket
+      description: For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePrivateServiceTicketRequest" }
+      responses:
+        "201":
+          {
+            description: One-use connector ticket,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PrivateServiceConnection" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs:
+    post:
+      operationId: preparePrivateServiceRun
+      description: Reserve a new run ID, number and binding nonce under the exact publisher grant and enrolled signing key. Retrying the same idempotency key returns the same preparation; control does not generate or store a private TLS key.
+      security: [{ publisherAuth: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/PrivateServiceID" },
+          { $ref: "#/components/parameters/IdempotencyKey" },
+        ]
+      responses:
+        "201":
+          {
+            description: Prepared run for the publisher to sign,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PrivateServiceRunPreparation" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs/{private_run_id}/bind:
+    post:
+      operationId: bindPrivateServiceRunKey
+      description: Verify an Ed25519 signature from the enrolled, current publisher identity key over the exact prepared team/service/run/number/nonce/grant/key/idempotency tuple and the publisher-generated public TLS key. A retry must repeat the same proof and pin; it may rotate only the run token.
+      security: [{ publisherAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - name: private_run_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/PrivateRunID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BindPrivateServiceRunKeyRequest" }
+      responses:
+        "200":
+          description: Bound publisher-generated public key and current run token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateServiceRunSetup" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs/{private_run_id}:
+    post:
+      operationId: heartbeatPrivateServiceRun
+      description: Renew only the current run under its exact publisher grant. Ready requires two current relay assignments, never a certificate or DNS state.
+      security: [{ privateRunAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - name: private_run_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/PrivateRunID" }
+      responses:
+        "200":
+          description: Current run and assignments
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateServiceRunState" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: closePrivateServiceRun
+      description: Close the exact run, invalidate tickets and its pinned public key, and publish a private-service tombstone. The publisher discards its local private key.
+      security: [{ privateRunAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - name: private_run_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/PrivateRunID" }
+      responses:
+        "204": { description: Run closed }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/browser/identity/login:
+    get:
+      operationId: beginBrowserIdentityLogin
+      description: Start OIDC sign-in for the shared control-host browser identity session.
+      security: []
+      responses:
+        "302": { description: Redirect to the identity provider }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/browser/identity/callback:
+    get:
+      operationId: completeBrowserIdentityLogin
+      description: Finish OIDC sign-in; set a random, Secure, HttpOnly, SameSite=Lax __Host-tnl-identity cookie scoped to the control hostname. Store only its digest; the session expires within 24 hours.
+      security: []
+      parameters:
+        - { name: state, in: query, required: true, schema: { type: string } }
+        - { name: code, in: query, required: true, schema: { type: string } }
+      responses:
+        "303": { description: Return to the control-host approval page }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/browser/identity/session:
+    post:
+      operationId: createBrowserIdentitySession
+      description: A CLI administrator may create a browser identity session bound to the parent control session. Revoking the parent invalidates the cookie. Never return authority tokens to the browser.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Set the host-only __Host-tnl-identity cookie }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: revokeBrowserIdentitySession
+      security: [{ browserIdentityCookie: [] }]
+      responses:
+        "204": { description: Session revoked and cookie cleared }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publish-runs/{publish_run_id}/ssh-attempts:
+    post:
+      operationId: createSSHAttempt
+      description: Current SSH run only. The publisher sends the trusted visitor source and SSH session hash, never a browser-provided address. The eight-character code is for lookup, not permission; return a separate private proof for publisher polling and claiming.
+      security: [{ publishRunAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PublishRunID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSSHAttemptRequest" }
+      responses:
+        "201":
+          description: Pending attempt, one-time code and private publisher proof
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SSHAttemptCreated" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/browser/ssh-attempts/lookup:
+    post:
+      operationId: lookupSSHAttempt
+      description: Requires a current shared browser identity session. Code lookup only displays the request; it never authorizes an SSH connection.
+      security: [{ browserIdentityCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SSHAttemptCodeRequest" }
+      responses:
+        "200":
+          description: Bounded attempt details for confirmation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SSHAttemptBrowserView" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/browser/ssh-attempts/{attempt_id}/decision:
+    post:
+      operationId: decideSSHAttempt
+      description: Check Origin and the current exact URL SSH grant and OS account under the URL lock before approval. The code identifies the request but carries no permission.
+      security: [{ browserIdentityCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/SSHAttemptID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SSHAttemptDecisionRequest" }
+      responses:
+        "200":
+          description: One durable approval or denial
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SSHAttemptState" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publish-runs/{publish_run_id}/ssh-attempts/{attempt_id}:
+    parameters:
+      - { $ref: "#/components/parameters/PublishRunID" }
+      - { $ref: "#/components/parameters/SSHAttemptID" }
+    post:
+      operationId: updateSSHAttempt
+      description: Poll, atomically claim once, or cancel with the current run token and private publisher proof. Claim also binds the original visitor connection, source, account and SSH session hash. Expiry, run closure or replacement invalidates the attempt.
+      security: [{ publishRunAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateSSHAttemptRequest" }
+      responses:
+        "200":
+          description: Current attempt state; no browser credential or code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SSHAttemptState" }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/publish-runs/{publish_run_id}/visitor-access:
     post:
       operationId: authorizeHTTPVisitor
@@ -203,6 +643,7 @@ paths:
   /v1/public-urls/{public_url_id}/visitor-certificate:
     post:
       operationId: issueVisitorCertificate
+      description: Available for exact HTTP public URLs; SSH is ineligible.
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: "#/components/parameters/PublicURLID" }
@@ -226,6 +667,7 @@ paths:
   /v1/publish-runs/{publish_run_id}/visitor-certificate:
     post:
       operationId: authorizeVisitorCertificate
+      description: Check a visitor certificate on an HTTP public URL; SSH does not issue visitor certificates.
       security: [{ publishRunAuth: [] }]
       parameters:
         - { $ref: "#/components/parameters/PublishRunID" }
@@ -1502,11 +1944,35 @@ components:
       type: http
       scheme: bearer
       bearerFormat: tnl publish-run token
+    privateRunAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl private-service run token
     publisherAuth:
       type: http
       scheme: bearer
       bearerFormat: tnl grant-scoped publisher access token
+    browserIdentityCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-tnl-identity
+      description: Digest-only random control-host cookie, backed by encrypted authority tokens; never an SSH code.
   parameters:
+    PrivateServiceID:
+      name: private_service_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/PrivateServiceID" }
+    PrivateServiceCursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { $ref: "#/components/schemas/PrivateServiceID" }
+    SSHAttemptID:
+      name: attempt_id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
     PublisherIdentityID:
       name: publisher_identity_id
       in: path
@@ -1610,6 +2076,332 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    PrivateServiceID:
+      type: string
+      pattern: "^psvc_[A-Za-z0-9]{22}$"
+    PrivateRunID:
+      type: string
+      pattern: "^psrun_[A-Za-z0-9]{22}$"
+    PrivateConnectorSessionID:
+      type: string
+      pattern: "^pcs_[A-Za-z0-9]{22}$"
+    PrivateServiceInvitationID:
+      type: string
+      pattern: "^psivt_[A-Za-z0-9]{22}$"
+    PrivateServiceGrantID:
+      type: string
+      pattern: "^psgr_[A-Za-z0-9]{22}$"
+    PrivateServiceName:
+      type: string
+      pattern: "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+      maxLength: 32
+    CreatePrivateServiceRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, name]
+      properties:
+        team_id: { $ref: "#/components/schemas/TeamID" }
+        name: { $ref: "#/components/schemas/PrivateServiceName" }
+    PrivateService:
+      type: object
+      additionalProperties: false
+      description: Saved private service. private_run_id and run_number are absent together while offline; their presence identifies a currently ready run, not a ticket.
+      required: [id, team_id, name, enabled, created_at]
+      dependentRequired:
+        private_run_id: [run_number]
+        run_number: [private_run_id]
+      properties:
+        id: { $ref: "#/components/schemas/PrivateServiceID" }
+        team_id: { $ref: "#/components/schemas/TeamID" }
+        name: { $ref: "#/components/schemas/PrivateServiceName" }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        private_run_id:
+          {
+            $ref: "#/components/schemas/PrivateRunID",
+            description: Present only for a ready run with two ready publisher connections and a live publisher grant.,
+          }
+        run_number:
+          {
+            type: integer,
+            format: int64,
+            minimum: 1,
+            description: Present only alongside private_run_id.,
+          }
+    PrivateServicePage:
+      type: object
+      additionalProperties: false
+      required: [services]
+      properties:
+        services: { type: array, items: { $ref: "#/components/schemas/PrivateService" } }
+        next_cursor: { $ref: "#/components/schemas/PrivateServiceID" }
+    CreatePrivateServiceGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [team, identity] }
+        identity_id: { $ref: "#/components/schemas/IdentityID" }
+        expires_at: { type: string, format: date-time }
+    PrivateServiceGrant:
+      type: object
+      additionalProperties: false
+      required: [id, private_service_id, kind, created_at]
+      properties:
+        id: { $ref: "#/components/schemas/PrivateServiceGrantID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        kind: { type: string, enum: [team, identity] }
+        identity_id: { $ref: "#/components/schemas/IdentityID" }
+        invitation_id: { $ref: "#/components/schemas/PrivateServiceInvitationID" }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+    CreatePrivateServiceInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [email, expires_at]
+      properties:
+        email: { type: string, format: email }
+        expires_at: { type: string, format: date-time }
+    PrivateServiceInvitation:
+      type: object
+      additionalProperties: false
+      required: [id, private_service_id, email, expires_at]
+      properties:
+        id: { $ref: "#/components/schemas/PrivateServiceInvitationID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        email: { type: string, format: email }
+        expires_at: { type: string, format: date-time }
+        accepted_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+    PrivateConnectorSessionSetup:
+      type: object
+      additionalProperties: false
+      required:
+        [connector_session_id, private_service_id, session_credential, ingress_address, expires_at]
+      properties:
+        connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        session_credential: { type: string, minLength: 32, maxLength: 512 }
+        ingress_address:
+          {
+            type: string,
+            minLength: 1,
+            description: Shared ingress infrastructure TLS endpoint,
+            not a service-specific hostname.,
+          }
+        expires_at: { type: string, format: date-time }
+    CreatePrivateServiceTicketRequest:
+      type: object
+      additionalProperties: false
+      required: [connector_session_id]
+      properties:
+        connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
+    PrivateServiceConnection:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          private_service_id,
+          private_run_id,
+          run_number,
+          connector_session_id,
+          ticket,
+          expires_at,
+          stream_public_key,
+          identity_id,
+          observed_source_ip,
+        ]
+      properties:
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
+        identity_id: { $ref: "#/components/schemas/IdentityID" }
+        observed_source_ip:
+          {
+            type: string,
+            minLength: 3,
+            maxLength: 45,
+            description: Copied from the source bound by ingress to this authenticated mux session; compare it with PrivateVisitorAccepted.,
+          }
+        ticket: { type: string, minLength: 32, maxLength: 512 }
+        expires_at: { type: string, format: date-time }
+        stream_public_key:
+          {
+            type: string,
+            pattern: "^[0-9a-f]{64}$",
+            description: Pin the publisher's per-run TLS 1.3 certificate public key and verify the signed connector challenge; no WebPKI certificate is issued for this service.,
+          }
+    PrivateServiceRunPreparation:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          team_id,
+          private_service_id,
+          private_run_id,
+          run_number,
+          publisher_identity_id,
+          publisher_grant_id,
+          publisher_key_id,
+          idempotency_key,
+          binding_nonce,
+          expires_at,
+        ]
+      properties:
+        team_id: { $ref: "#/components/schemas/TeamID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        publisher_identity_id: { $ref: "#/components/schemas/ResourceID" }
+        publisher_grant_id: { $ref: "#/components/schemas/ResourceID" }
+        publisher_key_id: { $ref: "#/components/schemas/ResourceID" }
+        idempotency_key: { $ref: "#/components/schemas/IdempotencyKey" }
+        binding_nonce: { type: string, pattern: "^[0-9a-f]{64}$" }
+        expires_at: { type: string, format: date-time }
+    BindPrivateServiceRunKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [run_number, stream_public_key, binding_signature]
+      properties:
+        run_number: { type: integer, format: int64, minimum: 1 }
+        stream_public_key:
+          {
+            type: string,
+            pattern: "^[0-9a-f]{64}$",
+            description: Publisher-generated Ed25519 public key; the private key stays with the publisher.,
+          }
+        binding_signature:
+          {
+            type: string,
+            pattern: "^[A-Za-z0-9_-]{86}$",
+            description: Ed25519 signature by the enrolled publisher identity over tunnelv1.PrivateRunBindingDigest for this prepared run.,
+          }
+    PrivateServiceRunSetup:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          private_service_id,
+          private_run_id,
+          run_number,
+          run_token,
+          stream_public_key,
+          publisher_connections,
+        ]
+      properties:
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        run_token: { type: string, minLength: 1, maxLength: 4096 }
+        stream_public_key:
+          {
+            type: string,
+            pattern: "^[0-9a-f]{64}$",
+            description: Exact publisher-generated key pinned for this run; no private TLS key is returned.,
+          }
+        publisher_connections:
+          {
+            type: array,
+            minItems: 2,
+            maxItems: 2,
+            items: { $ref: "#/components/schemas/ConnectionAssignment" },
+          }
+    PrivateServiceRunState:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          private_service_id,
+          private_run_id,
+          run_number,
+          state,
+          publisher_expires_at,
+          stream_public_key,
+          publisher_connections,
+        ]
+      properties:
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        state: { type: string, enum: [starting, ready, closed] }
+        publisher_expires_at: { type: string, format: date-time }
+        stream_public_key: { type: string, pattern: "^[0-9a-f]{64}$" }
+        publisher_connections:
+          {
+            type: array,
+            minItems: 2,
+            maxItems: 2,
+            items: { $ref: "#/components/schemas/ConnectionAssignment" },
+          }
+    SSHAttemptCode:
+      type: string
+      minLength: 8
+      maxLength: 8
+      pattern: "^[A-Z0-9]{8}$"
+    SSHAttemptCodeRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code: { $ref: "#/components/schemas/SSHAttemptCode" }
+    CreateSSHAttemptRequest:
+      type: object
+      additionalProperties: false
+      required: [publish_run_number, visitor_connection_id, source_ip, ssh_user, ssh_session_hash]
+      properties:
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        visitor_connection_id: { type: string, minLength: 1, maxLength: 128 }
+        source_ip: { type: string, maxLength: 64 }
+        ssh_user: { type: string, pattern: "^[a-z_][a-z0-9_-]{0,31}$" }
+        ssh_session_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+    SSHAttemptCreated:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, code, publisher_proof, expires_at]
+      properties:
+        attempt_id: { type: string }
+        code: { $ref: "#/components/schemas/SSHAttemptCode" }
+        publisher_proof: { type: string, minLength: 43, maxLength: 43 }
+        expires_at: { type: string, format: date-time }
+    SSHAttemptBrowserView:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, public_url_id, hostname, source_ip, ssh_user, expires_at]
+      properties:
+        attempt_id: { type: string }
+        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        hostname: { $ref: "#/components/schemas/CanonicalHostname" }
+        source_ip: { type: string }
+        ssh_user: { type: string }
+        expires_at: { type: string, format: date-time }
+    SSHAttemptDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [code, decision]
+      properties:
+        code: { $ref: "#/components/schemas/SSHAttemptCode" }
+        decision: { type: string, enum: [approve, deny] }
+    UpdateSSHAttemptRequest:
+      type: object
+      additionalProperties: false
+      required: [publish_run_number, publisher_proof, action]
+      properties:
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        publisher_proof: { type: string, minLength: 43, maxLength: 43 }
+        action: { type: string, enum: [poll, claim, cancel] }
+        visitor_connection_id: { type: string, minLength: 1, maxLength: 128 }
+        source_ip: { type: string, maxLength: 64 }
+        ssh_user: { type: string, pattern: "^[a-z_][a-z0-9_-]{0,31}$" }
+        ssh_session_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+    SSHAttemptState:
+      type: object
+      additionalProperties: false
+      required: [state, expires_at]
+      properties:
+        state: { type: string, enum: [pending, approved, denied, claimed, canceled] }
+        expires_at: { type: string, format: date-time }
     HTTPVisitorRequest:
       type: object
       additionalProperties: false
@@ -1684,7 +2476,7 @@ components:
         team_id: { type: string }
         team_name: { type: string }
         canonical_hostname: { type: string }
-        service_protocol: { type: string, pattern: "^(http|postgres|mysql|redis)$" }
+        service_protocol: { $ref: "#/components/schemas/PublicURLServiceProtocol" }
         public_port: { type: integer, format: int32, minimum: 1024, maximum: 65535 }
         visitor_access: { type: string, enum: [owner, preview_team, team_grant, identity_grant] }
     VisitorIPGrantInput:
@@ -1987,7 +2779,7 @@ components:
       enum: [app, alias, demo, oauth, webhooks]
     PublicURLServiceProtocol:
       type: string
-      enum: [http, postgres, mysql, redis, ssh]
+      enum: [http, ssh]
     PublicURLLifecycleState:
       type: string
       enum: [enabled, suspended]
@@ -2032,7 +2824,7 @@ components:
           type: integer
           minimum: 1024
           maximum: 65535
-          description: Stable visitor TCP port for a port-addressed public URL.
+          description: Assigned visitor port for SSH; HTTP uses hostname routing on 443.
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
@@ -2077,9 +2869,11 @@ components:
           $ref: "#/components/schemas/ResourceID"
         kind:
           type: string
-          enum: [saved_url, namespace]
+          enum: [saved_url, namespace, private_service]
         public_url_id:
           $ref: "#/components/schemas/PublicURLID"
+        private_service_id:
+          $ref: "#/components/schemas/PrivateServiceID"
         team_id:
           $ref: "#/components/schemas/TeamID"
         domain_id:
@@ -2122,6 +2916,7 @@ components:
     CreatePublisherGrantRequest:
       type: object
       additionalProperties: false
+      description: Select exactly one saved public URL, HTTP namespace, or private service ID within the team.
       required: [team_id]
       properties:
         team_id:
@@ -2129,16 +2924,19 @@ components:
         domain_id:
           $ref: "#/components/schemas/DomainID"
         public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
         expires_at: { type: string, format: date-time }
     CreatePublisherEnrollmentRequest:
       type: object
       additionalProperties: false
+      description: Enroll with one exact saved public URL, HTTP namespace, or private service ID.
       required: [team_id, name, kind]
       properties:
         team_id: { $ref: "#/components/schemas/TeamID" }
         name: { type: string, minLength: 1, maxLength: 63 }
         kind: { type: string, enum: [installed, automation, run] }
         public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
         domain_id: { $ref: "#/components/schemas/DomainID" }
     AllocateEphemeralPublicURLRequest:
       type: object
@@ -2189,7 +2987,7 @@ components:
           $ref: "#/components/schemas/ResourceID"
         kind:
           type: string
-          enum: [saved_url, namespace]
+          enum: [saved_url, namespace, private_service]
         team_id:
           $ref: "#/components/schemas/TeamID"
         domain_id:
@@ -2197,6 +2995,7 @@ components:
         namespace:
           type: string
         public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
         expires_at:
           type: string
           format: date-time
@@ -3174,8 +3973,19 @@ components:
     PublishRunSetup:
       type: object
       additionalProperties: false
-      required:
-        [public_url, publish_run, publish_run_token, certificate_plan, publisher_connections]
+      allOf:
+        - if:
+            properties:
+              public_url:
+                properties:
+                  service_protocol: { const: ssh }
+                required: [service_protocol]
+            required: [public_url]
+          then:
+            not: { required: [certificate_plan] }
+          else:
+            required: [certificate_plan]
+      required: [public_url, publish_run, publish_run_token, publisher_connections]
       properties:
         traffic:
           $ref: "#/components/schemas/TrafficLimits"
@@ -3189,6 +3999,7 @@ components:
           maxLength: 4096
         certificate_plan:
           $ref: "#/components/schemas/CertificatePlan"
+          description: Required for HTTP; absent for SSH, which has no visitor TLS certificate or ACME order.
         publisher_connections:
           type: array
           minItems: 2
@@ -3294,6 +4105,7 @@ components:
     PublishRunHeartbeat:
       type: object
       additionalProperties: false
+      description: SSH becomes ready after DNS, an assigned port, and two ready publisher connections; HTTP additionally requires a visitor certificate.
       required: [publish_run, publisher_connections, policy_denials]
       properties:
         publish_run:

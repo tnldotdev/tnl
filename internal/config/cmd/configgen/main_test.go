@@ -78,6 +78,30 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	}
 }
 
+func TestServiceSchemaKeepsPrivateTCPSeparateFromPublicURLs(t *testing.T) {
+	variants := servicesSchema().AdditionalProperties.OneOf
+	if len(variants) != 3 {
+		t.Fatalf("service variants: %d", len(variants))
+	}
+	private := variants[1]
+	if slices.Contains(private.Required, "private") || !slices.Contains(private.Required, "target") {
+		t.Fatalf("private tcp fields: %v", private.Required)
+	}
+	if tunnel, found := private.Properties.Get("tunnel"); !found || tunnel != jsonschema.FalseSchema {
+		t.Fatal("private tcp permits public URL tunnel")
+	}
+	if override, found := private.Properties.Get("private"); !found || slices.Contains(override.Required, "name") {
+		t.Fatal("private tcp override is not optional")
+	} else if name, found := override.Properties.Get("name"); !found || name.Pattern == "" {
+		t.Fatal("explicit private name must be validated")
+	}
+	for _, variant := range []*jsonschema.Schema{variants[0], variants[2]} {
+		if field, found := variant.Properties.Get("private"); !found || field != jsonschema.FalseSchema {
+			t.Fatal("public service permits private identity")
+		}
+	}
+}
+
 func TestSchemaHasDisjointTargetsAndNoRetiredPublicFields(t *testing.T) {
 	reflector := &jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}
 	schema := reflector.Reflect(config.Document{})
@@ -150,8 +174,8 @@ func TestSchemaHasDisjointTargetsAndNoRetiredPublicFields(t *testing.T) {
 
 func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
 	variants := servicesSchema().AdditionalProperties.OneOf
-	if len(variants) != 2 {
-		t.Fatal("services must have HTTP and TCP union members")
+	if len(variants) != 3 {
+		t.Fatal("services must have HTTP, private TCP, and SSH union members")
 	}
 	for i, service := range variants {
 		protocol, _ := service.Properties.Get("protocol")
@@ -162,14 +186,35 @@ func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
 				t.Fatal("HTTP service lost inference or HTTP settings")
 			}
 		} else {
-			if !reflect.DeepEqual(protocol.Enum, []any{"postgres", "mysql", "redis", "ssh"}) || !slices.Contains(service.Required, "protocol") || !slices.Contains(service.Required, "target") || len(target.OneOf) != 3 || http != jsonschema.FalseSchema {
-				t.Fatal("TCP service does not require its protocol and non-app target or forbids no HTTP settings")
+			wantProtocol := "tcp"
+			if i == 2 {
+				wantProtocol = "ssh"
+			}
+			if !reflect.DeepEqual(protocol.Enum, []any{wantProtocol}) || !slices.Contains(service.Required, "protocol") || !slices.Contains(service.Required, "target") || len(target.OneOf) != 3 || http != jsonschema.FalseSchema {
+				t.Fatal("non-HTTP service does not require its protocol and non-app target or forbids HTTP settings")
 			}
 		}
 		for _, variant := range target.OneOf {
 			kind, _ := variant.Properties.Get("type")
-			if i == 1 && kind.Const == "app" {
-				t.Fatal("TCP service accepts an app target")
+			if i != 0 && kind.Const == "app" {
+				t.Fatal("non-HTTP service accepts an app target")
+			}
+			if kind.Const != "app" {
+				tls, _ := variant.Properties.Get("tls")
+				if i == 2 {
+					if tls != jsonschema.FalseSchema {
+						t.Fatal("SSH service accepts target TLS")
+					}
+				} else {
+					mode, _ := tls.Properties.Get("mode")
+					want := []any{"direct"}
+					if i == 1 {
+						want = []any{"direct", "postgres", "mysql"}
+					}
+					if !slices.Contains(tls.Required, "mode") || !reflect.DeepEqual(mode.Enum, want) {
+						t.Fatalf("%s target TLS modes = %v", kind.Const, mode.Enum)
+					}
+				}
 			}
 			for _, field := range []string{"address", "project", "file", "service", "port", "container", "tls"} {
 				value, found := variant.Properties.Get(field)

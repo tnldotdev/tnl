@@ -148,7 +148,7 @@ WHERE id = $2
   AND mutation_revision = $20
   AND mutation_revision < 9223372036854775807
   AND lifecycle_state = 'enabled'
-RETURNING (next_publish_run_number - 1)::bigint AS publish_run_number
+RETURNING (next_publish_run_number - 1)::bigint AS publish_run_number, service_protocol
 )
 INSERT INTO control.publish_runs (
     id,
@@ -185,10 +185,10 @@ INSERT INTO control.publish_runs (
     $9,
     $10,
     $11,
-    $12,
-    $13,
-    $14,
-    $15,
+    CASE WHEN version.service_protocol = 'ssh' THEN NULL ELSE $12::text END AS certificate_cache_key,
+    CASE WHEN version.service_protocol = 'ssh' THEN NULL ELSE $13::text END AS certificate_scope,
+    CASE WHEN version.service_protocol = 'ssh' THEN NULL ELSE $14::text[] END AS certificate_identifiers,
+    CASE WHEN version.service_protocol = 'ssh' THEN NULL ELSE $15::text END AS certificate_challenge_method,
     convert_from($16::bytea, 'UTF8')::jsonb,
     'starting',
     $17,
@@ -472,7 +472,7 @@ func (q *Queries) ListPublishRunConnections(ctx context.Context, publishRunID st
 }
 
 const lockExpiredPublishRunPublicURLs = `-- name: LockExpiredPublishRunPublicURLs :many
-SELECT routes.id, routes.team_id, routes.domain_id, routes.ingress_pool_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest_ciphertext, routes.request_digest_storage_key_id, routes.canonical_hostname, routes.target, routes.namespace, routes.purpose, routes.service_protocol, routes.public_port, routes.public_url_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_policy_ciphertext, routes.allowed_ip_policy_storage_key_id, routes.allowed_ip_hashes, routes.allowed_ip_hash_key_id, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
+SELECT routes.id, routes.team_id, routes.domain_id, routes.ingress_pool_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest_ciphertext, routes.request_digest_storage_key_id, routes.canonical_hostname, routes.target, routes.namespace, routes.purpose, routes.service_protocol, routes.ssh_host_key, routes.public_port, routes.public_url_scope, routes.policy_revision, routes.ip_policy, routes.allowed_ip_policy_ciphertext, routes.allowed_ip_policy_storage_key_id, routes.allowed_ip_hashes, routes.allowed_ip_hash_key_id, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
 FROM control.publish_runs AS sessions
 JOIN control.public_urls AS routes ON routes.id = sessions.public_url_id
 WHERE sessions.closed_at IS NULL
@@ -524,6 +524,7 @@ func (q *Queries) LockExpiredPublishRunPublicURLs(ctx context.Context, arg LockE
 			&i.Namespace,
 			&i.Purpose,
 			&i.ServiceProtocol,
+			&i.SSHHostKey,
 			&i.PublicPort,
 			&i.PublicURLScope,
 			&i.PolicyRevision,
@@ -564,7 +565,7 @@ func (q *Queries) LockExpiredPublishRunPublicURLs(ctx context.Context, arg LockE
 }
 
 const lockPublicURLForRun = `-- name: LockPublicURLForRun :one
-SELECT id, team_id, domain_id, ingress_pool_id, membership_id, created_by_identity_id, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target, namespace, purpose, service_protocol, public_port, public_url_scope, policy_revision, ip_policy, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+SELECT id, team_id, domain_id, ingress_pool_id, membership_id, created_by_identity_id, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target, namespace, purpose, service_protocol, ssh_host_key, public_port, public_url_scope, policy_revision, ip_policy, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
 FROM control.public_urls
 WHERE id = $1
 FOR NO KEY UPDATE
@@ -591,6 +592,7 @@ func (q *Queries) LockPublicURLForRun(ctx context.Context, publicUrlID string) (
 		&i.Namespace,
 		&i.Purpose,
 		&i.ServiceProtocol,
+		&i.SSHHostKey,
 		&i.PublicPort,
 		&i.PublicURLScope,
 		&i.PolicyRevision,

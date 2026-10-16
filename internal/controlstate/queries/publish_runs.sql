@@ -77,7 +77,7 @@ WHERE id = sqlc.arg(public_url_id)
   AND mutation_revision = sqlc.arg(expected_mutation_revision)
   AND mutation_revision < 9223372036854775807
   AND lifecycle_state = 'enabled'
-RETURNING (next_publish_run_number - 1)::bigint AS publish_run_number
+RETURNING (next_publish_run_number - 1)::bigint AS publish_run_number, service_protocol
 )
 INSERT INTO control.publish_runs (
     id,
@@ -114,10 +114,10 @@ INSERT INTO control.publish_runs (
     sqlc.arg(publish_run_token_id),
     sqlc.arg(publish_run_token_digest),
     sqlc.arg(policy_revision),
-    sqlc.arg(certificate_cache_key),
-    sqlc.arg(certificate_scope),
-    sqlc.arg(certificate_identifiers),
-    sqlc.arg(certificate_challenge_method),
+    CASE WHEN version.service_protocol = 'ssh' THEN NULL ELSE sqlc.arg(certificate_cache_key)::text END AS certificate_cache_key,
+    CASE WHEN version.service_protocol = 'ssh' THEN NULL ELSE sqlc.arg(certificate_scope)::text END AS certificate_scope,
+    CASE WHEN version.service_protocol = 'ssh' THEN NULL ELSE sqlc.arg(certificate_identifiers)::text[] END AS certificate_identifiers,
+    CASE WHEN version.service_protocol = 'ssh' THEN NULL ELSE sqlc.arg(certificate_challenge_method)::text END AS certificate_challenge_method,
     convert_from(sqlc.arg(traffic_limits)::bytea, 'UTF8')::jsonb,
     'starting',
     sqlc.arg(created_at),

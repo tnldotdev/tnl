@@ -160,6 +160,7 @@ export interface TnlConfig {
              */
             publicURL?: string;
           };
+          private?: never;
           protocol?: "http";
           target?:
             | {
@@ -176,6 +177,7 @@ export interface TnlConfig {
                 type: "address";
                 address: string | number;
                 tls?: {
+                  mode: "direct";
                   caFile?: string;
                   serverName?: string;
                 };
@@ -192,6 +194,7 @@ export interface TnlConfig {
                 service: string;
                 port: number;
                 tls?: {
+                  mode: "direct";
                   caFile?: string;
                   serverName?: string;
                 };
@@ -203,6 +206,7 @@ export interface TnlConfig {
                 container: string;
                 port: number;
                 tls?: {
+                  mode: "direct";
                   caFile?: string;
                   serverName?: string;
                 };
@@ -229,6 +233,58 @@ export interface TnlConfig {
                 | undefined;
             };
           };
+        }
+      | {
+          inspection?: Inspection1;
+          tunnel?: never;
+          private?: {
+            name?: string;
+          };
+          protocol: "tcp";
+          target:
+            | {
+                type: "address";
+                address: string | number;
+                tls?: {
+                  mode: "direct" | "postgres" | "mysql";
+                  caFile?: string;
+                  serverName?: string;
+                };
+                project?: never;
+                file?: never;
+                service?: never;
+                port?: never;
+                container?: never;
+              }
+            | {
+                type: "compose";
+                project?: string;
+                file?: string;
+                service: string;
+                port: number;
+                tls?: {
+                  mode: "direct" | "postgres" | "mysql";
+                  caFile?: string;
+                  serverName?: string;
+                };
+                address?: never;
+                container?: never;
+              }
+            | {
+                type: "docker";
+                container: string;
+                port: number;
+                tls?: {
+                  mode: "direct" | "postgres" | "mysql";
+                  caFile?: string;
+                  serverName?: string;
+                };
+                address?: never;
+                project?: never;
+                file?: never;
+                service?: never;
+              };
+          http?: never;
         }
       | {
           inspection?: Inspection1;
@@ -284,15 +340,13 @@ export interface TnlConfig {
              */
             publicURL?: string;
           };
-          protocol: "postgres" | "mysql" | "redis" | "ssh";
+          private?: never;
+          protocol: "ssh";
           target:
             | {
                 type: "address";
                 address: string | number;
-                tls?: {
-                  caFile?: string;
-                  serverName?: string;
-                };
+                tls?: never;
                 project?: never;
                 file?: never;
                 service?: never;
@@ -305,10 +359,7 @@ export interface TnlConfig {
                 file?: string;
                 service: string;
                 port: number;
-                tls?: {
-                  caFile?: string;
-                  serverName?: string;
-                };
+                tls?: never;
                 address?: never;
                 container?: never;
               }
@@ -316,10 +367,7 @@ export interface TnlConfig {
                 type: "docker";
                 container: string;
                 port: number;
-                tls?: {
-                  caFile?: string;
-                  serverName?: string;
-                };
+                tls?: never;
                 address?: never;
                 project?: never;
                 file?: never;

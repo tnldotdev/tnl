@@ -103,8 +103,8 @@ func (service *Service) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// NewService builds public metadata from a saved address. callers reserve TCP
-// addresses before generating metadata; private discovery never enters this type.
+// NewService builds public metadata from a saved address. ssh requires an
+// assigned port; private TCP discovery never enters this type.
 func NewService(namespace, hostname, protocol string, port *int) (Service, error) {
 	service := Service{Namespace: namespace, Hostname: hostname, Protocol: protocol, Port: port}
 	if protocol == "http" {
@@ -125,16 +125,17 @@ func validateServiceAddress(service Service) error {
 	if err := canonicalHostname("service hostname", service.Hostname); err != nil {
 		return err
 	}
-	if !config.ValidProtocol(service.Protocol) {
-		return errors.New("service protocol must be http, postgres, mysql, redis, or ssh")
+	if service.Protocol != "http" && service.Protocol != "ssh" {
+		return errors.New("public service protocol must be http or ssh")
 	}
 	if service.Protocol == "http" {
 		if service.URL != "https://"+service.Hostname || service.Port != nil || service.Address != "" {
 			return errors.New("HTTP service needs its exact HTTPS URL and no TCP address or port")
 		}
 	} else {
-		if service.URL != "" || service.Port == nil || !tcpport.Valid(*service.Port) || service.Address != net.JoinHostPort(service.Hostname, strconv.Itoa(*service.Port)) || service.Paths != nil {
-			return errors.New("TCP service needs its saved public port and hostname:port address, without HTTP URL or paths")
+		if service.URL != "" || service.Port == nil || !tcpport.Valid(*service.Port) ||
+			service.Address != net.JoinHostPort(service.Hostname, strconv.Itoa(*service.Port)) || service.Paths != nil {
+			return errors.New("ssh needs its assigned port and hostname:port address, without HTTP URL or paths")
 		}
 	}
 	return nil

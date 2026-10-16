@@ -111,30 +111,48 @@ func servicesSchema() *jsonschema.Schema {
 		Type: "object", MaxProperties: integerPointer(32),
 		PropertyNames: &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
 		AdditionalProperties: &jsonschema.Schema{OneOf: []*jsonschema.Schema{
-			serviceSchema(false), serviceSchema(true),
+			serviceSchema("http"), serviceSchema("tcp"), serviceSchema("ssh"),
 		}},
 	}
 }
 
 // serviceSchema keeps the protocol boundary in the generated TypeScript union,
 // where JSON Schema conditionals alone would not constrain the declarations.
-func serviceSchema(tcp bool) *jsonschema.Schema {
+func serviceSchema(protocol string) *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
 	properties.Set("inspection", &jsonschema.Schema{Ref: "#/$defs/Inspection"})
 	tunnel := tunnelSchema()
 	tunnel.Description = "PublicURL and tunnel overrides for this service."
 	limits, _ := tunnel.Properties.Get("limits")
 	otherProtocol := "tcp"
-	if tcp {
+	if protocol != "http" {
 		otherProtocol = "http"
 	}
 	limits.Properties.Set(otherProtocol, jsonschema.FalseSchema)
-	properties.Set("tunnel", tunnel)
-	protocols := []any{"http"}
+	if protocol == "tcp" {
+		properties.Set("tunnel", jsonschema.FalseSchema)
+		private := jsonschema.NewProperties()
+		private.Set("name", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`})
+		properties.Set("private", &jsonschema.Schema{Type: "object", Properties: private, AdditionalProperties: jsonschema.FalseSchema})
+	} else {
+		properties.Set("tunnel", tunnel)
+		properties.Set("private", jsonschema.FalseSchema)
+	}
+	protocols := []any{protocol}
 	target := targetSchema()
-	if tcp {
-		protocols = []any{"postgres", "mysql", "redis", "ssh"}
+	if protocol != "http" {
 		target.OneOf = target.OneOf[1:]
+		if protocol == "ssh" {
+			for _, variant := range target.OneOf {
+				variant.Properties.Set("tls", jsonschema.FalseSchema)
+			}
+		}
+	} else {
+		for _, variant := range target.OneOf[1:] {
+			tls, _ := variant.Properties.Get("tls")
+			mode, _ := tls.Properties.Get("mode")
+			mode.Enum = []any{"direct"}
+		}
 	}
 	properties.Set("protocol", &jsonschema.Schema{Type: "string", Enum: protocols})
 	properties.Set("target", target)
@@ -155,13 +173,13 @@ func serviceSchema(tcp bool) *jsonschema.Schema {
 		Description: "Mount another configured service at a path on this service's public URL.",
 	})
 	properties.Set("http", &jsonschema.Schema{Type: "object", Properties: httpProperties, AdditionalProperties: jsonschema.FalseSchema})
-	if tcp {
+	if protocol != "http" {
 		properties.Set("http", jsonschema.FalseSchema)
 	}
 	service := &jsonschema.Schema{
 		Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
 	}
-	if tcp {
+	if protocol != "http" {
 		service.Required = []string{"protocol", "target"}
 	}
 	return service
@@ -260,9 +278,10 @@ func targetSchema() *jsonschema.Schema {
 		}
 		if kind != "app" {
 			tls := jsonschema.NewProperties()
+			tls.Set("mode", &jsonschema.Schema{Type: "string", Enum: []any{"direct", "postgres", "mysql"}})
 			tls.Set("server_name", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253)})
 			tls.Set("ca_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
-			properties.Set("tls", &jsonschema.Schema{Type: "object", Properties: tls, AdditionalProperties: jsonschema.FalseSchema})
+			properties.Set("tls", &jsonschema.Schema{Type: "object", Properties: tls, Required: []string{"mode"}, AdditionalProperties: jsonschema.FalseSchema})
 		}
 		// explicit forbidden fields also reject structurally inferred mixed targets
 		// in defineConfig, rather than relying on fresh-object excess checks.

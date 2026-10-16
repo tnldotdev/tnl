@@ -262,6 +262,11 @@ async function packAndVerify(stage: string, options: PackOptions): Promise<Packe
     packageManifestSchema,
   );
   assert.equal(packedManifest.version, metadata.version);
+  assert.deepEqual(
+    await readFile(path.join(extractionDirectory, "package", "LICENSE")),
+    await readFile(path.join(root, "LICENSE")),
+    `${options.packageName} has an outdated license`,
+  );
   assert(!JSON.stringify(packedManifest).includes("workspace:"));
   for (const lifecycle of ["preinstall", "install", "postinstall"]) {
     assert.equal(

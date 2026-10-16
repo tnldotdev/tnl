@@ -76,7 +76,7 @@ func (publisher *AppPublisher) UnmarshalYAML(node *yaml.Node) error {
 
 func ValidProtocol(protocol string) bool {
 	switch protocol {
-	case "http", "postgres", "mysql", "redis", "ssh":
+	case "http", "tcp", "ssh":
 		return true
 	}
 	return false
@@ -126,7 +126,7 @@ func ResolveServiceTarget(service Service, discovered string) (*Publish, error) 
 func validateTarget(service Service) error {
 	protocol := Protocol(service)
 	if !ValidProtocol(protocol) {
-		return errors.New("protocol must be http, postgres, mysql, redis, or ssh")
+		return errors.New("protocol must be http, tcp, or ssh")
 	}
 	target := service.Target
 	if target == nil || target.Type == "app" {
@@ -175,6 +175,12 @@ func validateTarget(service Service) error {
 		return errors.New("target.port must be between 1 and 65535")
 	}
 	if tls := target.TLS; tls != nil {
+		if protocol == "ssh" {
+			return errors.New("ssh does not use target TLS")
+		}
+		if tls.Mode != "direct" && tls.Mode != "postgres" && tls.Mode != "mysql" || protocol == "http" && tls.Mode != "direct" {
+			return errors.New("target.tls.mode must be direct, postgres, or mysql (direct for HTTP)")
+		}
 		if tls.ServerName != nil {
 			value := *tls.ServerName
 			if value == "" || strings.TrimSpace(value) != value || strings.ContainsAny(value, "/\\@ \t\r\n\x00") {
