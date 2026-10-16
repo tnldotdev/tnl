@@ -1,24 +1,21 @@
-// package clientruntime owns local app registration, publication observations,
-// and a bounded durable event journal. it never starts or stops applications.
+// package clientruntime owns local app registration and publication observations.
+// clientstate owns their transactional snapshot, cursor, and bounded history.
 package clientruntime
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
-	"slices"
-	"strconv"
-	"strings"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/clientstate"
 )
 
-const EventRetention = 2048
+const EventRetention = clientstate.RuntimeEventRetention
 
-var ErrCursorExpired = errors.New("local event cursor expired; read a new status snapshot")
+var ErrCursorExpired = clientstate.ErrRuntimeCursorExpired
 var ErrOwnerConflict = errors.New("another live app owns this service")
 var ErrRegistrationStale = errors.New("app registration is stale")
 
@@ -43,25 +40,22 @@ type Service struct {
 }
 
 type Event struct {
-	Cursor   string    `json:"cursor"`
-	Type     string    `json:"type"`
-	At       time.Time `json:"at"`
-	Service  *Service  `json:"service,omitempty"`
-	Snapshot *Snapshot `json:"snapshot,omitempty"`
+	Cursor      string                  `json:"cursor"`
+	Type        string                  `json:"type"`
+	At          time.Time               `json:"at"`
+	Service     *Service                `json:"service,omitempty"`
+	Snapshot    *Snapshot               `json:"snapshot,omitempty"`
+	Publication *clientstate.TunnelInfo `json:"publication,omitempty"`
 }
 
 type Snapshot struct {
-	SchemaVersion int       `json:"schema_version"`
-	Project       string    `json:"project"`
-	Cursor        string    `json:"cursor"`
-	ObservedAt    time.Time `json:"observed_at"`
-	Services      []Service `json:"services"`
-	Events        []Event   `json:"-"`
-}
-
-type diskJournal struct {
-	Snapshot Snapshot `json:"snapshot"`
-	Events   []Event  `json:"events"`
+	SchemaVersion int                      `json:"schema_version"`
+	Project       string                   `json:"project"`
+	Cursor        string                   `json:"cursor"`
+	ObservedAt    time.Time                `json:"observed_at"`
+	Services      []Service                `json:"services"`
+	Publications  []clientstate.TunnelInfo `json:"publications,omitempty"`
+	Events        []Event                  `json:"-"`
 }
 
 func Identity(project, state string) string {
@@ -69,126 +63,153 @@ func Identity(project, state string) string {
 	return hex.EncodeToString(digest[:12])
 }
 
-func JournalPath(project, state string) string {
-	return filepath.Join(state, "runtime", Identity(project, state)+".json")
-}
-
 func ReadSnapshot(project, state string) (Snapshot, error) {
-	data, err := os.ReadFile(JournalPath(project, state))
-	if errors.Is(err, os.ErrNotExist) {
-		return Snapshot{SchemaVersion: 1, Project: project, Cursor: "0", Services: []Service{}}, nil
-	}
+	database, err := clientstate.Open(context.Background(), state)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if len(data) > 16<<20 {
-		return Snapshot{}, errors.New("local journal exceeds limit")
-	}
-	var journal diskJournal
-	if err := json.Unmarshal(data, &journal); err != nil {
+	defer database.Close()
+	return ReadSnapshotFrom(context.Background(), database, project)
+}
+
+func ReadSnapshotFrom(ctx context.Context, database *clientstate.Database, project string) (Snapshot, error) {
+	snapshot, err := database.ReadRuntimeSnapshot(ctx, project)
+	if err != nil {
 		return Snapshot{}, err
 	}
-	if journal.Snapshot.SchemaVersion != 1 || journal.Snapshot.Project != project {
-		return Snapshot{}, errors.New("invalid local journal")
-	}
-	journal.Snapshot.Events = journal.Events
-	return journal.Snapshot, nil
+	return decodeSnapshot(snapshot)
 }
 
 func ListSnapshots(state string) ([]Snapshot, error) {
-	entries, err := os.ReadDir(filepath.Join(state, "runtime"))
-	if errors.Is(err, os.ErrNotExist) {
-		return []Snapshot{}, nil
-	}
+	database, err := clientstate.Open(context.Background(), state)
 	if err != nil {
 		return nil, err
 	}
-	result := []Snapshot{}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(state, "runtime", entry.Name()))
+	defer database.Close()
+	return ListSnapshotsFrom(context.Background(), database)
+}
+
+func ListSnapshotsFrom(ctx context.Context, database *clientstate.Database) ([]Snapshot, error) {
+	native, err := database.ListRuntimeSnapshots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]Snapshot, 0, len(native))
+	for _, entry := range native {
+		snapshot, err := decodeSnapshot(entry)
 		if err != nil {
 			return nil, err
 		}
-		if len(data) > 16<<20 {
-			return nil, errors.New("local journal exceeds limit")
-		}
-		var journal diskJournal
-		if err := json.Unmarshal(data, &journal); err != nil {
-			return nil, err
-		}
-		if journal.Snapshot.SchemaVersion != 1 || filepath.Base(JournalPath(journal.Snapshot.Project, state)) != entry.Name() {
-			return nil, errors.New("invalid local journal identity")
-		}
-		journal.Snapshot.Events = journal.Events
-		result = append(result, journal.Snapshot)
+		result = append(result, snapshot)
 	}
-	slices.SortFunc(result, func(a, b Snapshot) int { return strings.Compare(a.Project, b.Project) })
 	return result, nil
 }
 
-func WriteSnapshot(snapshot Snapshot, state string) error {
-	directory := filepath.Dir(JournalPath(snapshot.Project, state))
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return err
+// CommitSnapshot commits app services and one event using the native project
+// journal. the returned cursor/history replace the caller's view only on success.
+// publications written concurrently remain part of the same native snapshot.
+func CommitSnapshot(ctx context.Context, database *clientstate.Database, snapshot *Snapshot, kind string, service *Service) error {
+	if snapshot == nil {
+		return errors.New("clientruntime: snapshot is required")
 	}
-	data, err := json.Marshal(diskJournal{Snapshot: snapshot, Events: snapshot.Events})
-	if err != nil {
-		return err
-	}
-	for len(data) > 8<<20 && len(snapshot.Events) > 1 {
-		snapshot.Events = snapshot.Events[len(snapshot.Events)/2:]
-		data, err = json.Marshal(diskJournal{Snapshot: snapshot, Events: snapshot.Events})
+	services := make([]json.RawMessage, 0, len(snapshot.Services))
+	for _, value := range snapshot.Services {
+		encoded, err := json.Marshal(value)
 		if err != nil {
 			return err
 		}
+		services = append(services, encoded)
 	}
-	file, err := os.CreateTemp(directory, ".journal-")
+	event := Event{Service: service}
+	payload, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
-	if _, err := file.Write(data); err != nil {
-		file.Close()
+	native, err := database.CommitRuntimeUpdate(ctx, snapshot.Project, clientstate.RuntimeUpdate{
+		Services: services, ExpectedCursor: snapshot.Cursor, Type: kind, Payload: payload, Snapshot: service == nil,
+	})
+	if err != nil {
 		return err
 	}
-	if err := file.Sync(); err != nil {
-		file.Close()
+	persisted, err := decodeSnapshot(native)
+	if err != nil {
 		return err
 	}
-	if err := file.Close(); err != nil {
-		return err
+	snapshot.SchemaVersion, snapshot.Cursor, snapshot.ObservedAt = persisted.SchemaVersion, persisted.Cursor, persisted.ObservedAt
+	snapshot.Publications, snapshot.Events = persisted.Publications, persisted.Events
+	return nil
+}
+
+func decodeSnapshot(native clientstate.RuntimeSnapshot) (Snapshot, error) {
+	result := Snapshot{SchemaVersion: 1, Project: native.Project, Cursor: native.Cursor, ObservedAt: native.ObservedAt,
+		Services: make([]Service, 0, len(native.Services)), Publications: native.Publications, Events: make([]Event, 0, len(native.Events))}
+	for _, value := range native.Services {
+		var service Service
+		if err := json.Unmarshal(value, &service); err != nil {
+			return Snapshot{}, err
+		}
+		result.Services = append(result.Services, service)
 	}
-	return os.Rename(file.Name(), JournalPath(snapshot.Project, state))
+	for _, value := range native.Events {
+		event, err := decodeEvent(value)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		result.Events = append(result.Events, event)
+	}
+	return result, nil
+}
+
+func decodeEvent(native clientstate.RuntimeEvent) (Event, error) {
+	var event Event
+	if err := json.Unmarshal(native.Payload, &event); err != nil {
+		return Event{}, err
+	}
+	event.Cursor, event.Type, event.At = native.Cursor, native.Type, native.At
+	if event.Snapshot != nil {
+		event.Snapshot.Cursor, event.Snapshot.ObservedAt = native.Cursor, native.At
+	}
+	return event, nil
 }
 
 func EventsAfter(snapshot Snapshot, cursor string) ([]Event, error) {
-	sequence, err := ParseCursor(cursor)
-	if err != nil {
-		return nil, err
-	}
-	latestSequence, err := ParseCursor(snapshot.Cursor)
-	if err != nil {
-		return nil, err
-	}
-	if sequence > latestSequence {
-		return nil, ErrCursorExpired
-	}
-	if len(snapshot.Events) > 0 {
-		first, _ := ParseCursor(snapshot.Events[0].Cursor)
-		if sequence < first-1 {
-			return nil, ErrCursorExpired
+	native := clientstate.RuntimeSnapshot{Cursor: snapshot.Cursor, Events: make([]clientstate.RuntimeEvent, 0, len(snapshot.Events))}
+	for _, event := range snapshot.Events {
+		payload, err := json.Marshal(event)
+		if err != nil {
+			return nil, err
 		}
+		native.Events = append(native.Events, clientstate.RuntimeEvent{Cursor: event.Cursor, Type: event.Type, At: event.At, Payload: payload})
 	}
-	return slices.DeleteFunc(slices.Clone(snapshot.Events), func(event Event) bool { value, _ := ParseCursor(event.Cursor); return value <= sequence }), nil
+	resumed, err := clientstate.RuntimeEventsAfter(native, cursor)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]Event, 0, len(resumed))
+	for _, entry := range resumed {
+		event, err := decodeEvent(entry)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, event)
+	}
+	return result, nil
 }
 
-func ParseCursor(cursor string) (uint64, error) {
-	value, err := strconv.ParseUint(cursor, 10, 64)
-	if err != nil || strconv.FormatUint(value, 10) != cursor || strings.TrimSpace(cursor) != cursor {
-		return 0, fmt.Errorf("invalid local event cursor")
+// EventsAfterFrom resumes directly from native state without loading unrelated
+// snapshot payloads. both native resume and snapshot-based resume are exclusive.
+func EventsAfterFrom(ctx context.Context, database *clientstate.Database, project, cursor string) ([]Event, error) {
+	native, err := database.RuntimeEventsAfter(ctx, project, cursor)
+	if err != nil {
+		return nil, err
 	}
-	return value, nil
+	result := make([]Event, 0, len(native))
+	for _, value := range native {
+		event, err := decodeEvent(value)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, event)
+	}
+	return result, nil
 }

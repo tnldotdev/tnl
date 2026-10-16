@@ -4,12 +4,30 @@ const maximumRuntimeBytes = 64 * 1024;
 const maximumServices = 32;
 const serviceNamePattern = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
-export interface ProjectServiceMetadata {
+interface ServiceAddress {
   readonly namespace: string;
   readonly hostname: string;
+}
+
+export type ServiceProtocol = "http" | "postgres" | "mysql" | "redis" | "ssh";
+
+export interface HTTPServiceMetadata extends ServiceAddress {
+  readonly protocol: "http";
   readonly url: `https://${string}`;
   readonly paths?: Readonly<Record<string, ProjectPathMetadata | undefined>>;
+  readonly address?: never;
+  readonly port?: never;
 }
+
+export interface TCPServiceMetadata extends ServiceAddress {
+  readonly protocol: Exclude<ServiceProtocol, "http">;
+  readonly port: number;
+  readonly address: `${string}:${number}`;
+  readonly url?: never;
+  readonly paths?: never;
+}
+
+export type ProjectServiceMetadata = HTTPServiceMetadata | TCPServiceMetadata;
 
 export interface ProjectPathMetadata {
   readonly service: string;
@@ -91,12 +109,15 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     const service = record(value, `${description} service ${JSON.stringify(name)}`);
     exactKeys(
       service,
-      [
-        "hostname",
-        "namespace",
-        "url",
-        ...["protocol", "paths"].filter((key) => Object.hasOwn(service, key)),
-      ],
+      service.protocol === "http"
+        ? [
+            "protocol",
+            "hostname",
+            "namespace",
+            "url",
+            ...["paths"].filter((key) => Object.hasOwn(service, key)),
+          ]
+        : ["protocol", "hostname", "namespace", "port", "address"],
       `${description} service ${JSON.stringify(name)}`,
     );
     if (
@@ -114,14 +135,31 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       service.hostname,
       `${description} service ${JSON.stringify(name)} hostname`,
     );
-    const url: `https://${string}` = `https://${hostname}`;
-    if (service.url !== url) {
-      throw new TnlError("sdk.runtime_invalid");
-    }
     if (hostnames.has(hostname)) {
       throw new TnlError("sdk.runtime_invalid");
     }
     hostnames.add(hostname);
+    if (service.protocol !== "http") {
+      if (
+        !isTCPProtocol(service.protocol) ||
+        typeof service.port !== "number" ||
+        !Number.isInteger(service.port) ||
+        service.port < 1024 ||
+        service.port > 65535 ||
+        service.address !== `${hostname}:${service.port}`
+      )
+        throw new TnlError("sdk.runtime_invalid");
+      services[name] = Object.freeze({
+        protocol: service.protocol,
+        namespace: serviceNamespace,
+        hostname,
+        port: service.port,
+        address: `${hostname}:${service.port}`,
+      });
+      continue;
+    }
+    const url: `https://${string}` = `https://${hostname}`;
+    if (service.url !== url) throw new TnlError("sdk.runtime_invalid");
     let paths: Readonly<Record<string, ProjectPathMetadata | undefined>> | undefined;
     if (service.paths !== undefined) {
       const pathsObject = record(
@@ -159,6 +197,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       paths = Object.freeze(parsedPaths);
     }
     services[name] = Object.freeze({
+      protocol: "http",
       namespace: serviceNamespace,
       hostname,
       url,
@@ -167,7 +206,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
   }
   for (const service of Object.values(services)) {
     for (const mount of Object.values(service.paths ?? {})) {
-      if (mount !== undefined && !Object.hasOwn(services, mount.service)) {
+      if (mount !== undefined && services[mount.service]?.protocol !== "http") {
         throw new TnlError("sdk.runtime_invalid");
       }
     }
@@ -201,7 +240,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
         endpoint.url !== `https://${hostname}${endpoint.path}` ||
         !(
           (endpoint.service === "" && entries.length === 0) ||
-          (validServiceName(endpoint.service) && Object.hasOwn(services, endpoint.service))
+          (validServiceName(endpoint.service) && services[endpoint.service]?.protocol === "http")
         ) ||
         !Array.isArray(endpoint.methods) ||
         endpoint.methods.length === 0 ||
@@ -237,7 +276,7 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       if (
         !validServiceName(name) ||
         !validServiceName(alias.service) ||
-        !Object.hasOwn(services, alias.service) ||
+        services[alias.service]?.protocol !== "http" ||
         hostnames.has(origin.hostname)
       ) {
         throw new TnlError("sdk.runtime_invalid");
@@ -268,6 +307,10 @@ function isWebhookMethod(value: unknown): value is WebhookMethod {
     value === "PATCH" ||
     value === "DELETE"
   );
+}
+
+function isTCPProtocol(value: unknown): value is Exclude<ServiceProtocol, "http"> {
+  return value === "postgres" || value === "mysql" || value === "redis" || value === "ssh";
 }
 
 function optionalProjectKeys(value: Record<string, unknown>): string[] {
@@ -375,15 +418,20 @@ export function parseProjectRuntime(value: unknown, description: string): Projec
 }
 
 export function serializeRuntimePayload(project: ProjectMetadata, dev: boolean): string {
-  const serialized = JSON.stringify({
-    namespace: project.namespace,
-    dev,
-    services: project.services,
-    ...(project.worktree === undefined ? {} : { worktree: project.worktree }),
-    ...(project.oauth === undefined ? {} : { oauth: project.oauth }),
-    ...(project.webhooks === undefined ? {} : { webhooks: project.webhooks }),
-    ...(project.aliases === undefined ? {} : { aliases: project.aliases }),
-  });
+  const serialized = JSON.stringify(
+    parseProjectRuntime(
+      {
+        namespace: project.namespace,
+        dev,
+        services: project.services,
+        ...(project.worktree === undefined ? {} : { worktree: project.worktree }),
+        ...(project.oauth === undefined ? {} : { oauth: project.oauth }),
+        ...(project.webhooks === undefined ? {} : { webhooks: project.webhooks }),
+        ...(project.aliases === undefined ? {} : { aliases: project.aliases }),
+      },
+      "tnl runtime payload",
+    ),
+  );
   if (byteLength(serialized) > maximumRuntimeBytes) {
     throw new TnlError("sdk.runtime_invalid");
   }

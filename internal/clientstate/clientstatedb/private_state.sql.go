@@ -38,6 +38,24 @@ func (q *Queries) DeletePublisherIdentity(ctx context.Context, arg DeletePublish
 	return err
 }
 
+const deletePublisherJobFileManifest = `-- name: DeletePublisherJobFileManifest :exec
+DELETE FROM publisher_job_file_manifest WHERE id = 1
+`
+
+func (q *Queries) DeletePublisherJobFileManifest(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deletePublisherJobFileManifest)
+	return err
+}
+
+const deletePublisherJobRegistry = `-- name: DeletePublisherJobRegistry :exec
+DELETE FROM publisher_job_registry WHERE id = 1
+`
+
+func (q *Queries) DeletePublisherJobRegistry(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deletePublisherJobRegistry)
+	return err
+}
+
 const deletePublisherSelection = `-- name: DeletePublisherSelection :exec
 DELETE FROM publisher_selections WHERE server_origin = ?1
   AND selection_kind = ?2 AND selection_key = ?3
@@ -65,6 +83,35 @@ type GetPendingPublisherEnrollmentParams struct {
 
 func (q *Queries) GetPendingPublisherEnrollment(ctx context.Context, arg GetPendingPublisherEnrollmentParams) (PendingPublisherEnrollment, error) {
 	row := q.db.QueryRowContext(ctx, getPendingPublisherEnrollment, arg.ServerOrigin, arg.EnrollmentID)
+	var i PendingPublisherEnrollment
+	err := row.Scan(
+		&i.ServerOrigin,
+		&i.EnrollmentID,
+		&i.SelectionKind,
+		&i.SelectionKey,
+		&i.PublicKey,
+		&i.SigningKeyCiphertext,
+		&i.EnrollmentSecretCiphertext,
+		&i.ResultJson,
+		&i.ExpiresAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getPendingPublisherEnrollmentForSelection = `-- name: GetPendingPublisherEnrollmentForSelection :one
+SELECT server_origin, enrollment_id, selection_kind, selection_key, public_key, signing_key_ciphertext, enrollment_secret_ciphertext, result_json, expires_at, updated_at FROM pending_publisher_enrollments WHERE server_origin = ?1
+  AND selection_kind = ?2 AND selection_key = ?3
+`
+
+type GetPendingPublisherEnrollmentForSelectionParams struct {
+	ServerOrigin  string
+	SelectionKind string
+	SelectionKey  string
+}
+
+func (q *Queries) GetPendingPublisherEnrollmentForSelection(ctx context.Context, arg GetPendingPublisherEnrollmentForSelectionParams) (PendingPublisherEnrollment, error) {
+	row := q.db.QueryRowContext(ctx, getPendingPublisherEnrollmentForSelection, arg.ServerOrigin, arg.SelectionKind, arg.SelectionKey)
 	var i PendingPublisherEnrollment
 	err := row.Scan(
 		&i.ServerOrigin,

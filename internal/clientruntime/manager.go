@@ -6,13 +6,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/tcptarget"
 )
 
 const LeaseDuration = 20 * time.Second
@@ -32,11 +34,12 @@ type Manager struct {
 	op            sync.Mutex
 	mu            sync.Mutex
 	ctx           context.Context
-	state         string
+	database      *clientstate.Database
 	snapshot      Snapshot
 	registrations map[string]*registration
 	run           Run
 	Alive         func(int) bool
+	Persistent    bool
 	idleSince     time.Time
 	preparing     int
 	closed        bool
@@ -44,12 +47,15 @@ type Manager struct {
 	writeErr      error
 }
 
-func New(ctx context.Context, project, state string, services []Service, run Run) (*Manager, error) {
-	previous, err := ReadSnapshot(project, state)
+func New(ctx context.Context, project string, database *clientstate.Database, services []Service, run Run) (*Manager, error) {
+	if database == nil {
+		return nil, errors.New("clientruntime: open client state is required")
+	}
+	previous, err := ReadSnapshotFrom(ctx, database, project)
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{ctx: ctx, state: state, run: run, registrations: map[string]*registration{}, idleSince: time.Now(), snapshot: previous}
+	m := &Manager{ctx: ctx, database: database, run: run, registrations: map[string]*registration{}, idleSince: time.Now(), snapshot: previous}
 	m.snapshot.Services = slices.Clone(services)
 	slices.SortFunc(m.snapshot.Services, func(a, b Service) int {
 		if a.Name < b.Name {
@@ -82,26 +88,9 @@ func New(ctx context.Context, project, state string, services []Service, run Run
 }
 
 func (m *Manager) emitLocked(kind string, service *Service) {
-	sequence, _ := ParseCursor(m.snapshot.Cursor)
-	m.snapshot.Cursor = strconv.FormatUint(sequence+1, 10)
-	m.snapshot.ObservedAt = time.Now().UTC()
-	var copy *Service
-	if service != nil {
-		value := *service
-		copy = &value
-	}
-	event := Event{Cursor: m.snapshot.Cursor, Type: kind, At: m.snapshot.ObservedAt, Service: copy}
-	if copy == nil {
-		snapshot := m.snapshot
-		snapshot.Services = slices.Clone(snapshot.Services)
-		snapshot.Events = nil
-		event.Snapshot = &snapshot
-	}
-	m.snapshot.Events = append(m.snapshot.Events, event)
-	if len(m.snapshot.Events) > EventRetention {
-		m.snapshot.Events = slices.Clone(m.snapshot.Events[len(m.snapshot.Events)-EventRetention:])
-	}
-	if err := WriteSnapshot(m.snapshot, m.state); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := CommitSnapshot(ctx, m.database, &m.snapshot, kind, service); err != nil {
 		m.writeErr = err
 	}
 }
@@ -111,7 +100,17 @@ func (m *Manager) Snapshot() Snapshot {
 	defer m.mu.Unlock()
 	copy := m.snapshot
 	copy.Services = slices.Clone(copy.Services)
+	for index := range copy.Services {
+		if value := copy.Services[index].Observation; value != nil {
+			observation := *value
+			copy.Services[index].Observation = &observation
+		}
+	}
 	copy.Events = slices.Clone(copy.Events)
+	// publication writers share the journal but do not take the manager lock.
+	if latest, err := ReadSnapshotFrom(context.Background(), m.database, m.snapshot.Project); err == nil {
+		copy.Cursor, copy.ObservedAt, copy.Publications, copy.Events = latest.Cursor, latest.ObservedAt, latest.Publications, latest.Events
+	}
 	return copy
 }
 
@@ -135,8 +134,10 @@ func (m *Manager) Configure(services []Service) error {
 	m.op.Lock()
 	defer m.op.Unlock()
 	wanted := map[string]bool{}
+	definitions := map[string]Service{}
 	for _, service := range services {
 		wanted[service.Name] = true
+		definitions[service.Name] = service
 	}
 	m.mu.Lock()
 	if m.closed {
@@ -146,7 +147,7 @@ func (m *Manager) Configure(services []Service) error {
 	type removal struct{ id, owner string }
 	var removed []removal
 	for name, reg := range m.registrations {
-		if !wanted[name] {
+		if !wanted[name] || definitions[name].ServiceProtocol != m.serviceLocked(name).ServiceProtocol {
 			removed = append(removed, removal{m.serviceLocked(name).RegistrationID, reg.owner})
 		}
 	}
@@ -163,11 +164,11 @@ func (m *Manager) Configure(services []Service) error {
 	changed := len(next) != len(m.snapshot.Services)
 	for index, configured := range next {
 		if previous := m.serviceLocked(configured.Name); previous != nil {
-			if previous.Directory != configured.Directory || previous.Readiness != configured.Readiness {
+			if previous.Directory != configured.Directory || previous.Readiness != configured.Readiness || previous.ServiceProtocol != configured.ServiceProtocol {
 				changed = true
 			}
 			next[index] = *previous
-			next[index].Directory, next[index].Readiness = configured.Directory, configured.Readiness
+			next[index].Directory, next[index].Readiness, next[index].ServiceProtocol = configured.Directory, configured.Readiness, configured.ServiceProtocol
 			if previous.Readiness != configured.Readiness {
 				next[index].Ready, next[index].Observation = false, nil
 			}
@@ -199,6 +200,9 @@ func (m *Manager) Reserve(name, owner string, pid int, publicURL string) (string
 	if m.closed || m.ctx.Err() != nil {
 		return "", ErrRegistrationStale
 	}
+	if owner == "" || pid <= 0 || m.Alive != nil && !m.Alive(pid) {
+		return "", ErrRegistrationStale
+	}
 	service := m.serviceLocked(name)
 	if service == nil {
 		return "", errors.New("service is not configured")
@@ -213,7 +217,7 @@ func (m *Manager) Reserve(name, owner string, pid int, publicURL string) (string
 				return "", err
 			}
 		} else {
-			if current.owner != owner {
+			if current.owner != owner || current.pid != pid {
 				return "", ErrOwnerConflict
 			}
 			current.expires = time.Now().Add(LeaseDuration)
@@ -225,6 +229,8 @@ func (m *Manager) Reserve(name, owner string, pid int, publicURL string) (string
 		return "", err
 	}
 	service.RegistrationID = "reg_" + hex.EncodeToString(bytes)
+	service.Target, service.Framework, service.PublishRunNumber = "", "", 0
+	service.Registered, service.Routable, service.Ready, service.Observation = false, false, false, nil
 	service.PublicURL, service.Failure = publicURL, ""
 	m.registrations[name] = &registration{owner: owner, pid: pid, expires: time.Now().Add(LeaseDuration)}
 	m.idleSince = time.Time{}
@@ -239,7 +245,7 @@ func (m *Manager) findLocked(id, owner string) (*Service, *registration) {
 	for index := range m.snapshot.Services {
 		service := &m.snapshot.Services[index]
 		if service.RegistrationID == id {
-			if reg := m.registrations[service.Name]; reg != nil && reg.owner == owner && time.Now().Before(reg.expires) {
+			if reg := m.registrations[service.Name]; reg != nil && reg.owner == owner && time.Now().Before(reg.expires) && (m.Alive == nil || m.Alive(reg.pid)) {
 				return service, reg
 			}
 		}
@@ -248,10 +254,21 @@ func (m *Manager) findLocked(id, owner string) (*Service, *registration) {
 }
 
 func (m *Manager) Renew(id, owner string) error {
+	return m.renew(id, owner, "", false)
+}
+
+func (m *Manager) RenewTarget(id, owner, target string) error {
+	return m.renew(id, owner, target, true)
+}
+
+func (m *Manager) renew(id, owner, target string, fenced bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, reg := m.findLocked(id, owner)
+	service, reg := m.findLocked(id, owner)
 	if reg == nil {
+		return ErrRegistrationStale
+	}
+	if fenced && service.Registered && service.Target != target {
 		return ErrRegistrationStale
 	}
 	reg.expires = time.Now().Add(LeaseDuration)
@@ -261,9 +278,6 @@ func (m *Manager) Renew(id, owner string) error {
 // register acknowledges ownership and a bound target. provisioning happens in
 // the worker after this method returns and has its own observations.
 func (m *Manager) Register(id, owner, target, framework string) error {
-	if _, err := localproxy.ParseCanonicalTarget(target); err != nil {
-		return errors.Join(err, errors.New("target must be a canonical HTTP or HTTPS origin"))
-	}
 	m.op.Lock()
 	defer m.op.Unlock()
 	m.mu.Lock()
@@ -271,6 +285,24 @@ func (m *Manager) Register(id, owner, target, framework string) error {
 	if reg == nil {
 		m.mu.Unlock()
 		return ErrRegistrationStale
+	}
+	var targetErr error
+	if service.ServiceProtocol == "" || service.ServiceProtocol == "http" {
+		_, targetErr = localproxy.ParseCanonicalTarget(target)
+	} else {
+		var canonical string
+		canonical, targetErr = tcptarget.Normalize(target)
+		if canonical != target {
+			targetErr = errors.New("target must be canonical")
+		}
+	}
+	if targetErr != nil {
+		m.mu.Unlock()
+		return targetErr
+	}
+	if m.run == nil {
+		m.mu.Unlock()
+		return errors.New("clientruntime: worker is required")
 	}
 	if service.Registered && service.Target == target && reg.cancel != nil {
 		reg.expires = time.Now().Add(LeaseDuration)
@@ -296,17 +328,34 @@ func (m *Manager) Register(id, owner, target, framework string) error {
 	reg.cancel, reg.done = cancel, make(chan struct{})
 	copy, done := *service, reg.done
 	m.emitLocked("service.registered", service)
+	if err := m.writeErr; err != nil {
+		cancel()
+		close(done)
+		reg.cancel = nil
+		service.Registered = false
+		m.mu.Unlock()
+		return err
+	}
 	m.mu.Unlock()
 	go func() {
 		defer close(done)
-		err := m.run(ctx, copy, func(run uint64, routable bool) error { return m.Published(id, run, routable) })
+		err := m.run(ctx, copy, func(run uint64, routable bool) error {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			current, active := m.findLocked(id, owner)
+			if active == nil || active.done != done || current.Target != copy.Target || ctx.Err() != nil {
+				return ErrRegistrationStale
+			}
+			return m.publishedLocked(id, run, routable)
+		})
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		current := m.serviceLocked(copy.Name)
-		if current.RegistrationID != id || reg.done != done {
+		if current == nil || current.RegistrationID != id || reg.done != done {
 			return
 		}
 		current.Routable, current.Ready = false, false
+		current.Observation, current.ProvisioningStage = nil, ""
 		reg.cancel = nil
 		if err != nil && ctx.Err() == nil {
 			current.Failure = "runtime.publication_failed"
@@ -314,6 +363,8 @@ func (m *Manager) Register(id, owner, target, framework string) error {
 				current.Failure = string(reason)
 			}
 			m.emitLocked("service.failed", current)
+		} else if ctx.Err() == nil {
+			m.emitLocked("service.stopped", current)
 		}
 	}()
 	return nil
@@ -322,13 +373,21 @@ func (m *Manager) Register(id, owner, target, framework string) error {
 func (m *Manager) Published(id string, run uint64, routable bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.publishedLocked(id, run, routable)
+}
+
+func (m *Manager) publishedLocked(id string, run uint64, routable bool) error {
 	if m.closed {
 		return ErrRegistrationStale
 	}
 	for index := range m.snapshot.Services {
 		service := &m.snapshot.Services[index]
-		if service.RegistrationID != id || !service.Registered {
+		reg := m.registrations[service.Name]
+		if service.RegistrationID != id || !service.Registered || reg == nil || time.Now().After(reg.expires) {
 			continue
+		}
+		if run < service.PublishRunNumber {
+			return ErrRegistrationStale
 		}
 		if run != service.PublishRunNumber || !routable {
 			service.Ready, service.Observation = false, nil
@@ -353,6 +412,18 @@ func (m *Manager) Current(name, id, target string, run uint64) bool {
 	service := m.serviceLocked(name)
 	reg := m.registrations[name]
 	return !m.closed && service != nil && reg != nil && time.Now().Before(reg.expires) && (m.Alive == nil || m.Alive(reg.pid)) && service.Registered && service.RegistrationID == id && service.Target == target && (run == 0 || service.PublishRunNumber == run)
+}
+
+func (m *Manager) BindTunnel(name, id, target, tunnelID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	service := m.serviceLocked(name)
+	if m.closed || service == nil || service.RegistrationID != id || service.Target != target || !service.Registered {
+		return ErrRegistrationStale
+	}
+	service.TunnelID = tunnelID
+	m.emitLocked("service.bound", service)
+	return m.writeErr
 }
 
 func (m *Manager) RecordFailure(name, reason string) {
@@ -394,10 +465,13 @@ func (m *Manager) Observe(observation Observation) bool {
 	}
 	for index := range m.snapshot.Services {
 		service := &m.snapshot.Services[index]
-		if service.RegistrationID != observation.RegistrationID || service.PublishRunNumber != observation.PublishRunNumber || !service.Registered || !service.Routable {
+		if service.RegistrationID != observation.RegistrationID || service.PublishRunNumber != observation.PublishRunNumber || !service.Registered || !service.Routable || observation.PublishRunNumber == 0 {
 			continue
 		}
 		if observation.Readiness != service.Readiness {
+			return false
+		}
+		if observation.Target != "" && service.Target != observation.Target {
 			return false
 		}
 		reg := m.registrations[service.Name]
@@ -414,9 +488,60 @@ func (m *Manager) Observe(observation Observation) bool {
 	return false
 }
 
+// AddService adds one invocation to the same worker and journal boundary. it
+// cannot replace a configured service or an existing invocation definition.
+func (m *Manager) AddService(service Service) error {
+	if !opaqueid.Valid(service.Name, opaqueid.InvocationPrefix) {
+		return errors.New("invocation service ID is required")
+	}
+	m.op.Lock()
+	defer m.op.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrRegistrationStale
+	}
+	if current := m.serviceLocked(service.Name); current != nil {
+		if current.RegistrationID != "" || current.Registered {
+			return ErrOwnerConflict
+		}
+		*current = service
+		m.emitLocked("service.configured", nil)
+		return m.writeErr
+	}
+	m.snapshot.Services = append(m.snapshot.Services, service)
+	slices.SortFunc(m.snapshot.Services, func(a, b Service) int { return strings.Compare(a.Name, b.Name) })
+	m.emitLocked("service.configured", nil)
+	return m.writeErr
+}
+
+func (m *Manager) ServiceForRegistration(id string) (Service, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, service := range m.snapshot.Services {
+		if service.RegistrationID == id {
+			return service, true
+		}
+	}
+	return Service{}, false
+}
+
 func (m *Manager) Unregister(id, owner string) error {
 	m.op.Lock()
 	defer m.op.Unlock()
+	return m.unregister(id, owner)
+}
+
+func (m *Manager) UnregisterTarget(id, owner, target string) error {
+	m.op.Lock()
+	defer m.op.Unlock()
+	m.mu.Lock()
+	service, reg := m.findLocked(id, owner)
+	if reg == nil || service.Registered && service.Target != target {
+		m.mu.Unlock()
+		return ErrRegistrationStale
+	}
+	m.mu.Unlock()
 	return m.unregister(id, owner)
 }
 
@@ -452,7 +577,7 @@ func (m *Manager) unregister(id, owner string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.registrations, service.Name)
-	service.RegistrationID, service.Target = "", ""
+	service.RegistrationID, service.Target, service.TunnelID = "", "", ""
 	if len(m.registrations) == 0 {
 		m.idleSince = time.Now()
 	}
@@ -467,7 +592,7 @@ func (m *Manager) Sweep(alive func(int) bool) bool {
 	type expired struct{ id, owner string }
 	var entries []expired
 	for name, reg := range m.registrations {
-		if time.Now().After(reg.expires) || !alive(reg.pid) {
+		if time.Now().After(reg.expires) || alive != nil && !alive(reg.pid) {
 			entries = append(entries, expired{m.serviceLocked(name).RegistrationID, reg.owner})
 		}
 	}
@@ -477,7 +602,7 @@ func (m *Manager) Sweep(alive func(int) bool) bool {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.writeErr != nil || m.preparing == 0 && !m.idleSince.IsZero() && time.Since(m.idleSince) >= CleanupGrace
+	return m.writeErr != nil || !m.Persistent && m.preparing == 0 && !m.idleSince.IsZero() && time.Since(m.idleSince) >= CleanupGrace
 }
 
 func (m *Manager) Close() {

@@ -103,11 +103,7 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	}
 	if plan.generatedService || packageTypeConfigExists(plan.root) {
 		typeActions, err := projectTypeIncludeActions(projectConfiguration{
-			Project: projectconfig.Project{
-				Root:                       plan.root,
-				ServiceDirectories:         map[string]string{"app": plan.root},
-				RelativeServiceDirectories: map[string]string{"app": "."},
-			},
+			Project: projectconfig.Project{Root: plan.root},
 		})
 		if err != nil {
 			return err
@@ -236,7 +232,7 @@ export default defineConfig({
   feedback: true,
   services: {
     %s: {
-      directory: ".",
+      target: { type: "app" },
     },
   },
 });

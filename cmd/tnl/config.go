@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type projectConfiguration struct {
@@ -77,9 +78,10 @@ func projectRoot(ctx context.Context, flags cli) (string, error) {
 
 func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	service := ""
+	enrolled := flags.EnrollmentKey != "" || flags.PublisherID != ""
 	if _, found := c.Config.Services[flags.Target]; found && flags.Target != "" {
 		service, flags.Target = flags.Target, ""
-	} else if flags.Target == "" && flags.PublishCredential == "" {
+	} else if flags.Target == "" && !enrolled {
 		var err error
 		service, err = c.defaultService()
 		if err != nil {
@@ -90,10 +92,18 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if err != nil {
 		return err
 	}
+	if service != "" && config.Protocol(c.Config.Services[service]) == "tcp" {
+		return failure.Wrap("publish private TCP service", failure.PrivatePublisherUnavailable,
+			errors.New("private relay publisher connection is not available"))
+	}
 	flags.Service = service
 	flags.project = c
 	flags.projectRoot = c.Root
-	flags.ServerURL, flags.serverFromConfig, err = resolveProjectServer(flags.ServerURL, effective.Server, flags.AccessToken)
+	credential := flags.AccessToken
+	if enrolled && credential == "" {
+		credential = "publisher selection"
+	}
+	flags.ServerURL, flags.serverFromConfig, err = resolveProjectServer(flags.ServerURL, effective.Server, credential)
 	if err != nil {
 		return err
 	}
@@ -106,44 +116,110 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		}
 	}
 	usingConfiguredTarget := flags.Target == ""
-	if flags.Protocol == "" && effective.Publish != nil && effective.Publish.Protocol != nil {
-		flags.Protocol = *effective.Publish.Protocol
+	local := config.ServicePublish(c.Config.Services[service])
+	if flags.Protocol == "" && service != "" {
+		flags.Protocol = config.Protocol(c.Config.Services[service])
 	}
-	if usingConfiguredTarget && effective.Publish != nil && effective.Publish.Target != nil {
-		flags.Target = string(*effective.Publish.Target)
+	if usingConfiguredTarget && local.Target != nil {
+		flags.Target = string(*local.Target)
 	}
-	if usingConfiguredTarget && flags.TargetCAFile == "" && effective.Publish != nil && effective.Publish.TargetCAFile != nil {
-		flags.TargetCAFile = *effective.Publish.TargetCAFile
+	if usingConfiguredTarget && flags.TargetCAFile == "" && local.TargetCAFile != nil {
+		flags.TargetCAFile = *local.TargetCAFile
 	}
-	if usingConfiguredTarget && flags.TargetTLSName == "" && effective.Publish != nil && effective.Publish.TargetTLSName != nil {
-		flags.TargetTLSName = *effective.Publish.TargetTLSName
+	if usingConfiguredTarget && flags.TargetTLSName == "" && local.TargetTLSName != nil {
+		flags.TargetTLSName = *local.TargetTLSName
 	}
-	if usingConfiguredTarget && !flags.TargetTLS && effective.Publish != nil && effective.Publish.TargetTLS != nil {
-		flags.TargetTLS = *effective.Publish.TargetTLS
+	if usingConfiguredTarget && !flags.TargetTLS && local.TargetTLS != nil {
+		flags.TargetTLS = *local.TargetTLS
 	}
-	if flags.PublishCredential == "" {
+	if !enrolled {
 		applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
 	} else if effective.Tunnel != nil {
-		// a saved URL supplies hostname and visitor policy; local admission is still configurable.
 		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
 	}
 	applyInspection(&flags.tunnelFlags, effective)
 	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
-	if flags.PublishCredential == "" {
+	if !enrolled {
 		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	}
-	if flags.Target == "" && flags.PublishCredential == "" {
-		if service != "" {
-			return failure.Wrap("select target for service", failure.MissingTarget,
-				fmt.Errorf("target is required for service %q through publish.target", service))
-		}
+	if flags.Target == "" && service == "" && !enrolled {
 		return failure.Wrap("select target", failure.MissingTarget,
-			errors.New("target is required as an argument or publish.target in project configuration"))
+			errors.New("pass a target or select a configured service"))
 	}
-	if err := validateTunnelFlags(flags.tunnelFlags); err != nil {
-		return failure.Wrap("validate tunnel options", failure.InvalidTunnelFlags, err)
+	if enrolled && flags.Protocol == "" {
+		// the enrolled URL selects the protocol before its limits are applied.
+		return nil
+	}
+	protocol, err := publishProtocol(flags.Protocol)
+	if err != nil {
+		return err
+	}
+	if err := applyProtocolLimits(&flags.tunnelFlags, string(protocol)); err != nil {
+		return failure.Wrap("resolve application limits", failure.InvalidTunnelFlags, err)
+	}
+	if err := selectPublishInspection(flags, protocol); err != nil {
+		return err
 	}
 	return nil
+}
+
+// applyInstalledService snapshots only local target settings. installed jobs
+// reuse their saved URL policy and never create a URL from project settings.
+func (c projectConfiguration) applyInstalledService(flags *publishCommand) error {
+	service := flags.Target
+	definition, found := c.Config.Services[service]
+	if !found || service == "" {
+		return nil
+	}
+	if config.Protocol(definition) == "tcp" {
+		return failure.Wrap("install private TCP service", failure.PrivatePublisherUnavailable,
+			errors.New("private relay publisher connection is not available"))
+	}
+	effective, err := c.EffectiveService(service)
+	if err != nil {
+		return err
+	}
+	if flags.ServiceName != "" && flags.ServiceName != service {
+		return publisherCLIError("--service-name must match the configured service; use its name with tnl service start, stop, and remove")
+	}
+	flags.Service, flags.project, flags.projectRoot = service, c, c.Root
+	flags.ServiceName = service
+	flags.Target = ""
+	selected, _, err := resolveProjectServer(flags.ServerURL, effective.Server, "")
+	if err != nil {
+		return err
+	}
+	flags.ServerURL = selected
+	local := config.ServicePublish(definition)
+	if flags.Protocol == "" {
+		flags.Protocol = config.Protocol(definition)
+	}
+	if local.Target != nil {
+		flags.Target = string(*local.Target)
+	}
+	if flags.Target == "" {
+		return failure.Wrap("select installed target", failure.InstalledTargetMissing, errors.New("configured service has no stable target"))
+	}
+	if flags.TargetCAFile == "" && local.TargetCAFile != nil {
+		flags.TargetCAFile = *local.TargetCAFile
+	}
+	if flags.TargetTLSName == "" && local.TargetTLSName != nil {
+		flags.TargetTLSName = *local.TargetTLSName
+	}
+	if !flags.TargetTLS && local.TargetTLS != nil {
+		flags.TargetTLS = *local.TargetTLS
+	}
+	if effective.Tunnel != nil {
+		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
+		if effective.Tunnel.Ephemeral != nil && *effective.Tunnel.Ephemeral {
+			return publisherCLIError("installed publications require a saved public URL")
+		}
+	}
+	if err := applyProtocolLimits(&flags.tunnelFlags, flags.Protocol); err != nil {
+		return err
+	}
+	flags.Target, err = normalizePublishTarget(flags.Target, controlv1.PublicURLServiceProtocol(flags.Protocol))
+	return err
 }
 
 func (c projectConfiguration) defaultService() (string, error) {
@@ -200,26 +276,34 @@ func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 }
 
 func applyTunnelLimits(flags *tunnelFlags, limits *config.Limits) {
-	if limits == nil {
-		return
+	flags.workLimits = limits
+}
+
+func applyProtocolLimits(flags *tunnelFlags, protocol string) error {
+	resolved, err := config.ResolveWorkLimits(flags.workLimits, protocol)
+	if err != nil {
+		return err
 	}
-	if flags.Requests == nil {
-		flags.Requests = limits.Requests
+	if flags.Requests == nil && resolved.Requests != 0 {
+		flags.Requests = &resolved.Requests
 	}
-	if flags.Concurrency == nil {
-		flags.Concurrency = limits.Concurrency
+	if flags.Concurrency == nil && resolved.Concurrency != 0 {
+		flags.Concurrency = &resolved.Concurrency
 	}
-	if limits.Rate != nil {
-		if flags.RateRequests == nil {
-			flags.RateRequests = limits.Rate.Requests
-		}
-		if flags.RatePer == "" && limits.Rate.Per != nil {
-			flags.RatePer = limits.Rate.Per.Value().String()
-		}
+	if flags.RateRequests == nil && resolved.RateRequests != 0 {
+		flags.RateRequests = &resolved.RateRequests
 	}
+	if flags.RatePer == "" && resolved.RatePer != 0 {
+		flags.RatePer = resolved.RatePer.String()
+	}
+	if flags.RateBurst == nil && resolved.RateBurst != 0 {
+		flags.RateBurst = &resolved.RateBurst
+	}
+	return validateTunnelFlags(*flags)
 }
 
 func applyInspection(flags *tunnelFlags, effective config.TNL) {
+	flags.inspection = effective.Inspection
 	if effective.Inspection != nil {
 		if !flags.inspectionModeFromCLI && effective.Inspection.Mode != nil {
 			flags.InspectionMode = *effective.Inspection.Mode
@@ -235,20 +319,26 @@ func validateTunnelFlags(flags tunnelFlags) error {
 	if !flags.InspectionMode.Valid() {
 		return errors.New("--inspection-mode must be none or summary")
 	}
-	if flags.Requests != nil && *flags.Requests <= 0 || flags.Concurrency != nil && *flags.Concurrency <= 0 {
-		return errors.New("--requests and --concurrency must be greater than zero")
+	if flags.Requests != nil && (*flags.Requests <= 0 || *flags.Requests > config.MaxConfigInteger) || flags.Concurrency != nil && (*flags.Concurrency <= 0 || *flags.Concurrency > config.MaxConfigInteger) {
+		return errors.New("--requests and --concurrency must be positive safe integers")
 	}
 	if (flags.RateRequests == nil) != (flags.RatePer == "") {
 		return errors.New("--rate-requests and --rate-per must be supplied together")
 	}
 	if flags.RateRequests != nil {
 		period, err := time.ParseDuration(flags.RatePer)
-		if *flags.RateRequests <= 0 || err != nil || period <= 0 {
+		if *flags.RateRequests <= 0 || *flags.RateRequests > config.MaxConfigInteger || err != nil || period <= 0 {
 			return errors.New("--rate-requests and --rate-per must be positive")
 		}
 	}
+	if flags.RateBurst != nil && (*flags.RateBurst <= 0 || *flags.RateBurst > config.MaxConfigInteger || flags.RateRequests == nil) {
+		return errors.New("--rate-burst must be positive and requires a rate limit")
+	}
 	if flags.PublicURL != "" && flags.Name != "" {
 		return errors.New("--public-url and --name are mutually exclusive")
+	}
+	if flags.Ephemeral && (flags.PublicURL != "" || flags.Name != "") {
+		return errors.New("temporary publication chooses its own public URL; omit --name and --public-url")
 	}
 	return nil
 }
@@ -281,6 +371,7 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 
 func projectSensitiveCommand(command string) bool {
 	return strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "admin ") ||
+		strings.HasPrefix(command, "publisher ") ||
 		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ") || strings.HasPrefix(command, "alias ")
 }
 
@@ -386,12 +477,36 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Update.remoteFlags, true)
 	case "url delete <public-url-id>":
 		apply(&flags.URL.Delete.remoteFlags, true)
-	case "url credential create <service-or-public-url-id>":
-		apply(&flags.URL.Credential.Create.remoteFlags, true)
-	case "url credential list <public-url-id>":
-		apply(&flags.URL.Credential.List.remoteFlags, true)
-	case "url credential revoke <credential-id>":
-		apply(&flags.URL.Credential.Revoke.remoteFlags, true)
+	case "url inventory":
+		apply(&flags.URL.Inventory.remoteFlags, true)
+	case "url available":
+		apply(&flags.URL.Available.remoteFlags, false)
+	case "url certificate <url>":
+		apply(&flags.URL.Certificate.remoteFlags, false)
+	case "publisher enroll", "publisher enroll <public-url-id>":
+		apply(&flags.Publisher.Enroll.remoteFlags, true)
+	case "publisher list":
+		apply(&flags.Publisher.List.remoteFlags, true)
+	case "publisher revoke <publisher-id>":
+		apply(&flags.Publisher.Revoke.remoteFlags, true)
+	case "publisher grant add <publisher-id>":
+		apply(&flags.Publisher.Grant.Add.remoteFlags, true)
+	case "publisher grant revoke <publisher-id> <grant-id>":
+		apply(&flags.Publisher.Grant.Revoke.remoteFlags, true)
+	case "auth browser <url>":
+		apply(&flags.Auth.Browser.remoteFlags, false)
+	case "team feedback get":
+		apply(&flags.Team.Feedback.Get.remoteFlags, true)
+	case "team feedback set <authors>":
+		apply(&flags.Team.Feedback.Set.remoteFlags, true)
+	case "share invite create <url>":
+		apply(&flags.Share.Invite.Create.remoteFlags, false)
+	case "share invite accept <secret>":
+		apply(&flags.Share.Invite.Accept.remoteFlags, false)
+	case "share invite list <url>":
+		apply(&flags.Share.Invite.List.remoteFlags, false)
+	case "share invite revoke <url> <invitation-id>":
+		apply(&flags.Share.Invite.Revoke.remoteFlags, false)
 	case "share link create <url>":
 		apply(&flags.Share.Link.Create.remoteFlags, true)
 	case "share token create <url>":
@@ -402,7 +517,7 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Share.Revoke.remoteFlags, true)
 	case "share team create <url>":
 		apply(&flags.Share.Team.Create.remoteFlags, true)
-	case "share team revoke":
+	case "share team revoke", "share team revoke <url>":
 		apply(&flags.Share.Team.Revoke.remoteFlags, true)
 	case "feedback list":
 		apply(&flags.Feedback.List.remoteFlags, true)

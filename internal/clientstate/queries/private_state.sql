@@ -1,6 +1,10 @@
 -- name: GetPendingPublisherEnrollment :one
 SELECT * FROM pending_publisher_enrollments WHERE server_origin = sqlc.arg(server_origin) AND enrollment_id = sqlc.arg(enrollment_id);
 
+-- name: GetPendingPublisherEnrollmentForSelection :one
+SELECT * FROM pending_publisher_enrollments WHERE server_origin = sqlc.arg(server_origin)
+  AND selection_kind = sqlc.arg(selection_kind) AND selection_key = sqlc.arg(selection_key);
+
 -- name: SavePendingPublisherEnrollment :exec
 INSERT INTO pending_publisher_enrollments
     (server_origin, enrollment_id, selection_kind, selection_key, public_key, signing_key_ciphertext,
@@ -55,12 +59,18 @@ DELETE FROM publisher_selections WHERE server_origin = sqlc.arg(server_origin)
 -- name: GetPublisherJobRegistry :one
 SELECT jobs_ciphertext FROM publisher_job_registry WHERE id = 1;
 
+-- name: DeletePublisherJobRegistry :exec
+DELETE FROM publisher_job_registry WHERE id = 1;
+
 -- name: SavePublisherJobRegistry :exec
 INSERT INTO publisher_job_registry (id, jobs_ciphertext, updated_at) VALUES (1, sqlc.arg(jobs_ciphertext), sqlc.arg(updated_at))
 ON CONFLICT (id) DO UPDATE SET jobs_ciphertext = excluded.jobs_ciphertext, updated_at = excluded.updated_at;
 
 -- name: GetPublisherJobFileManifest :one
 SELECT manifest_ciphertext FROM publisher_job_file_manifest WHERE id = 1;
+
+-- name: DeletePublisherJobFileManifest :exec
+DELETE FROM publisher_job_file_manifest WHERE id = 1;
 
 -- name: SavePublisherJobFileManifest :exec
 INSERT INTO publisher_job_file_manifest (id, manifest_ciphertext, updated_at) VALUES (1, sqlc.arg(manifest_ciphertext), sqlc.arg(updated_at))

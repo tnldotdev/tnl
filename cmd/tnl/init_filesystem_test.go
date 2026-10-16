@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
@@ -39,18 +40,23 @@ func TestInitPreservesExistingStaticConfiguration(t *testing.T) {
 
 func TestProjectTypeIncludeActionsPreserveConfiguration(t *testing.T) {
 	root := t.TempDir()
-	service := filepath.Join(root, "apps", "api")
-	if err := os.MkdirAll(service, 0o700); err != nil {
+	nested := filepath.Join(root, "apps", "api")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(service, "tsconfig.json")
-	project := projectConfiguration{Project: projectconfig.Project{Root: root, ServiceDirectories: map[string]string{"api": service}}}
+	nestedPath := filepath.Join(nested, "tsconfig.json")
+	nestedSource := []byte(`{"include":["src"]}`)
+	if err := os.WriteFile(nestedPath, nestedSource, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "tsconfig.json")
+	project := projectConfiguration{Project: projectconfig.Project{Root: root, Config: config.TNL{Services: config.Services{"api": {}, "web": {}}}}}
 	for _, test := range []struct {
 		name, source string
 		wantAction   bool
 	}{
 		{"missing_include", "{\n  \"include\": [\"src/**/*.ts\"]\n}\n", true},
-		{"included", "{\n  \"include\": [\"src/**/*.ts\", \"../../.tnl/project.d.ts\"]\n}\n", false},
+		{"included", "{\n  \"include\": [\"src/**/*.ts\", \".tnl/project.d.ts\"]\n}\n", false},
 		{"jsonc", "{\n  // preserve this JSONC file\n  \"include\": [\"src\"]\n}\n", true},
 		{"duplicate_keys", "{\n  \"include\": [\"src\"],\n  \"include\": [\"generated\"]\n}\n", true},
 	} {
@@ -62,12 +68,15 @@ func TestProjectTypeIncludeActionsPreserveConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if test.wantAction && (len(actions) != 1 || !strings.Contains(actions[0], "../../.tnl/project.d.ts")) || !test.wantAction && len(actions) != 0 {
+			if test.wantAction && (len(actions) != 1 || !strings.Contains(actions[0], `".tnl/project.d.ts"`) || !strings.Contains(actions[0], path)) || !test.wantAction && len(actions) != 0 {
 				t.Fatalf("actions = %v", actions)
 			}
 			after, err := os.ReadFile(path)
 			if err != nil || string(after) != test.source {
 				t.Fatalf("tsconfig changed: %s, %v", after, err)
+			}
+			if got, err := os.ReadFile(nestedPath); err != nil || !bytes.Equal(got, nestedSource) {
+				t.Fatalf("nested tsconfig changed: %s, %v", got, err)
 			}
 		})
 	}
@@ -90,6 +99,30 @@ func TestProjectTypeIncludeActionUsesRootWithoutNamedServices(t *testing.T) {
 	data, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(data, source) {
 		t.Fatalf("tsconfig changed: %s, %v", data, err)
+	}
+}
+
+func TestProjectTypeIncludeActionDoesNotInferNestedServiceDirectory(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "apps", "web")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	nestedPath := filepath.Join(nested, "tsconfig.json")
+	source := []byte(`{"include":["src"]}`)
+	if err := os.WriteFile(nestedPath, source, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	project := projectConfiguration{Project: projectconfig.Project{Root: root, Config: config.TNL{Services: config.Services{"web": {}}}}}
+	actions, err := projectTypeIncludeActions(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 1 || !strings.Contains(actions[0], filepath.Join(root, "tsconfig.json")) || !strings.Contains(actions[0], `".tnl/project.d.ts"`) || strings.Contains(actions[0], nestedPath) {
+		t.Fatalf("actions = %v", actions)
+	}
+	if got, err := os.ReadFile(nestedPath); err != nil || !bytes.Equal(got, source) {
+		t.Fatalf("nested tsconfig changed: %s, %v", got, err)
 	}
 }
 

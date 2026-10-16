@@ -33,7 +33,11 @@ vi.mock("./dist/internal/app.js", async (importOriginal) => {
       framework: Parameters<typeof actual.createPreparedService>[1],
     ) => {
       const prepared = await actual.createPreparedService(options, framework, {
-        start: async () => process.env.APP_TEST_SOCKET ?? "",
+        start: async () => {
+          if (process.env.APP_TEST_ENDPOINT === undefined)
+            throw new (await import("./dist/errors.js")).TnlError("sdk.dev_unavailable");
+          return JSON.parse(process.env.APP_TEST_ENDPOINT);
+        },
         request: actual.runtimeRequest,
       });
       onTestFinished(() => prepared.close());
@@ -106,6 +110,7 @@ describe("tnl", () => {
           ...runtimeDefine(true),
           server: { allowedHosts: ["api.member.example"] },
         });
+        expect(bootstrap.requests[0]?.body).not.toHaveProperty("service");
       }),
     );
   });
@@ -346,19 +351,21 @@ test("registers and serves an IPv6 localhost target", async () => {
 function runtimeDefine(dev: boolean, apiHostname = "api.member.example") {
   const payload = JSON.stringify({
     namespace: "member.example",
-    dev,
     services: {
       api: {
+        protocol: "http",
         namespace: "member.example",
         hostname: apiHostname,
         url: `https://${apiHostname}`,
       },
       web: {
+        protocol: "http",
         namespace: "member.example",
         hostname: "web.member.example",
         url: "https://web.member.example",
       },
     },
+    dev,
   });
   return {
     define: {

@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -6,6 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { onTestFinished } from "vitest";
 import * as z from "zod";
 import { testPublicProject } from "./project.js";
+import type { RuntimeEndpoint } from "../src/internal/local.js";
 
 export interface BootstrapRequest {
   readonly authorization: string | undefined;
@@ -16,7 +17,7 @@ export interface BootstrapRequest {
 }
 
 export interface TestBootstrap {
-  readonly socket: string;
+  readonly endpoint: RuntimeEndpoint;
   readonly environment: Record<string, string>;
   readonly requests: BootstrapRequest[];
   assertHealthy(): void;
@@ -24,15 +25,16 @@ export interface TestBootstrap {
 }
 
 interface BootstrapOptions {
+  readonly capability?: string;
+  readonly ownerID?: string;
+  readonly registrationID?: string;
   readonly responseBody?: string;
-  readonly socket?: string;
   readonly status?: number;
 }
 
 export async function startTestBootstrap(options: BootstrapOptions = {}): Promise<TestBootstrap> {
-  const ownedDirectory =
-    options.socket === undefined ? await mkdtemp(path.join(os.tmpdir(), "tnl-app-test-")) : null;
-  const socket = options.socket ?? path.join(ownedDirectory ?? "", "control.sock");
+  const ownedDirectory = await mkdtemp(path.join(os.tmpdir(), "tnl-app-test-"));
+  const capability = options.capability ?? "a".repeat(64);
   const requests: BootstrapRequest[] = [];
   let failure: unknown;
   let appOwner: string | undefined;
@@ -44,6 +46,13 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
       try {
+        if (
+          request.headers.authorization !== `Bearer ${capability}` ||
+          request.headers.origin !== undefined
+        ) {
+          response.writeHead(401).end();
+          return;
+        }
         if (request.method === "GET" && request.url === "/v1/health") {
           // readiness probes are not registration messages.
           response.writeHead(204).end();
@@ -59,6 +68,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
         });
         response.statusCode = options.status ?? 200;
         if (response.statusCode !== 200) {
+          response.setHeader("Content-Type", "application/json");
           response.end(options.responseBody ?? "registration failed");
         } else if (["/v1/register", "/v1/renew", "/v1/unregister"].includes(request.url ?? "")) {
           if (request.url === "/v1/unregister") appOwner = undefined;
@@ -89,7 +99,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
           response.end(
             JSON.stringify({
               version: 1,
-              registration_id: `reg_${"b".repeat(32)}`,
+              registration_id: options.registrationID ?? `reg_${"b".repeat(32)}`,
               service: assignment.service,
               hostname: assignment.hostname,
               public_url: assignment.publicURL,
@@ -121,7 +131,7 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
           await closed;
         }
       } finally {
-        if (ownedDirectory !== null) await rm(ownedDirectory, { force: true, recursive: true });
+        await rm(ownedDirectory, { force: true, recursive: true });
       }
     })());
   const assertHealthy = () => {
@@ -138,20 +148,36 @@ export async function startTestBootstrap(options: BootstrapOptions = {}): Promis
   try {
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
-      server.listen(socket, () => {
+      server.listen(0, "127.0.0.1", () => {
         server.off("error", reject);
         resolve();
       });
     });
-    await chmod(socket, 0o600);
+    await chmod(ownedDirectory, 0o700);
   } catch (error) {
     await close();
     failure = undefined; // the startup caller receives this error directly.
     throw error;
   }
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("missing listener");
+  const service: string =
+    options.responseBody === undefined || options.status !== undefined
+      ? "api"
+      : JSON.parse(options.responseBody).service;
+  const endpoint: RuntimeEndpoint = {
+    version: 1,
+    url: `http://127.0.0.1:${address.port}`,
+    capability,
+    owner_id: options.ownerID ?? "b".repeat(32),
+    scope: "app",
+    service,
+  };
+  const descriptor = path.join(ownedDirectory, "endpoint.json");
+  await writeFile(descriptor, JSON.stringify(endpoint), { mode: 0o400 });
   return {
-    socket,
-    environment: { APP_TEST_SOCKET: socket },
+    endpoint,
+    environment: { TNL_APP_ENDPOINT: descriptor, APP_TEST_ENDPOINT: JSON.stringify(endpoint) },
     requests,
     assertHealthy,
     close,

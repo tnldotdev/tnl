@@ -184,3 +184,16 @@ the publisher prepares a run with `preparePrivateServiceRun`, signs
 then submits only its locally generated TLS **public** key and signature to
 `bindPrivateServiceRunKey`. retries keep the same prepared ID, nonce, key and
 signature; control may rotate the run token but never the TLS pin.
+
+the isolated private publisher stream boundary currently accepts only opaque
+targets and checks a claimed assignment, PROXY v2 source, pinned TLS 1.3 key,
+and signed visitor challenge before forwarding application bytes. the publisher
+prepare and bind the signed run, heartbeat/close it, and race two relay claims
+over WebPKI-authenticated QUIC and TLS/TCP. the local owner, relay adapter, and
+installed private job registry are not yet wired to this runner. an assignment
+replacement currently stops the run instead of replacing just that slot;
+streams are never replayed. `tnl publish orders --install` for `protocol: tcp`
+therefore fails before any grant or job write.
+verified `target.tls` modes (`direct`, `postgres`, `mysql`) also fail closed until
+their target negotiations and real-client fixtures are implemented. do not
+describe TablePlus or mysql CLI compatibility as working yet.

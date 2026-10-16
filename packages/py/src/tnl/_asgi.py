@@ -1,4 +1,4 @@
-"""run ASGI lifespan and one ad-hoc publication on the shared native socket."""
+"""temporary ASGI listeners with invocation-scoped native publication."""
 
 from __future__ import annotations
 
@@ -12,25 +12,37 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 import uvicorn
 from starlette.types import ASGIApp
 
 from ._native import NativeRuntime
 from ._protocol import (
-    CredentialRequired,
+    Endpoint,
     InvalidResponse,
     NativeUnavailable,
     RegistrationLost,
     Status,
     TnlError,
+    parse_registration,
     parse_status,
 )
 
 _native = NativeRuntime()
-_credential = re.compile(r"tnl_eph_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}")
-_duration = re.compile(r"(?:(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:ns|us|µs|ms|s|m|h))+")
 _alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+_duration = re.compile(r"(?:(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:ns|us|µs|ms|s|m|h))+")
+
+
+class _OwnedServer(uvicorn.Server):
+    tunnel: Tunnel | None = None
+
+    async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
+        try:
+            if self.tunnel is not None:
+                await self.tunnel.unregister()
+        finally:
+            await super().shutdown(sockets)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,17 +122,19 @@ def _limit_payload(value: Limits | None) -> dict[str, object] | None:
 
 
 class Tunnel:
-    """one routable ad-hoc URL and its owned ASGI listener."""
+    """one temporary public URL and its owned ASGI listener."""
 
     def __init__(
         self,
         native: NativeRuntime,
-        server: uvicorn.Server,
+        server: _OwnedServer,
         serve_task: asyncio.Task[None],
         listener: socket.socket,
         directory: str,
-        credential: str,
+        publisher_file: str | None,
+        publisher_id: str | None,
         server_url: str | None,
+        state_dir: str | None,
         access_mode: str | None,
         ip: list[str] | None,
         limits: Limits | None,
@@ -130,41 +144,46 @@ class Tunnel:
         self._serve_task = serve_task
         self._listener = listener
         self._directory = directory
-        self._socket = ""
+        self._state_dir = state_dir
+        self._endpoint: Endpoint | None = None
         self._id = "ivk_" + "".join(secrets.choice(_alphabet) for _ in range(22))
         self._owner = secrets.token_hex(16)
-        self._registration: dict[str, object] = {
-            "version": 1,
-            "registration_id": self._id,
-            "owner": self._owner,
-        }
+        self._target = f"http://127.0.0.1:{listener.getsockname()[1]}"
         self._payload: dict[str, object] = {
-            **self._registration,
+            "version": 1,
+            "invocation_id": self._id,
+            "owner": self._owner,
             "pid": os.getpid(),
-            "target": f"http://127.0.0.1:{listener.getsockname()[1]}",
-            "credential": credential,
+            "target": self._target,
         }
+        if publisher_file is not None:
+            self._payload["publisher_file"] = publisher_file
+        if publisher_id is not None:
+            self._payload["publisher_id"] = publisher_id
         if server_url is not None:
             self._payload["server_url"] = server_url
+        self._registration: dict[str, object] | None = None
         if access_mode is not None:
             self._payload["access_mode"] = access_mode
         if ip is not None:
             self._payload["ip"] = ip
         if limits is not None:
             self._payload["limits"] = _limit_payload(limits)
-        self._registered = False
         self._closed = False
+        self._closing_event = asyncio.Event()
         self._close_lock = asyncio.Lock()
+        self._registration_lock = asyncio.Lock()
         self._monitor: asyncio.Task[None] | None = None
         self._url: str | None = None
-        self._url_id: str | None = None
+        self._run = 0
         loop = asyncio.get_running_loop()
         self._ready: asyncio.Future[None] = loop.create_future()
         self._finished: asyncio.Future[None] = loop.create_future()
-        # a background failure can precede the first wait call.
-        self._finished.add_done_callback(
-            lambda future: future.exception() if not future.cancelled() else None
-        )
+        for future in (self._ready, self._finished):
+            future.add_done_callback(
+                lambda value: value.exception() if not value.cancelled() else None
+            )
+        server.tunnel = self
 
     @property
     def url(self) -> str:
@@ -172,101 +191,82 @@ class Tunnel:
             raise InvalidResponse()
         return self._url
 
-    async def start(self) -> None:
-        self._socket = await self._native.start(self._directory)
-        try:
-            status = parse_status(
-                await self._native.request(self._socket, "register", self._payload), self._id
+    async def _register(self) -> None:
+        async with self._registration_lock:
+            if self._closed:
+                return
+            self._endpoint = await self._native.start(
+                self._directory, invocation_id=self._id, state_dir=self._state_dir
             )
-        except BaseException:
-            # a lost acknowledgement may still have registered the invocation.
-            try:
-                await self._native.request(self._socket, "unregister", self._registration)
-            except TnlError:
-                pass
-            raise
-        self._registered = True
-        self._monitor = asyncio.create_task(self._follow(status))
+            self._registration = parse_registration(
+                await self._native.request(self._endpoint, "ad-hoc/register", self._payload),
+                self._owner,
+                self._target,
+            )
+
+    async def start(self) -> None:
+        await self._register()
+        self._monitor = asyncio.create_task(self._follow())
         await self._ready
 
+    async def unregister(self) -> None:
+        if not self._closed:
+            self._fail(TnlError("sdk.listener_failed", "ASGI listener stopped during publication"))
+        async with self._registration_lock:
+            if self._registration is not None and self._endpoint is not None:
+                try:
+                    await self._native.request(self._endpoint, "unregister", self._registration)
+                except RegistrationLost:
+                    pass
+                self._registration = None
+
     def _observe(self, status: Status) -> None:
-        if status.public_url_id is not None:
-            if self._url_id is not None and status.public_url_id != self._url_id:
-                raise InvalidResponse()
-            self._url_id = status.public_url_id
         if status.public_url is not None:
             if self._url is not None and status.public_url != self._url:
                 raise InvalidResponse()
             self._url = status.public_url
-        if status.state == "routable":
-            if not self._ready.done():
-                self._ready.set_result(None)
-        elif status.state == "stopped":
-            if not self._ready.done():
-                self._ready.set_exception(
-                    TnlError("sdk.publication_failed", "publisher stopped before ready")
-                )
-            if not self._finished.done():
-                self._finished.set_result(None)
-        elif status.state == "failed":
-            code = (
-                "sdk.credential_rejected"
-                if status.failure_code == "runtime.credential_rejected"
-                else "sdk.publication_failed"
-            )
-            error = TnlError(code, "the ad-hoc public URL could not be published")
-            if not self._ready.done():
-                self._ready.set_exception(error)
-            if not self._finished.done():
-                self._finished.set_exception(error)
+        if status.publish_run_number is not None:
+            if status.publish_run_number < self._run:
+                raise InvalidResponse()
+            self._run = status.publish_run_number
+        if status.routable and not self._ready.done():
+            self._ready.set_result(None)
+        elif status.failure:
+            self._fail(TnlError("sdk.publication_failed", "the public URL could not be published"))
 
-    async def _follow(self, status: Status) -> None:
+    async def _follow(self) -> None:
         last_renew = asyncio.get_running_loop().time()
-        strict = self._payload.get("limits") is not None and (
-            isinstance(self._payload["limits"], dict)
-            and ("requests" in self._payload["limits"] or "rate" in self._payload["limits"])
-        )
         while not self._closed and not self._finished.done():
             try:
                 if self._serve_task.done():
-                    if self._registered:
-                        try:
-                            await self._native.request(
-                                self._socket, "unregister", self._registration
-                            )
-                        except TnlError:
-                            # close retries cleanup if the native publisher is unavailable.
-                            pass
-                        else:
-                            self._registered = False
                     self._fail(
                         TnlError("sdk.listener_failed", "ASGI listener stopped during publication")
                     )
                     return
-                self._observe(status)
+                assert self._endpoint is not None and self._registration is not None
+                status = parse_status(
+                    await self._native.request(self._endpoint, "status"),
+                    self._id,
+                    str(self._registration["registration_id"]),
+                    self._target,
+                )
+                if status is not None:
+                    self._observe(status)
+                await self._pause(0.25)
                 if self._closed or self._finished.done():
                     return
-                await asyncio.sleep(0.25)
                 if asyncio.get_running_loop().time() - last_renew >= 5:
-                    await self._native.request(self._socket, "renew", self._registration)
+                    await self._native.request(self._endpoint, "renew", self._registration)
                     last_renew = asyncio.get_running_loop().time()
-                status = parse_status(
-                    await self._native.request(self._socket, "status", self._registration), self._id
-                )
             except asyncio.CancelledError:
                 return
             except (NativeUnavailable, RegistrationLost):
-                if strict:
-                    self._fail(RegistrationLost())
-                    return
                 try:
-                    self._socket = await self._native.start(self._directory)
-                    status = parse_status(
-                        await self._native.request(self._socket, "register", self._payload),
-                        self._id,
-                    )
-                except TnlError as restart_error:
-                    self._fail(restart_error)
+                    await self._register()
+                except (NativeUnavailable, RegistrationLost):
+                    await self._pause(1)
+                except TnlError as cause:
+                    self._fail(cause)
                     return
             except TnlError as cause:
                 self._fail(cause)
@@ -278,27 +278,29 @@ class Tunnel:
         if not self._finished.done():
             self._finished.set_exception(error)
 
+    async def _pause(self, seconds: float) -> None:
+        try:
+            await asyncio.wait_for(self._closing_event.wait(), seconds)
+        except TimeoutError:
+            pass
+
     async def wait(self) -> None:
-        await self._finished
+        await asyncio.shield(self._finished)
 
     async def close(self) -> None:
         async with self._close_lock:
             if self._closed:
                 return
             self._closed = True
+            self._closing_event.set()
             if self._monitor is not None:
-                self._monitor.cancel()
-                try:
-                    await self._monitor
-                except asyncio.CancelledError:
-                    pass
+                await self._monitor
             cleanup: list[Exception] = []
-            if self._registered:
-                try:
-                    await self._native.request(self._socket, "unregister", self._registration)
-                except TnlError as cause:
-                    if not isinstance(cause, RegistrationLost):
-                        cleanup.append(cause)
+            try:
+                await self.unregister()
+            except TnlError as cause:
+                cleanup.append(cause)
+            self._server.tunnel = None
             self._server.should_exit = True
             try:
                 await asyncio.wait_for(self._serve_task, 15)
@@ -307,6 +309,10 @@ class Tunnel:
                     cleanup.append(cause)
                 self._server.force_exit = True
                 self._serve_task.cancel()
+                try:
+                    await self._serve_task
+                except asyncio.CancelledError:
+                    pass
             finally:
                 self._listener.close()
             if not self._finished.done():
@@ -316,29 +322,28 @@ class Tunnel:
                     self._finished.set_result(None)
             if not self._ready.done():
                 self._ready.set_exception(RegistrationLost())
-                self._ready.add_done_callback(
-                    lambda future: future.exception() if not future.cancelled() else None
-                )
             if len(cleanup) == 1:
                 raise cleanup[0]
             if cleanup:
-                raise ExceptionGroup("ad-hoc publisher and ASGI cleanup failed", cleanup)
+                raise ExceptionGroup("publisher and ASGI cleanup failed", cleanup)
 
 
-async def _start_asgi(app: ASGIApp) -> tuple[uvicorn.Server, asyncio.Task[None], socket.socket]:
+async def _start_asgi(app: ASGIApp) -> tuple[_OwnedServer, asyncio.Task[None], socket.socket]:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    task: asyncio.Task[None] | None = None
     try:
         listener.bind(("127.0.0.1", 0))
         listener.listen(128)
-        configuration = uvicorn.Config(
-            app,
-            lifespan="on",
-            ws="websockets-sansio",
-            log_level="critical",
-            access_log=False,
-            timeout_graceful_shutdown=10,
+        server = _OwnedServer(
+            uvicorn.Config(
+                app,
+                lifespan="on",
+                ws="websockets-sansio",
+                log_level="critical",
+                access_log=False,
+                timeout_graceful_shutdown=10,
+            )
         )
-        server = uvicorn.Server(configuration)
         task = asyncio.create_task(server.serve(sockets=[listener]))
         while not server.started:
             if task.done():
@@ -347,6 +352,12 @@ async def _start_asgi(app: ASGIApp) -> tuple[uvicorn.Server, asyncio.Task[None],
             await asyncio.sleep(0.01)
         return server, task, listener
     except BaseException:
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         listener.close()
         raise
 
@@ -355,20 +366,48 @@ async def _start_asgi(app: ASGIApp) -> tuple[uvicorn.Server, asyncio.Task[None],
 async def open(
     app: ASGIApp,
     *,
-    credential: str | None = None,
+    publisher_file: str | Path | None = None,
+    publisher_id: str | None = None,
     server: str | None = None,
     directory: str | Path | None = None,
+    state_dir: str | Path | None = None,
     access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
     limits: Limits | None = None,
 ) -> AsyncIterator[Tunnel]:
-    """open an ASGI app after lifespan startup and close its URL on exit."""
+    """start ASGI, register its bound listener, and wait for native routability."""
     if not callable(app):
-        raise TnlError("sdk.configuration_invalid", "an ASGI application is required")
-    selected = credential if credential is not None else os.environ.get("TNL_CREDENTIAL")
-    if selected is None or selected == "":
-        raise CredentialRequired()
-    if _credential.fullmatch(selected) is None:
-        raise TnlError("sdk.credential_rejected", "invalid ad-hoc credential")
+        raise TnlError("sdk.configuration_invalid", "pass an ASGI app")
+    if publisher_file is not None and publisher_id is not None:
+        raise TnlError("sdk.configuration_invalid", "select a publisher file or publisher ID")
+    # a running native owner does not inherit later changes to the app's env.
+    # send the path, never the credential contents, with this invocation.
+    if publisher_file is None and publisher_id is None:
+        publisher_file = os.getenv("TNL_PUBLISHER_FILE")
+    if publisher_file is not None and (
+        not isinstance(publisher_file, str | Path)
+        or not Path(publisher_file).is_absolute()
+        or not 0 < len(str(publisher_file)) <= 4096
+        or "\0" in str(publisher_file)
+    ):
+        raise TnlError("sdk.configuration_invalid", "publisher_file must be an absolute path")
+    if publisher_id is not None and (
+        not isinstance(publisher_id, str)
+        or re.fullmatch(r"pub_[A-Za-z0-9]{22}", publisher_id) is None
+    ):
+        raise TnlError("sdk.configuration_invalid", "pass a stored publisher ID")
+    if server is not None:
+        origin = urlsplit(server)
+        if (
+            len(server) > 4096
+            or origin.scheme != "https"
+            or not origin.hostname
+            or origin.username
+            or origin.password
+            or origin.path
+            or origin.query
+            or origin.fragment
+        ):
+            raise TnlError("sdk.configuration_invalid", "server must be an HTTPS origin")
     access_mode, ip = _access_payload(access)
     _limit_payload(limits)
     root = str(Path(directory or os.getcwd()).resolve())
@@ -379,30 +418,23 @@ async def open(
         task,
         listener,
         root,
-        selected,
+        None if publisher_file is None else str(publisher_file),
+        publisher_id,
         server,
+        None if state_dir is None else str(state_dir),
         access_mode,
         ip,
         limits,
     )
     try:
         await tunnel.start()
-    except BaseException as setup_error:
-        try:
-            await asyncio.shield(tunnel.close())
-        except BaseException as cleanup_error:
-            raise BaseExceptionGroup(
-                "ASGI setup and cleanup failed", [setup_error, cleanup_error]
-            ) from None
-        raise
-    try:
         yield tunnel
-    except BaseException as body_error:
+    except BaseException as primary:
         try:
             await asyncio.shield(tunnel.close())
-        except BaseException as cleanup_error:
+        except BaseException as cleanup:
             raise BaseExceptionGroup(
-                "ASGI operation and cleanup failed", [body_error, cleanup_error]
+                "ASGI operation and cleanup failed", [primary, cleanup]
             ) from None
         raise
     else:

@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
+	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
@@ -115,8 +116,7 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 	}
 	metadata := projectmeta.Metadata{
 		Version: projectmeta.Version, Namespace: namespaceForMembership(current, domain),
-		Services:           make(map[string]projectmeta.Service, len(r.project.Config.Services)),
-		ServiceDirectories: make(map[string]string, len(r.project.Config.Services)),
+		Services: make(map[string]projectmeta.Service, len(r.project.Config.Services)),
 	}
 	if r.project.Worktree.Label.FullLabel != "" {
 		metadata.Worktree = &projectmeta.Worktree{Label: r.project.Worktree.Label}
@@ -150,7 +150,13 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 		if err != nil {
 			return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 		}
-		if paths := r.project.Config.Services[name].Paths; len(paths) > 0 {
+		if serviceMetadata.Protocol != "http" {
+			serviceMetadata, err = r.reserveTCPMetadata(ctx, name, effective, serviceMetadata)
+			if err != nil {
+				return projectmeta.Metadata{}, err
+			}
+		}
+		if paths := config.ServicePaths(r.project.Config.Services[name]); len(paths) > 0 {
 			serviceMetadata.Paths = make(map[string]projectmeta.Path, len(paths))
 			for prefix, mount := range paths {
 				serviceMetadata.Paths[prefix] = projectmeta.Path{
@@ -159,14 +165,6 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 			}
 		}
 		metadata.Services[name] = serviceMetadata
-		relative := r.project.RelativeServiceDirectories[name]
-		if relative == "" {
-			_, relative, err = r.project.ServiceDirectory(name)
-			if err != nil {
-				return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
-			}
-		}
-		metadata.ServiceDirectories[name] = relative
 	}
 	metadata.Webhooks, err = projectWebhookMetadata(ctx, r.state, r.project.Project, server, metadata)
 	if err != nil {
@@ -268,11 +266,42 @@ func configuredProjectService(
 	if err != nil {
 		return projectmeta.Service{}, err
 	}
-	return projectmeta.Service{
-		Namespace: namespaceForMembership(current, domain),
-		Hostname:  hostname,
-		URL:       "https://" + hostname,
-	}, nil
+	protocol := config.ServiceProtocol(effective.Publish)
+	if protocol != "http" {
+		return projectmeta.Service{Namespace: namespaceForMembership(current, domain), Hostname: hostname, Protocol: protocol}, nil
+	}
+	return projectmeta.NewService(namespaceForMembership(current, domain), hostname, protocol, nil)
+}
+
+func (r *projectMetadataResolver) reserveTCPMetadata(ctx context.Context, name string, effective config.TNL, selected projectmeta.Service) (projectmeta.Service, error) {
+	server, err := r.server(ctx, effective.Server)
+	if err != nil {
+		return projectmeta.Service{}, err
+	}
+	authenticated, err := r.client(ctx, server)
+	if err != nil {
+		return projectmeta.Service{}, err
+	}
+	services, err := preparePublisherServices(ctx, r.state, server, "https://"+selected.Hostname, "", "", valueOrEmpty(effective.Team), false, authenticated)
+	if err != nil {
+		return projectmeta.Service{}, err
+	}
+	flags := tunnelFlags{}
+	applyTunnelConfiguration(&flags, effective.Tunnel)
+	policy, err := resolveVisitorAccess(ctx, authenticated.Control, flags.access, flags.Anonymous, flags.IP)
+	if err != nil {
+		return projectmeta.Service{}, err
+	}
+	cfg := services.config("", policy.prefixes, publisher.ApplicationLimits{})
+	if policy.explicit {
+		cfg.AccessMode = policy.access
+	}
+	cfg.ServiceProtocol = protocolForService(r.project.Config.Services[name])
+	route, err := reserveConfiguredURL(ctx, services, cfg)
+	if err != nil {
+		return projectmeta.Service{}, err
+	}
+	return projectmeta.NewService(selected.Namespace, selected.Hostname, selected.Protocol, route.PublicPort)
 }
 
 func (r *projectMetadataResolver) resolveContext(

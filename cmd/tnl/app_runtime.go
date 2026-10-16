@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -20,34 +21,56 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/filelock"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/localproxy"
-	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/localpublisher"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
+	"github.com/tnldotdev/tnl/internal/projectpublisher"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
 type runtimeCommand struct {
-	Address runtimeOptions `cmd:"" hidden:""`
-	Serve   runtimeOptions `cmd:"" hidden:""`
+	Endpoint      runtimeEndpointOptions `cmd:"" hidden:""`
+	OwnerEndpoint runtimeOptions         `cmd:"" hidden:""`
+	Serve         runtimeOptions         `cmd:"" hidden:""`
 }
 type runtimeOptions struct {
-	Directory string `name:"directory" required:"" type:"path"`
-	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	Directory        string `name:"directory" required:"" type:"path"`
+	StateDir         string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	ComposeProxy     bool   `name:"compose-proxy" hidden:""`
+	ComposeOwner     bool   `name:"compose-owner" hidden:""`
+	ComposeConfigure bool   `name:"compose-configure" hidden:""`
+	ComposeRequest   bool   `name:"compose-request" hidden:""`
 }
+type runtimeEndpointOptions struct {
+	runtimeOptions `embed:""`
+	Service        string `name:"service"`
+	InvocationID   string `name:"invocation-id"`
+}
+
+// placement hooks are set by the container integration. host discovery and host
+// owner startup have complete defaults; container placement must be explicit.
+var runtimeTargetResolver projectpublisher.TargetResolver
+var runtimeOwnerTransport projectpublisher.OwnerTransportResolver
+
+var runtimeConfigurePublication func(context.Context, *clientstate.Database, projectconfig.Project, clientruntime.Service, *publisher.Config) error
+var runtimeVisitorTLS func(context.Context, *clientstate.Database, projectconfig.Project, clientruntime.Service) (*tls.Config, error)
+var runtimeAttachIntegrations func(context.Context, *clientstate.Database, projectconfig.Project, clientruntime.Service, *clientstate.Tunnel, *publisher.Config) (func(), error)
 
 func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfiguration, string, error) {
 	root, err := clientStateRoot(options.StateDir)
 	if err != nil {
 		return projectConfiguration{}, "", err
 	}
-	directory, err := filepath.EvalSymlinks(options.Directory)
+	directory, err := filepath.Abs(options.Directory)
+	if err != nil {
+		return projectConfiguration{}, "", err
+	}
+	directory, err = filepath.EvalSymlinks(directory)
 	if err != nil {
 		return projectConfiguration{}, "", err
 	}
@@ -55,11 +78,27 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 	if err != nil {
 		return projectConfiguration{}, "", err
 	}
-	root = state.Root()
+	defer state.Close()
 	salt, err := state.WorktreeHashSalt(ctx)
-	closeErr := state.Close()
-	if err != nil || closeErr != nil {
-		return projectConfiguration{}, "", errors.Join(err, closeErr)
+	if err != nil {
+		return projectConfiguration{}, "", err
+	}
+	if options.ComposeOwner {
+		// the host evaluated project configuration before creating the Compose
+		// override. the native publisher image does not need Node or a host Git
+		// worktree path just to parse tnl.config.ts again inside the container.
+		snapshot := filepath.Join(directory, ".tnl", "compose.project.json")
+		if info, err := os.Lstat(snapshot); err != nil || !info.Mode().IsRegular() {
+			return projectConfiguration{}, "", errors.New("run tnl compose up from the host to prepare publisher configuration")
+		}
+		document, err := config.LoadDocument(snapshot)
+		if err != nil || document.TNL == nil || document.TNL.Publisher == nil || document.TNL.Publisher.Type != "compose" {
+			return projectConfiguration{}, "", errors.New("host Compose publisher configuration is unavailable or invalid")
+		}
+		return projectConfiguration{Project: projectconfig.Project{
+			Root: directory, Selection: projectconfig.Selection{Path: snapshot},
+			Config: *document.TNL, Worktree: projectconfig.Worktree{Root: directory},
+		}}, state.Root(), nil
 	}
 	selection, err := projectconfig.SelectProjectConfig(ctx, directory, "", os.Getenv("TNL_CONFIG"), false)
 	if err != nil {
@@ -76,142 +115,166 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 		}
 		project.Config.Server = &canonical
 	}
-	// service registrations reuse saved URLs; ephemeral URLs are for one-off
-	// tnl publish invocations, not app restarts.
-	if project.Config.Tunnel != nil {
-		tunnel := *project.Config.Tunnel
-		value := false
-		tunnel.Ephemeral = &value
-		project.Config.Tunnel = &tunnel
+	return projectConfiguration{Project: project}, state.Root(), nil
+}
+
+func runtimeAvailable(ctx context.Context, endpoint privateprotocol.Endpoint) bool {
+	return privateprotocol.Call(ctx, endpoint, "GET", "/v1/health", nil, nil) == nil
+}
+
+func ensureRuntimeOwner(ctx context.Context, project projectConfiguration, root string) (privateprotocol.Endpoint, error) {
+	if runtimeOwnerTransport != nil {
+		return runtimeOwnerTransport.OwnerEndpoint(ctx, project.Project, root)
 	}
-	for name, service := range project.Config.Services {
-		if service.Tunnel != nil {
-			tunnel := *service.Tunnel
-			value := false
-			tunnel.Ephemeral = &value
-			service.Tunnel = &tunnel
-			project.Config.Services[name] = service
+	if p := project.Config.Publisher; p != nil && p.Type != "host" {
+		return privateprotocol.Endpoint{}, errors.New("compose publisher requires an owner transport resolver")
+	}
+	path, err := privateprotocol.DescriptorPath(root, project.Root)
+	if err != nil {
+		return privateprotocol.Endpoint{}, err
+	}
+	if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil && runtimeAvailable(ctx, endpoint) {
+		return endpoint, nil
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return privateprotocol.Endpoint{}, err
+	}
+	command := exec.Command(executable, "runtime", "serve", "--directory", project.Root, "--state-dir", root)
+	if err := command.Start(); err != nil {
+		return privateprotocol.Endpoint{}, err
+	}
+	go func() { _ = command.Wait() }()
+	timer := time.NewTimer(15 * time.Second)
+	defer timer.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if endpoint, err := privateprotocol.ReadEndpoint(path); err == nil && runtimeAvailable(ctx, endpoint) {
+			return endpoint, nil
+		}
+		select {
+		case <-ctx.Done():
+			return privateprotocol.Endpoint{}, ctx.Err()
+		case <-timer.C:
+			return privateprotocol.Endpoint{}, failure.Wrap("start project owner", failure.ClientStateUnavailable, errors.New("local publisher did not start"))
+		case <-ticker.C:
 		}
 	}
-	return projectConfiguration{Project: project}, root, nil
 }
 
-func runtimeSocket(project, state string) (string, error) {
-	// a stable short directory keeps one identity across application environments
-	// and fits Darwin's Unix socket path limit.
-	directory, err := privateRuntimeDirectoryAt("/tmp")
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(directory, "app-"+clientruntime.Identity(project, state)+".sock"), nil
-}
-
-func privateRuntimeDirectoryAt(base string) (string, error) {
-	directory := filepath.Join(base, fmt.Sprintf("tnl-%d", os.Getuid()))
-	if err := os.Mkdir(directory, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return "", failure.Wrap("create local publisher runtime directory", failure.ClientStateUnavailable, err)
-	}
-	info, err := os.Lstat(directory)
-	if err != nil {
-		return "", failure.Wrap("inspect local publisher runtime directory", failure.ClientStateUnavailable, err)
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.IsDir() || info.Mode().Perm() != 0o700 || stat.Uid != uint32(os.Getuid()) {
-		return "", failure.Wrap("validate local publisher runtime directory", failure.ClientStateUnavailable,
-			errors.New("local publisher runtime directory must be user-owned with mode 0700"))
-	}
-	return directory, nil
-}
-
-func runtimeHTTP(socket string) *http.Client {
-	return &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-	}}}
-}
-
-func runtimeAvailable(ctx context.Context, socket string) bool {
-	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/v1/health", nil)
-	response, err := runtimeHTTP(socket).Do(request)
-	if err != nil {
-		return false
-	}
-	response.Body.Close()
-	return response.StatusCode == http.StatusNoContent
-}
-
-func runRuntimeAddress(ctx context.Context, options runtimeOptions, output io.Writer) error {
-	project, state, err := runtimeProject(ctx, options)
+func runRuntimeOwnerEndpoint(ctx context.Context, options runtimeOptions, output io.Writer) error {
+	project, root, err := runtimeProject(ctx, options)
 	if err != nil {
 		return err
 	}
-	socket, err := runtimeSocket(project.Root, state)
+	endpoint, err := ensureRuntimeOwner(ctx, project, root)
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(output).Encode(struct {
-		Version int    `json:"version"`
-		Socket  string `json:"socket"`
-	}{privateprotocol.Version, socket})
+	return json.NewEncoder(output).Encode(endpoint)
+}
+
+func runRuntimeEndpoint(ctx context.Context, options runtimeEndpointOptions, output io.Writer) error {
+	project, root, err := runtimeProject(ctx, options.runtimeOptions)
+	if err != nil {
+		return err
+	}
+	request := privateprotocol.CapabilityRequest{Scope: "app"}
+	if options.InvocationID != "" {
+		if options.Service != "" {
+			return errors.New("select a service or invocation")
+		}
+		request.Scope, request.InvocationId = "invocation", &options.InvocationID
+	} else {
+		name, err := project.AppService(options.Directory, options.Service)
+		if err != nil {
+			return err
+		}
+		request.Service = &name
+	}
+	owner, err := ensureRuntimeOwner(ctx, project, root)
+	if err != nil {
+		return err
+	}
+	var endpoint privateprotocol.Endpoint
+	if err := privateprotocol.Call(ctx, owner, "POST", "/v1/capabilities", request, &endpoint); err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(endpoint)
 }
 
 type appPreparation struct {
-	assignment privateprotocol.Assignment
-	services   publisherServices
-	policy     resolvedVisitorAccess
-	flags      tunnelFlags
-	framework  privateprotocol.Framework
-	project    projectConfiguration
+	configuration projectpublisher.Configuration
+	project       projectConfiguration
+	framework     privateprotocol.Framework
+	assignment    privateprotocol.Assignment
+	invocation    *privateprotocol.Invocation
 }
 
 type appRuntime struct {
-	manager   *clientruntime.Manager
-	adhoc     *clientruntime.AdHocManager
-	project   projectConfiguration
-	state     *clientstate.Database
-	mu        sync.Mutex
-	prepareMu sync.Mutex
-	prepared  map[string]appPreparation
+	manager      *clientruntime.Manager
+	workers      *projectpublisher.Workers
+	capabilities *privateprotocol.Capabilities
+	placement    *runtimeComposePlacement
+	project      projectConfiguration
+	state        *clientstate.Database
+	mu           sync.Mutex
+	prepareMu    sync.Mutex
+	prepared     map[string]appPreparation
+	// visitor and admission integration is attached before worker fencing wraps
+	// callbacks. this applies equally to SDK, named CLI and invocation workers.
+	AttachPublication func(context.Context, clientruntime.Service, *publisher.Config) error
 }
 
 func authenticateRuntime(ctx context.Context, state *clientstate.Database, server string) (*clientauth.Client, error) {
 	if os.Getenv("TNL_ACCESS_TOKEN") != "" && os.Getenv("TNL_SERVER") == "" {
 		return nil, failure.Wrap("select credential server", failure.InvalidTunnelFlags, errors.New("an explicit access token requires TNL_SERVER"))
 	}
-	// credential refresh and current validation belong to clientauth. the local
-	// runtime cannot request an interactive login on an application's behalf.
 	return clientauth.Authenticate(ctx, clientauth.Config{ServerEndpoint: server, State: state, AccessToken: os.Getenv("TNL_ACCESS_TOKEN"), Diagnostics: io.Discard})
 }
 
 func configuredRuntimeServices(project projectConfiguration) []clientruntime.Service {
 	services := make([]clientruntime.Service, 0, len(project.Config.Services))
-	for name := range project.Config.Services {
-		effective, _ := project.EffectiveService(name)
-		if config.ServiceProtocol(effective.Publish) != "http" {
-			continue
-		}
+	for name, definition := range project.Config.Services {
 		readiness := clientruntime.Readiness{Path: "/"}
-		if effective.Readiness != nil {
-			readiness.Path = effective.Readiness.Path
+		if definition.HTTP != nil && definition.HTTP.Readiness != nil {
+			readiness.Path = definition.HTTP.Readiness.Path
 		}
-		services = append(services, clientruntime.Service{Name: name, Directory: project.RelativeServiceDirectories[name], Readiness: readiness})
+		services = append(services, clientruntime.Service{Name: name, Directory: ".", ServiceProtocol: config.Protocol(definition), Readiness: readiness})
 	}
 	slices.SortFunc(services, func(a, b clientruntime.Service) int { return strings.Compare(a.Name, b.Name) })
 	return services
 }
 
 func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
-	// the app process starts this worker. when it exits, the other registered
-	// apps reconnect to a worker they own instead of relying on an orphan.
-	parentPID := os.Getppid()
+	if options.ComposeConfigure {
+		return runRuntimeComposeConfigure(ctx, options, os.Stdin)
+	}
+	if options.ComposeRequest {
+		return runRuntimeComposeRequest(ctx, options, os.Stdin, os.Stdout)
+	}
+	if options.ComposeProxy {
+		return runRuntimeComposeProxy(ctx, options)
+	}
 	project, root, err := runtimeProject(ctx, options)
 	if err != nil {
 		return err
 	}
-	socket, err := runtimeSocket(project.Root, root)
+	var placement *runtimeComposePlacement
+	if options.ComposeOwner {
+		project, placement, err = runtimePrepareComposePlacement(ctx, project, root)
+		if err != nil {
+			return err
+		}
+	} else if project.Config.Publisher != nil && project.Config.Publisher.Type == "compose" {
+		return errors.New("start the configured compose publisher service with tnl runtime serve --compose-owner")
+	}
+	path, err := privateprotocol.DescriptorPath(root, project.Root)
 	if err != nil {
 		return err
 	}
-	lock, err := filelock.Acquire(socket+".lock", filelock.Nonblocking, os.Getuid())
+	lock, err := filelock.Acquire(path+".lock", filelock.Nonblocking, os.Geteuid())
 	if errors.Is(err, filelock.ErrLocked) {
 		return nil
 	}
@@ -219,48 +282,72 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		return err
 	}
 	defer lock.Close()
-	if info, err := os.Lstat(socket); err == nil {
-		if info.Mode()&os.ModeSocket == 0 {
-			return failure.Wrap("open local publisher socket", failure.ClientStateUnavailable, errors.New("local publisher socket path is occupied by a non-socket file"))
+	var listener net.Listener
+	var capabilities *privateprotocol.Capabilities
+	if placement != nil {
+		listener, capabilities, err = placement.Listen()
+	} else {
+		listener, err = net.Listen("tcp4", "127.0.0.1:0")
+		if err == nil {
+			capabilities, err = privateprotocol.NewCapabilities("http://" + listener.Addr().String())
 		}
-		if err := os.Remove(socket); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
 	}
-	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
-	defer os.Remove(socket)
-	if err := os.Chmod(socket, 0600); err != nil {
-		return err
-	}
 	state, err := clientstate.Open(ctx, root)
 	if err != nil {
 		return err
 	}
 	defer state.Close()
-	runtime := &appRuntime{project: project, state: state, prepared: map[string]appPreparation{}}
-	runtime.manager, err = clientruntime.New(ctx, project.Root, root, configuredRuntimeServices(project), runtime.publish)
+	a := &appRuntime{project: project, state: state, capabilities: capabilities, placement: placement, prepared: map[string]appPreparation{}}
+	if runtimeConfigurePublication != nil {
+		a.AttachPublication = func(ctx context.Context, service clientruntime.Service, cfg *publisher.Config) error {
+			return runtimeConfigurePublication(ctx, state, project.Project, service, cfg)
+		}
+	}
+	a.workers = &projectpublisher.Workers{Database: state, Configure: a.workerConfiguration}
+	if runtimeVisitorTLS != nil {
+		a.workers.VisitorTLS = func(ctx context.Context, service clientruntime.Service) (*tls.Config, error) {
+			return runtimeVisitorTLS(ctx, state, project.Project, service)
+		}
+	}
+	a.manager, err = clientruntime.New(ctx, project.Root, state, configuredRuntimeServices(project), a.workers.Run)
 	if err != nil {
 		return err
 	}
-	runtime.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
-	defer runtime.manager.Close()
-	runtime.adhoc = clientruntime.NewAdHocManager(ctx, runtime.publishAdHoc, runtime.manager.Alive, runtime.manager.BeginPreparation)
-	defer runtime.adhoc.Close()
-	server := &http.Server{Handler: runtime.handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
+	a.workers.Manager = a.manager
+	if placement == nil {
+		a.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
+	} else {
+		// app pids belong to other containers. leases, not this process's pid
+		// namespace, decide their liveness; the Compose owner stays up while idle.
+		a.manager.Persistent = true
+	}
+	defer a.manager.Close()
+	handler := a.handler()
+	if placement != nil {
+		handler = placement.Handler(capabilities, handler)
+	}
+	server := &http.Server{Handler: handler, BaseContext: func(net.Listener) context.Context { return ctx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: privateprotocol.MaxBytes}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = server.Shutdown(closeCtx)
+		_ = server.Shutdown(shutdown)
 		_ = server.Close()
 	}()
+	if err := privateprotocol.WriteEndpoint(path, capabilities.Owner()); err != nil {
+		return err
+	}
+	defer privateprotocol.RemoveEndpoint(path, capabilities.Owner().OwnerId)
+	if placement != nil {
+		if err := placement.PublishApps(ctx, root, capabilities); err != nil {
+			return err
+		}
+	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -273,361 +360,223 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 			}
 			return err
 		case <-ticker.C:
-			if os.Getppid() != parentPID {
+			if a.manager.Sweep(a.manager.Alive) {
 				return nil
 			}
-			if runtime.manager.Sweep(runtime.manager.Alive) {
-				return nil
-			}
-			runtime.adhoc.Sweep()
-			runtime.mu.Lock()
-			live := map[string]bool{}
-			for _, service := range runtime.manager.Snapshot().Services {
-				if service.RegistrationID != "" {
-					live[service.RegistrationID] = true
+			a.mu.Lock()
+			for id := range a.prepared {
+				if _, found := a.manager.ServiceForRegistration(id); !found {
+					delete(a.prepared, id)
 				}
 			}
-			for id := range runtime.prepared {
-				if !live[id] {
-					delete(runtime.prepared, id)
-				}
-			}
-			runtime.mu.Unlock()
+			a.mu.Unlock()
 		}
 	}
 }
 
-func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepare) (assignmentResult privateprotocol.Assignment, resultErr error) {
-	finishPreparation := a.manager.BeginPreparation()
-	defer finishPreparation()
-	if request.Version != privateprotocol.Version || !privateprotocol.ValidOwner(request.Owner) || request.PID <= 0 || !request.Framework.Valid() {
-		return privateprotocol.Assignment{}, failure.Wrap("prepare app", failure.ProjectConfigInvalid, errors.New("invalid app preparation"))
+func (a *appRuntime) handler() http.Handler {
+	return (&localpublisher.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, Register: a.register, Acquire: a.acquire, Invocation: a.invocation, Check: a.workers.Check, AppService: func(name string) bool {
+		service, found := a.project.Config.Services[name]
+		return found && config.TargetType(service) == "app"
+	}}).Handler()
+}
+
+func (a *appRuntime) register(request privateprotocol.Registration) error {
+	a.mu.Lock()
+	preparation, found := a.prepared[request.RegistrationID]
+	a.mu.Unlock()
+	if !found {
+		return clientruntime.ErrRegistrationStale
 	}
-	directory, err := filepath.EvalSymlinks(request.Directory)
-	if err != nil || !pathInside(directory, a.project.Root) {
-		return privateprotocol.Assignment{}, failure.Wrap("select app directory", failure.ProjectConfigInvalid, errors.Join(err, errors.New("app directory is outside the project")))
+	// retain the app's reported origin for renewal, but never treat its
+	// hostname as a container address. the worker resolves the selected service.
+	return a.manager.Register(request.RegistrationID, request.Owner, request.Target, string(preparation.framework))
+}
+
+func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepare) (privateprotocol.Assignment, error) {
+	if request.Version != 1 || !privateprotocol.ValidOwner(request.Owner) || request.PID <= 0 || !request.Framework.Valid() {
+		return privateprotocol.Assignment{}, errors.New("invalid app preparation")
 	}
-	project, _, err := runtimeProject(ctx, runtimeOptions{Directory: directory, StateDir: a.state.Root()})
-	if err != nil {
-		return privateprotocol.Assignment{}, err
-	}
-	if project.Root != a.project.Root {
-		return privateprotocol.Assignment{}, failure.Wrap("select app project", failure.ProjectConfigInvalid, errors.New("app preparation selected another project"))
-	}
-	name := request.Service
-	if name == "" {
-		longest := -1
-		for candidate, path := range project.ServiceDirectories {
-			if pathInside(directory, path) {
-				if len(path) > longest {
-					name, longest = candidate, len(path)
-				} else if len(path) == longest {
-					name = ""
-				}
-			}
-		}
-	}
-	if !naming.ValidServiceName(name) {
-		return privateprotocol.Assignment{}, failure.Wrap("select app service", failure.ServiceNotConfigured, errors.New("select a unique configured service"))
-	}
-	defer func() {
-		if resultErr == nil {
-			return
-		}
-		reason := "runtime.preparation_failed"
-		if known, _, ok := failure.Describe(resultErr); ok {
-			reason = string(known)
-		}
-		if errors.Is(resultErr, controlclient.ErrUnauthenticated) {
-			reason = string(failure.Authentication)
-		}
-		a.manager.RecordFailure(name, reason)
-	}()
-	effective, err := project.EffectiveService(name)
+	name, err := a.project.AppService(request.Directory, request.Service)
 	if err != nil {
 		return privateprotocol.Assignment{}, err
 	}
 	a.prepareMu.Lock()
 	defer a.prepareMu.Unlock()
-	if err := a.manager.Configure(configuredRuntimeServices(project)); err != nil {
-		return privateprotocol.Assignment{}, err
-	}
-	resolver := newProjectMetadataResolver(a.state, project, strings.NewReader(""), io.Discard, "app prepare")
+	finish := a.manager.BeginPreparation()
+	defer finish()
+	resolver := newProjectMetadataResolver(a.state, a.project, strings.NewReader(""), io.Discard, "app prepare")
 	resolver.silent = true
 	metadata, err := resolver.Generate(ctx)
 	if err != nil {
 		return privateprotocol.Assignment{}, err
 	}
-	server, err := resolver.server(ctx, effective.Server)
-	if err != nil {
-		return privateprotocol.Assignment{}, err
-	}
-	authenticated, err := resolver.client(ctx, server)
-	if err != nil {
-		return privateprotocol.Assignment{}, err
-	}
-	flags := tunnelFlags{InspectionMode: config.InspectionSummary}
-	applyTunnelConfiguration(&flags, effective.Tunnel)
-	applyInspection(&flags, effective)
-	// app-led URLs remain saved across restarts, including configurations that
-	// previously requested ephemeral development URLs.
-	flags.Ephemeral = false
-	selected := metadata.Services[name]
-	services, err := preparePublisherServices(ctx, a.state, server, selected.URL, "", flags.Domain, valueOrEmpty(effective.Team), false, authenticated)
-	if err != nil {
-		return privateprotocol.Assignment{}, err
-	}
-	policy, err := resolveVisitorAccess(ctx, authenticated.Control, flags.access, flags.Anonymous, flags.IP)
-	if err != nil {
-		return privateprotocol.Assignment{}, err
-	}
-	assignment := privateprotocol.Assignment{Version: privateprotocol.Version, RegistrationID: "reg_" + strings.Repeat("0", 32), Service: name, Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
-	payload, err := json.Marshal(assignment)
-	if err != nil || len(payload) > privateprotocol.MaxBytes {
-		return privateprotocol.Assignment{}, failure.Wrap("prepare app metadata", failure.ProjectConfigInvalid, errors.Join(err, errors.New("app metadata exceeds private protocol limit")))
-	}
 	if err := projectmeta.Write(ctx, a.project.Root, metadata); err != nil {
 		return privateprotocol.Assignment{}, err
 	}
-	if err := ctx.Err(); err != nil {
-		return privateprotocol.Assignment{}, err
-	}
+	selected := metadata.Services[name]
 	id, err := a.manager.Reserve(name, request.Owner, request.PID, selected.URL)
 	if err != nil {
 		return privateprotocol.Assignment{}, err
 	}
-	assignment.RegistrationID = id
+	assignment := privateprotocol.Assignment{Version: 1, RegistrationID: id, Service: name, Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{assignment: assignment, services: services, policy: policy, flags: flags, framework: request.Framework, project: project}
+	a.prepared[id] = appPreparation{project: a.project, framework: request.Framework, assignment: assignment}
 	a.mu.Unlock()
 	return assignment, nil
 }
 
-func valueOrEmpty(value *string) string {
-	if value == nil {
-		return ""
+func (a *appRuntime) acquire(ctx context.Context, request privateprotocol.Lease) (privateprotocol.Registration, error) {
+	a.prepareMu.Lock()
+	defer a.prepareMu.Unlock()
+	finish := a.manager.BeginPreparation()
+	defer finish()
+	resolved, err := projectpublisher.ResolveTarget(ctx, a.project.Project, request.Service, runtimeTargetResolver)
+	if err != nil {
+		return privateprotocol.Registration{}, err
 	}
-	return *value
-}
-
-func (a *appRuntime) handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	mux.HandleFunc("POST /v1/ad-hoc/register", func(w http.ResponseWriter, r *http.Request) {
-		var request privateprotocol.AdHocRegister
-		if err := privateprotocol.Decode(w, r, &request); err != nil {
-			runtimeProblem(w, err)
-			return
-		}
-		status, err := a.adhoc.Register(request)
-		if err != nil {
-			runtimeProblem(w, err)
-			return
-		}
-		privateprotocol.Write(w, http.StatusOK, status)
-	})
-	for _, operation := range []string{"status", "renew", "unregister"} {
-		mux.HandleFunc("POST /v1/ad-hoc/"+operation, func(w http.ResponseWriter, r *http.Request) {
-			var request privateprotocol.Registration
-			if err := privateprotocol.Decode(w, r, &request); err != nil || request.Version != privateprotocol.Version {
-				runtimeProblem(w, err)
-				return
-			}
-			var err error
-			switch operation {
-			case "status":
-				status, statusErr := a.adhoc.Status(request.RegistrationID, request.Owner)
-				if statusErr == nil {
-					privateprotocol.Write(w, http.StatusOK, status)
-					return
-				}
-				err = statusErr
-			case "renew":
-				err = a.adhoc.Renew(request.RegistrationID, request.Owner)
-			case "unregister":
-				err = a.adhoc.Unregister(request.RegistrationID, request.Owner)
-			}
-			if err != nil {
-				runtimeProblem(w, err)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		})
+	resolver := newProjectMetadataResolver(a.state, a.project, strings.NewReader(""), io.Discard, "named publish")
+	resolver.silent = true
+	metadata, err := resolver.Generate(ctx)
+	if err != nil {
+		return privateprotocol.Registration{}, err
 	}
-	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) { privateprotocol.Write(w, 200, a.manager.Snapshot()) })
-	mux.HandleFunc("POST /v1/observe", func(w http.ResponseWriter, r *http.Request) {
-		var observation clientruntime.Observation
-		if err := privateprotocol.Decode(w, r, &observation); err != nil {
-			runtimeProblem(w, err)
-			return
-		}
-		if !a.manager.Observe(observation) {
-			runtimeProblem(w, clientruntime.ErrRegistrationStale)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	})
-	mux.HandleFunc("POST /v1/prepare", func(w http.ResponseWriter, r *http.Request) {
-		var request privateprotocol.Prepare
-		if err := privateprotocol.Decode(w, r, &request); err != nil {
-			runtimeProblem(w, err)
-			return
-		}
-		assignment, err := a.prepare(r.Context(), request)
-		if err != nil {
-			runtimeProblem(w, err)
-			return
-		}
-		privateprotocol.Write(w, 200, assignment)
-	})
-	for _, operation := range []string{"register", "renew", "unregister"} {
-		mux.HandleFunc("POST /v1/"+operation, func(w http.ResponseWriter, r *http.Request) {
-			var request privateprotocol.Registration
-			if err := privateprotocol.Decode(w, r, &request); err != nil {
-				runtimeProblem(w, err)
-				return
-			}
-			if request.Version != privateprotocol.Version {
-				runtimeProblem(w, errors.New("unsupported protocol"))
-				return
-			}
-			var err error
-			switch operation {
-			case "register":
-				a.mu.Lock()
-				preparation, found := a.prepared[request.RegistrationID]
-				a.mu.Unlock()
-				if !found {
-					err = clientruntime.ErrRegistrationStale
-				} else {
-					err = a.manager.Register(request.RegistrationID, request.Owner, request.Target, string(preparation.framework))
-				}
-			case "renew":
-				err = a.manager.Renew(request.RegistrationID, request.Owner)
-			case "unregister":
-				err = a.manager.Unregister(request.RegistrationID, request.Owner)
-			}
-			if err != nil {
-				runtimeProblem(w, err)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		})
+	selected := metadata.Services[request.Service]
+	address := selected.URL
+	if selected.Protocol != "http" {
+		address = selected.Address
 	}
-	return mux
-}
-
-func runtimeProblem(w http.ResponseWriter, err error) {
-	code, message, status := "runtime.request_invalid", "local publisher request is invalid", 400
-	switch {
-	case errors.Is(err, clientruntime.ErrOwnerConflict):
-		code, message, status = "runtime.owner_conflict", "another live app owns this service; stop it before starting another", 409
-	case errors.Is(err, clientruntime.ErrRegistrationStale):
-		code, message, status = "runtime.registration_stale", "app registration expired; prepare and register the listener again", 409
-	case errors.Is(err, controlclient.ErrUnauthenticated):
-		code, message, status = "runtime.authentication_required", "run tnl auth login, then start the app again", 401
-	default:
-		if _, definition, ok := failure.Describe(err); ok && definition.Class == failure.Unauthenticated {
-			code, message, status = "runtime.authentication_required", "run tnl auth login, then start the app again", 401
-		} else if _, ok := failure.Of(err); ok {
-			presented := presentFailure(err)
-			code, message, status = string(presented.reason), presented.message, 503
-		}
+	id, err := a.manager.Reserve(request.Service, request.Owner, request.Pid, address)
+	if err != nil {
+		return privateprotocol.Registration{}, err
 	}
-	privateprotocol.Write(w, status, privateprotocol.Problem{Code: code, Message: message})
-}
-
-func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service, observe func(uint64, bool) error) (result error) {
 	a.mu.Lock()
-	preparation := a.prepared[service.RegistrationID]
+	a.prepared[id] = appPreparation{project: a.project}
 	a.mu.Unlock()
-	services, flags := preparation.services, preparation.flags
+	registration := privateprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: string(*resolved.Target)}
+	if err := a.manager.Register(id, request.Owner, registration.Target, ""); err != nil {
+		_ = a.manager.Unregister(id, request.Owner)
+		return privateprotocol.Registration{}, err
+	}
+	return registration, nil
+}
+
+func (a *appRuntime) workerConfiguration(ctx context.Context, service clientruntime.Service) (projectpublisher.Configuration, error) {
+	a.mu.Lock()
+	preparation, found := a.prepared[service.RegistrationID]
+	a.mu.Unlock()
+	if !found {
+		return projectpublisher.Configuration{}, clientruntime.ErrRegistrationStale
+	}
+	if preparation.configuration.Publisher.Control != nil {
+		return preparation.configuration, nil
+	}
 	project := preparation.project
-	server := services.authenticated.ServerEndpoint
-	group := projectIntegrationGroup(project.Project, services.namespace)
-	tunnel, err := a.state.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandDev, Server: server, Target: service.Target, Project: a.project.Root, Service: service.Name, IntegrationGroup: group})
-	if err != nil {
-		return err
-	}
-	ctx = tunnel.Context()
-	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		result = errors.Join(result, tunnel.Finish(closeCtx, result))
-	}()
-	if err := tunnel.SetDevTarget(ctx, service.Framework, service.Target); err != nil {
-		return err
-	}
-	output, err := newPublishOutput("human", "tnl", io.Discard, io.Discard, nil)
-	if err != nil {
-		return err
-	}
-	previewID, err := ensurePreview(ctx, a.state, services.state, services.routes, server, services.teamID, a.project.Root)
-	if err != nil {
-		return err
-	}
-	configuration := services.config(service.Target, preparation.policy.prefixes, flags.limits())
-	if preparation.policy.explicit {
-		configuration.AccessMode = preparation.policy.access
-	}
 	effective, err := project.EffectiveService(service.Name)
 	if err != nil {
-		return err
+		return projectpublisher.Configuration{}, err
 	}
-	if effective.Publish != nil && effective.Publish.TargetCAFile != nil {
-		configuration.TargetOptions, err = targetOptionsForCA(*effective.Publish.TargetCAFile, project.Root)
-		if err != nil {
-			return err
-		}
-	}
-	configuration.ControlURL = server
-	configuration.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
-	configuration.PreviewID, configuration.ProjectRoot, configuration.Service = previewID, a.project.Root, service.Name
-	configuration.Feedback = project.Config.Feedback != nil && *project.Config.Feedback
-	configuration.InspectionMode = flags.InspectionMode
-	configuration.AdmitRequest = func(_ *http.Request, identity publisher.PublishRunIdentity) error {
-		if !a.manager.Current(service.Name, service.RegistrationID, service.Target, identity.Number) {
-			return diagnostic.Wrap(diagnostic.TargetUnavailable, clientruntime.ErrRegistrationStale)
-		}
-		return nil
-	}
-	recorder, err := newInspectionRecorder(ctx, tunnel, a.project.Root, service.Name, flags.InspectionMode)
+	resolver := newProjectMetadataResolver(a.state, project, strings.NewReader(""), io.Discard, "project publish")
+	resolver.silent = true
+	server, err := resolver.server(ctx, effective.Server)
 	if err != nil {
-		return err
+		return projectpublisher.Configuration{}, err
 	}
-	defer recorder.Close()
-	configuration.ObserveRequest = httpObservation(recorder)
-	configuration.Logf = func(_ string, _ ...any) {
-		if ctx.Err() == nil {
-			a.manager.RecordWarning(service.Name, service.RegistrationID, string(failure.TransportUnavailable))
+	authenticated, err := resolver.client(ctx, server)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	_, current, err := resolver.resolveContext(ctx, effective)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	selected, err := configuredProjectService(service.Name, project.Worktree, effective, current)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	services, err := preparePublisherServices(ctx, a.state, server, "https://"+selected.Hostname, "", "", valueOrEmpty(effective.Team), false, authenticated)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	flags := tunnelFlags{}
+	applyTunnelConfiguration(&flags, effective.Tunnel)
+	policy, err := resolveVisitorAccess(ctx, authenticated.Control, flags.access, flags.Anonymous, flags.IP)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	limits, err := config.ResolveWorkLimits(effectiveTunnelLimits(effective), service.ServiceProtocol)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	inspectionPolicy, err := config.ResolveInspection(effective.Inspection, service.ServiceProtocol)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	cfg := services.config(service.Target, policy.prefixes, limits)
+	if policy.explicit {
+		cfg.AccessMode = policy.access
+	}
+	var binding *projectpublisher.TargetBinding
+	{
+		binding = runtimeTargetBinding(project.Project, service.Name, a.placement, service.Target, nil)
+		binding.Changed = func() {
+			a.manager.Observe(clientruntime.Observation{Target: service.Target, RegistrationID: service.RegistrationID,
+				PublishRunNumber: service.PublishRunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"})
 		}
-	}
-	if project.Config.OAuth {
-		origin, oauthServices, err := projectOAuthPublisher(ctx, a.state, project.Project, server, valueOrEmpty(project.Config.Team), services.authenticated)
+		selected, err := binding.Capture(ctx)
 		if err != nil {
-			return err
+			return projectpublisher.Configuration{}, err
 		}
-		stop := startOAuthIntegrationURL(ctx, a.state, oauthServices, origin, tunnel, output, nil)
-		defer stop()
-		configuration.ObserveResponse = integrationurls.Observer(a.state, server, origin.Hostname, group, tunnel.ID())
+		cfg.Target = selected.Address
 	}
-	if len(project.Config.Webhooks) != 0 {
-		stop := startWebhookIntegrationURL(ctx, a.state, services, project.Project, tunnel, service.Name, group, output, nil)
-		defer stop()
+	cfg.ResolveTarget = func(ctx context.Context) (string, string, error) {
+		selected, err := binding.Capture(ctx)
+		return selected.Address, selected.Identity, err
 	}
-	for prefix, mount := range project.Config.Services[service.Name].Paths {
+	cfg.ControlURL, cfg.ProjectRoot, cfg.Service = server, project.Root, service.Name
+	cfg.ServiceProtocol = protocolForService(project.Config.Services[service.Name])
+	cfg.PreserveSavedURLTarget = true
+	resolved := config.ServicePublish(project.Config.Services[service.Name])
+	if resolved.TargetTLS != nil {
+		cfg.TargetTLS = *resolved.TargetTLS
+	}
+	if resolved.TargetTLSName != nil {
+		cfg.TargetTLSName = *resolved.TargetTLSName
+	}
+	if resolved.TargetCAFile != nil {
+		cfg.TargetOptions, err = targetOptionsForCA(*resolved.TargetCAFile, project.Root)
+		if err != nil {
+			return projectpublisher.Configuration{}, err
+		}
+	}
+	native, err := selectNativeProjectPublisher(ctx, services, cfg)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	traffic, err := config.ResolveTrafficSelection(effectiveTunnelLimits(effective))
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	native, err = native.WithTraffic(traffic)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	cfg.Control = native
+	if a.AttachPublication != nil {
+		if err := a.AttachPublication(ctx, service, &cfg); err != nil {
+			return projectpublisher.Configuration{}, err
+		}
+	}
+	for prefix, mount := range config.ServicePaths(project.Config.Services[service.Name]) {
 		options := localproxy.TargetOptions{}
-		mounted, err := project.EffectiveService(mount.Service)
-		if err != nil {
-			return err
-		}
-		if mounted.Publish != nil && mounted.Publish.TargetCAFile != nil {
-			options, err = targetOptionsForCA(*mounted.Publish.TargetCAFile, project.Root)
+		mounted := config.ServicePublish(project.Config.Services[mount.Service])
+		if mounted.TargetCAFile != nil {
+			options, err = targetOptionsForCA(*mounted.TargetCAFile, project.Root)
 			if err != nil {
-				return err
+				return projectpublisher.Configuration{}, err
 			}
 		}
-		configuration.Mounts = append(configuration.Mounts, localproxy.Mount{Prefix: prefix, StripPrefix: mount.StripPrefix, Options: options, ResolveTarget: func() string {
+		cfg.Mounts = append(cfg.Mounts, localproxy.Mount{Prefix: prefix, StripPrefix: mount.StripPrefix, Options: options, ResolveTarget: func() string {
 			for _, candidate := range a.manager.Snapshot().Services {
 				if candidate.Name == mount.Service && a.manager.Current(candidate.Name, candidate.RegistrationID, candidate.Target, 0) {
 					return candidate.Target
@@ -636,61 +585,62 @@ func (a *appRuntime) publish(ctx context.Context, service clientruntime.Service,
 			return ""
 		}})
 	}
-	var probes sync.WaitGroup
-	probeCtx, cancelProbes := context.WithCancel(ctx)
-	defer func() { cancelProbes(); probes.Wait() }()
-	configuration.Observe = func(event publisher.Event) error {
-		if event.Type == publisher.EventPublicURLAssigned {
-			preview, err := services.routes.AddPreviewPublicURL(ctx, previewID, event.PublicURLID)
-			if err != nil {
-				return err
-			}
-			if preview.Id != previewID || preview.TeamId != services.teamID || !slices.Contains(preview.PublicUrlIds, event.PublicURLID) {
-				return failure.Wrap("associate preview", failure.ServerResponseInvalid, errors.New("preview omitted assigned public URL"))
-			}
+	previewID, err := ensurePreview(ctx, a.state, services.state, services.routes, server, services.teamID, project.Root)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	cfg.PreviewID, cfg.Feedback = previewID, project.Config.Feedback != nil && *project.Config.Feedback
+	cfg.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
+	cfg.Observe = func(event publisher.Event) error {
+		if event.Type != publisher.EventPublicURLAssigned {
+			return nil
 		}
-		if err := handlePublisherEvent(ctx, tunnel, output, event); err != nil {
+		preview, err := services.routes.AddPreviewPublicURL(ctx, previewID, event.PublicURLID)
+		if err != nil {
 			return err
 		}
-		switch event.Type {
-		case publisher.EventProvisioningStep:
-			a.manager.SetProvisioningStage(service.Name, service.RegistrationID, event.PublishRunNumber, event.ProvisioningStage)
-		case publisher.EventProvisioning, publisher.EventDraining:
-			return observe(event.PublishRunNumber, false)
-		case publisher.EventProvisioningStalled:
-			a.manager.RecordWarning(service.Name, service.RegistrationID, string(diagnostic.ProvisioningStalled))
-		case publisher.EventReady:
-			if err := observe(event.PublishRunNumber, true); err != nil {
-				return err
-			}
-			copy := service
-			copy.PublicURL, copy.PublishRunNumber, copy.Routable = event.PublicURL, event.PublishRunNumber, true
-			probes.Add(1)
-			go func() { defer probes.Done(); a.check(probeCtx, copy) }()
+		if preview.Id != previewID || preview.TeamId != services.teamID || !slices.Contains(preview.PublicUrlIds, event.PublicURLID) {
+			return failure.Wrap("associate preview", failure.ServerResponseInvalid, errors.New("preview omitted assigned public URL"))
 		}
 		return nil
 	}
-	if len(project.Config.Aliases) != 0 {
-		stop := startProjectAliases(ctx, a.state, project, service.Name, valueOrEmpty(project.Config.Team), services, configuration, group, tunnel, output)
-		defer stop()
+	group := projectIntegrationGroup(project.Project, services.namespace)
+	configuration := projectpublisher.Configuration{Publisher: cfg, TargetBinding: binding, Inspection: inspectionPolicy, PrimaryRoot: project.Worktree.PrimaryCheckoutRoot(), SharedRoot: project.Worktree.PrimaryCheckoutRoot(), IntegrationGroup: group}
+	configuration.Attach = func(ctx context.Context, tunnel *clientstate.Tunnel, cfg *publisher.Config) (func(), error) {
+		required := project.Config.OAuth
+		for _, definition := range project.Config.Webhooks {
+			required = required || definition.Service == service.Name
+		}
+		for _, definition := range project.Config.Aliases {
+			required = required || definition.Service == service.Name
+		}
+		if project.Config.OAuth {
+			origin, _, err := projectOAuthPublisher(ctx, a.state, project.Project, server, valueOrEmpty(project.Config.Team), services.authenticated)
+			if err != nil {
+				return nil, err
+			}
+			cfg.ObserveResponse = integrationurls.Observer(a.state, server, origin.Hostname, group, tunnel.ID())
+		}
+		if runtimeAttachIntegrations != nil {
+			return runtimeAttachIntegrations(ctx, a.state, project.Project, service, tunnel, cfg)
+		}
+		if required {
+			return nil, failure.Wrap("attach project integration URLs", failure.IntegrationURLNotReady, errors.New("a scoped integration publisher is required"))
+		}
+		return nil, nil
 	}
-	return publisher.Run(ctx, configuration)
+	return configuration, nil
 }
 
-func (a *appRuntime) check(ctx context.Context, service clientruntime.Service) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-	for attempt := 0; ctx.Err() == nil; attempt++ {
-		observation := clientruntime.Probe(ctx, service, nil)
-		if !a.manager.Observe(observation) || observation.Ready {
-			return
-		}
-		timer := time.NewTimer(clientruntime.RetryDelay(attempt))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
 	}
+	return *value
+}
+func effectiveTunnelLimits(effective config.TNL) *config.Limits {
+	if effective.Tunnel == nil {
+		return nil
+	}
+	return effective.Tunnel.Limits
 }

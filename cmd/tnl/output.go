@@ -52,6 +52,7 @@ type publishEvent struct {
 }
 
 type publishOutput struct {
+	detachedCtx           context.Context
 	mode                  publishOutputMode
 	stdout                io.Writer
 	stderr                io.Writer
@@ -185,6 +186,9 @@ func (o *publishOutput) starting(tunnelID, target string) error {
 	defer o.mu.Unlock()
 	o.tunnelID = tunnelID
 	o.target = target
+	if o.detachedCtx != nil {
+		detachedPublicationStarting(o.detachedCtx)
+	}
 	if o.mode == publishOutputHuman {
 		return nil
 	}
@@ -269,6 +273,9 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 				),
 			)
 		}
+	}
+	if o.detachedCtx != nil {
+		detachedPublicationReady(o.detachedCtx)
 	}
 	return nil
 }
