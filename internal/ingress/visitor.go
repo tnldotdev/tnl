@@ -118,8 +118,9 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 		return nil
 	}
 	// ingress cannot inspect a visitor credential inside TLS. restricted
-	// HTTP and database connections remain bounded until the publisher checks it.
-	denied := !challenge && route.AccessMode != "anonymous" && route.ServiceProtocol != "ssh"
+	// HTTP, database, and managed SSH connections remain bounded until the
+	// publisher checks it.
+	denied := !challenge && route.AccessMode != "anonymous"
 	kind, key := visitorConnection, route.ID
 	if challenge {
 		kind, key = challengeConnection, hello.ServerName

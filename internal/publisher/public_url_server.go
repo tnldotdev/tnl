@@ -33,6 +33,7 @@ import (
 // PublicURLServerConfig configures publisher TLS termination and local HTTP forwarding.
 type PublicURLServerConfig struct {
 	Hostname                    string
+	ControlURL                  string
 	PreviewID                   string
 	PublicURLID                 string
 	PublishRunNumber            uint64
@@ -40,6 +41,8 @@ type PublicURLServerConfig struct {
 	Target                      string
 	ResolveTarget               func(context.Context) (string, string, error)
 	ServiceProtocol             controlv1.PublicURLServiceProtocol
+	SSH                         *SSHConfig
+	SSHAttempts                 PublisherSSHAttempt
 	Purpose                     controlv1.PublicURLPurpose
 	AccessMode                  controlv1.VisitorAccessMode
 	PublicPort                  uint16
@@ -65,6 +68,8 @@ type PublicURLServerConfig struct {
 	InspectionMode              inspection.Mode
 	Certificate                 tls.Certificate
 	CertificatePlan             controlv1.CertificatePlan
+
+	RevalidateVisitorCertificate RevalidateVisitorCertificate
 }
 
 type PublicURLServer struct {
@@ -153,6 +158,10 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	config.Limits = admission.limits
 	if forwarding != nil {
 		forwarding.admission = admission
+		forwarding.liveSlots = make(chan struct{}, admission.limits.Concurrency)
+	}
+	if forwarding != nil && forwarding.protocol == controlv1.Ssh && (config.CertificatePlan.Identifiers != nil || config.CertificatePlan.CacheKey != "" || config.CertificatePlan.Scope != "" || config.CertificatePlan.ChallengeMethod != "" || len(config.Certificate.Certificate) != 0 || config.Certificate.PrivateKey != nil) {
+		return nil, errors.New("publisher: SSH does not use a public URL certificate")
 	}
 	if config.CertificatePlan.Identifiers != nil || config.CertificatePlan.CacheKey != "" || config.CertificatePlan.Scope != "" || config.CertificatePlan.ChallengeMethod != "" {
 		config.CertificatePlan, err = certificateidentity.CanonicalPlan(config.CertificatePlan)
@@ -449,6 +458,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 }
 
 func (r *PublicURLServer) InstallChallenge(challenge tlschallenge.TLSALPNChallenge) error {
+	if r.tcp != nil && r.tcp.protocol == controlv1.Ssh {
+		return errors.New("publisher: SSH does not use public URL certificate challenges")
+	}
 	if challenge.Hostname != r.hostname {
 		return errors.New("publisher: TLS-ALPN challenge hostname does not match public URL")
 	}
@@ -458,6 +470,9 @@ func (r *PublicURLServer) InstallChallenge(challenge tlschallenge.TLSALPNChallen
 func (r *PublicURLServer) RemoveChallenge(id string) bool { return r.challenges.Remove(id) }
 
 func (r *PublicURLServer) InstallCertificate(certificate tls.Certificate) error {
+	if r.tcp != nil && r.tcp.protocol == controlv1.Ssh {
+		return errors.New("publisher: SSH does not use a public URL certificate")
+	}
 	copy := certificate
 	if len(copy.Certificate) == 0 || copy.PrivateKey == nil {
 		return errors.New("publisher: application certificate and private key are required")
@@ -787,7 +802,11 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 	defer session.close()
 	var pendingTimer *time.Timer
 	if denied {
-		pendingTimer = time.AfterFunc(visitorPromotionTimeout, cancel)
+		pendingFor := visitorPromotionTimeout
+		if r.tcp != nil && r.tcp.protocol == controlv1.Ssh {
+			pendingFor = 5*time.Minute + 10*time.Second
+		}
+		pendingTimer = time.AfterFunc(pendingFor, cancel)
 		defer pendingTimer.Stop()
 	}
 	session.onPromoted = func() {
@@ -801,24 +820,21 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied, session: session}
 	if r.tcp != nil {
 		if header.Destination.Port() == r.tcp.publicPort {
-			if !denied || r.tcp.protocol != controlv1.Ssh {
-				select {
-				case <-r.admission.completed:
-					return
-				default:
-				}
-				// ssh has no visitor TLS handshake, so check the same installed
-				// certificate that gates publish-run readiness before forwarding.
-				if r.tcp.protocol == controlv1.Ssh {
-					if err := r.withValidCertificate(func() error { return nil }); err != nil {
-						return
-					}
-				}
-				r.tcp.forward(metadata, r.tls, session)
+			if r.tcp.protocol == controlv1.Ssh && !denied {
+				return
 			}
+			select {
+			case <-r.admission.completed:
+				return
+			default:
+			}
+			r.tcp.forward(metadata, r.tls, session)
 			return
 		}
-		// certificate challenges still arrive on HTTPS port 443.
+		// certificate challenges still arrive on HTTPS port 443 for database URLs.
+		if r.tcp.protocol == controlv1.Ssh {
+			return
+		}
 		if header.Destination.Port() != 443 {
 			return
 		}

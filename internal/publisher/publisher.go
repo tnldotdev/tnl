@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/managedssh"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -44,25 +45,29 @@ type PublicURLControlClient interface {
 }
 
 type Config struct {
-	Control                     PublicURLControlClient
-	VisitorControl              *controlclient.Client
-	ControlURL                  string
-	BrowserLoginAvailable       bool
-	TeamID                      string
-	DomainID                    string
-	MembershipID                string
-	PolicyRevision              uint64
-	PublicURLScope              controlv1.PublicURLScope
-	Purpose                     controlv1.PublicURLPurpose
-	Hostname                    string
-	PreviewID                   string
-	Feedback                    bool
-	Demo                        bool
-	ProjectRoot                 string
-	Service                     string
-	Target                      string
-	ResolveTarget               func(context.Context) (string, string, error)
-	ServiceProtocol             controlv1.PublicURLServiceProtocol
+	Control               PublicURLControlClient
+	VisitorControl        *controlclient.Client
+	ControlURL            string
+	BrowserLoginAvailable bool
+	TeamID                string
+	DomainID              string
+	MembershipID          string
+	PolicyRevision        uint64
+	PublicURLScope        controlv1.PublicURLScope
+	Purpose               controlv1.PublicURLPurpose
+	Hostname              string
+	PreviewID             string
+	Feedback              bool
+	Demo                  bool
+	ProjectRoot           string
+	Service               string
+	Target                string
+	ResolveTarget         func(context.Context) (string, string, error)
+	ServiceProtocol       controlv1.PublicURLServiceProtocol
+	SSH                   *SSHConfig
+	// SSHAttemptsForRun constructs an authenticated adapter bound to this run's
+	// token. a server API implementation must be injected before SSH can publish.
+	SSHAttemptsForRun           func(credentials.PublishRunToken) PublisherSSHAttempt
 	AccessMode                  controlv1.VisitorAccessMode
 	TargetTLSName               string
 	TargetTLS                   bool
@@ -92,6 +97,8 @@ type Config struct {
 	Logf                        func(string, ...any)
 	Observe                     func(Event) error
 	heartbeatInterval           time.Duration
+
+	RevalidateVisitorCertificate RevalidateVisitorCertificate
 }
 
 type EventType string
@@ -181,6 +188,13 @@ func Run(ctx context.Context, config Config) (result error) {
 		}
 		if config.Handler == nil {
 			err = localproxy.PreflightWithOptions(ctx, config.Target, config.TargetOptions)
+		}
+	} else if config.ServiceProtocol == controlv1.Ssh {
+		if err := validateManagedSSH(config.SSH, config.Target, config.TargetTLS, config.TargetTLSName, config.TargetOptions); err != nil {
+			return err
+		}
+		if config.Handler != nil || len(config.Mounts) != 0 || config.ResolveTarget != nil || config.Ephemeral {
+			return managedssh.ErrConfiguration
 		}
 	} else {
 		_, err = validateTCPForwarding(PublicURLServerConfig{
@@ -323,6 +337,12 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 	} else {
 		protocol := config.ServiceProtocol
 		body.ServiceProtocol = &protocol
+		if protocol == controlv1.Ssh {
+			pin := config.SSH.publicKey()
+			body.SshHostKey = &pin
+			mode := controlv1.Restricted
+			body.AccessMode = &mode
+		}
 	}
 	if config.PublicURLScope == controlv1.Member && config.MembershipID != "" {
 		body.MembershipId = &config.MembershipID
@@ -343,9 +363,12 @@ func validateRouteIdentity(route controlv1.PublicURL, config Config) error {
 		route.Ephemeral != config.Ephemeral {
 		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested public URL"))
 	}
-	if supportsTCPForwarding(config.ServiceProtocol) {
+	if supportsTCPForwarding(config.ServiceProtocol) || config.ServiceProtocol == controlv1.Ssh {
 		if route.ServiceProtocol != config.ServiceProtocol || route.PublicPort == nil || !tcpport.Valid(*route.PublicPort) || route.Target != "" {
 			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested TCP endpoint"))
+		}
+		if config.ServiceProtocol == controlv1.Ssh && (config.SSH == nil || route.AccessMode != controlv1.Restricted || route.SshHostKey == nil || *route.SshHostKey != config.SSH.publicKey()) {
+			return managedssh.ErrConfiguration
 		}
 	} else if route.ServiceProtocol != "" && route.ServiceProtocol != controlv1.Http || route.PublicPort != nil {
 		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested TCP endpoint"))
@@ -395,7 +418,7 @@ func reconcilePublicURL(ctx context.Context, config Config, route controlv1.Publ
 		currentPolicy = slices.Clone(config.AllowedIPPrefixes)
 		desiredPolicy = slices.Clone(currentPolicy)
 	}
-	if supportsTCPForwarding(config.ServiceProtocol) {
+	if supportsTCPForwarding(config.ServiceProtocol) || config.ServiceProtocol == controlv1.Ssh {
 		if slices.Equal(currentPolicy, desiredPolicy) {
 			return route, nil
 		}

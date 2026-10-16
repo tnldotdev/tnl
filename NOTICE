@@ -5,5 +5,8 @@ This product includes software developed for the tnl project.
 
 Third-party license terms and notices are provided in THIRD_PARTY_LICENSES.txt.
 
+The managed SSH runtime uses gliderssh (BSD-3-Clause), creack/pty (MIT), and
+pkg/sftp (BSD-2-Clause). Their license texts are included in that file.
+
 The Python ASGI binding directly depends on HTTPX, Starlette, Uvicorn, and
 websockets (BSD-3-Clause). Their distributions provide their license texts.

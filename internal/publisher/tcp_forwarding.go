@@ -13,6 +13,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/inspection"
+	"github.com/tnldotdev/tnl/internal/livevisitor"
 	"github.com/tnldotdev/tnl/internal/protocolinspection"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/internal/tcpport"
@@ -27,6 +28,9 @@ const mysqlClientSSL = 1 << 11
 
 type tcpForwarding struct {
 	protocol        controlv1.PublicURLServiceProtocol
+	ssh             *SSHConfig
+	attempts        PublisherSSHAttempt
+	controlURL      string
 	admission       *applicationAdmission
 	publicPort      uint16
 	target          string
@@ -34,6 +38,9 @@ type tcpForwarding struct {
 	backendTLS      *tls.Config
 	onTargetFailure func()
 	authorize       AuthorizeVisitorCertificate
+	revalidate      RevalidateVisitorCertificate
+	liveVisitors    livevisitor.Group
+	liveSlots       chan struct{}
 	observe         inspection.Observer
 	warn            func(string)
 	warningOnce     sync.Once
@@ -45,6 +52,15 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 			return nil, errors.New("publisher: HTTP public URL cannot configure TCP forwarding")
 		}
 		return nil, nil
+	}
+	if config.ServiceProtocol == controlv1.Ssh {
+		if err := validateManagedSSH(config.SSH, config.Target, config.TargetTLS, config.TargetTLSName, config.TargetOptions); err != nil {
+			return nil, err
+		}
+		if config.AccessMode != controlv1.Restricted || config.SSHAttempts == nil || !tcpport.Valid(int(config.PublicPort)) || config.Handler != nil || len(config.Mounts) != 0 || config.ResolveTarget != nil {
+			return nil, errors.New("managed SSH requires restricted, account-authorized publication")
+		}
+		return &tcpForwarding{protocol: controlv1.Ssh, publicPort: config.PublicPort, ssh: config.SSH, attempts: config.SSHAttempts, controlURL: config.ControlURL}, nil
 	}
 	host, err := validateTCPForwarding(config)
 	if err != nil {
@@ -73,12 +89,14 @@ func newTCPForwarding(config PublicURLServerConfig) (*tcpForwarding, error) {
 		protocol: config.ServiceProtocol, publicPort: config.PublicPort, target: config.Target, resolveTarget: config.ResolveTarget,
 		backendTLS:      backendTLS,
 		onTargetFailure: config.OnTargetFailure,
-		authorize:       config.AuthorizeVisitorCertificate, observe: observe, warn: config.OnWarning,
+		authorize:       config.AuthorizeVisitorCertificate,
+		revalidate:      config.RevalidateVisitorCertificate,
+		observe:         observe, warn: config.OnWarning,
 	}, nil
 }
 
 func supportsTCPForwarding(protocol controlv1.PublicURLServiceProtocol) bool {
-	return protocol == controlv1.Postgres || protocol == controlv1.Mysql || protocol == controlv1.Redis || protocol == controlv1.Ssh
+	return protocol == controlv1.Postgres || protocol == controlv1.Mysql || protocol == controlv1.Redis
 }
 
 func validateTCPForwarding(config PublicURLServerConfig) (string, error) {
@@ -103,6 +121,10 @@ func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config, session
 	}
 	ctx, cancel := context.WithTimeout(base, 10*time.Second)
 	defer cancel()
+	if d.protocol == controlv1.Ssh {
+		_ = d.serveSSH(visitor, session)
+		return
+	}
 	target := d.target
 	if d.resolveTarget != nil {
 		var identity string
@@ -126,7 +148,7 @@ func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config, session
 	_ = backend.SetDeadline(time.Now().Add(10 * time.Second))
 	visitorTLS := publicTLS.Clone()
 	visitorTLS.NextProtos = nil
-	if d.authorize != nil {
+	if d.authorize != nil || d.revalidate != nil {
 		visitorTLS.ClientAuth = tls.RequestClientCert
 	}
 	switch d.protocol {
@@ -136,25 +158,7 @@ func (d *tcpForwarding) forward(visitor net.Conn, publicTLS *tls.Config, session
 		_ = d.mysql(ctx, visitor, backend, visitorTLS, session)
 	case controlv1.Redis:
 		_ = d.redis(ctx, visitor, backend, visitorTLS, session)
-	case controlv1.Ssh:
-		_ = d.ssh(ctx, visitor, backend, session)
 	}
-}
-
-func (d *tcpForwarding) ssh(ctx context.Context, visitor, backend net.Conn, session *visitorSession) error {
-	if d.backendTLS != nil {
-		secured, err := d.connectTargetTLS(backend)
-		if err != nil {
-			return err
-		}
-		backend = secured
-	}
-	release, err := d.admit(ctx, session)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return copyTCPConnections(visitor, visitor, backend)
 }
 
 func (d *tcpForwarding) redis(ctx context.Context, visitor, backend net.Conn, publicTLS *tls.Config, session *visitorSession) error {
@@ -162,9 +166,11 @@ func (d *tcpForwarding) redis(ctx context.Context, visitor, backend net.Conn, pu
 	if err := securedVisitor.Handshake(); err != nil {
 		return err
 	}
-	if err := d.authorizeTLS(ctx, session, securedVisitor); err != nil {
+	stopAuthorization, err := d.authorizeTLS(ctx, session, securedVisitor, backend)
+	if err != nil {
 		return err
 	}
+	defer stopAuthorization()
 	if d.backendTLS != nil {
 		secured, err := d.connectTargetTLS(backend)
 		if err != nil {
@@ -249,9 +255,11 @@ func (d *tcpForwarding) postgres(ctx context.Context, visitor, backend net.Conn,
 	if err := secured.HandshakeContext(ctx); err != nil {
 		return err
 	}
-	if err := d.authorizeTLS(ctx, session, secured); err != nil {
+	stopAuthorization, err := d.authorizeTLS(ctx, session, secured, backend)
+	if err != nil {
 		return err
 	}
+	defer stopAuthorization()
 	release, err := d.admit(ctx, session)
 	if err != nil {
 		return err
@@ -311,9 +319,11 @@ func (d *tcpForwarding) mysql(ctx context.Context, visitor, backend net.Conn, pu
 	if err := securedVisitor.Handshake(); err != nil {
 		return err
 	}
-	if err := d.authorizeTLS(ctx, session, securedVisitor); err != nil {
+	stopAuthorization, err := d.authorizeTLS(ctx, session, securedVisitor, backend)
+	if err != nil {
 		return err
 	}
+	defer stopAuthorization()
 	release, err := d.admit(ctx, session)
 	if err != nil {
 		return err
@@ -392,12 +402,52 @@ func (d *tcpForwarding) admit(ctx context.Context, session *visitorSession) (fun
 	return release, nil
 }
 
-func (d *tcpForwarding) authorizeTLS(ctx context.Context, session *visitorSession, secured *tls.Conn) error {
-	if d.authorize == nil {
-		if session.visitor.Header.AccessPending {
-			return errors.New("publisher: denied database visitor requires live certificate authorization")
+func (d *tcpForwarding) authorizeTLS(ctx context.Context, session *visitorSession, secured *tls.Conn, backend net.Conn) (func(), error) {
+	if d.authorize != nil {
+		if err := d.authorize(ctx, session.visitor, secured.ConnectionState()); err != nil {
+			return nil, err
 		}
-		return nil
 	}
-	return d.authorize(ctx, session.visitor, secured.ConnectionState())
+	if d.revalidate == nil {
+		if d.authorize != nil {
+			return func() {}, nil
+		}
+		if session.visitor.Header.AccessPending {
+			return nil, errors.New("publisher: denied database visitor requires live certificate authorization")
+		}
+		return func() {}, nil
+	}
+	state := secured.ConnectionState()
+	key, err := visitorAuthorizationKey(session.visitor, state)
+	if err != nil {
+		return nil, err
+	}
+	// reserve watcher capacity before creating any checker or session worker.
+	// the existing application concurrency limit also bounds pending checks.
+	if d.liveSlots != nil {
+		select {
+		case d.liveSlots <- struct{}{}:
+		default:
+			return nil, errors.New("publisher: TCP visitor capacity is exhausted")
+		}
+	}
+	releaseSlot := func() {
+		if d.liveSlots != nil {
+			<-d.liveSlots
+		}
+	}
+	lease, _, err := d.liveVisitors.Acquire(ctx, key, func(ctx context.Context) (livevisitor.Decision, error) {
+		return d.revalidate(ctx, session.visitor, state)
+	})
+	if err != nil {
+		releaseSlot()
+		return nil, err
+	}
+	stop, err := session.watchAuthorization(lease, secured.NetConn(), backend)
+	if err != nil {
+		releaseSlot()
+		return nil, err
+	}
+	var once sync.Once
+	return func() { once.Do(func() { stop(); releaseSlot() }) }, nil
 }

@@ -72,7 +72,7 @@ func TestControlAndTargetTrustAreIndependentPerJob(t *testing.T) {
 }
 
 func TestProtocolTargetAndTrustValidation(t *testing.T) {
-	for _, protocol := range []string{"http", "postgres", "mysql", "redis", "ssh"} {
+	for _, protocol := range []string{"http", "postgres", "mysql", "redis"} {
 		job, _, _ := fixture(t, "one")
 		job.Protocol = controlv1.PublicURLServiceProtocol(protocol)
 		if protocol != "http" {
