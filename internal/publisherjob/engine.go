@@ -44,9 +44,12 @@ func Clients(job Job) (nativeauth.NativeControl, nativeauth.EnrollmentAuthority,
 }
 
 type Engine struct {
-	Registry     *Registry
-	Clients      ClientFactory
-	Publish      func(context.Context, publisher.Config) error
+	Registry *Registry
+	Clients  ClientFactory
+	Publish  func(context.Context, publisher.Config) error
+	// ConfigureSSH installs the managed SSH runtime using the job's protected
+	// host key and allowed users. SSH jobs fail closed when no hook is supplied.
+	ConfigureSSH func(Job, *publisher.Config) error
 	PollInterval time.Duration
 	RetryMin     time.Duration
 	RetryMax     time.Duration
@@ -247,6 +250,14 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64) (bool, er
 		return false, err
 	}
 	cfg.Control, cfg.State, cfg.DrainTime = native, profile, e.DrainTime
+	if job.Protocol == "ssh" {
+		if e.ConfigureSSH == nil {
+			return false, ErrScope
+		}
+		if err := e.ConfigureSSH(job, &cfg); err != nil {
+			return false, err
+		}
+	}
 	transportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	cfg.QUICConnector = muxsession.QUICConnector{TLSConfig: transportTLS}
 	cfg.TCPConnector = muxsession.TLSYamuxConnector{TLSConfig: transportTLS}
@@ -281,6 +292,9 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64) (bool, er
 }
 
 func publicationConfig(job Job, publicURL controlv1.PublicURL) (publisher.Config, error) {
+	if err := validateJob(&job); err != nil {
+		return publisher.Config{}, err
+	}
 	if publicURL.Id != job.PublicURLID || publicURL.ServiceProtocol != job.Protocol || publicURL.Ephemeral || publicURL.Purpose != controlv1.App || publicURL.LifecycleState != controlv1.Enabled {
 		return publisher.Config{}, ErrScope
 	}

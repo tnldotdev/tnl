@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,6 +49,10 @@ type Job struct {
 	Protocol      controlv1.PublicURLServiceProtocol `json:"protocol"`
 	TargetTLS     bool                               `json:"target_tls"`
 	TargetTLSName string                             `json:"target_tls_name,omitempty"`
+	SSHUsers      []string                           `json:"ssh_users,omitempty"`
+	// the host private key belongs only in the encrypted whole-job snapshot.
+	// callers must select approved fields for output rather than marshal Job.
+	SSHHostKey []byte `json:"ssh_host_key,omitempty"`
 	// trust is captured at install time, so boot never depends on a user's files.
 	TargetCAPEM []byte                      `json:"target_ca_pem,omitempty"`
 	ServerCAPEM []byte                      `json:"server_ca_pem,omitempty"`
@@ -56,6 +61,15 @@ type Job struct {
 	Revision    uint64                      `json:"revision"`
 	Status      Status                      `json:"status"`
 }
+
+// String keeps private key material out of incidental diagnostic formatting.
+func (j Job) String() string {
+	type plain Job
+	j.SSHHostKey = nil
+	return fmt.Sprintf("%+v", plain(j))
+}
+
+func (j Job) GoString() string { return j.String() }
 
 // status contains approved observations only; errors and tokens never enter it.
 type Status struct {

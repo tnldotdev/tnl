@@ -6,11 +6,36 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/managedssh"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
+	"golang.org/x/crypto/ssh"
 )
 
 func validateTarget(job *Job) error {
+	if job.Protocol == "ssh" {
+		if job.Target != "" || job.TargetTLS || job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 {
+			return ErrScope
+		}
+		if len(job.SSHUsers) == 0 {
+			return ErrScope
+		}
+		if err := managedssh.ValidateUsers(job.SSHUsers); err != nil {
+			return ErrScope
+		}
+		if len(job.SSHHostKey) == 0 || len(job.SSHHostKey) > 16<<10 {
+			return ErrScope
+		}
+		signer, err := managedssh.ParseHostKey(job.SSHHostKey)
+		if err != nil || signer.PublicKey().Type() != ssh.KeyAlgoED25519 {
+			return ErrScope
+		}
+		_, err = trustRoots(job.ServerCAPEM)
+		return err
+	}
+	if len(job.SSHUsers) != 0 || len(job.SSHHostKey) != 0 {
+		return ErrScope
+	}
 	var err error
 	if job.Protocol == "http" {
 		if job.TargetTLS || job.TargetTLSName != "" {
