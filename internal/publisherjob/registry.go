@@ -1,15 +1,18 @@
-// package publisherjob owns enrolled system publications and their private state.
+// package publisherjob owns installed publications and their private state.
 package publisherjob
 
 import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,22 +27,25 @@ import (
 )
 
 var (
-	ErrUnsafeState = failure.Wrap("open system publisher state", failure.ClientStateUnavailable, errors.New("system publisher state is unsafe or has changed"))
-	ErrScope       = failure.Wrap("select system publication", failure.InvalidTunnelFlags, errors.New("a system job requires an explicit server and a saved URL grant"))
-	ErrJobExists   = failure.Wrap("install system publication", failure.ServerConflict, errors.New("job name or saved URL is already installed"))
-	ErrJobNotFound = failure.Wrap("read system publication", failure.ServerResourceNotFound, errors.New("system publisher job does not exist"))
+	ErrUnsafeState  = failure.Wrap("open installed publisher state", failure.ClientStateUnavailable, errors.New("installed publisher state is unsafe or has changed"))
+	ErrScope        = failure.Wrap("select installed publication", failure.InvalidTunnelFlags, errors.New("an installed job requires an explicit server and a saved URL grant"))
+	ErrJobExists    = failure.Wrap("install publication", failure.ServerConflict, errors.New("saved URL is already installed"))
+	ErrJobNotFound  = failure.Wrap("read installed publication", failure.ServerResourceNotFound, errors.New("installed publisher job does not exist"))
+	ErrJobAmbiguous = failure.Wrap("select installed publication", failure.InstalledJobAmbiguous, errors.New("more than one installed job has this name"))
 )
 
 const registryName = "publisher-jobs-v1"
 
 type OpenOptions struct {
 	Root string
-	// production state is root-owned. tests must explicitly select their uid.
+	User bool
+	// tests must explicitly select their uid for isolated system state.
 	TestOwnerUID *int
 }
 
 type Job struct {
 	ID            string                             `json:"job_id"`
+	Name          string                             `json:"name,omitempty"`
 	Server        string                             `json:"server"`
 	PublisherID   string                             `json:"publisher_id"`
 	GrantID       string                             `json:"grant_id"`
@@ -83,6 +89,9 @@ type Registry struct {
 // Open uses a standalone database and file wrapping key, including on macOS.
 func Open(ctx context.Context, options OpenOptions) (*Registry, error) {
 	owner := 0
+	if options.User {
+		owner = os.Getuid()
+	}
 	if options.TestOwnerUID != nil {
 		owner = *options.TestOwnerUID
 	}
@@ -197,6 +206,49 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 	})
 }
 
+// JobKey keeps the resource kind in the key, so a future private service ID
+// cannot collide with a public URL ID on the same server.
+func JobKey(server, kind, resourceID string) string {
+	if canonical, err := clientstate.CanonicalServer(server); err == nil {
+		server = canonical
+	}
+	digest := sha256.Sum256([]byte(server + "\x00" + kind + "\x00" + resourceID))
+	return kind + "-" + hex.EncodeToString(digest[:12])
+}
+
+func PublicURLJobKey(server, publicURLID string) string {
+	return JobKey(server, "url", publicURLID)
+}
+
+func PrivateServiceJobKey(server, privateServiceID string) string {
+	return JobKey(server, "private", privateServiceID)
+}
+
+// Remove drops local desired state and its job-scoped signing identity after
+// the caller has stopped and joined the worker.
+func (r *Registry) Remove(ctx context.Context, id string) error {
+	return r.update(ctx, func(jobs *[]Job) error {
+		for i, job := range *jobs {
+			if job.ID != id {
+				continue
+			}
+			if job.Enabled || job.Status.State != "stopped" {
+				return ErrScope
+			}
+			profile, err := r.database.Server(ctx, job.Server)
+			if err != nil {
+				return err
+			}
+			if err := profile.RemovePublisherSigningIdentity(ctx, "job:"+id); err != nil {
+				return err
+			}
+			*jobs = append((*jobs)[:i], (*jobs)[i+1:]...)
+			return nil
+		}
+		return ErrJobNotFound
+	})
+}
+
 func matches(job Job, identity authorityv1.PublisherEnrollmentResult) bool {
 	return identity.Kind == "saved_url" && identity.PublicUrlId != nil && *identity.PublicUrlId == job.PublicURLID && identity.TeamId != "" && identity.ClientId == job.PublisherID && identity.GrantId == job.GrantID && opaqueid.Valid(identity.KeyId, opaqueid.PublisherIdentityKeyPrefix)
 }
@@ -250,6 +302,30 @@ func (r *Registry) setEnabled(ctx context.Context, id string, enabled bool) erro
 func (r *Registry) List(ctx context.Context) (jobs []Job, err error) {
 	err = r.locked(ctx, func() error { jobs, err = r.load(ctx); return err })
 	return jobs, err
+}
+
+// ResolveJob requires an unambiguous ID or display name across all installed
+// projects in this supervisor. no job changes before this selection succeeds.
+func (r *Registry) ResolveJob(ctx context.Context, selected string) (Job, error) {
+	jobs, err := r.List(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	var match Job
+	count := 0
+	for _, job := range jobs {
+		if selected == job.ID || selected != "" && selected == job.Name {
+			match = job
+			count++
+		}
+	}
+	if count > 1 {
+		return Job{}, ErrJobAmbiguous
+	}
+	if count == 0 {
+		return Job{}, ErrJobNotFound
+	}
+	return match, nil
 }
 
 func (r *Registry) status(ctx context.Context, id string, revision uint64, status Status) error {
@@ -349,7 +425,7 @@ func (r *Registry) WaitStopped(ctx context.Context, id string) error {
 }
 
 func validateJob(job *Job) error {
-	if !naming.ValidServiceName(job.ID) || job.Server == "" || !opaqueid.Valid(job.PublisherID, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(job.GrantID, opaqueid.PublisherGrantPrefix) || !opaqueid.Valid(job.PublicURLID, opaqueid.PublicURLPrefix) || !job.Protocol.Valid() {
+	if !naming.ValidServiceName(job.ID) || len(job.Name) > 128 || strings.TrimSpace(job.Name) != job.Name || strings.ContainsAny(job.Name, "\x00\r\n") || job.Server == "" || !opaqueid.Valid(job.PublisherID, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(job.GrantID, opaqueid.PublisherGrantPrefix) || !opaqueid.Valid(job.PublicURLID, opaqueid.PublicURLPrefix) || !job.Protocol.Valid() {
 		return ErrScope
 	}
 	server, err := clientstate.CanonicalServer(job.Server)

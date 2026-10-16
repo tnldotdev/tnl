@@ -124,6 +124,20 @@ func (d *Database) ListRuntimeSnapshots(ctx context.Context) ([]RuntimeSnapshot,
 	return result, tx.Commit()
 }
 
+// KnownProjectURLs is a bounded, read-only set of public URL IDs previously
+// observed for this project and server. callers must still check the grant and
+// hostname before choosing a publication.
+func (d *Database) KnownProjectURLs(ctx context.Context, project, server string) ([]string, error) {
+	if _, err := runtimeProject(project); err != nil {
+		return nil, err
+	}
+	origin, err := CanonicalServer(server)
+	if err != nil {
+		return nil, err
+	}
+	return d.queries.ListKnownProjectURLs(ctx, clientstatedb.ListKnownProjectURLsParams{ProjectRoot: project, ServerOrigin: origin})
+}
+
 // CommitRuntimeUpdate allocates the cursor in SQLite and commits the snapshot,
 // event, and retention together. it never trusts a writer's event history.
 func (d *Database) CommitRuntimeUpdate(ctx context.Context, project string, update RuntimeUpdate) (RuntimeSnapshot, error) {

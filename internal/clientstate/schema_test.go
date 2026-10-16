@@ -53,6 +53,14 @@ func TestV1ProjectJournalAndHandoffState(t *testing.T) {
 	if err := database.db.QueryRowContext(ctx, `SELECT count(*) FROM project_url_inventory WHERE project_root = ? AND server_origin = ?`, root, server).Scan(&knownURLs); err != nil || knownURLs != 1 {
 		t.Fatalf("known project URLs = %d, %v; want 1", knownURLs, err)
 	}
+	urls, err := database.KnownProjectURLs(ctx, root, server+"/")
+	if err != nil || len(urls) != 1 || urls[0] != "url_example" {
+		t.Fatalf("read-only project URL selection: %v %v", urls, err)
+	}
+	other, err := database.KnownProjectURLs(ctx, root, "https://other.example.test")
+	if err != nil || len(other) != 0 {
+		t.Fatalf("project URL selection crossed servers: %v %v", other, err)
+	}
 	if _, err := database.db.ExecContext(ctx, `UPDATE local_tunnels SET primary_project_root = ?, integration_namespace = ? WHERE id = ?`,
 		root, "member.example.test", "tun_0123456789abcdefghijkl"); err != nil {
 		t.Fatal(err)

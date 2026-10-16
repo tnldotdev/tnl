@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type projectConfiguration struct {
@@ -156,6 +157,61 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		return err
 	}
 	return nil
+}
+
+// applyInstalledService snapshots only local target settings. installed jobs
+// reuse their saved URL policy and never create a URL from project settings.
+func (c projectConfiguration) applyInstalledService(flags *publishCommand) error {
+	service := flags.Target
+	definition, found := c.Config.Services[service]
+	if !found || service == "" {
+		return nil
+	}
+	effective, err := c.EffectiveService(service)
+	if err != nil {
+		return err
+	}
+	if flags.ServiceName != "" && flags.ServiceName != service {
+		return publisherCLIError("--service-name must match the configured service; use its name with tnl service start, stop, and remove")
+	}
+	flags.Service, flags.project, flags.projectRoot = service, c, c.Root
+	flags.ServiceName = service
+	flags.Target = ""
+	selected, _, err := resolveProjectServer(flags.ServerURL, effective.Server, "")
+	if err != nil {
+		return err
+	}
+	flags.ServerURL = selected
+	local := config.ServicePublish(definition)
+	if flags.Protocol == "" {
+		flags.Protocol = config.Protocol(definition)
+	}
+	if local.Target != nil {
+		flags.Target = string(*local.Target)
+	}
+	if flags.Target == "" {
+		return failure.Wrap("select installed target", failure.InstalledTargetMissing, errors.New("configured service has no stable target"))
+	}
+	if flags.TargetCAFile == "" && local.TargetCAFile != nil {
+		flags.TargetCAFile = *local.TargetCAFile
+	}
+	if flags.TargetTLSName == "" && local.TargetTLSName != nil {
+		flags.TargetTLSName = *local.TargetTLSName
+	}
+	if !flags.TargetTLS && local.TargetTLS != nil {
+		flags.TargetTLS = *local.TargetTLS
+	}
+	if effective.Tunnel != nil {
+		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
+		if effective.Tunnel.Ephemeral != nil && *effective.Tunnel.Ephemeral {
+			return publisherCLIError("installed publications require a saved public URL")
+		}
+	}
+	if err := applyProtocolLimits(&flags.tunnelFlags, flags.Protocol); err != nil {
+		return err
+	}
+	flags.Target, err = normalizePublishTarget(flags.Target, controlv1.PublicURLServiceProtocol(flags.Protocol))
+	return err
 }
 
 func (c projectConfiguration) defaultService() (string, error) {

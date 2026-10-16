@@ -13,12 +13,17 @@ import (
 func validateTarget(job *Job) error {
 	var err error
 	if job.Protocol == "http" {
-		if job.TargetTLS || job.TargetTLSName != "" {
+		if job.TargetTLS {
 			return ErrScope
 		}
 		job.Target, err = localproxy.NormalizeTarget(job.Target)
-		if len(job.TargetCAPEM) > 0 && !strings.HasPrefix(job.Target, "https://") {
+		if (len(job.TargetCAPEM) > 0 || job.TargetTLSName != "") && !strings.HasPrefix(job.Target, "https://") {
 			return ErrScope
+		}
+		if job.TargetTLSName != "" && net.ParseIP(job.TargetTLSName) == nil {
+			if _, e := naming.CanonicalizeHostname(job.TargetTLSName); e != nil {
+				return ErrScope
+			}
 		}
 	} else {
 		job.Target, err = tcptarget.Normalize(job.Target)
@@ -56,4 +61,10 @@ func trustRoots(pem []byte) (*x509.CertPool, error) {
 		return nil, ErrScope
 	}
 	return roots, nil
+}
+
+// ValidateTrust checks a copied CA snapshot before one-use enrollment starts.
+func ValidateTrust(pem []byte) error {
+	_, err := trustRoots(pem)
+	return err
 }

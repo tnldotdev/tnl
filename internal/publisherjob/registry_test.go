@@ -182,6 +182,76 @@ func TestInstallRetryRefreshesSettingsWithoutReplacingScopeOrKey(t *testing.T) {
 	}
 }
 
+func TestStableJobKeyAndDisplayName(t *testing.T) {
+	r := testRegistry(t)
+	job, identity, private := fixture(t, "placeholder")
+	if PublicURLJobKey(job.Server+"/", job.PublicURLID) != PublicURLJobKey(job.Server, job.PublicURLID) {
+		t.Fatal("server spelling changed the stable job key")
+	}
+	job.ID = PublicURLJobKey(job.Server, job.PublicURLID)
+	if job.ID == PrivateServiceJobKey(job.Server, job.PublicURLID) {
+		t.Fatal("different resource kinds share a job key")
+	}
+	job.Name = "first"
+	if err := r.Install(t.Context(), job, identity, private); err != nil {
+		t.Fatal(err)
+	}
+	job.Name = "renamed"
+	if err := r.Install(t.Context(), job, identity, private); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := r.List(t.Context())
+	if err != nil || len(jobs) != 1 || jobs[0].ID != job.ID || jobs[0].Name != "renamed" || jobs[0].Revision != 2 {
+		t.Fatalf("renamed job: %+v %v", jobs, err)
+	}
+	if err := r.Stop(t.Context(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.status(t.Context(), job.ID, 3, Status{State: "stopped"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Remove(t.Context(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err = r.List(t.Context())
+	if err != nil || len(jobs) != 0 {
+		t.Fatalf("removed job: %+v %v", jobs, err)
+	}
+	if _, found, err := r.signingIdentity(t.Context(), job); err == nil || found != nil {
+		t.Fatalf("removed job identity still readable: %v", err)
+	}
+}
+
+func TestResolveJobNameOrIDWithoutCrossProjectGuessing(t *testing.T) {
+	r := testRegistry(t)
+	first, identity, private := fixture(t, "first")
+	first.Name = "orders"
+	if err := r.Install(t.Context(), first, identity, private); err != nil {
+		t.Fatal(err)
+	}
+	if selected, err := r.ResolveJob(t.Context(), "orders"); err != nil || selected.ID != first.ID {
+		t.Fatalf("single service name: %+v %v", selected, err)
+	}
+	second, identity, private := fixture(t, "second")
+	second.Name = "orders"
+	second.Server = "https://other.example"
+	if err := r.Install(t.Context(), second, identity, private); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ResolveJob(t.Context(), "orders"); !errors.Is(err, ErrJobAmbiguous) {
+		t.Fatalf("same name across projects was selected: %v", err)
+	}
+	for _, id := range []string{first.ID, second.ID} {
+		selected, err := r.ResolveJob(t.Context(), id)
+		if err != nil || selected.ID != id {
+			t.Fatalf("exact job ID could not disambiguate: %+v %v", selected, err)
+		}
+	}
+	if _, err := r.ResolveJob(t.Context(), "missing"); !errors.Is(err, ErrJobNotFound) {
+		t.Fatalf("missing job matched: %v", err)
+	}
+}
+
 func TestRegistryRejectsUnsafeAndReplacedState(t *testing.T) {
 	for _, part := range []string{"key", "database", "root", "lock"} {
 		for _, change := range []string{"missing", "symlink", "mode", "replacement"} {

@@ -33,7 +33,8 @@ type cli struct {
 	Watch       watchCommand     `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
 	Publisher   publisherCommand `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
-	Service     serviceCommand   `cmd:"" help:"Manage installed system publications." group:"operate"`
+	Service     serviceCommand   `cmd:"" help:"Manage installed publications." group:"operate"`
+	Detached    detachedCommand  `cmd:"" help:"Inspect and stop detached publications." group:"operate"`
 	Status      statusCommand    `cmd:"" help:"Show local snapshots and fresh signed-in server facts; --all includes other projects." group:"start"`
 	Ping        pingCommand      `cmd:"" help:"Check a public URL from this machine as an unauthenticated visitor." group:"start"`
 	Inspect     inspectCommand   `cmd:"" help:"Inspect recent local HTTP and supported TCP activity." group:"manage"`
@@ -338,13 +339,42 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	parsedCommand := canonicalParsedCommand(parsed.Command())
 	applyTunnelCLIUnits(parsed, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
+	if parsedCommand == "publish <service-or-target>" {
+		if flags.Publish.Detach && flags.Publish.Install {
+			return publisherCLIError("--install and --detach cannot be combined")
+		}
+		if flags.Publish.Detach {
+			if flags.Publish.EnrollmentKey == "-" {
+				return publisherCLIError("--detach cannot read an enrollment key from stdin; use --publisher or --publisher-file")
+			}
+			if flags.Publish.Output != "human" {
+				return publisherCLIError("--detach requires --output=human")
+			}
+			if flags.Publish.System || flags.Publish.ServiceName != "" || flags.Publish.SystemStateDir != "" || flags.Publish.ServerCAFile != "" {
+				return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
+			}
+			return detachPublish(ctx, args, flags.Publish.StateDir, stdout)
+		}
+		if flags.Publish.DetachedChild != "" {
+			root, err := clientStateRoot(flags.Publish.StateDir)
+			if err != nil {
+				return err
+			}
+			var cleanup func()
+			ctx, cleanup, err = serveDetached(ctx, root, flags.Publish.DetachedChild)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+		}
+	}
 	if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
 		if err := prepareDemoPublish(&flags.Publish, flags.ConfigPath, term.IsTerminal(int(os.Stdin.Fd()))); err != nil {
 			return err
 		}
 	}
 	telemetryCommand, telemetryAction, collectTelemetry := selectedTelemetryCommand(parsed)
-	if flags.Publish.BG {
+	if flags.Publish.Install || flags.Publish.Detach {
 		collectTelemetry = false
 	}
 	var telemetry *telemetryInvocation
@@ -391,7 +421,38 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "wait", "watch":
 		return runAppObservation(ctx, flags, parsedCommand, stdout)
 	case "publish <service-or-target>", "config check", "config generate":
-		if parsedCommand == "publish <service-or-target>" && (flags.Publish.Demo || flags.Publish.BG || flags.Publish.PublisherFile != "") {
+		if parsedCommand == "publish <service-or-target>" && flags.Publish.Install {
+			if !flags.Publish.System {
+				scope := systemStateFlags{SystemStateDir: flags.Publish.SystemStateDir}
+				options, scopeErr := scope.options()
+				if scopeErr != nil {
+					return scopeErr
+				}
+				if err := requireInstalledService(ctx, options, nil); err != nil {
+					return err
+				}
+				selection, _, selectErr := selectProjectConfiguration(ctx, flags)
+				if selectErr != nil {
+					return selectErr
+				}
+				if selection.Path == "" {
+					break
+				}
+				projectStateRoot, err = commandStateRoot(parsed)
+				if err != nil {
+					return err
+				}
+				project, err = loadProjectConfiguration(ctx, flags, projectStateRoot)
+				if err != nil {
+					return err
+				}
+				if err := project.applyInstalledService(&flags.Publish); err != nil {
+					return err
+				}
+			}
+			break
+		}
+		if parsedCommand == "publish <service-or-target>" && (flags.Publish.Demo || flags.Publish.PublisherFile != "") {
 			break
 		}
 		projectStateRoot, err = commandStateRoot(parsed)
@@ -497,10 +558,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runServiceStart(ctx, flags.Service.Start, stdout, nil)
 	case "service stop <job>":
 		return runServiceStop(ctx, flags.Service.Stop, stdout)
+	case "service remove <job>":
+		return runServiceRemove(ctx, flags.Service.Remove, stdout)
 	case "service list":
 		return runServiceList(ctx, flags.Service.List, stdout)
 	case "service serve":
 		return runServiceServe(ctx, flags.Service.Serve)
+	case "detached list":
+		return runDetachedList(flags.Detached.List, stdout)
+	case "detached stop <id>":
+		return runDetachedStop(flags.Detached.Stop, stdout)
 	case "status":
 		if !flags.Status.All {
 			flags.Status.Project, err = projectRoot(ctx, flags)

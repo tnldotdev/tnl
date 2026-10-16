@@ -22,6 +22,11 @@ func protocolForService(service config.Service) controlv1.PublicURLServiceProtoc
 	return controlv1.PublicURLServiceProtocol(config.Protocol(service))
 }
 
+func projectPublisherScope(server, publicURLID string) string {
+	digest := sha256.Sum256([]byte(server + "\x00" + publicURLID))
+	return "project-publisher:" + hex.EncodeToString(digest[:])
+}
+
 // reserveConfiguredURL uses team authority only to create or edit saved state.
 // targets stay private to the native owner for both HTTP and TCP publications.
 func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg publisher.Config) (controlv1.PublicURL, error) {
@@ -69,8 +74,7 @@ func selectNativeProjectPublisher(ctx context.Context, services publisherService
 		return nil, err
 	}
 	server := services.authenticated.ServerEndpoint
-	digest := sha256.Sum256([]byte(server + "\x00" + route.Id))
-	scope := "project-publisher:" + hex.EncodeToString(digest[:])
+	scope := projectPublisherScope(server, route.Id)
 	lock, err := services.state.LockPublisherSigningIdentity(ctx, scope)
 	if err != nil {
 		return nil, err

@@ -1,6 +1,7 @@
 package publisherjob
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -20,8 +22,10 @@ import (
 
 const ServiceLabel = "dev.tnl.publisher"
 const SystemdUnit = "tnl-publisher.service"
+const UserServiceLabel = "dev.tnl.service"
+const UserSystemdUnit = "tnl.service"
 
-var ErrServiceNotLoaded = errors.New("system publisher service is not loaded")
+var ErrServiceNotLoaded = errors.New("tnl service is not loaded")
 
 type Command struct {
 	Program string
@@ -49,6 +53,7 @@ func (HostExecutor) Execute(ctx context.Context, command Command) error {
 type ServiceOptions struct {
 	Platform     string
 	Root         string
+	User         bool
 	BinarySource string
 	// unit directory and owner overrides exist for isolated service tests.
 	TestUnitDir  string
@@ -62,6 +67,14 @@ func DefaultRoot(platform string) string {
 	return "/var/lib/tnl/publisher"
 }
 
+func DefaultUserRoot(platform string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".tnl-service"), nil
+}
+
 func (o ServiceOptions) resolved() (ServiceOptions, int, string, error) {
 	if o.Platform == "" {
 		o.Platform = runtime.GOOS
@@ -70,9 +83,20 @@ func (o ServiceOptions) resolved() (ServiceOptions, int, string, error) {
 		return o, 0, "", ErrScope
 	}
 	if o.Root == "" {
-		o.Root = DefaultRoot(o.Platform)
+		if o.User {
+			var err error
+			o.Root, err = DefaultUserRoot(o.Platform)
+			if err != nil {
+				return o, 0, "", err
+			}
+		} else {
+			o.Root = DefaultRoot(o.Platform)
+		}
 	}
 	owner := 0
+	if o.User {
+		owner = os.Getuid()
+	}
 	if o.TestOwnerUID != nil {
 		owner = *o.TestOwnerUID
 	}
@@ -82,6 +106,17 @@ func (o ServiceOptions) resolved() (ServiceOptions, int, string, error) {
 	dir := "/etc/systemd/system"
 	if o.Platform == "darwin" {
 		dir = "/Library/LaunchDaemons"
+	}
+	if o.User {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return o, owner, "", err
+		}
+		if o.Platform == "darwin" {
+			dir = filepath.Join(home, "Library", "LaunchAgents")
+		} else {
+			dir = filepath.Join(home, ".config", "systemd", "user")
+		}
 	}
 	if o.TestUnitDir != "" {
 		if o.TestOwnerUID == nil || !safeServicePath(o.TestUnitDir) {
@@ -99,27 +134,48 @@ func safeServicePath(path string) bool {
 // ServiceUnit contains only the stable binary and private state directory.
 // system services run at boot with no login session or secret command arguments.
 func ServiceUnit(platform, binary, root string) ([]byte, error) {
+	return serviceUnit(platform, binary, root, false)
+}
+
+func serviceUnit(platform, binary, root string, user bool) ([]byte, error) {
 	if !safeServicePath(binary) || !safeServicePath(root) {
 		return nil, ErrScope
 	}
 	if platform == "darwin" {
 		var body strings.Builder
-		body.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>Label</key><string>" + ServiceLabel + "</string>\n<key>ProgramArguments</key><array>")
-		for _, arg := range []string{binary, "service", "serve", "--system-state-dir", root} {
+		label := ServiceLabel
+		if user {
+			label = UserServiceLabel
+		}
+		body.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>Label</key><string>" + label + "</string>\n<key>ProgramArguments</key><array>")
+		args := []string{binary, "service", "serve", "--system-state-dir", root}
+		if user {
+			args = append(args, "--user")
+		} else {
+			args = append(args, "--system")
+		}
+		for _, arg := range args {
 			body.WriteString("<string>")
 			if err := xml.EscapeText(&body, []byte(arg)); err != nil {
 				return nil, err
 			}
 			body.WriteString("</string>")
 		}
-		body.WriteString("</array>\n<key>UserName</key><string>root</string>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>ThrottleInterval</key><integer>5</integer>\n<key>ExitTimeOut</key><integer>45</integer>\n<key>Umask</key><integer>63</integer>\n</dict></plist>\n")
+		body.WriteString("</array>\n")
+		if !user {
+			body.WriteString("<key>UserName</key><string>root</string>\n")
+		}
+		body.WriteString("<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>ThrottleInterval</key><integer>5</integer>\n<key>ExitTimeOut</key><integer>45</integer>\n<key>Umask</key><integer>63</integer>\n</dict></plist>\n")
 		return []byte(body.String()), nil
 	}
 	if platform != "linux" {
 		return nil, ErrScope
 	}
 	quote := func(value string) string { return strconv.Quote(strings.ReplaceAll(value, "$", "$$")) }
-	return []byte("[Unit]\nDescription=tnl enrolled system publications\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=root\nUMask=0077\nExecStart=" + quote(binary) + " service serve --system-state-dir " + quote(root) + "\nRestart=always\nRestartSec=5\nTimeoutStopSec=45\nKillMode=mixed\nNoNewPrivileges=true\nStandardOutput=null\nStandardError=null\n\n[Install]\nWantedBy=multi-user.target\n"), nil
+	if user {
+		return []byte("[Unit]\nDescription=tnl user service\nAfter=network-online.target\n\n[Service]\nType=simple\nUMask=0077\nExecStart=" + quote(binary) + " service serve --system-state-dir " + quote(root) + " --user\nRestart=always\nRestartSec=5\nTimeoutStopSec=45\nKillMode=mixed\nNoNewPrivileges=true\nStandardOutput=null\nStandardError=null\n\n[Install]\nWantedBy=default.target\n"), nil
+	}
+	return []byte("[Unit]\nDescription=tnl enrolled system publications\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=root\nUMask=0077\nExecStart=" + quote(binary) + " service serve --system-state-dir " + quote(root) + " --system\nRestart=always\nRestartSec=5\nTimeoutStopSec=45\nKillMode=mixed\nNoNewPrivileges=true\nStandardOutput=null\nStandardError=null\n\n[Install]\nWantedBy=multi-user.target\n"), nil
 }
 
 // InstallService atomically refreshes the running binary before restarting the
@@ -132,7 +188,12 @@ func InstallService(ctx context.Context, options ServiceOptions, executor Execut
 	if executor == nil {
 		return ErrScope
 	}
-	registry, err := Open(ctx, OpenOptions{Root: o.Root, TestOwnerUID: o.TestOwnerUID})
+	if o.User {
+		if err := ensureUserUnitParent(unitDir, owner); err != nil {
+			return err
+		}
+	}
+	registry, err := Open(ctx, OpenOptions{Root: o.Root, User: o.User, TestOwnerUID: o.TestOwnerUID})
 	if err != nil {
 		return err
 	}
@@ -166,13 +227,20 @@ func InstallService(ctx context.Context, options ServiceOptions, executor Execut
 		if err := atomicFile(binary, source, owner, 0o700); err != nil {
 			return err
 		}
-		unit, err := ServiceUnit(o.Platform, binary, registry.Root())
+		unit, err := serviceUnit(o.Platform, binary, registry.Root(), o.User)
 		if err != nil {
 			return err
 		}
 		name := SystemdUnit
 		if o.Platform == "darwin" {
 			name = ServiceLabel + ".plist"
+		}
+		if o.User {
+			if o.Platform == "darwin" {
+				name = UserServiceLabel + ".plist"
+			} else {
+				name = UserSystemdUnit
+			}
 		}
 		unitPath = filepath.Join(unitDir, name)
 		if err := atomicFile(unitPath, strings.NewReader(string(unit)), owner, 0o644); err != nil {
@@ -184,20 +252,43 @@ func InstallService(ctx context.Context, options ServiceOptions, executor Execut
 		return err
 	}
 	if o.Platform == "linux" {
+		args := []string{}
+		unit := SystemdUnit
+		if o.User {
+			args = []string{"--user"}
+			unit = UserSystemdUnit
+		}
 		return executeAll(ctx, executor,
-			Command{Program: "/bin/systemctl", Args: []string{"daemon-reload"}},
-			Command{Program: "/bin/systemctl", Args: []string{"enable", SystemdUnit}},
-			Command{Program: "/bin/systemctl", Args: []string{"restart", SystemdUnit}})
+			Command{Program: "/bin/systemctl", Args: append(slices.Clone(args), "daemon-reload")},
+			Command{Program: "/bin/systemctl", Args: append(slices.Clone(args), "enable", unit)},
+			Command{Program: "/bin/systemctl", Args: append(slices.Clone(args), "restart", unit)})
 	}
-	err = executor.Execute(ctx, Command{Program: "/bin/launchctl", Args: []string{"print", "system/" + ServiceLabel}})
+	domain, label := "system", ServiceLabel
+	if o.User {
+		domain, label = "gui/"+strconv.Itoa(os.Getuid()), UserServiceLabel
+	}
+	err = executor.Execute(ctx, Command{Program: "/bin/launchctl", Args: []string{"print", domain + "/" + label}})
 	if err == nil {
-		if err := executeAll(ctx, executor, Command{Program: "/bin/launchctl", Args: []string{"bootout", "system/" + ServiceLabel}}); err != nil {
+		if err := executeAll(ctx, executor, Command{Program: "/bin/launchctl", Args: []string{"bootout", domain + "/" + label}}); err != nil {
 			return err
 		}
 	} else if !errors.Is(err, ErrServiceNotLoaded) {
 		return failure.Wrap("inspect system publisher service", failure.ClientStateUnavailable, err)
 	}
-	return executeAll(ctx, executor, Command{Program: "/bin/launchctl", Args: []string{"bootstrap", "system", unitPath}})
+	return executeAll(ctx, executor, Command{Program: "/bin/launchctl", Args: []string{"bootstrap", domain, unitPath}})
+}
+
+func ensureUserUnitParent(dir string, owner int) error {
+	parent := filepath.Dir(dir)
+	if _, err := os.Lstat(parent); errors.Is(err, os.ErrNotExist) {
+		if err := ensureUserUnitParent(parent, owner); err != nil {
+			return err
+		}
+		if err := os.Mkdir(parent, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+	}
+	return trustedAncestors(parent, owner)
 }
 
 func StartService(ctx context.Context, options ServiceOptions, executor Executor) error {
@@ -209,9 +300,97 @@ func StartService(ctx context.Context, options ServiceOptions, executor Executor
 		return ErrScope
 	}
 	if o.Platform == "darwin" {
-		return executeAll(ctx, executor, Command{Program: "/bin/launchctl", Args: []string{"kickstart", "system/" + ServiceLabel}})
+		domain, label := "system", ServiceLabel
+		if o.User {
+			domain, label = "gui/"+strconv.Itoa(os.Getuid()), UserServiceLabel
+		}
+		return executeAll(ctx, executor, Command{Program: "/bin/launchctl", Args: []string{"kickstart", domain + "/" + label}})
+	}
+	if o.User {
+		return executeAll(ctx, executor, Command{Program: "/bin/systemctl", Args: []string{"--user", "start", UserSystemdUnit}})
 	}
 	return executeAll(ctx, executor, Command{Program: "/bin/systemctl", Args: []string{"start", SystemdUnit}})
+}
+
+// CheckService is read-only: in particular, it cannot initialize registry
+// state or redeem an enrollment key when the requested supervisor is absent.
+func CheckService(ctx context.Context, options ServiceOptions, executor Executor) error {
+	o, owner, dir, err := options.resolved()
+	if err != nil {
+		return err
+	}
+	name := SystemdUnit
+	if o.Platform == "darwin" {
+		name = ServiceLabel + ".plist"
+	}
+	if o.User {
+		if o.Platform == "darwin" {
+			name = UserServiceLabel + ".plist"
+		} else {
+			name = UserSystemdUnit
+		}
+	}
+	for _, file := range []struct {
+		path string
+		mode os.FileMode
+	}{
+		{filepath.Join(dir, name), 0o644}, {filepath.Join(o.Root, "bin", "tnl"), 0o700},
+	} {
+		info, e := os.Lstat(file.path)
+		if e != nil {
+			if errors.Is(e, os.ErrNotExist) {
+				return ErrServiceNotLoaded
+			}
+			return e
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid != uint32(owner) || !info.Mode().IsRegular() || info.Mode().Perm() != file.mode || trustedAncestors(filepath.Dir(file.path), owner) != nil {
+			return ErrUnsafeState
+		}
+	}
+	want, err := serviceUnit(o.Platform, filepath.Join(o.Root, "bin", "tnl"), o.Root, o.User)
+	if err != nil {
+		return err
+	}
+	unit, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(unit, want) {
+		return ErrServiceNotLoaded
+	}
+	if executor == nil {
+		return ErrScope
+	}
+	if o.Platform == "darwin" {
+		domain, label := "system", ServiceLabel
+		if o.User {
+			domain, label = "gui/"+strconv.Itoa(os.Getuid()), UserServiceLabel
+		}
+		return executor.Execute(ctx, Command{Program: "/bin/launchctl", Args: []string{"print", domain + "/" + label}})
+	}
+	args := []string{"is-enabled", SystemdUnit}
+	if o.User {
+		args = []string{"--user", "is-enabled", UserSystemdUnit}
+	}
+	return executor.Execute(ctx, Command{Program: "/bin/systemctl", Args: args})
+}
+
+// CheckActiveService also checks that the already installed service is running.
+// registration must not succeed when there is no supervisor to pick up jobs.
+func CheckActiveService(ctx context.Context, options ServiceOptions, executor Executor) error {
+	if err := CheckService(ctx, options, executor); err != nil {
+		return err
+	}
+	o, _, _, err := options.resolved()
+	if err != nil || o.Platform == "darwin" {
+		return err
+	}
+	args := []string{"is-active", SystemdUnit}
+	if o.User {
+		args = []string{"--user", "is-active", UserSystemdUnit}
+	}
+	return executor.Execute(ctx, Command{Program: "/bin/systemctl", Args: args})
 }
 
 func executeAll(ctx context.Context, executor Executor, commands ...Command) error {

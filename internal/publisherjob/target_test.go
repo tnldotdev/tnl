@@ -72,6 +72,16 @@ func TestControlAndTargetTrustAreIndependentPerJob(t *testing.T) {
 }
 
 func TestProtocolTargetAndTrustValidation(t *testing.T) {
+	https, cert := tlsFixture(t)
+	secure, _, _ := fixture(t, "secure")
+	secure.Target, secure.TargetCAPEM, secure.TargetTLSName = https.URL, cert, "localhost"
+	if err := validateJob(&secure); err != nil {
+		t.Fatalf("configured HTTPS trust and server name were rejected: %v", err)
+	}
+	secure.Target = "http://127.0.0.1:3000"
+	if err := validateJob(&secure); !errors.Is(err, ErrScope) {
+		t.Fatalf("custom server name was allowed without HTTPS: %v", err)
+	}
 	for _, protocol := range []string{"http", "postgres", "mysql", "redis", "ssh"} {
 		job, _, _ := fixture(t, "one")
 		job.Protocol = controlv1.PublicURLServiceProtocol(protocol)

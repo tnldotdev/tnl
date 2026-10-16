@@ -27,6 +27,33 @@ type jobAuthority struct {
 	public   ed25519.PublicKey
 }
 
+type testUserRunner func(context.Context) error
+
+func (f testUserRunner) Serve(ctx context.Context) error { return f(ctx) }
+
+func TestUserJobRunnerSharesSupervisorLifetime(t *testing.T) {
+	r := testRegistry(t)
+	started, joined := make(chan struct{}), make(chan struct{})
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, UserJobs: []UserJobRunner{testUserRunner(func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		close(joined)
+		return nil
+	})}}
+	cancel, done := startEngine(t, engine)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("user job runner did not start")
+	}
+	joinEngine(t, cancel, done)
+	select {
+	case <-joined:
+	default:
+		t.Fatal("user job runner was not joined")
+	}
+}
+
 func (*jobAuthority) RedeemPublisherEnrollment(context.Context, string, ed25519.PublicKey) (authorityv1.PublisherEnrollmentResult, error) {
 	return authorityv1.PublisherEnrollmentResult{}, errors.New("unexpected enrollment")
 }

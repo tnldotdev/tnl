@@ -52,16 +52,23 @@ type publishCommand struct {
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	telemetry := optionalTelemetryReporter(reporters)
 	selection := enrolledPublishSelection{EnrollmentKey: flags.EnrollmentKey, PublisherID: flags.PublisherID, PublisherFile: flags.PublisherFile}
-	if flags.BG {
+	if flags.Install && flags.Detach {
+		return publisherCLIError("--install and --detach cannot be combined")
+	}
+	if flags.Install {
+		if flags.Output != "human" {
+			return publisherCLIError("--install requires --output=human")
+		}
 		return runEnrolledBackgroundPublish(ctx, flags, selection, flags.backgroundPublishFlags, stdout, os.Stdin, nil)
 	}
-	if flags.Job != "" || flags.SystemStateDir != "" || flags.ServerCAFile != "" {
-		return publisherCLIError("--job, --system-state-dir, and --server-ca-file require --bg")
+	if flags.System || flags.ServiceName != "" || flags.SystemStateDir != "" || flags.ServerCAFile != "" {
+		return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
 	}
 	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
 	if err != nil {
 		return err
 	}
+	output.detachedCtx = ctx
 	defer func() { result = output.finish(ctx, result) }()
 	if flags.EnrollmentKey != "" || flags.PublisherID != "" || flags.PublisherFile != "" {
 		return runEnrolledPublish(ctx, flags, selection, output, telemetry, os.Stdin)

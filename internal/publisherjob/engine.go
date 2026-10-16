@@ -44,13 +44,37 @@ func Clients(job Job) (nativeauth.NativeControl, nativeauth.EnrollmentAuthority,
 }
 
 type Engine struct {
-	Registry     *Registry
+	Registry *Registry
+	// UserJobs lets the user-login supervisor host another job kind with its
+	// own registry and credentials. the system publisher service leaves it empty.
+	UserJobs     []UserJobRunner
 	Clients      ClientFactory
 	Publish      func(context.Context, publisher.Config) error
 	PollInterval time.Duration
 	RetryMin     time.Duration
 	RetryMax     time.Duration
 	DrainTime    time.Duration
+}
+
+// UserJobRunner owns its own registry and reconciliation. Serve joins its
+// workers before returning when the shared user-login context is canceled.
+type UserJobRunner interface{ Serve(context.Context) error }
+
+// UserConnectorJob is the local desired-state boundary for a private connector.
+// its private_service_id is not a public_url_id or a publisher grant.
+// #386 can implement this registry and pass a UserJobRunner to the supervisor
+// without depending on generated private-service API models here.
+type UserConnectorJob struct {
+	ID               string
+	Server           string
+	PrivateServiceID string
+	Enabled          bool
+	Revision         uint64
+}
+
+type UserConnectorRegistry interface {
+	ListConnectorJobs(context.Context) ([]UserConnectorJob, error)
+	SetConnectorStatus(context.Context, string, uint64, string) error
 }
 
 type worker struct {
@@ -95,6 +119,18 @@ func (e Engine) Serve(ctx context.Context) error {
 		return err
 	}
 	defer serviceLock.Close()
+	for _, runner := range e.UserJobs {
+		if runner == nil {
+			return ErrScope
+		}
+	}
+	userCtx, cancelUser := context.WithCancel(ctx)
+	userDone := make(chan error, len(e.UserJobs))
+	var userWorkers sync.WaitGroup
+	for _, runner := range e.UserJobs {
+		userWorkers.Go(func() { userDone <- runner.Serve(userCtx) })
+	}
+	defer func() { cancelUser(); userWorkers.Wait() }()
 	workers := map[string]*worker{}
 	defer func() {
 		for _, w := range workers {
@@ -116,6 +152,17 @@ func (e Engine) Serve(ctx context.Context) error {
 	for {
 		if ctx.Err() != nil {
 			return nil
+		}
+		select {
+		case err := <-userDone:
+			if ctx.Err() != nil {
+				return nil
+			}
+			if err == nil {
+				return ErrScope
+			}
+			return err
+		default:
 		}
 		jobs, err := e.Registry.List(ctx)
 		if err != nil {
@@ -291,7 +338,7 @@ func publicationConfig(job Job, publicURL controlv1.PublicURL) (publisher.Config
 	if err != nil {
 		return publisher.Config{}, err
 	}
-	cfg := publisher.Config{ControlURL: job.Server, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, Hostname: publicURL.CanonicalHostname, Target: job.Target, ServiceProtocol: job.Protocol, TargetTLS: job.TargetTLS, TargetTLSName: job.TargetTLSName, TargetOptions: localproxy.TargetOptions{RootCAs: roots}, PreserveSavedURLTarget: publicURL.Target == "", InspectionMode: inspection.Mode("none")}
+	cfg := publisher.Config{ControlURL: job.Server, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, Hostname: publicURL.CanonicalHostname, Target: job.Target, ServiceProtocol: job.Protocol, TargetTLS: job.TargetTLS, TargetTLSName: job.TargetTLSName, TargetOptions: localproxy.TargetOptions{RootCAs: roots, ServerName: job.TargetTLSName}, PreserveSavedURLTarget: publicURL.Target == "", InspectionMode: inspection.Mode("none")}
 	cfg.Limits = job.Limits
 	if publicURL.MembershipId != nil {
 		cfg.MembershipID = *publicURL.MembershipId

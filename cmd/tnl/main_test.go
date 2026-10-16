@@ -46,7 +46,7 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 		"url access show", "url access set", "auth browser", "team feedback get", "team feedback set",
 		"share invite create", "share invite accept", "share invite list", "share invite revoke",
 		"publisher enroll", "publisher setup", "publisher provision", "publisher current", "publisher list", "publisher revoke", "publisher grant add", "publisher grant revoke",
-		"service install", "service start", "service stop", "service list",
+		"service install", "service start", "service stop", "service remove", "service list", "detached list", "detached stop",
 		"admin server status", "admin relays list", "admin relays drain", "admin maintenance list",
 		"admin maintenance allow", "admin maintenance block",
 	} {
@@ -65,6 +65,24 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	}
 	if _, err := parser.Parse([]string{"route", "list"}); err == nil {
 		t.Fatal("obsolete route command was accepted")
+	}
+	if _, err := parser.Parse([]string{"publish", "3000", "--bg"}); err == nil {
+		t.Fatal("obsolete --bg flag was accepted")
+	}
+}
+
+func TestConfiguredInstallPreflightsBeforeProjectState(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "user-state")
+	service := filepath.Join(t.TempDir(), "service-state")
+	var output, diagnostics bytes.Buffer
+	err := run(t.Context(), []string{"publish", "orders", "--install", "--state-dir", state, "--system-state-dir", service}, &output, &diagnostics)
+	if reason, ok := failure.Of(err); !ok || reason.Reason() != failure.ServiceNotInstalled {
+		t.Fatalf("project state opened before service preflight: %v", err)
+	}
+	for _, path := range []string{state, service} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("install preflight created %s: %v", path, err)
+		}
 	}
 }
 
