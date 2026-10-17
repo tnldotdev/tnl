@@ -25,6 +25,7 @@ type shareInviteCreateCommand struct {
 	URL         string `arg:"" required:""`
 	Email       string `name:"email" required:""`
 	ExpiresIn   string `name:"expires-in" default:"24h"`
+	SSHUser     string `name:"ssh-user" help:"Existing nonroot account on the SSH target; required for an SSH public URL."`
 }
 type shareInviteAcceptCommand struct {
 	remoteFlags `embed:""`
@@ -51,7 +52,15 @@ func runShareInviteCreate(ctx context.Context, f shareInviteCreateCommand, o, d 
 		return err
 	}
 	defer s.Close()
+	return createShareInvitation(ctx, s, f, duration, o)
+}
+
+func createShareInvitation(ctx context.Context, s *teamSession, f shareInviteCreateCommand, duration time.Duration, o io.Writer) error {
 	item, err := resolveVisitorPublicURL(ctx, s, f.URL)
+	if err != nil {
+		return err
+	}
+	sshUser, err := shareSSHUser(item.ServiceProtocol, f.SSHUser)
 	if err != nil {
 		return err
 	}
@@ -64,7 +73,7 @@ func runShareInviteCreate(ctx context.Context, f shareInviteCreateCommand, o, d 
 	if err != nil {
 		return err
 	}
-	invite, err := s.authenticated.Control.CreateVisitorInvitation(ctx, item.Id, key, controlv1.CreateVisitorInvitationRequest{Email: f.Email, TokenDigest: hex.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(duration)})
+	invite, err := s.authenticated.Control.CreateVisitorInvitation(ctx, item.Id, key, controlv1.CreateVisitorInvitationRequest{Email: f.Email, TokenDigest: hex.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(duration), SshUser: sshUser})
 	if err != nil {
 		return err
 	}
@@ -82,7 +91,8 @@ func runShareInviteAccept(ctx context.Context, f shareInviteAcceptCommand, o, d 
 	if err != nil {
 		return err
 	}
-	return writeHumanFrame(o, "tnl share invite accept", "accepted", "", clioutput.Fields(clioutput.Field{Label: "public URL ID", Value: grant.PublicUrlId}, clioutput.Field{Label: "grant ID", Value: grant.Id}))
+	fields := []clioutput.Field{{Label: "public URL ID", Value: grant.PublicUrlId}, {Label: "grant ID", Value: grant.Id}}
+	return writeHumanFrame(o, "tnl share invite accept", "accepted", "", clioutput.Fields(shareAccountFields(fields, grant.SshUser)...))
 }
 func runShareInviteList(ctx context.Context, f shareInviteListCommand, o, d io.Writer) error {
 	s, err := openTeamSession(ctx, f.remoteFlags, "tnl share invite list", d)
@@ -103,7 +113,8 @@ func runShareInviteList(ctx context.Context, f shareInviteListCommand, o, d io.W
 	}
 	blocks := []clioutput.Block{}
 	for _, invite := range invites {
-		blocks = append(blocks, clioutput.Section(invite.Id, clioutput.Fields(clioutput.Field{Label: "email", Value: invite.Email}, clioutput.Field{Label: "expires", Value: invite.ExpiresAt.UTC().Format(time.RFC3339)})))
+		fields := []clioutput.Field{{Label: "email", Value: invite.Email}, {Label: "expires", Value: invite.ExpiresAt.UTC().Format(time.RFC3339)}}
+		blocks = append(blocks, clioutput.Section(invite.Id, clioutput.Fields(shareAccountFields(fields, invite.SshUser)...)))
 	}
 	return writeHumanFrame(o, "tnl share invite list", countState(len(invites), "invitation", "invitations"), "", blocks...)
 }

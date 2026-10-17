@@ -155,14 +155,29 @@ Compose network can remain plaintext; `--target-tls` instead requires a
 verified TLS handshake to the target and never falls back to plaintext. Redis
 authentication and command authorization remain with the target.
 
-`tnl publish sshd:22 --protocol ssh` forwards the SSH protocol unchanged to an
-existing sshd. An SSH client must check that sshd's host key matches the key it
-expects for the saved public `hostname:port`; the public URL certificate does
-not authenticate the SSH server to the SSH client. Control and the publisher
-still issue and install that certificate before marking the publish run ready.
-The publisher checks it before forwarding new SSH visitors and retains the
-normal certificate expiration and renewal lifecycle. Target TLS remains an
-explicit option for an SSH target behind a separate TLS wrapper.
+`tnl service ssh enable --name HOST --user ACCOUNT` installs a root-owned host
+job for existing nonroot accounts. the job saves the public hostname, allocated
+port, account allowlist, and ed25519 host key; the private key stays in protected
+system state. setup checkpoints its one-use enrollment so an uncertain install
+can retry without replacing the host identity or publisher grant. `tnl service
+status HOST` prints the saved address and SSH host-key fingerprint. project
+services and `tnl publish` cannot forward a raw sshd target.
+
+the displayed `ssh ACCOUNT@HOST -p PORT` address is the intended ordinary SSH
+entry point. the current server still requires visitor TLS before SSH, so this
+command will not yet authenticate a visitor. browser per-connection approval
+and an SSH-first-byte server path depend on the upstream server integration;
+host setup keeps the current-stage hint until that flow works end to end.
+the visitor `tnl ssh` and its TLS ProxyCommand have been removed. the private
+`internal/managedssh` host runtime remains available for the server transition.
+
+`tnl connect REDIS_HOST` selects a saved Redis public URL using the current
+visitor session, prints one ephemeral loopback TCP listener, and accepts one
+local connection. its URL-bound client key stays in memory. `internal/tcpconnect`
+checks the server's WebPKI name and optional ALPN before carrying bounded-buffer
+TCP streams with half-close. PostgreSQL and MySQL need their separate startup
+negotiation before this connector can serve them; background listener management
+belongs to the separate supervisor.
 
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the

@@ -290,6 +290,9 @@ func publicationConfig(job Job, publicURL controlv1.PublicURL) (publisher.Config
 	if publicURL.Id != job.PublicURLID || publicURL.ServiceProtocol != job.Protocol || publicURL.Ephemeral || publicURL.Purpose != controlv1.App || publicURL.LifecycleState != controlv1.Enabled {
 		return publisher.Config{}, ErrScope
 	}
+	if job.Protocol == controlv1.Ssh && job.PublicHostname != "" && (job.PublicHostname != publicURL.CanonicalHostname || publicURL.PublicPort == nil || job.PublicPort != *publicURL.PublicPort) {
+		return publisher.Config{}, ErrScope
+	}
 	if publicURL.Target != "" && (job.Protocol != "http" || publicURL.Target != job.Target) {
 		return publisher.Config{}, ErrScope
 	}

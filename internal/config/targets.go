@@ -30,6 +30,8 @@ func MatchesDockerIdentifier(identifier, id, name string) bool {
 	return identifier == strings.TrimPrefix(name, "/") || identifier == id
 }
 
+// ValidProtocol includes managed SSH for saved public URL metadata and native
+// policy selection. project targets have a narrower boundary in validateTarget.
 func ValidProtocol(protocol string) bool {
 	switch protocol {
 	case "http", "postgres", "mysql", "redis", "ssh":
@@ -81,8 +83,11 @@ func ResolveServiceTarget(service Service, discovered string) (*Publish, error) 
 
 func validateTarget(service Service) error {
 	protocol := Protocol(service)
+	if protocol == "ssh" {
+		return errors.New("SSH cannot use a project service target; run tnl service ssh enable --name HOST --user ACCOUNT to install managed SSH")
+	}
 	if !ValidProtocol(protocol) {
-		return errors.New("protocol must be http, postgres, mysql, redis, or ssh")
+		return errors.New("protocol must be http, postgres, mysql, or redis")
 	}
 	target := service.Target
 	if target == nil || target.Type == "app" {

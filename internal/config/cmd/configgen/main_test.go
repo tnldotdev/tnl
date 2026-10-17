@@ -162,7 +162,7 @@ func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
 				t.Fatal("HTTP service lost inference or HTTP settings")
 			}
 		} else {
-			if !reflect.DeepEqual(protocol.Enum, []any{"postgres", "mysql", "redis", "ssh"}) || !slices.Contains(service.Required, "protocol") || !slices.Contains(service.Required, "target") || len(target.OneOf) != 3 || http != jsonschema.FalseSchema {
+			if !reflect.DeepEqual(protocol.Enum, []any{"postgres", "mysql", "redis"}) || !slices.Contains(service.Required, "protocol") || !slices.Contains(service.Required, "target") || len(target.OneOf) != 3 || http != jsonschema.FalseSchema {
 				t.Fatal("TCP service does not require its protocol and non-app target or forbids no HTTP settings")
 			}
 		}

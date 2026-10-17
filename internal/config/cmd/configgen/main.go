@@ -131,7 +131,7 @@ func serviceSchema(tcp bool) *jsonschema.Schema {
 	protocols := []any{"http"}
 	target := targetSchema()
 	if tcp {
-		protocols = []any{"postgres", "mysql", "redis", "ssh"}
+		protocols = []any{"postgres", "mysql", "redis"}
 		target.OneOf = target.OneOf[1:]
 	}
 	properties.Set("protocol", &jsonschema.Schema{Type: "string", Enum: protocols})

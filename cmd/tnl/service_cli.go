@@ -6,19 +6,28 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/managedssh"
 	"github.com/tnldotdev/tnl/internal/publisherjob"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"golang.org/x/crypto/ssh"
 )
 
-// parent wiring: add Service serviceCommand to the root CLI and dispatch each
-// command to its matching runService* handler. main owns SIGINT/SIGTERM context.
 type serviceCommand struct {
+	SSH     serviceSSHCommand     `cmd:"" name:"ssh" help:"Set up a managed SSH host service."`
 	Install serviceInstallCommand `cmd:"" help:"Install or refresh the system publisher binary and boot service."`
 	Start   serviceJobCommand     `cmd:"" help:"Start one installed system publication."`
 	Stop    serviceJobCommand     `cmd:"" help:"Stop one local job without revoking its grant."`
 	List    serviceListCommand    `cmd:"" help:"List installed system publications and their native run state."`
+	Status  serviceJobCommand     `cmd:"" help:"Show one installed system publication and its run state."`
 	Serve   serviceServeCommand   `cmd:"" hidden:"" help:"Run the enrolled system publisher service."`
+}
+
+type serviceSSHCommand struct {
+	Enable  sshEnableCommand `cmd:"" help:"Enable managed SSH for existing nonroot accounts on this host."`
+	Install struct{}         `cmd:"" hidden:""`
 }
 
 type systemStateFlags struct {
@@ -103,6 +112,15 @@ func runServiceList(ctx context.Context, flags serviceListCommand, output io.Wri
 	return writeSystemJobs(ctx, registry, output, "tnl service list", "")
 }
 
+func runServiceStatus(ctx context.Context, flags serviceJobCommand, output io.Writer) error {
+	registry, err := publisherjob.Open(ctx, publisherjob.OpenOptions{Root: flags.root()})
+	if err != nil {
+		return err
+	}
+	defer registry.Close()
+	return writeSystemJobs(ctx, registry, output, "tnl service status", flags.Job)
+}
+
 func runServiceServe(ctx context.Context, flags serviceServeCommand) error {
 	registry, err := publisherjob.Open(ctx, publisherjob.OpenOptions{Root: flags.root()})
 	if err != nil {
@@ -136,6 +154,16 @@ func renderSystemJobs(output io.Writer, command string, jobs []publisherjob.Job,
 			desired = "running"
 		}
 		fields := []clioutput.Field{{Label: "job", Value: job.ID}, {Label: "server", Value: job.Server}, {Label: "public URL", Value: job.PublicURLID}, {Label: "publisher", Value: job.PublisherID}, {Label: "protocol", Value: string(job.Protocol)}, {Label: "desired", Value: desired}, {Label: "state", Value: job.Status.State}}
+		if len(job.SSHUsers) != 0 {
+			fields = append(fields, clioutput.Field{Label: "accounts", Value: strings.Join(job.SSHUsers, ", ")})
+		}
+		if job.Protocol == controlv1.Ssh && job.PublicHostname != "" && job.PublicPort != 0 {
+			fields = append(fields,
+				clioutput.Field{Label: "hostname", Value: job.PublicHostname},
+				clioutput.Field{Label: "public port", Value: strconv.Itoa(job.PublicPort)},
+				clioutput.Field{Label: "connect", Value: "ssh " + job.SSHUsers[0] + "@" + job.PublicHostname + " -p " + strconv.Itoa(job.PublicPort)},
+			)
+		}
 		if job.Status.PublishRunNumber != 0 {
 			fields = append(fields, clioutput.Field{Label: "publish run", Value: strconv.FormatUint(job.Status.PublishRunNumber, 10)})
 		}
@@ -143,6 +171,16 @@ func renderSystemJobs(output io.Writer, command string, jobs []publisherjob.Job,
 			fields = append(fields, clioutput.Field{Label: "failure", Value: job.Status.Failure})
 		}
 		blocks = append(blocks, clioutput.Section(job.ID, clioutput.Fields(fields...)))
+		if job.Protocol == controlv1.Ssh {
+			signer, err := managedssh.ParseHostKey(job.SSHHostKey)
+			if err != nil {
+				return publisherjob.ErrUnsafeState
+			}
+			blocks = append(blocks, clioutput.Section("host key", clioutput.Text(ssh.FingerprintSHA256(signer.PublicKey()))))
+		}
+	}
+	if selected != "" && len(blocks) == 0 {
+		return publisherjob.ErrJobNotFound
 	}
 	return writeHumanFrame(output, command, state, "", blocks...)
 }

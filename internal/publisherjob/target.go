@@ -8,12 +8,19 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/managedssh"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
 	"golang.org/x/crypto/ssh"
 )
 
 func validateTarget(job *Job) error {
 	if job.Protocol == "ssh" {
+		if job.PublicHostname != "" || job.PublicPort != 0 {
+			hostname, err := naming.CanonicalizeHostname(job.PublicHostname)
+			if err != nil || hostname != job.PublicHostname || job.PublicPort < 1024 || !tcpport.Valid(job.PublicPort) {
+				return ErrScope
+			}
+		}
 		if job.Target != "" || job.TargetTLS || job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 {
 			return ErrScope
 		}
@@ -33,7 +40,7 @@ func validateTarget(job *Job) error {
 		_, err = trustRoots(job.ServerCAPEM)
 		return err
 	}
-	if len(job.SSHUsers) != 0 || len(job.SSHHostKey) != 0 {
+	if len(job.SSHUsers) != 0 || len(job.SSHHostKey) != 0 || job.PublicHostname != "" || job.PublicPort != 0 {
 		return ErrScope
 	}
 	var err error

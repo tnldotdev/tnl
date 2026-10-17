@@ -41,16 +41,18 @@ type OpenOptions struct {
 }
 
 type Job struct {
-	ID            string                             `json:"job_id"`
-	Server        string                             `json:"server"`
-	PublisherID   string                             `json:"publisher_id"`
-	GrantID       string                             `json:"grant_id"`
-	PublicURLID   string                             `json:"public_url_id"`
-	Target        string                             `json:"target"`
-	Protocol      controlv1.PublicURLServiceProtocol `json:"protocol"`
-	TargetTLS     bool                               `json:"target_tls"`
-	TargetTLSName string                             `json:"target_tls_name,omitempty"`
-	SSHUsers      []string                           `json:"ssh_users,omitempty"`
+	ID             string                             `json:"job_id"`
+	Server         string                             `json:"server"`
+	PublisherID    string                             `json:"publisher_id"`
+	GrantID        string                             `json:"grant_id"`
+	PublicURLID    string                             `json:"public_url_id"`
+	PublicHostname string                             `json:"public_hostname,omitempty"`
+	PublicPort     int                                `json:"public_port,omitempty"`
+	Target         string                             `json:"target"`
+	Protocol       controlv1.PublicURLServiceProtocol `json:"protocol"`
+	TargetTLS      bool                               `json:"target_tls"`
+	TargetTLSName  string                             `json:"target_tls_name,omitempty"`
+	SSHUsers       []string                           `json:"ssh_users,omitempty"`
 	// the host private key belongs only in the encrypted whole-job snapshot.
 	// callers must select approved fields for output rather than marshal Job.
 	SSHHostKey []byte `json:"ssh_host_key,omitempty"`

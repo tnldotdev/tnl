@@ -14,7 +14,7 @@ func TestHarnessArgumentsPreserveChildCommand(t *testing.T) {
 	if parsed.Service != "postgres" || !reflect.DeepEqual(parsed.Command, arguments[2:]) {
 		t.Fatalf("parsed test command = %+v", parsed)
 	}
-	for _, input := range [][]string{{"mysql", "--", "go", "test"}, {"redis", "--", "go", "test"}, {"ssh", "--", "go", "test"}, {"dns"}, {"runtime"}} {
+	for _, input := range [][]string{{"mysql", "--", "go", "test"}, {"redis", "--", "go", "test"}, {"dns"}, {"runtime"}} {
 		if _, err := parseHarnessArguments(input); err != nil {
 			t.Fatalf("parse %v: %v", input, err)
 		}
@@ -22,7 +22,7 @@ func TestHarnessArgumentsPreserveChildCommand(t *testing.T) {
 }
 
 func TestHarnessArgumentsRejectInvalidCommands(t *testing.T) {
-	for _, input := range [][]string{{}, {"unknown"}, {"postgres"}, {"postgres", "--"}, {"postgres", "go", "test"}, {"dns", "--", "go", "test"}, {"runtime", "--", "go", "test"}} {
+	for _, input := range [][]string{{}, {"unknown"}, {"postgres"}, {"postgres", "--"}, {"postgres", "go", "test"}, {"ssh", "--", "go", "test"}, {"dns", "--", "go", "test"}, {"runtime", "--", "go", "test"}} {
 		if _, err := parseHarnessArguments(input); err == nil {
 			t.Errorf("accepted %v", input)
 		}

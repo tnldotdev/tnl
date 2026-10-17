@@ -306,7 +306,7 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 }
 
 func projectSensitiveCommand(command string) bool {
-	return strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "admin ") ||
+	return strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "admin ") || command == "connect <url>" ||
 		strings.HasPrefix(command, "publisher ") ||
 		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ") || strings.HasPrefix(command, "alias ")
 }
@@ -419,6 +419,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Available.remoteFlags, false)
 	case "url certificate <url>":
 		apply(&flags.URL.Certificate.remoteFlags, false)
+	case "connect <url>":
+		apply(&flags.Connect.remoteFlags, false)
 	case "publisher enroll", "publisher enroll <public-url-id>":
 		apply(&flags.Publisher.Enroll.remoteFlags, true)
 	case "publisher list":

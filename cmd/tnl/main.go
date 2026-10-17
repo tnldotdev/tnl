@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/managedssh"
 	"golang.org/x/term"
 )
 
@@ -32,6 +33,7 @@ type cli struct {
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
 	Watch       watchCommand     `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
+	Connect     connectCommand   `cmd:"" help:"Connect one loopback TCP client to a saved Redis public URL." group:"start"`
 	Publisher   publisherCommand `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
 	Service     serviceCommand   `cmd:"" help:"Manage installed system publications." group:"operate"`
 	Status      statusCommand    `cmd:"" help:"Show local snapshots and fresh signed-in server facts; --all includes other projects." group:"start"`
@@ -148,7 +150,19 @@ type aliasChoiceCommand struct {
 	Name            string `arg:"" name:"name" help:"Configured project alias name."`
 }
 
+func isSSHChildCommand(args []string) bool {
+	return len(args) == 2 && args[0] == "runtime" && args[1] == "ssh-child"
+}
+
 func main() {
+	// the private child reads setup only from fd 3. it must run before cli state,
+	// telemetry, output adapters, or argument parsing can touch the session.
+	if isSSHChildCommand(os.Args[1:]) {
+		if err := managedssh.RunChild(context.Background()); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -232,6 +246,9 @@ func writeCommandError(output io.Writer, err error) {
 	command := "tnl"
 	if contextual, ok := clioutput.CommandOf(err); ok {
 		command = contextual
+	}
+	if writeSSHCommandError(output, command, err) {
+		return
 	}
 	if text, ok := diagnostic.TextForCommandError(command, err); ok {
 		_, _ = io.WriteString(output, text+"\n")
@@ -468,6 +485,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return err
 	case "publish <service-or-target>":
 		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
+	case "connect <url>":
+		return runConnect(ctx, flags.Connect, stderr)
 	case "publisher enroll <public-url-id>", "publisher enroll":
 		return runPublisherEnroll(ctx, flags.Publisher.Enroll, stdout, stderr)
 	case "publisher current":
@@ -492,8 +511,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runServiceStop(ctx, flags.Service.Stop, stdout)
 	case "service list":
 		return runServiceList(ctx, flags.Service.List, stdout)
+	case "service status <job>":
+		return runServiceStatus(ctx, flags.Service.Status, stdout)
 	case "service serve":
 		return runServiceServe(ctx, flags.Service.Serve)
+	case "service ssh enable":
+		return runSSHEnable(ctx, flags.Service.SSH.Enable, stdout, stderr)
+	case "service ssh install":
+		return runSSHInstall(ctx, os.Stdin)
 	case "status":
 		if !flags.Status.All {
 			flags.Status.Project, err = projectRoot(ctx, flags)
@@ -651,6 +676,8 @@ func commandFailureReason(command string) failure.Reason {
 		return failure.Authentication
 	case strings.HasPrefix(command, "tnl publish"):
 		return failure.TunnelUnavailable
+	case strings.HasPrefix(command, "tnl service ssh "):
+		return failure.InvalidSetupInput
 	case strings.HasPrefix(command, "tnl team "):
 		return failure.TeamUnavailable
 	case strings.HasPrefix(command, "tnl domain "):

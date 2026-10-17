@@ -281,7 +281,7 @@ export interface TnlConfig {
              */
             publicURL?: string;
           };
-          protocol: "postgres" | "mysql" | "redis" | "ssh";
+          protocol: "postgres" | "mysql" | "redis";
           target:
             | {
                 type: "address";

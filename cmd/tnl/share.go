@@ -42,6 +42,7 @@ type teamShareCommand struct {
 
 type teamShareCreateCommand struct {
 	ExpiresIn       string `name:"expires-in" help:"Exact URL grant lifetime; omit for perpetual access."`
+	SSHUser         string `name:"ssh-user" help:"Existing nonroot account on the SSH target; requires an exact SSH public URL."`
 	scopedTeamFlags `embed:""`
 	URL             string           `arg:"" name:"url" optional:"" help:"Public URL ID, hostname, or HTTPS origin to open."`
 	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
@@ -279,8 +280,7 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	}
 	ids := []string{selected.Id}
 	if flags.Preview {
-		ids = slices.Clone(preview.PublicUrlIds)
-		slices.Sort(ids)
+		ids = anonymousPreviewPublicURLIDs(routes)
 	}
 	request := controlv1.CreateShareRequest{
 		PublicUrlIds: ids, ExpiresAt: time.Now().UTC().Add(lifetime), SecretFingerprint: hex.EncodeToString(fingerprint[:]),
@@ -326,6 +326,36 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	}
 	_, err = fmt.Fprintln(output, entry)
 	return failure.Wrap("write share URL", failure.OutputUnavailable, err)
+}
+
+func anonymousPreviewPublicURLIDs(routes []controlv1.PublicURL) []string {
+	ids := make([]string, 0, len(routes))
+	for _, route := range routes {
+		if route.ServiceProtocol == controlv1.Http {
+			ids = append(ids, route.Id)
+		}
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids)
+}
+
+func shareSSHUser(protocol string, account string) (*string, error) {
+	invalid := func(message string) (*string, error) {
+		return nil, failure.Wrap("validate share SSH account", failure.ShareInputInvalid, errors.New(message))
+	}
+	if protocol != "ssh" {
+		if account != "" {
+			return invalid("--ssh-user requires an SSH public URL")
+		}
+		return nil, nil
+	}
+	if account == "" {
+		return invalid("SSH grants require --ssh-user with an existing nonroot account on the SSH target")
+	}
+	if !validSSHAccount(account) {
+		return invalid("--ssh-user must name an existing nonroot account on the SSH target")
+	}
+	return &account, nil
 }
 
 func shareServices(project projectConfiguration, routes []controlv1.PublicURL, preview bool) map[string]shareServiceResult {
@@ -464,10 +494,12 @@ func runExactShareList(ctx context.Context, flags remoteFlags, selector string, 
 		if grant.RevokedAt != nil {
 			state = "revoked"
 		}
-		blocks = append(blocks, clioutput.Section(grant.Id, clioutput.Fields(clioutput.Field{Label: "kind", Value: string(grant.Kind)}, clioutput.Field{Label: "state", Value: state}, clioutput.Field{Label: "expires", Value: expiry})))
+		fields := []clioutput.Field{{Label: "kind", Value: string(grant.Kind)}, {Label: "state", Value: state}, {Label: "expires", Value: expiry}}
+		blocks = append(blocks, clioutput.Section(grant.Id, clioutput.Fields(shareAccountFields(fields, grant.SshUser)...)))
 	}
 	for _, invitation := range invitations {
-		blocks = append(blocks, clioutput.Section(invitation.Id, clioutput.Fields(clioutput.Field{Label: "email", Value: invitation.Email}, clioutput.Field{Label: "expires", Value: invitation.ExpiresAt.UTC().Format(time.RFC3339)})))
+		fields := []clioutput.Field{{Label: "email", Value: invitation.Email}, {Label: "expires", Value: invitation.ExpiresAt.UTC().Format(time.RFC3339)}}
+		blocks = append(blocks, clioutput.Section(invitation.Id, clioutput.Fields(shareAccountFields(fields, invitation.SshUser)...)))
 	}
 	for _, share := range shares {
 		fields := []clioutput.Field{{Label: "scope", Value: string(share.Scope)}, {Label: "expires", Value: share.ExpiresAt.UTC().Format(time.RFC3339)}}
@@ -481,7 +513,10 @@ func runExactShareList(ctx context.Context, flags remoteFlags, selector string, 
 
 func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, project projectConfiguration, output, diagnostics io.Writer) error {
 	if flags.URL != "" {
-		return runExactTeamShare(ctx, flags.selection(), flags.URL, flags.ExpiresIn, false, flags.Output, output, diagnostics)
+		return runExactTeamShare(ctx, flags.selection(), flags.URL, flags.ExpiresIn, flags.SSHUser, false, flags.Output, output, diagnostics)
+	}
+	if flags.SSHUser != "" {
+		return failure.Wrap("select SSH team grant", failure.ShareInputInvalid, errors.New("--ssh-user requires an exact SSH public URL"))
 	}
 	if flags.ExpiresIn != "" {
 		return failure.Wrap("select expiring team grant", failure.ShareInputInvalid, errors.New("an expiring team grant requires an exact public URL"))
@@ -521,7 +556,7 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 
 func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, project projectConfiguration, output, diagnostics io.Writer) error {
 	if flags.URL != "" {
-		return runExactTeamShare(ctx, flags.selection(), flags.URL, "", true, flags.Output, output, diagnostics)
+		return runExactTeamShare(ctx, flags.selection(), flags.URL, "", "", true, flags.Output, output, diagnostics)
 	}
 	if !project.Found() || project.Root == "" {
 		return failure.Wrap("select share project", failure.PreviewNotSaved, errors.New("select a configured project to revoke this checkout's team access"))
@@ -559,12 +594,16 @@ func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, proje
 	return writeHumanFrame(output, "tnl share team revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "preview ID", Value: id}))
 }
 
-func runExactTeamShare(ctx context.Context, flags remoteFlags, selector, lifetime string, revoke bool, mode statusOutputMode, output, diagnostics io.Writer) error {
+func runExactTeamShare(ctx context.Context, flags remoteFlags, selector, lifetime, account string, revoke bool, mode statusOutputMode, output, diagnostics io.Writer) error {
 	session, err := openTeamSession(ctx, flags, "tnl share team", diagnostics)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
+	return exactTeamShare(ctx, session, selector, lifetime, account, revoke, mode, output)
+}
+
+func exactTeamShare(ctx context.Context, session *teamSession, selector, lifetime, account string, revoke bool, mode statusOutputMode, output io.Writer) error {
 	item, err := resolveVisitorPublicURL(ctx, session, selector)
 	if err != nil {
 		return err
@@ -585,6 +624,10 @@ func runExactTeamShare(ctx context.Context, flags remoteFlags, selector, lifetim
 		}
 		state = "revoked"
 	} else {
+		sshUser, err := shareSSHUser(item.ServiceProtocol, account)
+		if err != nil {
+			return err
+		}
 		var expires *time.Time
 		if lifetime != "" {
 			duration, err := time.ParseDuration(lifetime)
@@ -598,7 +641,7 @@ func runExactTeamShare(ctx context.Context, flags remoteFlags, selector, lifetim
 		if err != nil {
 			return err
 		}
-		result, err = session.authenticated.Control.CreateTeamVisitorGrant(ctx, item.Id, key, controlv1.CreateTeamVisitorGrantRequest{ExpiresAt: expires})
+		result, err = session.authenticated.Control.CreateTeamVisitorGrant(ctx, item.Id, key, controlv1.CreateTeamVisitorGrantRequest{ExpiresAt: expires, SshUser: sshUser})
 		if err != nil {
 			return err
 		}
@@ -610,7 +653,15 @@ func runExactTeamShare(ctx context.Context, flags remoteFlags, selector, lifetim
 			State       string                 `json:"state"`
 		}{item.Id, result, state})
 	}
-	return writeHumanFrame(output, "tnl share team", state, "", clioutput.Fields(clioutput.Field{Label: "public URL ID", Value: item.Id}, clioutput.Field{Label: "hostname", Value: item.CanonicalHostname}))
+	fields := []clioutput.Field{{Label: "public URL ID", Value: item.Id}, {Label: "hostname", Value: item.CanonicalHostname}}
+	return writeHumanFrame(output, "tnl share team", state, "", clioutput.Fields(shareAccountFields(fields, result.SshUser)...))
+}
+
+func shareAccountFields(fields []clioutput.Field, account *string) []clioutput.Field {
+	if account != nil {
+		fields = append(fields, clioutput.Field{Label: "ssh user", Value: *account})
+	}
+	return fields
 }
 
 func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagnostics io.Writer) error {
