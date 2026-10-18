@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
 )
 
@@ -159,7 +162,75 @@ func validTLSHostname(value string) bool {
 			return false
 		}
 	}
+	if strings.Contains(strings.ToLower(value), "xn--") {
+		if _, err := naming.CanonicalizeHostname(strings.ToLower(value)); err != nil {
+			return false
+		}
+	}
 	return true
+}
+
+// ValidTLSIdentity accepts a certificate DNS hostname or an unzoned IP address.
+func ValidTLSIdentity(value string) bool {
+	if address, err := netip.ParseAddr(value); err == nil {
+		return address.Zone() == ""
+	}
+	return validTLSHostname(value)
+}
+
+// CAURLError preserves URL parser failures without putting source URLs or
+// query credentials in the diagnostic text.
+type CAURLError struct{ cause error }
+
+func (e *CAURLError) Error() string {
+	return "ca must be system, a project-relative PEM file, or an HTTPS CA-bundle URL"
+}
+func (e *CAURLError) Unwrap() error    { return e.cause }
+func (e *CAURLError) GoString() string { return e.Error() }
+
+func validateCAURL(value string) error {
+	location, err := url.Parse(value)
+	if err != nil {
+		return &CAURLError{cause: err}
+	}
+	if location.Scheme != "https" || !ValidTLSIdentity(location.Hostname()) || location.User != nil ||
+		location.Fragment != "" || location.Opaque != "" || location.Host == "" || strings.ContainsAny(value, "\\ \t\r\n\x00") {
+		return &CAURLError{cause: errors.New("CA URL needs an HTTPS hostname without credentials, fragments, or whitespace")}
+	}
+	if port := location.Port(); port != "" {
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 {
+			if err == nil {
+				err = errors.New("CA URL port must be between 1 and 65535")
+			}
+			return &CAURLError{cause: err}
+		}
+	} else if strings.HasSuffix(location.Host, ":") {
+		return &CAURLError{cause: errors.New("CA URL port must not be empty")}
+	}
+	return nil
+}
+
+func ValidateServiceTLS(value ServiceTLS) error {
+	if value.Hostname != nil {
+		name := *value.Hostname
+		if !ValidTLSIdentity(name) {
+			return errors.New("hostname must be a hostname or IP address")
+		}
+		if address, err := netip.ParseAddr(name); err == nil && address.Zone() != "" {
+			return errors.New("hostname cannot have an IP zone")
+		}
+	}
+	if value.CA == "system" {
+		return nil
+	}
+	if strings.HasPrefix(value.CA, "https://") {
+		return validateCAURL(value.CA)
+	}
+	if strings.Contains(value.CA, "://") || validateProjectRelativeFile(value.CA) != nil {
+		return errors.New("ca must be system, a project-relative PEM file, or an HTTPS CA-bundle URL")
+	}
+	return nil
 }
 
 func validateProjectRelativeFile(value string) error {

@@ -58,6 +58,13 @@ type Service struct {
 
 // ServiceTarget describes exactly one private discovery mechanism. an omitted
 // target means an app-reported HTTP listener.
+// ServiceTLS describes trust for target TLS initiated by the visitor's tnl
+// process. a configured block never falls back to plaintext or unverified TLS.
+type ServiceTLS struct {
+	Hostname *string `json:"hostname,omitempty" yaml:"hostname,omitempty" jsonschema_description:"Certificate hostname; defaults to the target host. Set this when dialing an IP whose certificate names a DNS host."`
+	CA       string  `json:"ca" yaml:"ca" jsonschema:"required" jsonschema_description:"system uses only the visitor machine's roots. Otherwise capture a bounded candidate trust snapshot from a project-relative CA-only PEM file or verified HTTPS CA-bundle URL. A changed digest requires explicit server approval; fetching never updates that approval. No plaintext, stale, or unverified fallback. This is separate from publisher-to-HTTPS target trust."`
+}
+
 type ServiceTarget struct {
 	Type      string     `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=compose,enum=docker"`
 	Address   *Target    `json:"address,omitempty" yaml:"address,omitempty"`
