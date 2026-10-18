@@ -135,25 +135,6 @@ type LocalTunnel struct {
 	FailureCode          sql.NullString
 }
 
-type LocalTunnelEvent struct {
-	ProjectRoot      string
-	Sequence         int64
-	TunnelID         string
-	Service          string
-	ServiceProtocol  string
-	State            string
-	Target           string
-	Hostname         string
-	PublicPort       int64
-	PublishRunNumber int64
-	CreatedAt        int64
-}
-
-type LocalTunnelEventCursor struct {
-	ProjectRoot string
-	Sequence    int64
-}
-
 type LocalTunnelPublicationObservation struct {
 	ID      string
 	Payload interface{}

@@ -103,60 +103,6 @@ CREATE INDEX local_tunnels_cleanup_idx
 CREATE INDEX local_tunnels_integration_group_idx ON local_tunnels (server_origin, primary_project_root, integration_namespace, lease_expires_at)
     WHERE stopped_at IS NULL;
 
-CREATE TABLE local_tunnel_event_cursors (
-    project_root TEXT PRIMARY KEY,
-    sequence INTEGER NOT NULL CHECK (sequence > 0)
-) STRICT;
-
-CREATE TABLE local_tunnel_events (
-    project_root TEXT NOT NULL,
-    sequence INTEGER NOT NULL CHECK (sequence > 0),
-    tunnel_id TEXT NOT NULL,
-    service TEXT NOT NULL,
-    service_protocol TEXT NOT NULL CHECK (service_protocol IN ('postgres', 'mysql', 'redis', 'ssh')),
-    state TEXT NOT NULL,
-    target TEXT NOT NULL,
-    hostname TEXT NOT NULL,
-    public_port INTEGER NOT NULL CHECK (public_port BETWEEN 0 AND 65535),
-    publish_run_number INTEGER NOT NULL,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (project_root, sequence)
-) STRICT;
-
--- +goose StatementBegin
-CREATE TRIGGER local_tunnel_event_started AFTER INSERT ON local_tunnels
-WHEN NEW.service IS NOT NULL AND NEW.service_protocol <> 'http'
-BEGIN
-    INSERT INTO local_tunnel_event_cursors (project_root, sequence) VALUES (NEW.project_root, 1)
-        ON CONFLICT (project_root) DO UPDATE SET sequence = sequence + 1;
-    INSERT INTO local_tunnel_events
-        (project_root, sequence, tunnel_id, service, service_protocol, state, target, hostname, public_port, publish_run_number, created_at)
-    VALUES (NEW.project_root, (SELECT sequence FROM local_tunnel_event_cursors WHERE project_root = NEW.project_root),
-        NEW.id, NEW.service, NEW.service_protocol, NEW.state, coalesce(NEW.target,''), coalesce(NEW.hostname,''), coalesce(NEW.public_port,0), coalesce(NEW.publish_run_number,0), NEW.updated_at);
-    DELETE FROM local_tunnel_events
-    WHERE project_root = NEW.project_root
-      AND sequence <= (SELECT sequence - 2048 FROM local_tunnel_event_cursors WHERE project_root = NEW.project_root);
-END;
--- +goose StatementEnd
-
--- +goose StatementBegin
-CREATE TRIGGER local_tunnel_event_changed AFTER UPDATE ON local_tunnels
-WHEN NEW.service IS NOT NULL AND NEW.service_protocol <> 'http'
- AND (NEW.state IS NOT OLD.state OR NEW.hostname IS NOT OLD.hostname OR NEW.public_port IS NOT OLD.public_port
-      OR NEW.target IS NOT OLD.target OR NEW.publish_run_number IS NOT OLD.publish_run_number)
-BEGIN
-    INSERT INTO local_tunnel_event_cursors (project_root, sequence) VALUES (NEW.project_root, 1)
-        ON CONFLICT (project_root) DO UPDATE SET sequence = sequence + 1;
-    INSERT INTO local_tunnel_events
-        (project_root, sequence, tunnel_id, service, service_protocol, state, target, hostname, public_port, publish_run_number, created_at)
-    VALUES (NEW.project_root, (SELECT sequence FROM local_tunnel_event_cursors WHERE project_root = NEW.project_root),
-        NEW.id, NEW.service, NEW.service_protocol, NEW.state, coalesce(NEW.target,''), coalesce(NEW.hostname,''), coalesce(NEW.public_port,0), coalesce(NEW.publish_run_number,0), NEW.updated_at);
-    DELETE FROM local_tunnel_events
-    WHERE project_root = NEW.project_root
-      AND sequence <= (SELECT sequence - 2048 FROM local_tunnel_event_cursors WHERE project_root = NEW.project_root);
-END;
--- +goose StatementEnd
-
 -- locally observed public URL IDs let status read server state after a tunnel
 -- stops. the cache contains no credentials or targets and is bounded per
 -- project/server, including projects that create many temporary URLs.
@@ -516,8 +462,9 @@ SELECT id,
         'server', server_origin, 'project', project_root, 'service', coalesce(service, ''),
         'service_protocol', CASE WHEN service_protocol = 'http' THEN '' ELSE service_protocol END,
         'public_url_id', coalesce(public_url_id, ''), 'publish_run_number', coalesce(publish_run_number, 0),
-        'hostname', coalesce(hostname, ''),
-        'public_url', CASE WHEN hostname IS NULL THEN '' ELSE 'https://' || hostname END,
+        'public_port', coalesce(public_port, 0), 'hostname', coalesce(hostname, ''),
+        'public_url', CASE WHEN hostname IS NULL THEN '' WHEN public_port IS NOT NULL THEN hostname || ':' || public_port
+            WHEN service_protocol = 'http' THEN 'https://' || hostname ELSE '' END,
         'target', coalesce(target, ''), 'framework', coalesce(framework, ''), 'failure', coalesce(failure_code, ''),
         'started_at', CASE WHEN started_at = 0 THEN '0001-01-01T00:00:00Z' ELSE
             strftime('%Y-%m-%dT%H:%M:%S', started_at / 1000000000 - (started_at % 1000000000 < 0), 'unixepoch')
@@ -551,7 +498,7 @@ END;
 
 -- +goose StatementBegin
 CREATE TRIGGER project_publication_changed AFTER UPDATE ON local_tunnels
-WHEN NEW.state IS NOT OLD.state OR NEW.hostname IS NOT OLD.hostname
+WHEN NEW.state IS NOT OLD.state OR NEW.hostname IS NOT OLD.hostname OR NEW.public_port IS NOT OLD.public_port
     OR NEW.target IS NOT OLD.target OR NEW.publish_run_number IS NOT OLD.publish_run_number
     OR NEW.public_url_id IS NOT OLD.public_url_id OR NEW.framework IS NOT OLD.framework OR NEW.failure_code IS NOT OLD.failure_code
 BEGIN

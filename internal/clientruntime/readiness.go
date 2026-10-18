@@ -16,6 +16,7 @@ type Readiness struct {
 }
 
 type Observation struct {
+	Target           string    `json:"-"`
 	RegistrationID   string    `json:"registration_id"`
 	PublishRunNumber uint64    `json:"publish_run_number"`
 	CheckedAt        time.Time `json:"checked_at"`

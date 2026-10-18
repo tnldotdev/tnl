@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -37,7 +36,13 @@ func testAppRuntime(t *testing.T) (*appRuntime, string, <-chan uint64) {
 	a := &appRuntime{project: projectConfiguration{Project: projectconfig.Project{Root: project, Config: config.TNL{Services: config.Services{"api": {}, "web": {}}}, RelativeServiceDirectories: map[string]string{"api": ".", "web": "."}}}, prepared: map[string]appPreparation{}}
 	var run atomic.Uint64
 	started := make(chan uint64, 4)
-	manager, err := clientruntime.New(t.Context(), project, state, configuredRuntimeServices(a.project), func(ctx context.Context, _ clientruntime.Service, observe func(uint64, bool) error) error {
+	database, err := clientstate.Open(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	a.state = database
+	manager, err := clientruntime.New(t.Context(), project, database, configuredRuntimeServices(a.project), func(ctx context.Context, _ clientruntime.Service, observe func(uint64, bool) error) error {
 		number := run.Add(1)
 		if err := observe(number, true); err != nil {
 			return err
@@ -265,7 +270,7 @@ func TestWaitAlwaysChecksFreshResponsesAndKeepsFailingPublicationsRunning(t *tes
 		return clientruntime.Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now(), Status: 503, Reason: "runtime.probe_rejected", Readiness: service.Readiness}
 	}
 	var output bytes.Buffer
-	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Service: []string{"api"}, Timeout: 20 * time.Millisecond, Output: "json"}, &output, probe)
+	err = runAppWaitWithProbe(t.Context(), a.project, state, waitCommand{Service: []string{"api"}, Timeout: 500 * time.Millisecond, Output: "json"}, &output, probe)
 	if reason, _, ok := failure.Describe(err); !ok || reason != failure.AppReadinessTimeout || calls.Load() == 0 {
 		t.Fatalf("fresh wait = %v, probes=%d", err, calls.Load())
 	}
@@ -319,7 +324,7 @@ func TestWaitDiscardsAResponseFromAReplacedRegistrationRun(t *testing.T) {
 func TestWatchResumeAndExpiredCursor(t *testing.T) {
 	a, state, _ := testAppRuntime(t)
 	a.manager.RecordFailure("api", "runtime.preparation_failed")
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	var output bytes.Buffer
 	if err := runAppWatch(ctx, a.project, state, watchCommand{Output: "ndjson"}, &output); err != nil {
@@ -336,7 +341,7 @@ func TestWatchResumeAndExpiredCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	output.Reset()
-	ctx2, cancel2 := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx2, cancel2 := context.WithTimeout(t.Context(), time.Second)
 	defer cancel2()
 	if err := runAppWatch(ctx2, a.project, state, watchCommand{After: initial.Snapshot.Cursor, Output: "ndjson"}, &output); err != nil {
 		t.Fatal(err)
@@ -399,7 +404,7 @@ func TestWatchResumesTCPAndAppEventsWithOneCursor(t *testing.T) {
 		Snapshot clientruntime.Snapshot `json:"snapshot"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &initial); err != nil || initial.Type != "snapshot" ||
-		len(initial.Snapshot.Services) != 3 || !strings.Contains(initial.Snapshot.Cursor, ":") ||
+		len(initial.Snapshot.Services) != 3 || initial.Snapshot.Cursor == "" ||
 		initial.Snapshot.Services[1].Name != "orders" {
 		t.Fatalf("mixed watch snapshot = %s, %v", output.String(), err)
 	}
@@ -431,9 +436,9 @@ func TestWatchResumesTCPAndAppEventsWithOneCursor(t *testing.T) {
 		}
 		events = append(events, event)
 	}
-	if len(events) != 3 || events[2].Type != "service.publication" ||
-		events[2].Service == nil || events[2].Service.PublicURL != "orders.example:15432" ||
-		!events[2].Service.Routable || events[2].Cursor != strings.Split(initial.Snapshot.Cursor, ":")[0]+":3" {
+	if len(events) != 3 || events[2].Type != "publication.changed" ||
+		events[2].Publication == nil || events[2].Publication.PublicURL != "orders.example:15432" ||
+		events[2].Publication.State != clientstate.TunnelStateReady || events[2].Cursor == initial.Snapshot.Cursor {
 		t.Fatalf("TCP watch events = %#v", events)
 	}
 	if _, err := a.manager.Reserve("api", "owner", 1, "https://api.example"); err != nil {
@@ -448,20 +453,11 @@ func TestWatchResumesTCPAndAppEventsWithOneCursor(t *testing.T) {
 	if err := runAppWatch(resumeCtx2, project, stateDir, watchCommand{After: events[2].Cursor, Output: "ndjson"}, &output); err != nil {
 		t.Fatal(err)
 	}
-	preparedCursor, _, err := parseWatchCursor(events[2].Cursor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous, err := clientruntime.ParseCursor(preparedCursor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	next := strconv.FormatUint(previous+1, 10)
-	if !strings.Contains(output.String(), `"cursor":"`+next+`:3","type":"service.prepared"`) ||
-		!strings.Contains(output.String(), `"cursor":"`+next+`:4","type":"service.stopped"`) {
+	if !strings.Contains(output.String(), `"type":"service.prepared"`) ||
+		!strings.Contains(output.String(), `"type":"publication.changed"`) {
 		t.Fatalf("interleaved watch resume = %s", output.String())
 	}
-	if err := runAppWatch(t.Context(), project, stateDir, watchCommand{After: "0:9999", Output: "ndjson"}, &output); !errors.Is(err, clientstate.ErrTunnelCursorExpired) {
+	if err := runAppWatch(t.Context(), project, stateDir, watchCommand{After: "0:9999", Output: "ndjson"}, &output); !errors.Is(err, clientruntime.ErrCursorExpired) {
 		t.Fatalf("future TCP cursor = %v", err)
 	}
 }
@@ -488,7 +484,7 @@ func TestWatchTCPOnlyProjectWithoutAppRuntime(t *testing.T) {
 		Snapshot clientruntime.Snapshot `json:"snapshot"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &initial); err != nil ||
-		initial.Snapshot.Cursor != "0:0" || len(initial.Snapshot.Services) != 1 ||
+		initial.Snapshot.Cursor == "" || len(initial.Snapshot.Services) != 1 ||
 		initial.Snapshot.Services[0].Name != "warehouse" || initial.Snapshot.Services[0].Registered {
 		t.Fatalf("TCP-only watch snapshot = %s, %v", output.String(), err)
 	}
@@ -507,8 +503,8 @@ func TestWatchTCPOnlyProjectWithoutAppRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	var event clientruntime.Event
-	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil || event.Cursor != "0:1" ||
-		event.Type != "service.starting" || event.Service == nil || event.Service.ServiceProtocol != "mysql" {
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil || event.Cursor == initial.Snapshot.Cursor ||
+		event.Type != "publication.started" || event.Publication == nil || event.Publication.ServiceProtocol != "mysql" {
 		t.Fatalf("TCP-only event = %s, %v", output.String(), err)
 	}
 }

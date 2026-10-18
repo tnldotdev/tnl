@@ -244,7 +244,7 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	}
 	defer state.Close()
 	runtime := &appRuntime{project: project, state: state, prepared: map[string]appPreparation{}}
-	runtime.manager, err = clientruntime.New(ctx, project.Root, root, configuredRuntimeServices(project), runtime.publish)
+	runtime.manager, err = clientruntime.New(ctx, project.Root, state, configuredRuntimeServices(project), runtime.publish)
 	if err != nil {
 		return err
 	}
