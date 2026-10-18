@@ -173,7 +173,7 @@ func (q *Queries) LatestIngressRoutingEntryRevision(ctx context.Context, arg Lat
 }
 
 const listIngressRoutingTableEvents = `-- name: ListIngressRoutingTableEvents :many
-SELECT id, event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision, projection, public_url_expires_at, created_at, policy_ciphertext, policy_storage_key_id
+SELECT id, event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision, projection, policy_ciphertext, policy_storage_key_id, public_url_expires_at, created_at
 FROM control.ingress_routing_table_events
 WHERE id > $1
   AND id <= $2
@@ -204,10 +204,10 @@ func (q *Queries) ListIngressRoutingTableEvents(ctx context.Context, arg ListIng
 			&i.CanonicalHostname,
 			&i.EntryRevision,
 			&i.Projection,
-			&i.PublicUrlExpiresAt,
-			&i.CreatedAt,
 			&i.PolicyCiphertext,
 			&i.PolicyStorageKeyID,
+			&i.PublicUrlExpiresAt,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -227,7 +227,7 @@ WITH latest AS (
     GROUP BY history.canonical_hostname,
         CASE WHEN history.event_kind IN ('public_url_upsert', 'public_url_tombstone') THEN 'public_url' ELSE 'challenge' END
 )
-SELECT events.id, events.event_kind, events.public_url_id, events.publish_run_number, events.canonical_hostname, events.entry_revision, events.projection, events.public_url_expires_at, events.created_at, events.policy_ciphertext, events.policy_storage_key_id
+SELECT events.id, events.event_kind, events.public_url_id, events.publish_run_number, events.canonical_hostname, events.entry_revision, events.projection, events.policy_ciphertext, events.policy_storage_key_id, events.public_url_expires_at, events.created_at
 FROM latest
 JOIN control.ingress_routing_table_events AS events ON events.id = latest.routing_table_revision
 WHERE events.event_kind IN ('public_url_upsert', 'challenge_upsert')
@@ -259,10 +259,10 @@ func (q *Queries) ListIngressRoutingTableSnapshot(ctx context.Context, arg ListI
 			&i.CanonicalHostname,
 			&i.EntryRevision,
 			&i.Projection,
-			&i.PublicUrlExpiresAt,
-			&i.CreatedAt,
 			&i.PolicyCiphertext,
 			&i.PolicyStorageKeyID,
+			&i.PublicUrlExpiresAt,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

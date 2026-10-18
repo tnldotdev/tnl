@@ -7,15 +7,11 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/adhoc"
-	"github.com/tnldotdev/tnl/internal/clientserver"
-	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -33,13 +29,17 @@ type Limits struct {
 }
 
 type Options struct {
-	Credential  string
-	ServerURL   string
-	StateDir    string
-	HTTPClient  *http.Client
-	AllowIP     []string
-	AllowAllIPs bool
-	Limits      Limits
+	EnrollmentKey   string
+	PublisherID     string
+	PublisherFile   string
+	Publisher       *Publisher
+	ServerURL       string
+	StateDir        string
+	HTTPClient      *http.Client
+	AccessMode      controlv1.VisitorAccessMode
+	IP              []string
+	Limits          Limits
+	StateProtection StateProtection
 }
 
 // Tunnel owns its local listener, publish run, and temporary public URL.
@@ -58,45 +58,13 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	if handler == nil {
 		return nil, errors.New("an HTTP handler is required")
 	}
-	credential := options.Credential
-	if credential == "" {
-		credential = os.Getenv("TNL_CREDENTIAL")
-	}
-	if _, _, _, err := credentials.ParseEphemeralCredential(credentials.EphemeralCredential(credential)); err != nil {
-		return nil, err
-	}
 	limits := publisher.ApplicationLimits{Requests: options.Limits.Requests, RateRequests: options.Limits.Rate.Requests,
 		RatePer: options.Limits.Rate.Per, Concurrency: options.Limits.Concurrency}
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
-	serverURL := options.ServerURL
-	if serverURL == "" {
-		serverURL = os.Getenv("TNL_SERVER")
-	}
-	stateDir := options.StateDir
-	if stateDir == "" {
-		stateDir = os.Getenv("TNL_STATE_DIR")
-	}
-	if stateDir == "" {
-		defaultDir, err := clientstate.DefaultDir()
-		if err != nil {
-			return nil, err
-		}
-		stateDir = defaultDir
-	}
-	state, err := clientstate.Open(ctx, stateDir)
+	state, profile, serverURL, native, err := preparePublisher(ctx, options)
 	if err != nil {
-		return nil, err
-	}
-	serverURL, err = clientserver.Select(ctx, state, serverURL)
-	if err != nil {
-		_ = state.Close()
-		return nil, err
-	}
-	profile, err := state.Server(ctx, serverURL)
-	if err != nil {
-		_ = state.Close()
 		return nil, err
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -124,9 +92,8 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	go func() {
 		result := adhoc.Run(runCtx, adhoc.Options{
 			ControlURL: serverURL, HTTPClient: options.HTTPClient, State: profile,
-			Credential: credentials.EphemeralCredential(credential), InvocationID: invocationID,
-			Target: "http://" + listener.Addr().String(), AllowIP: slices.Clone(options.AllowIP),
-			AllowAllIPs: options.AllowAllIPs, Limits: limits,
+			Publisher: native, InvocationID: invocationID,
+			Target: "http://" + listener.Addr().String(), AccessMode: options.AccessMode, IP: slices.Clone(options.IP), Limits: limits,
 			OnAllocated: func(route controlv1.PublicURL) error {
 				tunnel.mu.Lock()
 				tunnel.id, tunnel.url = route.Id, "https://"+route.CanonicalHostname
@@ -159,6 +126,10 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	}()
 	select {
 	case event := <-ready:
+		if ctx.Err() != nil {
+			_ = tunnel.Close()
+			return nil, context.Cause(ctx)
+		}
 		tunnel.mu.Lock()
 		valid := event.PublicURLID == tunnel.id && event.PublicURL == tunnel.url && event.PublishRunNumber > 0
 		tunnel.mu.Unlock()

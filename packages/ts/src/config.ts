@@ -2,36 +2,71 @@ import type { TnlConfig, TnlConfigInput, TnlConfigContext } from "./config.gen.j
 
 export type * from "./config.gen.js";
 
-type ServiceNames<Config> = Config extends { readonly services: infer Services }
-  ? Extract<keyof Services, string>
+type HTTPServiceNames<Config> = Config extends { readonly services: infer Services }
+  ? Extract<
+      {
+        [Name in keyof Services]: "protocol" extends keyof Services[Name]
+          ? Services[Name]["protocol"] extends "http" | undefined
+            ? Name
+            : never
+          : Name;
+      }[keyof Services],
+      string
+    >
   : never;
 
 type ObjectReference<Names extends string> = { readonly service: Names };
-type WebhookService<Names extends string> = [Names] extends [never] ? "" : Names;
+type WebhookService<Config> = Config extends { readonly services: infer Services }
+  ? keyof Services extends never
+    ? ""
+    : HTTPServiceNames<Config>
+  : "";
 
 type TargetReferences<Config> = {
   [Field in keyof Config as Field extends "aliases" | "webhooks" ? Field : never]: {
     [Name in keyof Config[Field]]: ObjectReference<
-      Field extends "webhooks" ? WebhookService<ServiceNames<Config>> : ServiceNames<Config>
+      Field extends "webhooks" ? WebhookService<Config> : HTTPServiceNames<Config>
     >;
   };
 } & {
   [Field in keyof Config as Field extends "services" ? Field : never]: {
     [Name in keyof Config[Field]]: {
-      [Paths in keyof Config[Field][Name] as Paths extends "paths" ? Paths : never]: {
-        [
-          Prefix in keyof Config[Field][Name][Paths]
-        ]: Config[Field][Name][Paths][Prefix] extends string
-          ? Exclude<ServiceNames<Config>, Name>
-          : ObjectReference<Exclude<ServiceNames<Config>, Name>>;
+      [HTTP in keyof Config[Field][Name] as HTTP extends "http" ? HTTP : never]: {
+        [Paths in keyof Config[Field][Name][HTTP] as Paths extends "paths" ? Paths : never]: {
+          [
+            Prefix in keyof Config[Field][Name][HTTP][Paths]
+          ]: Config[Field][Name][HTTP][Paths][Prefix] extends string
+            ? Exclude<HTTPServiceNames<Config>, Name>
+            : ObjectReference<Exclude<HTTPServiceNames<Config>, Name>>;
+        };
       };
     };
   };
 };
 
 type Service = NonNullable<NonNullable<TnlConfig["services"]>[string]>;
+export type TnlServiceConfig = Service;
+export type TnlServiceTarget = NonNullable<Service["target"]>;
+export type TnlProtocol = NonNullable<Service["protocol"]>;
 type Alias = NonNullable<NonNullable<TnlConfig["aliases"]>[string]>;
 type Webhook = NonNullable<NonNullable<TnlConfig["webhooks"]>[string]>;
+type HTTP = NonNullable<Extract<Service, { protocol?: "http" }>["http"]>;
+type ServiceForNames<Names extends string, Name extends Names, Member = Service> = Member extends {
+  protocol?: "http";
+}
+  ? Omit<Member, "http"> & {
+      http?: Omit<HTTP, "paths"> & {
+        paths?: Record<
+          string,
+          | Exclude<NoInfer<Names>, Name>
+          | {
+              service: Exclude<NoInfer<Names>, Name>;
+              stripPrefix?: boolean;
+            }
+        >;
+      };
+    }
+  : Member;
 
 /**
  * project configuration whose service references are restricted to Names.
@@ -43,32 +78,26 @@ export type TnlConfigForServices<Names extends string> = Omit<
   "services" | "aliases" | "webhooks"
 > & {
   services?: {
-    [Name in Names]: Omit<Service, "paths"> & {
-      paths?: Record<
-        string,
-        | Exclude<NoInfer<Names>, Name>
-        | {
-            service: Exclude<NoInfer<Names>, Name>;
-            stripPrefix?: boolean;
-          }
-      >;
-    };
+    [Name in Names]: ServiceForNames<Names, Name>;
   };
   aliases?: Record<string, Omit<Alias, "service"> & { service: NoInfer<Names> }>;
-  webhooks?: Record<string, Omit<Webhook, "service"> & { service: NoInfer<WebhookService<Names>> }>;
+  webhooks?: Record<
+    string,
+    Omit<Webhook, "service"> & { service: NoInfer<[Names] extends [never] ? "" : Names> }
+  >;
 };
 
-/** infer service keys and reject unknown alias, webhook, or path-mount references. */
+/** infer config literals and check HTTP references. */
+// check factories after inferring their const return. intersecting the return
+// with its reference constraints widens async discriminants before inference.
+// keep this overload first so zero-argument factories receive the same context.
+export function defineConfig<const Config extends TnlConfig>(
+  config: ((context: TnlConfigContext) => Config | Promise<Config>) &
+    NoInfer<[Config] extends [TargetReferences<Config>] ? unknown : never>,
+): (context: TnlConfigContext) => Config | Promise<Config>;
 export function defineConfig<const Config extends TnlConfig>(
   config: Config & NoInfer<TargetReferences<Config>>,
 ): Config;
-export function defineConfig<const Names extends string = never>(
-  config: (
-    context: TnlConfigContext,
-  ) => TnlConfigForServices<Names> | Promise<TnlConfigForServices<Names>>,
-): (
-  context: TnlConfigContext,
-) => TnlConfigForServices<Names> | Promise<TnlConfigForServices<Names>>;
 export function defineConfig(config: TnlConfigInput): TnlConfigInput {
   return config;
 }

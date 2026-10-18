@@ -23,6 +23,7 @@
       "namespace": "member.example",
       "services": {
         "web": {
+          "protocol": "http",
           "namespace": "member.example",
           "hostname": "web.member.example",
           "url": "https://web.member.example"

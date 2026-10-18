@@ -39,6 +39,24 @@ func (e HashedIPPrefixFamily) Valid() bool {
 	}
 }
 
+// Defines values for IngressRoutingTableEntryAccessMode.
+const (
+	Anonymous  IngressRoutingTableEntryAccessMode = "anonymous"
+	Restricted IngressRoutingTableEntryAccessMode = "restricted"
+)
+
+// Valid indicates whether the value is a known member of the IngressRoutingTableEntryAccessMode enum.
+func (e IngressRoutingTableEntryAccessMode) Valid() bool {
+	switch e {
+	case Anonymous:
+		return true
+	case Restricted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for IngressRoutingTableEntryIpPolicy.
 const (
 	AllowAll        IngressRoutingTableEntryIpPolicy = "allow_all"
@@ -245,10 +263,11 @@ type IngressRoutingPublisherConnection struct {
 
 // IngressRoutingTableEntry defines model for IngressRoutingTableEntry.
 type IngressRoutingTableEntry struct {
-	AllowedIpHashes   []HashedIPPrefix                 `json:"allowed_ip_hashes"`
-	CanonicalHostname string                           `json:"canonical_hostname"`
-	IngressPoolId     *Identifier                      `json:"ingress_pool_id,omitempty"`
-	IpPolicy          IngressRoutingTableEntryIpPolicy `json:"ip_policy"`
+	AccessMode        IngressRoutingTableEntryAccessMode `json:"access_mode"`
+	AllowedIpHashes   []HashedIPPrefix                   `json:"allowed_ip_hashes"`
+	CanonicalHostname string                             `json:"canonical_hostname"`
+	IngressPoolId     *Identifier                        `json:"ingress_pool_id,omitempty"`
+	IpPolicy          IngressRoutingTableEntryIpPolicy   `json:"ip_policy"`
 
 	// IpPolicyKey Purpose-specific verifier sent only on the authenticated private API; never persisted with routing events.
 	IpPolicyKey          *[]byte                                  `json:"ip_policy_key,omitempty"`
@@ -261,7 +280,13 @@ type IngressRoutingTableEntry struct {
 	PublisherConnections []IngressRoutingPublisherConnection      `json:"publisher_connections"`
 	RecoveryEpisodeId    *int64                                   `json:"recovery_episode_id,omitempty"`
 	ServiceProtocol      *IngressRoutingTableEntryServiceProtocol `json:"service_protocol,omitempty"`
+
+	// Traffic Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
+	Traffic *IngressTrafficLimits `json:"traffic,omitempty"`
 }
+
+// IngressRoutingTableEntryAccessMode defines model for IngressRoutingTableEntry.AccessMode.
+type IngressRoutingTableEntryAccessMode string
 
 // IngressRoutingTableEntryIpPolicy defines model for IngressRoutingTableEntry.IpPolicy.
 type IngressRoutingTableEntryIpPolicy string
@@ -299,6 +324,19 @@ type IngressRoutingTableSnapshot struct {
 	Entries               []IngressRoutingTableEvent `json:"entries"`
 	RetainedAfterRevision int64                      `json:"retained_after_revision"`
 	ThroughRevision       int64                      `json:"through_revision"`
+}
+
+// IngressTrafficLimits Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
+type IngressTrafficLimits struct {
+	Burst              int    `json:"burst"`
+	Connections        int    `json:"connections"`
+	DownloadBytes      int64  `json:"download_bytes"`
+	Rate               int    `json:"rate"`
+	RatePerNs          int64  `json:"rate_per_ns"`
+	TotalConnections   *int64 `json:"total_connections,omitempty"`
+	TotalDownloadBytes *int64 `json:"total_download_bytes,omitempty"`
+	TotalUploadBytes   *int64 `json:"total_upload_bytes,omitempty"`
+	UploadBytes        int64  `json:"upload_bytes"`
 }
 
 // IngressUsageReport defines model for IngressUsageReport.

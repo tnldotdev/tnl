@@ -31,7 +31,7 @@ func TestPublicReadinessUsesHeadersOnlyAndDoesNotFollowRedirects(t *testing.T) {
 			calls := 0
 			observation := Probe(t.Context(), Service{RegistrationID: "registration", PublishRunNumber: 7, PublicURL: "https://app.example"}, roundTrip(func(request *http.Request) (*http.Response, error) {
 				calls++
-				if request.Method != "GET" || request.URL.String() != "https://app.example/" || request.Header.Get(ProbeHeader) != "1" || request.Header.Get("Authorization") != "" || request.Header.Get("Cookie") != "" {
+				if request.Method != "GET" || request.URL.String() != "https://app.example/" || request.Header.Get(ProbeHeader) != "" || request.Header.Get("Authorization") != "" || request.Header.Get("Cookie") != "" {
 					t.Fatalf("probe = %#v", request)
 				}
 				deadline, ok := request.Context().Deadline()

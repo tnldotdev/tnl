@@ -32,7 +32,7 @@ func TestAliasFingerprintDistinguishesInheritedAndExplicitEmptyVisitorPolicy(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	definition.AllowIP = []string{}
+	definition.Access = &Access{Mode: "restricted"}
 	_, explicit, err := definition.DefinitionBytes("review")
 	if err != nil || inherited == explicit {
 		t.Fatal("explicit visitor-policy override looked like inheritance")
@@ -68,7 +68,6 @@ func TestInvalidAliasDeclarations(t *testing.T) {
 		{"exclusive name", `{"review":{"service":"api","name":"review","public_url":"https://review.example.test"}}`, "mutually exclusive"},
 		{"exclusive domain", `{"review":{"service":"api","domain":"example.test","public_url":"https://review.example.test"}}`, "omit domain"},
 		{"URL path", `{"review":{"service":"api","public_url":"https://review.example.test/path"}}`, "without a port"},
-		{"mixed IP policy", `{"review":{"service":"api","allow_all_ips":true,"allow_ip":["192.0.2.1"]}}`, "cannot be combined"},
 		{"duplicate names", `{"first":{"service":"api","name":"review"},"second":{"service":"api","name":"review"}}`, "also used"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

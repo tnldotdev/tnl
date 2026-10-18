@@ -4,76 +4,31 @@ Audience: tnl maintainers working on `internal/controlstate`, routing
 publication, usage aggregation, or recovery. Product and operator documentation
 does not depend on these implementation details.
 
-## start from the baseline, then keep migrations compatible
+## start from a fresh baseline
 
-The current baseline is for fresh databases; old staging and production schemas
-must be reset before installing it. `tnld migrate` applies that baseline through
-the direct database URL. For later changes, preserve the reads and writes of
-control and standalone processes still serving traffic: add schema before
-switching its users, and remove old schema after those users stop. The runtime
-checks a minimum schema version and accepts newer versions; an older
-`tnld migrate` rejects databases newer than its embedded migrations.
+The current baseline requires a fresh PostgreSQL database and a coordinated
+stop/start of control, ingress, and relay roles. `tnld migrate` uses the direct
+database URL. Serving processes require the exact embedded migration version
+and the stored baseline identity; another version-1 database cannot be reused.
+Later compatible changes must add schema before switching serving code to it.
 
-`schemaVersion` tracks the newest embedded migration and changes when a migration
-is added. `minimumSchemaVersion` tracks the oldest schema the serving code can
-use safely; it advances only when runtime reads or writes need a newer migration.
-The values can differ while an additive migration is not yet used by serving code.
+The baseline creates ingress pools before teams and public URLs. It seeds
+`ingress-a` disabled until the operator verifies its addresses and ports. A
+team's ingress pool is pinned while it owns saved public URLs; each new URL
+inherits that pool. TCP port claims belong to one URL and pool and retain their
+historical hostname and port through quarantine and release.
 
-Migration 23 seeds the current public ingress address as `ingress-a`. Existing
-teams and public URLs keep that pool ID; its address and allocatable ports remain
-disabled until an operator has verified the deployment. A TCP port claim belongs
-to one saved public URL and one pool. Released claims retain the hostname and
-port so another public URL cannot later receive the same pair. Adding a second
-pool must not change the pool already pinned to an existing public URL.
-
-Migration 24 prevents moving a team to another pool while it has any saved
-public URLs. Creation reads the team's pool under its authorization lock and
-pins it to the new URL. DNS work uses the URL's pinned pool, so member wildcard
-records cannot alternate between ingress addresses. Until `ingress-a` is
-enabled with its public IPs, DNS work for that seeded pool keeps using the
-existing ingress-address configuration; another disabled pool never receives
-DNS records.
-
-Migration 25 records the visitor service protocol separately from a public
-URL's purpose. TCP public URLs have no saved private target. Control assigns a
-TCP port only after the pool and port have been enabled. A claimed URL keeps
-its port across runs; deletion moves the claim into seven days of quarantine.
-Cleanup releases a bounded batch after the deadline, retaining the historical
-hostname-and-port pair so a new URL cannot take both values at once. Both
-TCP protocols prefer available symmetric ports (such as `10001`), then
-choose among the remaining available ports using the public URL ID.
-
-Control may enable `ingress-a` after its public IPs and `TNLD_TCP_PORTS`
-inventory have been exposed by the ingress deployment. Repeated starts may
-add verified ports but cannot change an enabled pool's public IPs or disable
-ports that have saved claims. Ingress capacity and pool addresses are separate
-from the interchangeable ingress process leases.
-
-Migration 26 makes the saved URL's public TCP port readable with its protocol.
-Creation claims that port inside the URL-creation transaction, after the
-authorization and team guard but before publishing the new URL. An exhausted
-pool rolls back the whole creation; an idempotent retry returns the saved
-hostname and port. Existing HTTP URLs still have no public TCP port.
-
-The guest-domain change requires migration 11 because managed guest trials store
-an empty DNS authority reference that the old constraint rejected. Email delivery
-requires migration 12's queue table, including for storage-key rotation. The
-authority cleanup requires migration 13's renamed guest retry-key columns.
-
-The two publisher connection slots are stored in
+The two publisher connection slots remain in
 `control.publish_run_connection_slots`. A slot keeps its `id` and
-`(publish_run_id, connection_slot)` identity when its connection assignment is
-replaced; `publisher_connection_id` changes with that assignment. Tables use
-`id` as their primary key and retain natural lookup keys as unique constraints.
-Foreign keys cover saved control-owned relationships, including publish run
-usage and certificate orders. guest trials retain their own ownership IDs;
-historical process-run IDs do not require current-lease rows.
+`(publish_run_id, connection_slot)` identity when its assignment is replaced;
+`publisher_connection_id` changes. Trigger-maintained relay-service reservations
+count open, assigned slots and use an advisory guard during placement. Historical
+process-run IDs do not require live ingress or relay lease rows.
 
-Control seals the visitor-network hash master key with `TNLD_STORAGE_KEY` when
-an ingress first registers. The encryption migration discards earlier usage
-reports, buckets, deliveries, ingress usage runs, and the old plaintext key;
-the next ingress registration creates a new key. Storage-key rotation also
-re-encrypts this master key.
+Control stores the guest retry key in `control.guest_retry_keys` and the visitor
+network hash key in `control.visitor_network_hash_keys`. Both are encrypted with
+the storage key and must participate in key rotation. IP-policy and request
+digests elsewhere retain their own ciphertext and storage-key IDs.
 
 ## acquire locks in one order
 

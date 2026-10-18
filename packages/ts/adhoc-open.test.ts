@@ -1,205 +1,317 @@
-import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import * as path from "node:path";
+import { createServer } from "node:http";
 import { expect, test } from "vitest";
 import { TnlError } from "./src/errors.js";
-import { openServer, parseAdHocStatus } from "./src/internal/open.js";
-import type { NodeHTTPServer } from "./src/internal/register.js";
+import { openServer, openFetch } from "./src/internal/open.js";
+import { parseStatus } from "./src/internal/status.js";
+import { runtimeRequest, type RuntimeEndpoint } from "./src/internal/local.js";
+import { record } from "./src/internal/runtime.js";
 
-const listener: NodeHTTPServer = {
-  listening: true,
-  address: () => ({ address: "127.0.0.1", port: 3000 }),
-  once: () => listener,
-  off: () => listener,
-  close: () => listener,
-};
-
-const credential = () =>
-  `tnl_eph_${randomBytes(16).toString("base64url")}.${randomBytes(32).toString("base64url")}`;
-
-test("the ad-hoc Go, TypeScript, and Python socket fixture has the same bounded status", async () => {
-  const fixturePath = path.resolve(
-    import.meta.dirname,
-    "../../internal/privateprotocol/testdata/adhoc.json",
-  );
-  const fixture: unknown = JSON.parse(await readFile(fixturePath, "utf8"));
-  if (
-    fixture === null ||
-    typeof fixture !== "object" ||
-    !("ready" in fixture) ||
-    !("failed" in fixture)
-  )
-    throw new Error("invalid ad-hoc fixture");
-  const ready = fixture.ready;
-  if (
-    ready === null ||
-    typeof ready !== "object" ||
-    !("registration_id" in ready) ||
-    typeof ready.registration_id !== "string"
-  )
-    throw new Error("invalid ready fixture");
-  const id = ready.registration_id;
-  const status = parseAdHocStatus(ready, id);
-  expect(status.state).toBe("routable");
-  expect(status.publicURL).toBe("https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test");
-  expect(status.publishRunNumber).toBe(1);
-  expect(() => parseAdHocStatus({ ...ready, credential: "secret" }, id)).toThrow(TnlError);
-  expect(() => parseAdHocStatus({ ...ready, state: { toString: () => "routable" } }, id)).toThrow(
-    TnlError,
-  );
-  expect(parseAdHocStatus(fixture.failed, id).failureCode).toBe("runtime.publication_failed");
-});
-
-test("one supplied Node listener waits for its run and stays open on close", async () => {
-  const calls: string[] = [];
-  let registrationID = "";
-  let statuses = 0;
-  const handle = await openServer(
-    listener,
-    { credential: credential(), targetHostname: "app.internal" },
-    {
-      start: async () => "/tmp/tnl-test.sock",
-      request: async (_socket, operation, body: unknown) => {
-        calls.push(operation);
-        if (
-          body === null ||
-          typeof body !== "object" ||
-          !("registration_id" in body) ||
-          typeof body.registration_id !== "string"
-        )
-          throw new Error("invalid private request");
-        registrationID ||= body.registration_id;
-        expect(body.registration_id).toBe(registrationID);
-        if (operation === "ad-hoc/register") {
-          expect(body).toHaveProperty("target", "http://app.internal:3000");
-        }
-        if (operation === "ad-hoc/unregister" || operation === "ad-hoc/renew") return undefined;
-        const status = {
-          version: 1,
-          registration_id: registrationID,
-          ...(operation === "ad-hoc/register"
-            ? { state: "starting" }
-            : ++statuses === 1
-              ? {
-                  state: "publishing",
-                  public_url_id: "url_allocated",
-                  public_url: "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test",
-                }
-              : {
-                  state: "routable",
-                  public_url_id: "url_allocated",
-                  public_url: "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test",
-                  publish_run_number: 2,
-                }),
-        };
-        return status;
-      },
-      pause: async () => new Promise((resolve) => setTimeout(resolve, 1)),
-    },
-  );
-  expect(handle.url).toBe("https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test");
-  expect(calls.filter((call) => call === "ad-hoc/status")).toHaveLength(2);
-  await handle.close();
-  await handle.wait();
-  expect(listener.listening).toBe(true);
-  expect(calls.at(-1)).toBe("ad-hoc/unregister");
-});
-
-test("a strict total budget fails closed when the native manager disappears", async () => {
-  let starts = 0;
-  await expect(
-    openServer(
-      listener,
-      { credential: credential(), limits: { requests: 1 } },
+const id = `reg_${"a".repeat(32)}`;
+const publicURL = "https://temporary.member.example";
+function snapshot(service: string, target: string, registration = id, routable = true, run = 2) {
+  return {
+    schema_version: 1,
+    project: "/project",
+    cursor: "cursor",
+    observed_at: new Date().toISOString(),
+    services: [
       {
-        start: async () => {
-          starts++;
-          return "/tmp/tnl-test.sock";
-        },
-        request: async (_socket, operation, body: unknown) => {
-          if (operation === "ad-hoc/status") throw new TnlError("sdk.dev_unavailable");
-          if (operation === "ad-hoc/unregister") return undefined;
-          if (body === null || typeof body !== "object" || !("registration_id" in body))
-            throw new Error("invalid private request");
-          return { version: 1, registration_id: body.registration_id, state: "starting" };
-        },
+        service,
+        directory: ".",
+        registration_id: registration,
+        target,
+        registered: true,
+        routable,
+        ready: false,
+        readiness: { path: "/" },
+        public_url: publicURL,
+        publish_run_number: run,
+      },
+    ],
+  };
+}
+
+test("status fences scope, registration, target, and publish run without public GET probes", () => {
+  const value = snapshot("invocation", "http://127.0.0.1:1234");
+  expect(parseStatus(value, "invocation", id, "http://127.0.0.1:1234")?.routable).toBe(true);
+  expect(
+    parseStatus(value, "invocation", `reg_${"b".repeat(32)}`, "http://127.0.0.1:1234"),
+  ).toBeUndefined();
+  expect(parseStatus(value, "invocation", id, "http://127.0.0.1:4321")).toBeUndefined();
+  expect(() => parseStatus(value, "other", id, "http://127.0.0.1:1234")).toThrow(TnlError);
+  expect(() =>
+    parseStatus({ ...value, capability: "secret" }, "invocation", id, "http://127.0.0.1:1234"),
+  ).toThrow(TnlError);
+  const item = value.services[0];
+  if (item === undefined) throw new Error("missing service");
+  item.publish_run_number = 0;
+  expect(() => parseStatus(value, "invocation", id, "http://127.0.0.1:1234")).toThrow(TnlError);
+});
+
+test("real Node port-0 wildcard listener waits for exact native status and joins target-fenced cleanup", async () => {
+  const app = createServer((_request, response) => response.end("app"));
+  await new Promise<void>((resolve) => app.listen(0, "0.0.0.0", resolve));
+  const calls: { path: string | undefined; body: unknown }[] = [];
+  let service = "";
+  let owner = "";
+  let target = "";
+  let statuses = 0;
+  const api = createServer((request, response) => {
+    expect(request.headers.authorization).toBe(`Bearer ${"b".repeat(64)}`);
+    expect(request.headers.origin).toBeUndefined();
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      const body: unknown =
+        chunks.length === 0 ? undefined : JSON.parse(Buffer.concat(chunks).toString());
+      calls.push({ path: request.url, body });
+      response.setHeader("Content-Type", "application/json");
+      if (request.url === "/v1/ad-hoc/register") {
+        const payload = record(body, "invocation");
+        service = String(payload.invocation_id);
+        owner = String(payload.owner);
+        target = String(payload.target);
+        expect(payload.publisher_id).toBe(`pub_${"A".repeat(22)}`);
+        expect(payload.credential).toBeUndefined();
+        response.end(JSON.stringify({ version: 1, registration_id: id, owner, target }));
+      } else if (request.url === "/v1/status") {
+        expect(request.method).toBe("GET");
+        statuses++;
+        response.end(
+          JSON.stringify(
+            snapshot(service, target, statuses === 1 ? `reg_${"c".repeat(32)}` : id, statuses > 2),
+          ),
+        );
+      } else {
+        expect(body).toEqual({ version: 1, registration_id: id, owner, target });
+        response.writeHead(204).end();
+      }
+    });
+  });
+  await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
+  const address = api.address();
+  if (address === null || typeof address === "string") throw new Error("missing listener");
+  try {
+    const handle = await openServer(
+      app,
+      { publisherID: `pub_${"A".repeat(22)}` },
+      {
+        start: async (_directory, _binary, selection) => ({
+          version: 1,
+          url: `http://127.0.0.1:${address.port}`,
+          capability: "b".repeat(64),
+          owner_id: "a".repeat(32),
+          scope: "invocation",
+          invocation_id: selection?.invocationID ?? "",
+        }),
+        request: runtimeRequest,
         pause: async () => new Promise((resolve) => setTimeout(resolve, 1)),
       },
-    ),
-  ).rejects.toMatchObject({ code: "sdk.registration_stale" });
-  expect(starts).toBe(1);
+    );
+    expect(handle.url).toBe(publicURL);
+    expect(statuses).toBeGreaterThanOrEqual(3);
+    await handle.close();
+    await handle.wait();
+    expect(app.listening).toBe(true);
+    expect(calls.at(-1)?.path).toBe("/v1/unregister");
+  } finally {
+    await Promise.all(
+      [app, api].map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+    );
+  }
 });
 
-test("an unlimited handle reuses its invocation after a native manager restart", async () => {
+test("default invocation rediscovery retains automatic publisher selection after owner replacement", async () => {
   let starts = 0;
+  let service = "";
+  let target = "";
+  let failed = false;
   const ids: string[] = [];
-  let lost = false;
-  const handle = await openServer(
-    listener,
-    { credential: credential() },
+  const handle = await openFetch(
+    () => new Response("app"),
+    {},
     {
-      start: async () => {
+      start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => {
         starts++;
-        return `/tmp/tnl-test-${starts}.sock`;
+        service = selection?.invocationID ?? "";
+        return {
+          version: 1,
+          url: "http://127.0.0.1:12345",
+          capability: String(starts).repeat(64),
+          owner_id: "a".repeat(32),
+          scope: "invocation",
+          invocation_id: service,
+        };
       },
-      request: async (_socket, operation, body: unknown) => {
-        if (operation === "ad-hoc/unregister" || operation === "ad-hoc/renew") return undefined;
-        if (
-          body === null ||
-          typeof body !== "object" ||
-          !("registration_id" in body) ||
-          typeof body.registration_id !== "string"
-        )
-          throw new Error("invalid private request");
+      request: async (_endpoint, operation, body) => {
         if (operation === "ad-hoc/register") {
-          ids.push(body.registration_id);
-          return starts === 1
-            ? { version: 1, registration_id: body.registration_id, state: "starting" }
-            : {
-                version: 1,
-                registration_id: body.registration_id,
-                state: "routable",
-                public_url_id: "url_same",
-                public_url: "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test",
-                publish_run_number: 2,
-              };
+          const payload = record(body, "invocation");
+          target = String(payload.target);
+          ids.push(String(payload.invocation_id));
+          expect(payload).not.toHaveProperty("publisher_id");
+          expect(payload).not.toHaveProperty("publisher_file");
+          expect(payload).not.toHaveProperty("enrollment_key");
+          return {
+            version: 1,
+            registration_id: `reg_${String(starts).repeat(32)}`,
+            owner: payload.owner,
+            target,
+          };
         }
-        if (!lost) {
-          lost = true;
-          throw new TnlError("sdk.dev_unavailable");
+        if (operation === "status") {
+          if (!failed) {
+            failed = true;
+            throw new TnlError("sdk.registration_stale");
+          }
+          return snapshot(service, target, `reg_${String(starts).repeat(32)}`);
         }
-        throw new Error("unexpected status request");
+        return undefined;
       },
       pause: async () => new Promise((resolve) => setTimeout(resolve, 1)),
     },
   );
   expect(starts).toBe(2);
-  expect(ids).toHaveLength(2);
   expect(ids[0]).toBe(ids[1]);
-  expect(handle.url).toBe("https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test");
   await handle.close();
 });
 
-test("an authored native credential denial becomes a typed SDK error", async () => {
-  await expect(
-    openServer(
-      listener,
-      { credential: credential() },
+test("close interrupts status polling and joins unregister without waiting for its next timer", async () => {
+  let service = "";
+  let target = "";
+  let unregistered = false;
+  const handle = await openFetch(
+    () => new Response("app"),
+    { publisherID: `pub_${"A".repeat(22)}` },
+    {
+      start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => {
+        service = selection?.invocationID ?? "";
+        return {
+          version: 1,
+          url: "http://127.0.0.1:12345",
+          capability: "b".repeat(64),
+          owner_id: "a".repeat(32),
+          scope: "invocation",
+          invocation_id: service,
+        };
+      },
+      request: async (_endpoint, operation, body) => {
+        if (operation === "ad-hoc/register") {
+          const payload = record(body, "invocation");
+          target = String(payload.target);
+          return { version: 1, registration_id: id, owner: payload.owner, target };
+        }
+        if (operation === "status") return snapshot(service, target);
+        if (operation === "unregister") unregistered = true;
+        return undefined;
+      },
+      pause: () => new Promise<void>(() => {}),
+    },
+  );
+  await handle.close();
+  await handle.wait();
+  expect(unregistered).toBe(true);
+});
+
+test("explicit publisher file is passed only to native and never enters status", async () => {
+  let service = "";
+  let target = "";
+  const handle = await openFetch(
+    () => new Response("app"),
+    { publisherFile: "/private/publisher.json" },
+    {
+      start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => {
+        service = selection?.invocationID ?? "";
+        return {
+          version: 1,
+          url: "http://127.0.0.1:12345",
+          capability: "b".repeat(64),
+          owner_id: "a".repeat(32),
+          scope: "invocation",
+          invocation_id: service,
+        };
+      },
+      request: async (_endpoint, operation, body) => {
+        if (operation === "ad-hoc/register") {
+          const payload = record(body, "invocation");
+          target = String(payload.target);
+          expect(payload.publisher_file).toBe("/private/publisher.json");
+          expect(payload.publisher_id).toBeUndefined();
+          return { version: 1, registration_id: id, owner: payload.owner, target };
+        }
+        if (operation === "status") return snapshot(service, target);
+        return undefined;
+      },
+      pause: () => new Promise<void>(() => {}),
+    },
+  );
+  expect(JSON.stringify(handle)).not.toContain("publisher.json");
+  await handle.close();
+});
+
+test("publisher file configured after the owner starts reaches the native invocation", async () => {
+  const prior = process.env.TNL_PUBLISHER_FILE;
+  process.env.TNL_PUBLISHER_FILE = "/private/production-publisher.json";
+  let service = "";
+  let target = "";
+  try {
+    const handle = await openFetch(
+      () => new Response("app"),
+      {},
       {
-        start: async () => "/tmp/tnl-test.sock",
-        request: async (_socket, operation, body: unknown) => {
-          if (operation === "ad-hoc/unregister") return undefined;
-          if (body === null || typeof body !== "object" || !("registration_id" in body))
-            throw new Error("invalid private request");
+        start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => {
+          service = selection?.invocationID ?? "";
           return {
             version: 1,
-            registration_id: body.registration_id,
-            state: "failed",
-            failure_code: "runtime.credential_rejected",
+            url: "http://127.0.0.1:12345",
+            capability: "b".repeat(64),
+            owner_id: "a".repeat(32),
+            scope: "invocation",
+            invocation_id: service,
           };
         },
-        pause: async () => new Promise((resolve) => setTimeout(resolve, 1)),
+        request: async (_endpoint, operation, body) => {
+          if (operation === "ad-hoc/register") {
+            const payload = record(body, "invocation");
+            target = String(payload.target);
+            expect(payload.publisher_file).toBe("/private/production-publisher.json");
+            return { version: 1, registration_id: id, owner: payload.owner, target };
+          }
+          if (operation === "status") return snapshot(service, target);
+          return undefined;
+        },
+        pause: () => new Promise<void>(() => {}),
       },
-    ),
-  ).rejects.toMatchObject({ code: "sdk.credential_rejected" });
+    );
+    expect(JSON.stringify(handle)).not.toContain("production-publisher.json");
+    await handle.close();
+  } finally {
+    if (prior === undefined) delete process.env.TNL_PUBLISHER_FILE;
+    else process.env.TNL_PUBLISHER_FILE = prior;
+  }
+});
+
+test("invalid explicit publisher selection fails before contacting native", async () => {
+  const app = createServer();
+  await new Promise<void>((resolve) => app.listen(0, "127.0.0.1", resolve));
+  try {
+    const start = async (): Promise<RuntimeEndpoint> => {
+      throw new Error("native should not be called");
+    };
+    await expect(
+      openServer(
+        app,
+        { publisherFile: "relative/file" },
+        { start, request: async () => undefined, pause: async () => {} },
+      ),
+    ).rejects.toMatchObject({ code: "sdk.configuration_invalid" });
+    await expect(
+      openServer(
+        app,
+        { publisherFile: "/private/file", publisherID: `pub_${"A".repeat(22)}` } as never,
+        { start, request: async () => undefined, pause: async () => {} },
+      ),
+    ).rejects.toMatchObject({ code: "sdk.configuration_invalid" });
+  } finally {
+    await new Promise<void>((resolve) => app.close(() => resolve()));
+  }
 });

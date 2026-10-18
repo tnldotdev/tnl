@@ -1,4 +1,4 @@
-import { chmod, cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { onTestFinished } from "vitest";
@@ -74,22 +74,14 @@ export async function installRuntimeFixture(
     join(directory, "package.json"),
     JSON.stringify({ name: "tnl-framework-fixture", type: "module" }),
   );
-  // mock only native process discovery in this isolated package copy. framework
-  // startup, bound listener reporting, metadata, HTTP, and HMR remain real.
+  // use the real package and a private scoped HTTP descriptor. framework startup,
+  // bound listener reporting, metadata, HTTP, and HMR remain real.
   const packageDirectory = join(directory, "node_modules", "@tnldotdev", "tnl");
   await mkdir(packageDirectory, { recursive: true });
   await cp(new URL("../dist/", import.meta.url), join(packageDirectory, "dist"), {
     recursive: true,
   });
   await cp(new URL("../package.json", import.meta.url), join(packageDirectory, "package.json"));
-  const binary = join(directory, "native-publisher");
-  await writeFile(
-    binary,
-    `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ version: 1, path: bootstrap.endpointPath }))});\n`,
-  );
-  await chmod(binary, 0o700);
-  await writeFile(
-    join(packageDirectory, "dist", "internal", "launcher.js"),
-    `export function resolveNativeBinary() { return ${JSON.stringify(binary)}; }\n`,
-  );
+  if (bootstrap.environment.TNL_APP_ENDPOINT === undefined)
+    throw new Error("missing scoped descriptor");
 }

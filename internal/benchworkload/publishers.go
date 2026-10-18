@@ -7,17 +7,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/qlog"
+	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -50,6 +54,7 @@ type PublisherConfig struct {
 	QUICKeepAlive               time.Duration
 	Parallel                    int
 	Concurrency                 int
+	RateRequests                int
 	// StartParallel overrides Parallel only during activation; shutdown has its own bound.
 	StartParallel             int
 	ReadyTimeout, StopTimeout time.Duration
@@ -92,10 +97,31 @@ type Publishers struct {
 	failures    chan error
 	failureOnce sync.Once
 	run         func(context.Context, publisher.Config) error
+	prepare     func(context.Context, publisher.Config) (publisher.Config, func(context.Context) error, error)
+}
+
+// a control session creates saved URLs, but only the URL-scoped native identity
+// may start their publish runs. the client state keeps the enrollment reusable.
+type scopedBenchmarkControl struct {
+	*controlclient.Client
+	state     *clientstate.Store
+	authority *authorityclient.Client
+}
+
+func (c scopedBenchmarkControl) CreatePublishRun(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
+	route, err := c.Client.GetPublicURL(ctx, id)
+	if err != nil {
+		return controlv1.PublishRunSetup{}, err
+	}
+	native, _, err := nativeauth.EnsureOwner(ctx, c.state, c.Client, c.authority, route)
+	if err != nil {
+		return controlv1.PublishRunSetup{}, err
+	}
+	return native.CreatePublishRun(ctx, id, retry)
 }
 
 func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers, retErr error) {
-	if config.Parallel < 1 || config.StartParallel < 0 || config.ReadyTimeout <= 0 || config.StopTimeout <= 0 || config.DrainTime < 0 {
+	if config.Parallel < 1 || config.StartParallel < 0 || config.RateRequests < 0 || config.ReadyTimeout <= 0 || config.StopTimeout <= 0 || config.DrainTime < 0 {
 		return nil, errors.New("publisher concurrency and deadlines must be positive")
 	}
 	if !config.Transport.Valid() {
@@ -190,14 +216,60 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	if err != nil {
 		return nil, err
 	}
+	var prepare func(context.Context, publisher.Config) (publisher.Config, func(context.Context) error, error)
+	var publicationControl publisher.PublicURLControlClient = scopedBenchmarkControl{Client: auth.Control, state: store, authority: auth.Authority}
+	if config.Ephemeral {
+		namespace := membership.ManagedLabel + "." + domain.CanonicalDomain
+		native, _, err := nativeauth.EnsureNamespace(ctx, store, auth.Control, auth.Authority, team.Id, domain.Id, namespace)
+		if err != nil {
+			return nil, err
+		}
+		prepare = func(ctx context.Context, cfg publisher.Config) (publisher.Config, func(context.Context) error, error) {
+			worker, err := native.Fork()
+			if err != nil {
+				return cfg, nil, err
+			}
+			invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
+			if err != nil {
+				return cfg, nil, err
+			}
+			request := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: invocation, Target: cfg.Target}
+			mode := controlv1.Anonymous
+			request.AccessMode = &mode
+			if cfg.AllowedIPPrefixes != nil {
+				prefixes := slices.Clone(cfg.AllowedIPPrefixes)
+				request.Ip = &prefixes
+			}
+			route, err := worker.Allocate(ctx, request)
+			if err != nil {
+				return cfg, nil, err
+			}
+			cfg.Control, cfg.AllocatedPublicURL = worker, &route
+			cfg.Hostname, cfg.TeamID, cfg.DomainID = route.CanonicalHostname, route.TeamId, route.DomainId
+			cfg.Purpose, cfg.PublicURLScope, cfg.PolicyRevision = route.Purpose, route.PublicUrlScope, uint64(route.PolicyRevision)
+			if route.MembershipId != nil {
+				cfg.MembershipID = *route.MembershipId
+			}
+			if route.AllowedIpPrefixes != nil {
+				cfg.AllowedIPPrefixes = slices.Clone(*route.AllowedIpPrefixes)
+			}
+			return cfg, func(ctx context.Context) error { return worker.DeletePublicURL(ctx, route.Id) }, nil
+		}
+		publicationControl = native
+	}
 	groupCtx, cancel := context.WithCancel(ctx)
+	limits := publisher.ApplicationLimits{Concurrency: config.Concurrency}
+	if config.RateRequests > 0 {
+		limits.RateRequests, limits.RatePer, limits.RateBurst = config.RateRequests, time.Second, config.RateRequests
+	}
 	return &Publishers{config: config, database: database, ctx: groupCtx, cancel: cancel,
 		namespace: membership.ManagedLabel + "." + domain.CanonicalDomain, failures: make(chan error, 1), run: publisher.Run,
-		base: publisher.Config{Control: auth.Control, State: store, Target: config.Target, DrainTime: config.DrainTime,
-			Limits:    publisher.ApplicationLimits{Concurrency: config.Concurrency},
+		prepare: prepare,
+		base: publisher.Config{Control: publicationControl, ControlURL: auth.ServerEndpoint, State: store, Target: config.Target, DrainTime: config.DrainTime,
+			Limits:    limits,
 			Ephemeral: config.Ephemeral,
 			TeamID:    team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,
-			PolicyRevision: uint64(team.PolicyRevision), AllowedIPPrefixes: config.AllowedIPPrefixes,
+			PolicyRevision: uint64(team.PolicyRevision), AccessMode: controlv1.Anonymous, AllowedIPPrefixes: config.AllowedIPPrefixes,
 			QUICConnector: muxsession.QUICConnector{TLSConfig: config.RelayTLS, Config: benchmarkQUICConfig(config.QUICDisablePathMTUDiscovery, config.QUICQlog, config.QUICKeepAlive)},
 			TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: config.RelayTLS},
 			FallbackDelay: 250 * time.Millisecond},
@@ -279,7 +351,20 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPubli
 				return nil
 			}
 			go func() {
-				process.err = g.run(publicURLCtx, cfg)
+				var cleanup func(context.Context) error
+				if g.prepare != nil {
+					var err error
+					cfg, cleanup, err = g.prepare(publicURLCtx, cfg)
+					process.err = err
+				}
+				if process.err == nil {
+					process.err = g.run(publicURLCtx, cfg)
+				}
+				if cleanup != nil {
+					cleanupCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+					process.err = errors.Join(process.err, cleanup(cleanupCtx))
+					stop()
+				}
 				if publicURLCtx.Err() == nil {
 					process.err = fmt.Errorf("publisher %d exited unexpectedly: %w", index, errors.Join(errors.New("publisher exited"), process.err))
 					g.failureOnce.Do(func() {

@@ -89,7 +89,7 @@ func TestReviewerFeedbackReadCannotCrossPublicURL(t *testing.T) {
 		PublishRunID: "pr_other", PublicURLID: "url_other", PublishRunNumber: 1,
 	}}}
 	request := httptest.NewRequest(http.MethodPost, "/v1/publish-runs/pr_other/feedback/"+thread.ID+"/query",
-		strings.NewReader(`{"publish_run_number":1,"preview_id":"pv_0123456789abcdefghijkl","access":{"allowed_ip":true}}`))
+		strings.NewReader(`{"publish_run_number":1,"preview_id":"pv_0123456789abcdefghijkl","access":{"visit_allowed":true}}`))
 	request.Header.Set("Authorization", "Bearer publisher-token")
 	response := httptest.NewRecorder()
 	h.GetReviewerFeedbackThread(response, request, "pr_other", thread.ID)

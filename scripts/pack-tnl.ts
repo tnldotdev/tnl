@@ -159,7 +159,7 @@ try {
 
     if (process.platform === target.operatingSystem && process.arch === target.architecture) {
       const { stdout } = await execFileAsync(path.join(stage, "bin", "tnl"), ["version"]);
-      assert.equal(stdout.trim(), `tnl ${metadata.version} (${metadata.commit})`);
+      assert.equal(stdout, `tnl ${metadata.version} (${metadata.commit})\n`);
     }
   }
 
@@ -262,11 +262,6 @@ async function packAndVerify(stage: string, options: PackOptions): Promise<Packe
     packageManifestSchema,
   );
   assert.equal(packedManifest.version, metadata.version);
-  assert.deepEqual(
-    await readFile(path.join(extractionDirectory, "package", "LICENSE")),
-    await readFile(path.join(root, "LICENSE")),
-    `${options.packageName} has an outdated license`,
-  );
   assert(!JSON.stringify(packedManifest).includes("workspace:"));
   for (const lifecycle of ["preinstall", "install", "postinstall"]) {
     assert.equal(

@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/readiness"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
 )
 
 var (
@@ -213,7 +214,9 @@ type IngressRoutingTableProjection struct {
 	IngressPoolID        string                                   `json:"ingress_pool_id,omitempty"`
 	ServiceProtocol      PublicURLServiceProtocol                 `json:"service_protocol,omitempty"`
 	PublicPort           *uint16                                  `json:"public_port,omitempty"`
+	Traffic              *trafficlimits.Limits                    `json:"traffic,omitempty"`
 	PolicyRevision       uint64                                   `json:"policy_revision"`
+	AccessMode           VisitorAccessMode                        `json:"access_mode"`
 	IPPolicy             IPPolicy                                 `json:"ip_policy"`
 	AllowedIPHashes      []ippolicy.Entry                         `json:"allowed_ip_hashes,omitempty"`
 	IPPolicyKeyID        string                                   `json:"ip_policy_key_id,omitempty"`
@@ -341,47 +344,12 @@ func (d *Database) HeartbeatPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
-	credential, credentialErr := queries.GetPublishRunCredentialState(ctx, session.ID)
-	if credentialErr != nil && !errors.Is(credentialErr, pgx.ErrNoRows) {
-		return PublishRunSetup{}, fmt.Errorf("controlstate: read publish credential state: %w", credentialErr)
+	live, err := d.publisherRunLive(ctx, queries, route, session.ID, now)
+	if err != nil {
+		return PublishRunSetup{}, err
 	}
-	credentialRevoked := credentialErr == nil && (credential.RevokedAt.Valid || !credential.ExpiresAt.Time.After(now))
-	if credentialErr == nil && !credentialRevoked {
-		switch PublishCredentialKind(credential.Kind) {
-		case PublishCredentialSavedURL:
-			credentialRevoked = !credential.PublicURLID.Valid || credential.PublicURLID.String != route.ID || credential.Target != route.Target
-		case PublishCredentialEphemeral:
-			credentialRevoked = !route.Ephemeral || credential.AllocationCredentialID != credential.ID ||
-				credential.TeamID.String != route.TeamID || credential.DomainID.String != route.DomainID ||
-				credential.Namespace.String != route.Namespace
-			if !credentialRevoked {
-				_, domainErr := queries.GetReadyEphemeralCredentialDomain(ctx, controlstatedb.GetReadyEphemeralCredentialDomainParams{
-					DomainID: route.DomainID, TeamID: nullableText(route.TeamID),
-				})
-				if domainErr != nil && !errors.Is(domainErr, pgx.ErrNoRows) {
-					return PublishRunSetup{}, domainErr
-				}
-				credentialRevoked = errors.Is(domainErr, pgx.ErrNoRows)
-			}
-		default:
-			credentialRevoked = true
-		}
-	}
-	if credentialErr == nil && !credentialRevoked {
-		membership, memberErr := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
-			TeamID: route.TeamID, IdentityID: credential.IssuedByIdentityID,
-		})
-		if memberErr != nil && !errors.Is(memberErr, pgx.ErrNoRows) {
-			return PublishRunSetup{}, fmt.Errorf("controlstate: read publish credential membership: %w", memberErr)
-		}
-		credentialRevoked = errors.Is(memberErr, pgx.ErrNoRows) || membership.ID != credential.MembershipID ||
-			membership.PolicyRevision != credential.PolicyRevision ||
-			credential.Kind == string(PublishCredentialEphemeral) && membership.Role != credential.IssuedRole.String ||
-			route.PublicURLScope == "member" && (!route.MembershipID.Valid || route.MembershipID.String != membership.ID) ||
-			route.PublicURLScope == "shared" && membership.Role != "admin" && membership.Role != "owner"
-	}
-	if credentialRevoked {
-		if err := closePublishRun(ctx, queries, &pendingEvents, route, session, PublishRunClosed, now, "publish_credential_revoked"); err != nil {
+	if !live {
+		if err := closePublishRun(ctx, queries, &pendingEvents, route, session, PublishRunClosed, now, "publisher_grant_revoked"); err != nil {
 			return PublishRunSetup{}, err
 		}
 		if err := pendingEvents.publish(ctx, queries); err != nil {
@@ -390,7 +358,7 @@ func (d *Database) HeartbeatPublishRun(
 		if err := tx.Commit(ctx); err != nil {
 			return PublishRunSetup{}, err
 		}
-		return PublishRunSetup{}, ErrPublicURLCredential
+		return PublishRunSetup{}, ErrPublisherIdentity
 	}
 	spentReason, err := queries.GuestRunAllowanceSpent(ctx, controlstatedb.GuestRunAllowanceSpentParams{
 		PublishRunID: text(session.ID), Now: timestamptz(now),
@@ -837,13 +805,19 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 	now time.Time,
 ) (*publishedIngressRoutingTableEvent, error) {
 	policy := IPPolicy(route.IpPolicy)
+	traffic, err := decodePublishRunTraffic(session.TrafficLimits)
+	if err != nil {
+		return nil, err
+	}
 	projection := IngressRoutingTableProjection{
 		PublishRunID: session.ID, PublicURLID: route.ID, PublishRunNumber: uint64(session.PublishRunNumber),
 		CanonicalHostname: route.CanonicalHostname, PolicyRevision: uint64(route.PolicyRevision),
 		IngressPoolID: route.IngressPoolID, ServiceProtocol: PublicURLServiceProtocol(route.ServiceProtocol),
+		AccessMode:           VisitorAccessMode(route.AccessMode),
 		IPPolicy:             policy,
 		PublicUrlExpiresAt:   projectionExpiresAt,
 		PublisherConnections: make([]IngressRoutingTablePublisherConnection, 0, len(connections)),
+		Traffic:              &traffic,
 	}
 	if route.PublicPort.Valid {
 		port := uint16(route.PublicPort.Int32)
@@ -857,7 +831,7 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 		if len(route.AllowedIpHashes) == 0 || !route.AllowedIpHashKeyID.Valid {
 			return nil, errors.New("controlstate: routing policy is not protected")
 		}
-		if err := json.Unmarshal(route.AllowedIpHashes, &projection.AllowedIPHashes); err != nil || len(projection.AllowedIPHashes) == 0 {
+		if err := json.Unmarshal(route.AllowedIpHashes, &projection.AllowedIPHashes); err != nil {
 			return nil, errors.New("controlstate: stored hashed routing policy is invalid")
 		}
 		projection.IPPolicy = IPPolicyHashedAllowlist

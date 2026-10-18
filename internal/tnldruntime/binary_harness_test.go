@@ -166,9 +166,10 @@ type integrationBinaryPublishEvent struct {
 
 type integrationBinaryPublish struct {
 	*commandOwner
-	events eventRecorder[integrationBinaryPublishEvent]
-	cursor int
-	stderr synchronizedBuffer
+	events                eventRecorder[integrationBinaryPublishEvent]
+	cursor                int
+	stderr                synchronizedBuffer
+	acceptDockerInterrupt bool
 }
 
 // exec's stdout pump always gets a successful Write, including malformed or
@@ -271,9 +272,14 @@ func waitForIntegrationBinaryPublishEvent(
 		event, err := publish.events.next(ctx, &publish.cursor)
 		if err != nil {
 			processErr, scanErr := publish.result()
+			previous, _ := publish.events.snapshot()
+			var observed []struct{ Type, Reason string }
+			for _, item := range previous {
+				observed = append(observed, struct{ Type, Reason string }{string(item.Type), item.Reason})
+			}
 			t.Fatalf(
-				"tnl publish did not emit %q: %v; process %v, NDJSON %v\nstderr:\n%s",
-				eventType, err, processErr, scanErr, publish.stderr.String(),
+				"tnl publish did not emit %q: %v; process %v, NDJSON %v, events %+v\nstderr:\n%s",
+				eventType, err, processErr, scanErr, observed, publish.stderr.String(),
 			)
 		}
 		if event.Type == eventType {
@@ -296,6 +302,10 @@ func waitForIntegrationBinaryPublish(t *testing.T, publish *integrationBinaryPub
 		t.Errorf("tnl publish did not stop: %v", err)
 	}
 	processErr, scanErr := publish.result()
+	var interrupted *exec.ExitError
+	if publish.acceptDockerInterrupt && errors.As(processErr, &interrupted) && interrupted.ExitCode() == 130 {
+		processErr = nil
+	}
 	if processErr != nil || scanErr != nil {
 		t.Errorf("tnl publish exited: process %v, NDJSON %v\nstderr:\n%s", processErr, scanErr, publish.stderr.String())
 	}

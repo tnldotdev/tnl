@@ -26,30 +26,37 @@ The arrows show responsibility, not one permanent network connection. Control
 coordinates the system. Visitor bytes travel through ingress and one connected
 relay to the publisher.
 
-| Component                  | Responsibility                                                                          |
-| -------------------------- | --------------------------------------------------------------------------------------- |
-| `tnl` client and publisher | Tunnel lifecycle, publisher connections, visitor TLS termination, and target forwarding |
-| Control                    | Durable state, authorization, placement, certificates, administration, and coordination |
-| Ingress                    | Visitor acceptance, IP policy, relay selection, usage, and one-time forwarding          |
-| Relay                      | Publisher connections and visitor streams for locally connected publishers              |
-| PostgreSQL                 | Authoritative durable server state                                                      |
+| Component                  | Responsibility                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------ |
+| `tnl` client and publisher | Tunnel lifecycle, publisher connections, visitor TLS termination, and target forwarding    |
+| Control                    | Durable state, authorization, placement, certificates, administration, and coordination    |
+| Ingress                    | Visitor acceptance, optional IP filtering, relay selection, usage, and one-time forwarding |
+| Relay                      | Publisher connections and visitor streams for locally connected publishers                 |
+| PostgreSQL                 | Authoritative durable server state                                                         |
 
 Only control connects to PostgreSQL. Ingress receives a short-lived routing
 table. Each relay knows its own lease and the publishers connected to it.
 
-Control encrypts saved signed-in IP allowlists and request digests with
+Control encrypts saved IP filters and request digests with
 `TNLD_STORAGE_KEY`. Guest trials keep a keyed digest of their issuing IP,
 never its address; a guest credential expires 72 hours after issuance. For each
 public URL, control derives a purpose-specific verifier from the storage key
 and sends it only over the authenticated ingress API. PostgreSQL routing
 events contain hashed IP prefixes, not the verifier or the original CIDRs.
 Ingress masks a visitor address to each permitted prefix length and checks its
-digest before forwarding; an absent verifier rejects the visitor. Ingress and
+digest before forwarding; an absent verifier rejects the visitor. An IP match
+does not grant access to a restricted public URL. Ingress and
 relays never receive `TNLD_STORAGE_KEY`. The separate visitor-network usage
 sketch estimates distinct networks and cannot authorize a visitor.
 
 Standalone composes control, ingress, and two logical relay services in one
 `tnld` process. It uses the same role boundaries through in-process adapters.
+The checked-in standalone Compose file uses one external PostgreSQL database;
+the migrator receives its direct URL and standalone receives the pooled URL.
+In the split topology, control alone holds the pooled database URL,
+Route 53 access, and the storage key. CI publishes immutable images but never
+deploys production. Operators select an exact source commit and image digest,
+migrate a fresh database, and qualify staging before production promotion.
 
 ## follow a visitor connection
 
@@ -57,31 +64,50 @@ Standalone composes control, ingress, and two logical relay services in one
 visitor
    | visitor TLS ClientHello
    v
-ingress: inspect hostname and apply IP policy
+ingress: inspect hostname and apply optional IP filter
    | authenticated internal forwarding
    v
 relay: open a stream on a ready publisher connection
    | unchanged visitor TLS bytes
    v
-publisher: terminate visitor TLS
+publisher: terminate visitor TLS, check visitor access
    | HTTP or HTTPS to the configured target
    v
 target service
 ```
 
 Ingress creates one PROXY v2 metadata header with the original source and
-destination. Relay preserves that header and the visitor TLS bytes. A denied
-visitor may use a separate, bounded forwarding budget to reach the publisher
-for an HTTPS 403, but never reaches the target. The publisher removes
-untrusted forwarding headers before proxying an allowed HTTP request.
+destination. Relay preserves that header and the visitor TLS bytes. On a restricted
+public URL, ingress gives a matching source bounded pending capacity until the
+publisher checks a sign-in, share, or database certificate. An authenticated
+publisher-to-relay-to-ingress sideband binds the exact visitor, run, connection
+assignment, and relay. Ingress reserves ordinary capacity and acknowledges
+promotion before the publisher sends app requests or database authentication to
+the target. A source outside a configured IP filter is rejected before
+forwarding. The publisher removes untrusted forwarding headers before proxying
+an allowed HTTP request.
+
+The publisher checks every HTTP app request against a run-local visitor decision.
+Positive decisions are scoped to the public URL, run, credential digest, and
+trusted source IP. An active decision refreshes after 30 seconds; if control is
+unavailable, its last successful decision expires within two minutes or sooner
+at the underlying credential, IP grant, or run expiry. Unknown visitors fail
+closed. Only the first allowed request on a restricted visitor connection
+promotes ingress capacity; subsequent requests still check visitor access.
+Database certificates use the same bounded decision cache for new connections,
+not for commands on an already admitted connection.
 
 For a TCP public URL, ingress uses the original destination port in the
 trusted outer PROXY v2 header instead of inspecting a ClientHello. A routing
 entry binds that port to a saved public URL within one ingress pool; missing or
-conflicting entries fail closed. Ingress applies the same IP policy, admission,
-and retry boundary before forwarding visitor bytes unchanged. It closes a denied
-TCP connection without opening a publisher stream. Ingress does not terminate
-visitor TLS for TCP public URLs; the publisher handles it when the protocol uses TLS.
+conflicting entries fail closed. Ingress applies the same optional IP filter,
+admission, and retry boundary before forwarding visitor bytes unchanged. A
+restricted database visitor proves a URL-bound certificate at the publisher;
+an explicitly anonymous database URL reaches the target's own login without one.
+SSH visitors outside the IP filter are closed before opening a publisher stream.
+PostgreSQL, MySQL, and Redis visitors cannot send authentication bytes to a
+private target before promotion. Ingress does not terminate visitor TLS for TCP
+public URLs; the publisher handles it when the protocol uses TLS.
 `internal/tcpport` checks allocated public ports (1024–65535) separately from
 ordinary TCP ports (1–65535). `internal/tcptarget` checks the private
 host:port target before the publisher dials it.
@@ -95,12 +121,15 @@ public URL certificate. by default the private target receives plaintext TCP;
 `--target-tls` selects a separate, certificate-verified TLS connection instead.
 the publisher never retries in plaintext after a target TLS failure. a
 PostgreSQL GSS request gets a refusal so the client can request TLS instead.
-PostgreSQL clients must disable SCRAM channel binding
-(`channel_binding=disable`) when visitor TLS ends at the publisher: their TLS
-channel does not reach the database. `--visitor-tls-passthrough` instead passes
-the visitor TLS handshake to a PostgreSQL or MySQL target that accepts TLS,
-without requiring `--target-tls`. the client sees the target's certificate and
-must verify it; the publisher cannot inspect database commands in this mode.
+PostgreSQL clients disable SCRAM channel binding (`channel_binding=disable`)
+when the private target is plaintext or uses a different TLS certificate: the
+visitor TLS channel does not reach the database. a client certificate is issued
+for one identity and exact database public URL by control's separate private
+issuer. the client keeps its signing key; control rechecks the certificate,
+current grant, and publish run for every new visitor. a valid certificate by
+itself does not preserve access after a grant expires or is revoked. a plaintext
+PostgreSQL CancelRequest never forwards its cancellation secret; clients using
+encrypted cancellation can reach the private target.
 a MySQL target with no TLS advertises visitor TLS through a rewritten greeting;
 the publisher preserves its challenge and plugin, adjusts the authentication
 packet sequence, and handles the private server's RSA password exchange when
@@ -109,15 +138,12 @@ required. plaintext database startup is never forwarded from a visitor.
 `tnl publish db.internal:5432 --protocol postgres` keeps the private target on
 the customer machine and displays the saved public `hostname:port` after the
 publish run is ready. a configured database service can select the same protocol
-and private `host:port` target through `publish.protocol` and `publish.target` in
-`tnl.config.ts`. `tnl url credential create --protocol postgres` saves the
-endpoint without a private target; a credential-backed `tnl publish` must then
-supply that target locally. a bare port selects a loopback target, while a
+and private `host:port` target through `services.NAME.protocol` and
+`services.NAME.target` in `tnl.config.ts`. a bare port selects a loopback target, while a
 host:port such as `postgres:5432` reaches a service on the publisher's network.
 `--target-ca-file` extends the trust roots for an explicit `--target-tls`
 connection, while `--target-tls-name` sets its expected certificate hostname.
-TypeScript configuration uses `publish.targetTLS`, `publish.targetCAFile`, and
-`publish.targetTLSName` for the same settings.
+project configuration selects private target TLS under `services.NAME.target.tls`.
 
 `tnl publish redis:6379 --protocol redis` uses the same saved TCP port and
 publisher-owned private target. Redis visitors start TLS immediately, before
@@ -197,31 +223,34 @@ the application starts with its normal development command. Vite and Next
 integrations prepare browser-safe project metadata, then register the bound
 listener. Node and Bun applications call `await tnl.prepare({service: "api"})`
 before startup and `await publication.register(server)` after binding, including
-listeners that request port 0. directory inference requires a unique configured
-service. builds and production previews do not prepare registrations.
+listeners that request port 0. a single configured app can omit `service`;
+multiple apps select it explicitly. project configuration has no per-service
+directory. builds and production previews do not prepare registrations.
 
-`internal/clientruntime` owns registration leases, publisher observations,
-readiness, and a bounded durable local event journal. the private native command
-`tnl runtime endpoint` locates one loopback HTTP descriptor per canonical
-project/worktree/client-state identity. the app starts `tnl runtime serve` to
-maintain it. the descriptor contains a random local bearer credential and is
-user-owned with mode 0600 beneath a mode-0700 directory under `/tmp`.
-`internal/privateprotocol` bounds and
-validates requests; golden fixtures describe its wire shape. configured-service
-control sessions remain in the native process. an ad-hoc credential crosses
-only this authenticated local API when the app registers its bound target; it does not
-enter snapshots, diagnostics, or browser metadata. the native runtime can
-start without a project file for ad-hoc registrations.
+`internal/clientruntime` owns registration leases and readiness. `internal/clientstate`
+stores bounded, transactional project snapshots and events in fresh `client-v3.db`.
+the native owner binds an assigned loopback HTTP port and puts its owner descriptor
+in a verified mode-0700 client-state directory. apps receive service-scoped
+capabilities and ad-hoc invocations receive invocation-scoped capabilities;
+`api/local-publisher/v1/openapi.yaml` defines their private HTTP operations.
+the owner credential and control sessions stay in the native process. descriptors,
+snapshots, and browser metadata contain no publisher signing key.
 
-the same native HTTP API accepts several ad-hoc invocations from one app process.
-`internal/clientruntime.AdHocManager` keeps them separate from configured
-services, checks the owner, pid, renewal, and invocation ID for each registration,
-and holds the runtime open until they drain. each worker calls
-`internal/adhoc.Run`; its local status becomes routable only on the ready event
-for that registration and publish run. ad-hoc readiness uses no public GET
-probe and cannot become a configured-service readiness observation.
-ad-hoc URLs can reach local services by hostname, such as
-`http://app.internal:3000`.
+the same owner can serve several ad-hoc invocations. each requires a current
+namespace-scoped publisher identity from explicit local setup or a private
+`TNL_PUBLISHER_FILE`; invalid explicit files fail closed. registration includes
+only its bound target and invocation identity. the worker allocates the exact
+temporary public URL, starts a signed run, and deletes the URL after drain.
+ad-hoc readiness is the run's routability, not a public GET app probe.
+
+the native owner runs with the project's app or `tnl publish` invocation. a
+host-side owner can discover a selected Compose container through its published
+loopback port, checking the exact project, worktree label, service, and container
+identity before each new target capture. a publisher inside Docker instead
+uses a configured private address and runs ordinary `tnl publish` commands in
+its container. Compose manages that container's startup, authentication state
+volume, and network; tnl does not generate an override or a cross-container app
+credential. replacing a target never replays an admitted visitor.
 
 preparation reserves a live owner without claiming a listener. registration
 acknowledges the bound target, not provisioning. duplicate live owners fail;
@@ -235,12 +264,16 @@ grace. it never launches or terminates application processes.
 registered, routable, and ready are separate facts. routable means the existing
 publisher has reported control readiness. ready additionally requires a fresh
 public GET: by default `/` accepts any 2xx app response. tnl diagnostic
-responses always fail. service readiness can select a path. checks use normal
-DNS/TLS, send no app credentials, follow no redirects, and read headers only
+responses always fail. service readiness can select a path. a proof derived
+for that exact run and path remains in owner memory and is stripped before the
+target sees the GET. checks use normal DNS/TLS, follow no redirects, and read headers only
 with a five-second deadline. retries start at
 500 milliseconds and double to two seconds for up to two minutes. each new run
 gets an automatic check; `tnl wait` checks again. a failed check leaves the
-publication running. `tnl status` only reads observations.
+publication running. `tnl status` reads local observations by default;
+`--scope=server` fetches saved URL state for locally known public URL IDs.
+`tnl ping` checks the public address from the invoking machine without an
+owner proof or app credentials.
 
 `tnl watch` resumes after a local event cursor. a status or initial watch
 snapshot includes the cursor for its service state. cursors older than retained
@@ -250,7 +283,7 @@ manager restart and contains no credentials, request bodies, or OAuth state.
 `tnl inspect` keeps numbered HTTP and supported TCP summaries in client SQLite.
 HTTP, PostgreSQL, and MySQL default to summary; `inspection.mode: none` or
 `--inspection-mode=none` disables capture. the record contract also accepts
-Redis command names and outcomes for a later publisher observer, without
+Redis command categories and outcomes, without
 arguments or reply bodies. SSH does not create inspection records. no protocol
 retains request headers, bodies, SQL statements, or Redis arguments in this
 history.
@@ -258,21 +291,23 @@ history.
 `internal/adhoc.Run` owns the common publication boundary for ad-hoc SDK
 registrations. control allocates the URL before `publisher.Run` starts; the
 publisher reuses that exact URL and never creates a second one for the handle.
-the runner passes the namespace credential only to authenticated control calls,
+the runner signs control calls with the selected namespace publisher identity,
 observes the normal publish-run ready event, and deletes the allocated URL
 after publication drains. a registration whose setup fails after allocation
 still attempts cleanup. the caller owns its local listener and invocation ID.
 the Python binding starts ASGI lifespan on a port-0 loopback listener before
-registering it over the same private HTTP API used by TypeScript. its status
+registering it over the same scoped private API used by TypeScript. its status
 poller waits for the exact registration and ready publish run, never a public
 GET probe. on exit, unregister joins native drain before ASGI shutdown; a
 process crash leaves the owner/pid lease and ephemeral expiry as cleanup
 boundaries. a single-request Python callable needs the explicit HTTP adapter,
 while ASGI apps and supplied TypeScript servers keep their normal WebSockets.
 
-`pkg/tnl.Open` owns its Go HTTP listener and uses the same server selection as
-the native client: an explicit server, `TNL_SERVER`, the saved selection, then
-the hosted default.
+`pkg/tnl.Open` owns its Go HTTP listener and a temporary URL. it loads an
+explicit publisher file/identity when selected, otherwise the locally installed
+default namespace publisher for the selected server. it uses an explicit server,
+`TNL_SERVER`, saved selection, then the hosted default. missing local setup
+returns an actionable error; no app call implicitly creates a grant.
 
 ## maintain project integration urls
 
@@ -322,36 +357,14 @@ back to ordinary public URL lookup.
 
 ## understand public urls and publishing
 
-control can issue a public URL publish credential to a signed-in member who may
-publish one enabled, saved app URL. it records only a digest. the credential
-authenticates reads for that URL and publish run creation, never team management
-or public URL mutations. the saved target and current membership must still
-match; the publish run token handles later run operations. control records the
-credential used to start a run and closes that run on heartbeat if the
-credential expires, is revoked, or its issuer loses publish authority.
-
-an ephemeral credential instead records a team, ready domain, membership,
-namespace, and DNS-01 wildcard certificate plan. issuing it does not create a
-public URL or allow it to act as a saved-URL credential. control checks the
-stored kind as well as the token's prefix, and team credential listing and
-revocation handle both kinds by credential ID.
-
-ad-hoc allocation is control-owned: one invocation ID and an ephemeral
-credential select one URL beneath the stored namespace. control rechecks the
-stored credential, current membership and domain, and the public URL creation
-gate in the creation transaction. the caller supplies a canonical loopback
-target and visitor IP policy, never the hostname. the 128-bit `eph-` label is
-random; identical allocation retries return the same saved URL, while changed
-inputs conflict. namespace wildcard DNS covers the label, but ingress still
-requires the exact saved URL and a ready publish run before routing visitors.
-control records the allocating credential beside the exact URL in PostgreSQL.
-a publish run can use that credential only for its allocation; run creation
-rechecks the current role, certificate plan, and domain, and heartbeat closes
-the run after credential revocation, expiry, or a changed ownership boundary.
-after the publisher drains, control removes an ad-hoc URL only when its
-allocating credential still owns that exact URL. process loss leaves the URL
-for the existing ephemeral expiry path; retention removes its ownership row
-when it eventually removes the public URL row.
+publisher identities use one-use enrollment, local signing keys, and grants
+scoped to one saved public URL or an HTTP namespace. control rechecks the
+grant, team membership, and URL state at publish run creation and heartbeat.
+ad-hoc allocation is control-owned: one invocation ID and a namespace grant
+select one temporary URL with a caller-selected visitor access policy that
+defaults to restricted. a changed or revoked grant cannot publish another URL.
+the publisher removes its allocation after draining; an interrupted publisher
+leaves it for the ephemeral expiry path.
 
 control owns hostname policy: a member may publish any valid descendant of
 their namespace, subject to the managed domain's configured depth limit.
@@ -530,14 +543,14 @@ namespaces.
 
 ## own each api
 
-| Contract                                                       | Implementer                               | Caller and authentication                                                           |
-| -------------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------- |
-| [Control](../../api/control/v1/openapi.yaml)                   | `internal/controlapi` on control          | CLI and publisher with access or publish-run credentials                            |
-| [Authority](../../api/authority/v1/openapi.yaml)               | Built-in authority on control             | CLI sessions and team/domain operations; scoped website identity and invitations    |
-| [Ingress](../../api/ingress/v1/openapi.yaml)                   | `internal/ingressapi` on control          | Ingress with cluster authentication, or standalone direct calls                     |
-| [Relay](../../api/relay/v1/openapi.yaml)                       | `internal/relayapi` on control            | Relay with cluster authentication, or standalone direct calls                       |
-| [Public URL usage](../../api/public-url-usage/v1/openapi.yaml) | External receiver                         | Control public URL usage worker with a configured bearer token                      |
-| [Publisher](../../api/publisher/v1/openapi.yaml)               | `internal/publisher` on the local process | Same-origin browser feedback through public URL IP policy or a current share cookie |
+| Contract                                                       | Implementer                               | Caller and authentication                                                        |
+| -------------------------------------------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------- |
+| [Control](../../api/control/v1/openapi.yaml)                   | `internal/controlapi` on control          | CLI and publisher with access or publish-run credentials                         |
+| [Authority](../../api/authority/v1/openapi.yaml)               | Built-in authority on control             | CLI sessions and team/domain operations; scoped website identity and invitations |
+| [Ingress](../../api/ingress/v1/openapi.yaml)                   | `internal/ingressapi` on control          | Ingress with cluster authentication, or standalone direct calls                  |
+| [Relay](../../api/relay/v1/openapi.yaml)                       | `internal/relayapi` on control            | Relay with cluster authentication, or standalone direct calls                    |
+| [Public URL usage](../../api/public-url-usage/v1/openapi.yaml) | External receiver                         | Control public URL usage worker with a configured bearer token                   |
+| [Publisher](../../api/publisher/v1/openapi.yaml)               | `internal/publisher` on the local process | Same-origin browser feedback after current visitor authorization                 |
 
 OpenAPI is the wire contract. It does not promise that every reserved operation
 is implemented.
@@ -565,12 +578,12 @@ implements handshakes, and `internal/streamcopy` copies bytes in both directions
 | `packages/ts`              | Browser-safe runtime and Node framework integrations                        |
 
 The npm public subpaths are the package root, `/config`, `/next`, and `/vite`.
-The private development HTTP API is shipped implementation, not a public extension
-API.
+the private development HTTP endpoint is shipped implementation, not a public
+extension API.
 
-Framework integrations receive browser-safe metadata and a private local endpoint.
-They never receive control access tokens. They remain inactive during builds and
-previews.
+framework integrations receive browser-safe metadata and a service-scoped
+private HTTP endpoint. they never receive control access tokens. they remain
+inactive during builds and previews.
 
 Go validates project metadata before writing `.tnl/project.json`. The TypeScript
 package validates it again when reading it or receiving an app assignment.

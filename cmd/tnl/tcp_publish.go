@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"strconv"
+	"strings"
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
@@ -58,9 +59,15 @@ func savedPublicAddress(route controlv1.PublicURL) (string, error) {
 
 func validateTCPPublishOptions(flags publishCommand, protocol controlv1.PublicURLServiceProtocol) error {
 	if protocol == controlv1.Http {
-		if flags.TargetTLSName != "" || flags.TargetTLS || flags.VisitorTLSPassthrough {
+		if flags.TargetTLS {
 			return failure.Wrap("validate publish options", failure.InvalidTunnelFlags,
 				errors.New("target TLS options require a TCP service protocol"))
+		}
+		if flags.TargetTLSName != "" {
+			target, err := localproxy.NormalizeTarget(flags.Target)
+			if err != nil || !strings.HasPrefix(target, "https://") {
+				return failure.Wrap("validate HTTPS target", failure.InvalidTunnelFlags, errors.New("--target-tls-name requires an HTTPS target"))
+			}
 		}
 		return nil
 	}
@@ -68,15 +75,8 @@ func validateTCPPublishOptions(flags publishCommand, protocol controlv1.PublicUR
 		return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags,
 			errors.New("TCP publications do not support --open"))
 	}
-	if flags.VisitorTLSPassthrough {
-		if protocol != controlv1.Postgres && protocol != controlv1.Mysql {
-			return failure.Wrap("validate private TCP publish options", failure.InvalidTunnelFlags,
-				errors.New("visitor TLS passthrough requires PostgreSQL or MySQL"))
-		}
-		if flags.TargetTLS || flags.TargetTLSName != "" || flags.TargetCAFile != "" {
-			return failure.Wrap("validate private TCP publish options", failure.InvalidTunnelFlags,
-				errors.New("visitor TLS passthrough lets the client verify the database certificate; omit target TLS options"))
-		}
+	if flags.Ephemeral {
+		return failure.Wrap("validate TCP publication", failure.InvalidTunnelFlags, errors.New("TCP publication requires a saved public URL"))
 	}
 	if !flags.TargetTLS && (flags.TargetTLSName != "" || flags.TargetCAFile != "") {
 		return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags,

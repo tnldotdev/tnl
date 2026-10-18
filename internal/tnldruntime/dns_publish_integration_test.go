@@ -68,7 +68,7 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	finalizing := make(chan controlv1.CertificateIssuance, 1)
 	config := fixture.identity.publisherConfig(target.URL, quic, tcp)
 	config.Control = &certificateObservingControlClient{
-		PublicURLControlClient: config.Control,
+		integrationScopedRunControl: config.Control.(*integrationScopedRunControl),
 		observe: func(issuance controlv1.CertificateIssuance) {
 			if issuance.State == controlv1.CertificateIssuanceStateFinalizing {
 				select {
@@ -140,7 +140,7 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 }
 
 type certificateObservingControlClient struct {
-	publisher.PublicURLControlClient
+	*integrationScopedRunControl
 	observe func(controlv1.CertificateIssuance)
 }
 
@@ -152,7 +152,7 @@ func (c *certificateObservingControlClient) CreateCertificateIssuance(
 	csr []byte,
 	idempotencyKey string,
 ) (controlv1.CertificateIssuance, error) {
-	issuance, err := c.PublicURLControlClient.CreateCertificateIssuance(
+	issuance, err := c.integrationScopedRunControl.CreateCertificateIssuance(
 		ctx, publishRunID, publishRunNumber, token, csr, idempotencyKey,
 	)
 	c.observeResponse(issuance, err)
@@ -164,7 +164,7 @@ func (c *certificateObservingControlClient) GetCertificateIssuance(
 	issuanceID string,
 	token credentials.PublishRunToken,
 ) (controlv1.CertificateIssuance, error) {
-	issuance, err := c.PublicURLControlClient.GetCertificateIssuance(ctx, issuanceID, token)
+	issuance, err := c.integrationScopedRunControl.GetCertificateIssuance(ctx, issuanceID, token)
 	c.observeResponse(issuance, err)
 	return issuance, err
 }
@@ -174,7 +174,7 @@ func (c *certificateObservingControlClient) MarkCertificateChallengeReady(
 	issuanceID string,
 	token credentials.PublishRunToken,
 ) (controlv1.CertificateIssuance, error) {
-	issuance, err := c.PublicURLControlClient.MarkCertificateChallengeReady(ctx, issuanceID, token)
+	issuance, err := c.integrationScopedRunControl.MarkCertificateChallengeReady(ctx, issuanceID, token)
 	c.observeResponse(issuance, err)
 	return issuance, err
 }

@@ -1,10 +1,8 @@
 import { once } from "node:events";
 import * as fs from "node:fs/promises";
 import * as http from "node:http";
-import * as path from "node:path";
 import { describe, expect, onTestFinished, test, vi } from "vitest";
 import { WebSocketServer } from "ws";
-import * as z from "zod";
 import { startTestBootstrap, waitForBootstrapRequest } from "./test-helper/bootstrap.js";
 import {
   environmentBaseline,
@@ -22,23 +20,21 @@ import { startTestProcess } from "./test-helper/process.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
-  return { ...original, writeFile: vi.fn(original.writeFile) };
+  return { ...original, chmod: vi.fn(original.chmod) };
 });
 
 describe("test resource ownership", () => {
-  test("closes the bootstrap and removes its directory if writing the endpoint fails", async () => {
-    vi.mocked(fs.writeFile).mockRejectedValueOnce(new Error("write failed"));
-    await expect(startTestBootstrap()).rejects.toThrow("write failed");
-    const endpointPath = vi.mocked(fs.writeFile).mock.calls[0]?.[0];
-    expect(typeof endpointPath).toBe("string");
-    await expect(fs.stat(path.dirname(String(endpointPath)))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+  test("closes the bootstrap and removes its directory if chmod fails", async () => {
+    vi.mocked(fs.chmod).mockRejectedValueOnce(new Error("chmod failed"));
+    await expect(startTestBootstrap()).rejects.toThrow("chmod failed");
+    const socket = vi.mocked(fs.chmod).mock.calls[0]?.[0];
+    expect(typeof socket).toBe("string");
+    await expect(fs.stat(String(socket))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   test("surfaces malformed bootstrap requests through the waiter instead of throwing in an event handler", async () => {
     const bootstrap = await startTestBootstrap();
-    expect(await endpointRequest(bootstrap.endpointPath, "{")).toBe(400);
+    expect(await endpointRequest(bootstrap.endpoint, "{")).toBe(400);
     await expect(waitForBootstrapRequest(bootstrap)).rejects.toBeInstanceOf(SyntaxError);
     await bootstrap.close();
     await bootstrap.close();
@@ -130,8 +126,8 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
   vi.stubEnv("NODE_OPTIONS", "--invalid-inherited-option");
   const inherited = { ...process.env };
   await expect(
-    withProcessEnvironment({ APP_TEST_ENDPOINT: "isolated" }, () => {
-      expect(process.env.APP_TEST_ENDPOINT).toBe("isolated");
+    withProcessEnvironment({ APP_TEST_SOCKET: "isolated" }, () => {
+      expect(process.env.APP_TEST_SOCKET).toBe("isolated");
       expect(process.env.TNL_PROJECT_RUNTIME).toBeUndefined();
       throw new Error("callback failed");
     }),
@@ -140,9 +136,9 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
   const sanitized = subprocessEnvironment({
     TEST_SAFE_OVERRIDE: "preserved",
     TNL_ACCESS_TOKEN: "explicit-secret",
-    APP_TEST_ENDPOINT: "isolated",
+    APP_TEST_SOCKET: "isolated",
   });
-  expect(sanitized.APP_TEST_ENDPOINT).toBe("isolated");
+  expect(sanitized.APP_TEST_SOCKET).toBe("isolated");
   expect(sanitized.TEST_SAFE_OVERRIDE).toBe("preserved");
   expect(sanitized.NODE_OPTIONS).toBeUndefined();
   expect(sanitized.NODE_ENV).toBe("development");
@@ -156,26 +152,20 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
     expect(Object.hasOwn(sanitized, name)).toBe(false);
   }
   for (const name of Object.keys(environmentBaseline).filter(
-    (name) => name !== "APP_TEST_ENDPOINT" && name !== "NODE_ENV",
+    (name) => name !== "APP_TEST_SOCKET" && name !== "NODE_ENV",
   )) {
     expect(sanitized[name]).toBeUndefined();
   }
 });
 
-async function endpointRequest(endpointPath: string, body: string): Promise<number | undefined> {
-  const endpoint = z
-    .object({ url: z.url(), credential: z.string() })
-    .parse(JSON.parse(await fs.readFile(endpointPath, "utf8")));
-  const url = new URL(endpoint.url);
+async function endpointRequest(
+  endpoint: import("./src/internal/local.js").RuntimeEndpoint,
+  body: string,
+): Promise<number | undefined> {
   return await new Promise((resolve, reject) => {
     const request = http.request(
-      {
-        hostname: url.hostname,
-        port: url.port,
-        method: "POST",
-        path: "/v1/prepare",
-        headers: { Authorization: `Bearer ${endpoint.credential}` },
-      },
+      endpoint.url + "/v1/prepare",
+      { method: "POST", headers: { Authorization: `Bearer ${endpoint.capability}` } },
       (response) => {
         response.on("error", reject);
         response.on("end", () => resolve(response.statusCode));

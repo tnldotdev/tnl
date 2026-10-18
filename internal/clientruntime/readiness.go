@@ -30,7 +30,11 @@ type Observation struct {
 // deliberately outside the readiness boundary. the default transport uses DNS
 // and WebPKI exactly as a visitor would.
 func Probe(ctx context.Context, service Service, transport http.RoundTripper) Observation {
-	observation := Observation{RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness}
+	return ProbeWithProof(ctx, service, transport, "")
+}
+
+func ProbeWithProof(ctx context.Context, service Service, transport http.RoundTripper, proof string) Observation {
+	observation := Observation{Target: service.Target, RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness}
 	path := service.Readiness.Path
 	if path == "" {
 		path = "/"
@@ -42,7 +46,9 @@ func Probe(ctx context.Context, service Service, transport http.RoundTripper) Ob
 		observation.Reason = "runtime.probe_failed"
 		return observation
 	}
-	request.Header.Set(ProbeHeader, "1")
+	if proof != "" {
+		request.Header.Set(ProbeHeader, proof)
+	}
 	request.Header.Set("User-Agent", "tnl-readiness/1")
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)

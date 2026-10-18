@@ -48,7 +48,7 @@ func Hash(key [32]byte, prefix netip.Prefix) (Entry, error) {
 }
 
 func New(key [32]byte, entries []Entry) (Policy, error) {
-	if key == [32]byte{} || len(entries) == 0 {
+	if key == [32]byte{} {
 		return Policy{}, ErrInvalidPolicy
 	}
 	policy := Policy{key: key, allowed: make(map[length]map[[32]byte]struct{})}

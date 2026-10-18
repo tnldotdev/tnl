@@ -31,10 +31,11 @@ Try the built-in demo without installing a project dependency or signing in:
 npx --yes @tnldotdev/tnl publish --demo
 ```
 
-On tnl.dev, the public URL opens in your browser when ready. Click **ping** and
+On tnl.dev, the guest link opens in your browser when ready. Click **ping** and
 match the URL and count with the terminal running `tnl`. The browser shows the
 round-trip time and when your computer sent the pong. Guests can run one demo
-at a time. Only your current IP can visit. A guest credential lasts 72 hours
+at a time. The link admits this demo without signing in; tnl prints it once
+instead of admitting every visitor from your IP. A guest credential lasts 72 hours
 and allows 15 minutes ready or about 5 MiB of traffic across runs. Ctrl+C
 stops the demo and removes its public URL. Run `tnl auth login` to publish your own
 app. CLI telemetry is on by default, including for the demo. Run
@@ -63,9 +64,7 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
   services: {
-    app: {
-      directory: ".",
-    },
+    app: {},
   },
 });
 ```
@@ -76,11 +75,17 @@ Then run:
 npx tnl auth login
 pnpm dev
 npx tnl wait
+npx tnl status --scope=local
+npx tnl status --scope=server
 ```
 
 Sign in once with `tnl auth login`. The integration prepares public metadata before
 framework startup, then reports the listener's actual bound port to a local
-`tnl` process. By default, only your current IP can visit the public URL.
+`tnl` process. By default, a visitor needs a current sign-in, share link, or
+URL-scoped visitor token. To allow anonymous visitors to a service, set
+`tunnel: { access: "anonymous" }` for that service. An additional IP list in
+`access: { ip: ["192.0.2.0/24"] }` limits where credentialed visitors may connect;
+an IP match does not replace their credential.
 
 `tnl wait` checks a fresh public response. `tnl status` shows every configured
 service, including apps that have not started, without sending a request to the
@@ -97,8 +102,8 @@ allowed on the declared webhook path and method.
 
 ## give your services their own urls
 
-If your project has several services, give each its own directory in
-`tnl.config.ts`:
+If your project has several services, name them in `tnl.config.ts` and
+select the service when preparing each app:
 
 ```ts
 // tnl.config.ts
@@ -106,17 +111,15 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
   services: {
-    web: {
-      directory: "apps/web",
-    },
-    api: {
-      directory: "apps/api",
-    },
+    web: {},
+    api: {},
   },
 });
 ```
 
-Start each service with its normal development command:
+Pass `service: "web"` or `service: "api"` to your framework integration or
+`tnl.prepare()` in each app. Start each service with its normal development
+command:
 
 ```bash
 pnpm --dir apps/web dev
@@ -180,7 +183,7 @@ The same frontend is now running from two checkouts:
 | primary   | `https://web-example-k7n2p9.ecstatic-penguin.tnl.dev`      |
 | `../perf` | `https://web-example-perf-m4q8s2.ecstatic-penguin.tnl.dev` |
 
-`tnl` names each URL after the service and project, adding the directory name
+`tnl` names each URL after the service and project, adding the checkout name
 for a linked worktree. A short ID keeps names distinct, and switching branches
 leaves the URL unchanged.
 
@@ -191,7 +194,7 @@ listener it actually opens. Restarting the same worktree reuses its URL.
 See what is running across your local worktrees from any of them:
 
 ```bash
-npx tnl status --all
+npx tnl status --all --scope=local
 ```
 
 ## custom domain
@@ -218,6 +221,7 @@ with the built-in administrator's login token, publish directly beneath it:
 
 ```bash
 tnl auth login --server https://control.example.com --login-token
+tnl status --scope=server --server https://control.example.com
 tnl publish 3000 --server https://control.example.com --name app
 # https://app.routes.example.com
 ```
@@ -273,6 +277,6 @@ if paid options arrive.
 
 ## license
 
-The client and server are licensed under [BSD-3-Clause](LICENSE). See the
+The client and server are [MIT-licensed](LICENSE). See the
 [dependency notices](THIRD_PARTY_LICENSES.txt), browse the
 [command reference](https://tnl.dev/docs/cli), or [contribute](contributing.md).

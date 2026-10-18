@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -14,25 +17,28 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/demo"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type publishCommand struct {
-	openOptions           `embed:""`
-	remoteFlags           `embed:""`
-	tunnelFlags           `embed:""`
-	Target                string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or TCP host:port."`
-	Protocol              string            `name:"protocol" env:"TNL_PROTOCOL" help:"Local service protocol; defaults to http."`
-	TargetTLSName         string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the target's TLS certificate; defaults to the target host."`
-	TargetTLS             bool              `name:"target-tls" env:"TNL_TARGET_TLS" help:"Use verified TLS for the TCP target."`
-	VisitorTLSPassthrough bool              `name:"visitor-tls-passthrough" help:"Pass database visitor TLS to the private target; the client verifies its certificate and tnl cannot inspect it."`
-	PublishCredential     string            `name:"credential" env:"TNL_CREDENTIAL" help:"Credential for publishing one saved public URL without a control session."`
-	Output                publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
-	Demo                  bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
+	openOptions   `embed:""`
+	remoteFlags   `embed:""`
+	tunnelFlags   `embed:""`
+	Target        string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or TCP host:port."`
+	Protocol      string            `name:"protocol" env:"TNL_PROTOCOL" help:"Local service protocol; defaults to http."`
+	TargetTLSName string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in an HTTPS or TCP target's TLS certificate; defaults to the target host."`
+	TargetTLS     bool              `name:"target-tls" env:"TNL_TARGET_TLS" help:"Use verified TLS for the TCP target."`
+	EnrollmentKey string            `name:"enroll-key" env:"TNL_ENROLL_KEY" help:"One-use publisher enrollment key; use - to read stdin."`
+	PublisherID   string            `name:"publisher" env:"TNL_PUBLISHER" help:"Saved scoped publisher identity ID."`
+	PublisherFile string            `name:"publisher-file" env:"TNL_PUBLISHER_FILE" type:"path" help:"Portable scoped publisher identity file; no login session is used."`
+	Output        publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
+	Demo          bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
 	serverFromConfig bool
 	selectedTeam     string
@@ -44,16 +50,14 @@ type publishCommand struct {
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	telemetry := optionalTelemetryReporter(reporters)
+	selection := enrolledPublishSelection{EnrollmentKey: flags.EnrollmentKey, PublisherID: flags.PublisherID, PublisherFile: flags.PublisherFile}
 	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { result = output.finish(ctx, result) }()
-	if flags.PublishCredential != "" {
-		if flags.Demo {
-			return failure.Wrap("validate demo options", failure.InvalidTunnelFlags, errors.New("a public URL publish credential cannot be used with --demo"))
-		}
-		return runScopedPublish(ctx, flags, output, telemetry)
+	if flags.EnrollmentKey != "" || flags.PublisherID != "" || flags.PublisherFile != "" {
+		return runEnrolledPublish(ctx, flags, selection, output, telemetry, os.Stdin)
 	}
 	protocol, err := publishProtocol(flags.Protocol)
 	if err != nil {
@@ -68,6 +72,12 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	if err := validateTCPPublishOptions(flags, protocol); err != nil {
 		return err
+	}
+	if flags.Service != "" {
+		if protocol == controlv1.Http {
+			output.openURL = browserOpener(ctx, flags.Open, true)
+		}
+		return runNamedPublish(ctx, flags.project, flags.StateDir, flags.Service, output)
 	}
 	var localDemo *demo.Server
 	if flags.Demo {
@@ -94,6 +104,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	targetOptions, err := targetOptionsForCA(flags.TargetCAFile, flags.projectRoot)
 	if err != nil {
 		return err
+	}
+	if protocol == controlv1.Http {
+		targetOptions.ServerName = flags.TargetTLSName
 	}
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
@@ -156,14 +169,25 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if protocol == controlv1.Http {
 		output.openURL = browserOpener(ctx, flags.Open, authenticated.Discovery.DnsAutomation)
 	}
-	policy, err := resolveIPPolicy(ctx, authenticated.Control, flags.AllowIP, flags.AllowAllIPs)
+	policy, err := resolveVisitorAccess(ctx, authenticated.Control, flags.access, flags.Anonymous, flags.IP)
 	if err != nil {
 		return err
 	}
-	if policy.current != "" {
-		if err := output.currentIP(policy.current); err != nil {
-			return err
+	if protocol == controlv1.Ssh {
+		if flags.access != nil && flags.access.VisitorMode() != "anonymous" {
+			return failure.Wrap("validate SSH visitor access", failure.InvalidTunnelFlags, errors.New("SSH uses target authentication; select anonymous access for an optional IP list"))
 		}
+		policy.access = controlv1.Anonymous
+		policy.explicit = true
+	}
+	if guest != nil {
+		// guest publication remains bound to its issuing IP. control discards
+		// that prefix after checking it, so browser visits use the guest link.
+		guestPrefixes, sourceErr := accessIPPrefixes(ctx, authenticated.Control, []string{"current"})
+		if sourceErr != nil {
+			return sourceErr
+		}
+		policy.prefixes = guestPrefixes
 	}
 	if guest != nil {
 		allocated, err := authenticated.Control.AllocateGuestDemoNumber(ctx)
@@ -211,18 +235,23 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.limits())
+	if policy.explicit {
+		publisherConfig.AccessMode = policy.access
+	}
 	publisherConfig.ServiceProtocol = protocol
-	publisherConfig.TargetTLSName = flags.TargetTLSName
+	if protocol != controlv1.Http {
+		publisherConfig.TargetTLSName = flags.TargetTLSName
+	}
 	publisherConfig.TargetTLS = flags.TargetTLS
-	publisherConfig.VisitorTLSPassthrough = flags.VisitorTLSPassthrough
 	publisherConfig.TargetOptions = targetOptions
-	recorder, err := newInspectionRecorder(ctx, tunnel, flags.projectRoot, flags.Service, flags.InspectionMode)
+	recorder, err := newInspectionRecorder(ctx, tunnel, flags.projectRoot, flags.Service, flags.InspectionMode, flags.inspection)
 	if err != nil {
 		return err
 	}
 	defer recorder.Close()
-	publisherConfig.ObserveRequest = httpObservation(recorder)
-	publisherConfig.InspectionMode = flags.InspectionMode
+	publisherConfig.ObserveSummary = summaryObservation(recorder)
+	publisherConfig.InspectionMode = inspection.Mode(flags.InspectionMode)
+	publisherConfig.OnWarning = publishWarning(tunnel, output)
 	if oauthHostname != "" {
 		publisherConfig.ObserveResponse = integrationurls.Observer(state, serverURL, oauthHostname, integrationGroup, tunnel.ID())
 	}
@@ -230,7 +259,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable
 	if flags.Demo {
 		publisherConfig.Demo, publisherConfig.Feedback, publisherConfig.Service = true, true, "demo"
-		publisherConfig.Purpose = controlv1.Demo
+		if guest != nil {
+			publisherConfig.Purpose = controlv1.Demo
+		}
 	}
 	publisherConfig.Mounts, err = resolveProjectMounts(flags.project, flags.Service)
 	if err != nil {
@@ -241,7 +272,33 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			errors.New("TCP public URLs cannot use HTTP path mounts"))
 	}
 	publisherConfig.Logf = output.logf
+	cleanup, err := selectForegroundPublisher(ctx, state, services, &publisherConfig, guest)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, cleanup()) }()
 	publisherConfig.Observe = withTelemetryObserver(telemetry, telemetryPublish, serverURL, nil, func(event publisher.Event) error {
+		if guest != nil && event.Type == publisher.EventPublicURLAssigned {
+			secret := make([]byte, 32)
+			if _, err := rand.Read(secret); err != nil {
+				return err
+			}
+			fingerprint := sha256.Sum256(secret)
+			key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
+			if err != nil {
+				return err
+			}
+			share, err := authenticated.Control.CreateURLShare(ctx, key, controlv1.CreateShareRequest{
+				PublicUrlIds: []string{event.PublicURLID}, SecretFingerprint: hex.EncodeToString(fingerprint[:]), ExpiresAt: guest.ExpiresAt,
+			})
+			if err != nil {
+				return fmt.Errorf("create guest share: %w", err)
+			}
+			if share.Scope != controlv1.ShareScopeGuest || len(share.PublicUrlIds) != 1 || share.PublicUrlIds[0] != event.PublicURLID {
+				return failure.Wrap("create guest share", failure.ServerResponseInvalid, errors.New("server returned a share for another public URL"))
+			}
+			output.setGuestShare(share.Id + "." + base64.RawURLEncoding.EncodeToString(secret))
+		}
 		if localDemo != nil && event.Type == publisher.EventReady {
 			localDemo.SetPublicURL(event.PublicURL)
 		}

@@ -364,8 +364,8 @@ func (q *Queries) GetRelayTransportCertificate(ctx context.Context, arg GetRelay
 }
 
 const listRelayServiceAssignmentTotals = `-- name: ListRelayServiceAssignmentTotals :many
-SELECT relay_service_id, assignment_count
-FROM control.relay_service_assignment_totals
+SELECT relay_service_id, reserved_slot_count AS assignment_count
+FROM control.relay_service_reservations
 `
 
 type ListRelayServiceAssignmentTotalsRow struct {

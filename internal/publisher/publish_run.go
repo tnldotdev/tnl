@@ -144,15 +144,19 @@ func runSession(
 		config.PreviewID = preview.Id
 	}
 	var shareRuntime *shareAccess
-	if config.PreviewID != "" && !config.Demo {
+	if setup.PublicUrl.ServiceProtocol == controlv1.Http && (setup.PublicUrl.Purpose == controlv1.App || setup.PublicUrl.Purpose == controlv1.Alias || setup.PublicUrl.Purpose == controlv1.Demo) {
 		if err := progress("share_access"); err != nil {
 			return err
 		}
 		client, ok := config.Control.(shareAccessClient)
 		if !ok {
-			return errors.New("publisher: share-capable control client is required for this preview")
+			return errors.New("publisher: share-capable control client is required for HTTP public URLs")
 		}
-		if err := client.EnableShareAccess(ctx, setup.PublishRun.Id, version, config.PreviewID, publishRunToken); err != nil {
+		previewID := config.PreviewID
+		if config.Demo {
+			previewID = ""
+		}
+		if err := client.EnableShareAccess(ctx, setup.PublishRun.Id, version, previewID, publishRunToken); err != nil {
 			return fmt.Errorf("publisher: enable share access: %w", err)
 		}
 		shareRuntime = &shareAccess{client: client, runID: setup.PublishRun.Id, version: version, token: publishRunToken}
@@ -178,36 +182,59 @@ func runSession(
 		defer func() { cancelSession(nil); <-refreshDone }()
 	}
 	var material clientstate.Material
+	identity := PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, Number: version}
+	authorizeVisitor := config.AuthorizeVisitorCertificate
+	if authorizeVisitor == nil {
+		var candidate any = config.Control
+		if config.VisitorControl != nil {
+			candidate = config.VisitorControl
+		}
+		if client, ok := candidate.(VisitorCertificateAuthorizer); ok {
+			authorizeVisitor = VisitorCertificateAuthorization(client, controlclient.VisitorCertificateScope{
+				PublishRunID: setup.PublishRun.Id, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version, PublishRunToken: publishRunToken,
+			})
+		}
+	}
+	var readiness *ReadinessProof
+	if config.ReadinessProof != nil {
+		readiness = config.ReadinessProof(identity)
+	}
 	feedback, err := newFeedbackRuntime(config, setup, publishRunToken)
 	if err != nil {
 		return err
 	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
-		BrowserAccess: browserAccessForRun(config, setup, publishRunToken, shareRuntime),
-		PreviewID:     config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version,
-		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, TargetOptions: config.TargetOptions, CertificatePlan: plan,
+		BrowserAccess:         browserAccessForRun(config, setup, publishRunToken, shareRuntime),
+		BrowserLoginAvailable: config.BrowserLoginAvailable,
+		PreviewID:             config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, PublishRunNumber: version,
+		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, ResolveTarget: config.ResolveTarget, TargetOptions: config.TargetOptions, CertificatePlan: plan,
 		ServiceProtocol: setup.PublicUrl.ServiceProtocol, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS,
-		VisitorTLSPassthrough: config.VisitorTLSPassthrough,
-		PublicPort:            publicPort,
-		Mounts:                config.Mounts,
-		ShareAccess:           shareRuntime,
-		Feedback:              feedback,
-		RequestLimit:          config.RequestLimit,
-		Limits:                config.Limits,
-		ObserveRequest:        config.ObserveRequest,
-		InspectionMode:        config.InspectionMode,
-		Handler:               config.Handler,
+		Purpose:                     setup.PublicUrl.Purpose,
+		AccessMode:                  setup.PublicUrl.AccessMode,
+		PromoteVisitor:              config.PromoteVisitor,
+		AdmitVisitor:                config.AdmitVisitor,
+		AuthorizeVisitorCertificate: authorizeVisitor,
+		ReadinessProof:              readiness,
+		OnWarning:                   config.OnWarning,
+		PublicPort:                  publicPort,
+		Mounts:                      config.Mounts,
+		ShareAccess:                 shareRuntime,
+		Feedback:                    feedback,
+		Limits:                      config.Limits,
+		ObserveSummary:              config.ObserveSummary,
+		InspectionMode:              config.InspectionMode,
+		Handler:                     config.Handler,
 		AdmitRequest: func(request *http.Request) error {
 			if config.AdmitRequest == nil {
 				return nil
 			}
-			return config.AdmitRequest(request, PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, Number: version})
+			return config.AdmitRequest(request, identity)
 		},
 		ObserveResponse: func(response *http.Response) error {
 			if config.ObserveResponse == nil {
 				return nil
 			}
-			return config.ObserveResponse(response, PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, Number: version})
+			return config.ObserveResponse(response, identity)
 		},
 		OnTargetFailure: func() {
 			_ = observe(config, Event{Type: EventTargetUnavailable, PublicURLID: setup.PublicUrl.Id,

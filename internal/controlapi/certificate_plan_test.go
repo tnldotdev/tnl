@@ -3,12 +3,14 @@ package controlapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -74,26 +76,16 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 						CanonicalDomain: "routes.example.test", DNSAuthorityReference: "dns_authority_1"}},
 				},
 			}
-			h := testHandler(t, Config{DNSAutomation: test.dnsAutomation, ManagedURLMode: mode,
-				ManagedDomainMaxMemberChildLabels: test.maxChildLabels}, store, store, nil)
-			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
-			request.Header.Set("Authorization", "Bearer access-token")
-			request.Header.Set("Idempotency-Key", "session-plan")
-			response := httptest.NewRecorder()
-			h.ServeHTTP(response, request)
+			authorizer := localAuthorizer{store: store, dnsAutomation: test.dnsAutomation, managedURLMode: mode, managedDomainMaxMemberChildLabels: test.maxChildLabels}
+			decision, err := authorizer.Authorize(t.Context(), authorization.Request{Operation: authorization.OperationPublishRunCreate, AccessToken: "access-token", TeamID: "team_1", DomainID: "domain_1", PublicURLID: "public_url_1", PublicURLMembershipID: membershipID, CanonicalHostname: hostname, PublicURLScope: authorization.PublicURLScope(test.scope), PublicURLMutationRevision: 1})
 			if test.expectDepthDenied {
-				var problem controlv1.Problem
-				if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || response.Code != http.StatusForbidden || problem.Code != controlv1.MemberHostnameDepthExceeded || store.sessions != 0 {
-					t.Fatalf("nested hostname was not rejected before creating a run: %d %s", response.Code, response.Body.String())
+				if !errors.Is(err, errMemberHostnameDepth) {
+					t.Fatalf("nested hostname depth rejection = %v", err)
 				}
 				return
 			}
-			if response.Code != http.StatusCreated {
-				t.Fatalf("session status = %d: %s", response.Code, response.Body.String())
-			}
-			var setup controlv1.PublishRunSetup
-			if err := json.Unmarshal(response.Body.Bytes(), &setup); err != nil {
-				t.Fatal(err)
+			if err != nil || decision.CertificatePlan == nil {
+				t.Fatalf("certificate boundary = %+v, %v", decision, err)
 			}
 			wantScope, wantIDs := hostname, []string{hostname}
 			if test.dnsAutomation {
@@ -110,23 +102,15 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 					wantIDs = []string{"*." + wantScope}
 				}
 			}
-			plan := setup.CertificatePlan
+			plan := *decision.CertificatePlan
 			slices.Sort(wantIDs)
 			if plan.CacheKey != wantScope || plan.Scope != wantScope || !slices.Equal(plan.Identifiers, wantIDs) {
 				t.Errorf("API plan = %#v; want cache key/scope %q and identifiers %q", plan, wantScope, wantIDs)
 			}
-			if store.sessionRequest.CertificateScope != wantScope || store.sessionRequest.CertificateCacheKey != wantScope ||
-				!slices.Equal(store.sessionRequest.CertificateIdentifiers, wantIDs) {
-				t.Errorf("persisted plan = %q, %q, %q; want %q, %q", store.sessionRequest.CertificateCacheKey,
-					store.sessionRequest.CertificateScope, store.sessionRequest.CertificateIdentifiers, wantScope, wantIDs)
-			}
-			if test.dnsAutomation && plan.ChallengeMethod != controlv1.Dns01 {
+			if test.dnsAutomation && string(plan.ChallengeMethod) != "dns-01" {
 				t.Errorf("DNS challenge method = %q; want dns-01", plan.ChallengeMethod)
 			}
-			if string(store.sessionRequest.CertificateChallenge) != string(plan.ChallengeMethod) {
-				t.Errorf("stored challenge method = %q; API returned %q", store.sessionRequest.CertificateChallenge, plan.ChallengeMethod)
-			}
-			if !test.dnsAutomation && plan.ChallengeMethod != controlv1.TlsAlpn01 {
+			if !test.dnsAutomation && string(plan.ChallengeMethod) != "tls-alpn-01" {
 				t.Errorf("no-DNS challenge method = %q; want tls-alpn-01", plan.ChallengeMethod)
 			}
 		})

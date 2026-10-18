@@ -41,8 +41,8 @@ func TestLoadDocumentRequiresVersionAndStrictFields(t *testing.T) {
 		"unknown.yml":        {"version: 1\ntnl:\n  unexpected_key: true\n", "field unexpected_key not found"},
 		"unknown.json":       {`{"version":1,"tnl":{"unexpected_key":true}}`, `unknown object member name "unexpected_key"`},
 		"service-oauth.json": {`{"version":1,"tnl":{"services":{"api":{"oauth":true}}}}`, `unknown object member name "oauth"`},
-		"retired-ca.yml":     {"version: 1\ntnl:\n  publish:\n    ca_file: ca.pem\n", "field ca_file not found"},
-		"retired-ca.json":    {`{"version":1,"tnl":{"publish":{"ca_file":"ca.pem"}}}`, `unknown object member name "ca_file"`},
+		"retired-ca.yml":     {"version: 1\ntnl:\n  publish:\n    ca_file: ca.pem\n", "field publish not found"},
+		"retired-ca.json":    {`{"version":1,"tnl":{"publish":{"ca_file":"ca.pem"}}}`, `unknown object member name "publish"`},
 		"duplicate.yml":      {"version: 1\nversion: 1\n", "already defined"},
 		"duplicate.json":     {`{"version":1,"version":1}`, "duplicate object member name"},
 		"tagged.yml":         {"version: 1\ntnl: !include config.yml\n", "custom YAML tag"},
@@ -74,16 +74,17 @@ tnl:
   feedback: true
   oauth: true
   tunnel:
-    allow_ip: [192.0.2.1]
-    allow_all_ips: false
+    access: {ip: [192.0.2.1]}
     limits:
-      requests: 20
-      rate: {requests: 5, per: 1m}
-      concurrency: 750
-  publish:
-    target: 3000
-  readiness:
-    path: /health
+      http:
+        total: 20
+        rate: {count: 5, per: 1m}
+        concurrency: 750
+  services:
+    web:
+      target: {type: address, address: 3000}
+      http:
+        readiness: {path: /health}
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -94,13 +95,13 @@ tnl:
 	}
 	if document.TNL == nil || document.TNL.Server == nil || *document.TNL.Server != "https://control.example.com" ||
 		document.TNL.Feedback == nil || !*document.TNL.Feedback || !document.TNL.OAuth ||
-		document.TNL.Publish == nil || document.TNL.Publish.Target == nil || string(*document.TNL.Publish.Target) != "3000" ||
-		document.TNL.Readiness == nil || document.TNL.Readiness.Path != "/health" ||
-		document.TNL.Tunnel == nil || document.TNL.Tunnel.AllowAllIPs == nil || *document.TNL.Tunnel.AllowAllIPs ||
-		document.TNL.Tunnel.Limits == nil || document.TNL.Tunnel.Limits.Concurrency == nil || *document.TNL.Tunnel.Limits.Concurrency != 750 ||
-		document.TNL.Tunnel.Limits.Requests == nil || *document.TNL.Tunnel.Limits.Requests != 20 ||
-		document.TNL.Tunnel.Limits.Rate == nil || document.TNL.Tunnel.Limits.Rate.Requests == nil || *document.TNL.Tunnel.Limits.Rate.Requests != 5 ||
-		document.TNL.Tunnel.Limits.Rate.Per == nil || document.TNL.Tunnel.Limits.Rate.Per.Value() != time.Minute {
+		document.TNL.Services["web"].Target == nil || string(*document.TNL.Services["web"].Target.Address) != "3000" ||
+		document.TNL.Services["web"].HTTP.Readiness.Path != "/health" ||
+		document.TNL.Tunnel == nil || document.TNL.Tunnel.Access == nil || document.TNL.Tunnel.Access.VisitorMode() != "restricted" || len(document.TNL.Tunnel.Access.IP) != 1 ||
+		document.TNL.Tunnel.Limits == nil || document.TNL.Tunnel.Limits.HTTP.Concurrency == nil || *document.TNL.Tunnel.Limits.HTTP.Concurrency != 750 ||
+		document.TNL.Tunnel.Limits.HTTP.Total == nil || *document.TNL.Tunnel.Limits.HTTP.Total != 20 ||
+		document.TNL.Tunnel.Limits.HTTP.Rate == nil || document.TNL.Tunnel.Limits.HTTP.Rate.Count == nil || *document.TNL.Tunnel.Limits.HTTP.Rate.Count != 5 ||
+		document.TNL.Tunnel.Limits.HTTP.Rate.Per == nil || document.TNL.Tunnel.Limits.HTTP.Rate.Per.Value() != time.Minute {
 		t.Fatalf("document = %#v", document)
 	}
 }
@@ -166,8 +167,8 @@ func TestValidateTNLRejectsInvalidServiceNames(t *testing.T) {
 
 func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
 	for name, contents := range map[string]string{
-		"json": `{"version":1,"tnl":{"services":{"web":{"paths":{"/api":"api","/v1":{"service":"api","strip_prefix":true}}},"api":{}}}}`,
-		"yml":  "version: 1\ntnl:\n  services:\n    web:\n      paths:\n        /api: api\n        /v1:\n          service: api\n          strip_prefix: true\n    api: {}\n",
+		"json": `{"version":1,"tnl":{"services":{"web":{"http":{"paths":{"/api":"api","/v1":{"service":"api","strip_prefix":true}}}},"api":{}}}}`,
+		"yml":  "version: 1\ntnl:\n  services:\n    web:\n      http:\n        paths:\n          /api: api\n          /v1:\n            service: api\n            strip_prefix: true\n    api: {}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			filename := "tnl." + name
@@ -179,19 +180,19 @@ func TestPathMountsUseConfiguredServicesAndCleanPrefixes(t *testing.T) {
 				t.Fatal(err)
 			}
 			parsed, err := LoadDocument(path)
-			if err != nil || parsed.TNL.Services["web"].Paths["/api"].Service != "api" ||
-				parsed.TNL.Services["web"].Paths["/v1"].Service != "api" || !parsed.TNL.Services["web"].Paths["/v1"].StripPrefix {
+			if err != nil || ServicePaths(parsed.TNL.Services["web"])["/api"].Service != "api" ||
+				ServicePaths(parsed.TNL.Services["web"])["/v1"].Service != "api" || !ServicePaths(parsed.TNL.Services["web"])["/v1"].StripPrefix {
 				t.Fatalf("paths = %+v, %v", parsed.TNL, err)
 			}
 		})
 	}
 	for _, prefix := range []string{"/", "/api/", "/api//v1", "/api/../admin", "/api%2Fv1", "/__tnl", "/__tnl/share"} {
-		if err := ValidateTNL(TNL{Services: Services{"web": {Paths: map[string]PathMount{prefix: {Service: "api"}}}, "api": {}}}); err == nil {
+		if err := ValidateTNL(TNL{Services: Services{"web": {HTTP: &HTTPService{Paths: map[string]PathMount{prefix: {Service: "api"}}}}, "api": {}}}); err == nil {
 			t.Fatalf("invalid mount prefix %q was accepted", prefix)
 		}
 	}
 	for _, destination := range []string{"missing", "web", ""} {
-		if err := ValidateTNL(TNL{Services: Services{"web": {Paths: map[string]PathMount{"/api": {Service: destination}}}, "api": {}}}); err == nil {
+		if err := ValidateTNL(TNL{Services: Services{"web": {HTTP: &HTTPService{Paths: map[string]PathMount{"/api": {Service: destination}}}}, "api": {}}}); err == nil {
 			t.Fatalf("mount destination %q was accepted", destination)
 		}
 	}
@@ -221,9 +222,9 @@ func TestValidateTNLScopesFixedAddressesToOneService(t *testing.T) {
 func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) {
 	invalidTarget := Target("https://example.com")
 	for name, value := range map[string]TNL{
-		"target":            {Publish: &Publish{Target: &invalidTarget}},
-		"masked prefix":     {Tunnel: &Tunnel{AllowIP: []string{"192.0.2.7/24"}}},
-		"duplicate address": {Tunnel: &Tunnel{AllowIP: []string{"192.0.2.1", "192.0.2.1/32"}}},
+		"target":            {Services: Services{"web": {Target: &ServiceTarget{Type: "address", Address: &invalidTarget}}}},
+		"masked prefix":     {Tunnel: &Tunnel{Access: &Access{IP: []string{"192.0.2.7/24"}}}},
+		"duplicate address": {Tunnel: &Tunnel{Access: &Access{IP: []string{"192.0.2.1", "192.0.2.1/32"}}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := ValidateTNL(value); err == nil {
@@ -234,11 +235,11 @@ func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) 
 }
 
 func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
-	protocol, target, tlsName, caFile, targetTLS := "postgres", Target("db.internal:5432"), "db.internal", "./certs/target-ca.pem", true
+	protocol, target, tlsName, caFile := "postgres", Target("db.internal:5432"), "db.internal", "./certs/target-ca.pem"
 	webTarget := Target("3000")
 	project := TNL{OAuth: true, Services: Services{
-		"web":    {Publish: &Publish{Target: &webTarget}},
-		"orders": {Publish: &Publish{Protocol: &protocol, Target: &target, TargetTLS: &targetTLS, TargetTLSName: &tlsName, TargetCAFile: &caFile}},
+		"web":    {Target: &ServiceTarget{Type: "address", Address: &webTarget}},
+		"orders": {Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: &target, TLS: &TargetTLS{ServerName: &tlsName, CAFile: &caFile}}},
 	}}
 	if err := ValidateTNL(project); err != nil {
 		t.Fatalf("mixed web and PostgreSQL services: %v", err)
@@ -247,30 +248,31 @@ func TestDatabaseServiceConfigurationKeepsWebServicesIndependent(t *testing.T) {
 		"http target": func(value *TNL) {
 			invalid := Target("http://db.internal:5432")
 			service := value.Services["orders"]
-			service.Publish.Target = &invalid
+			service.Target.Address = &invalid
 		},
 		"readiness": func(value *TNL) {
 			service := value.Services["orders"]
-			service.Readiness = &Readiness{Path: "/health"}
+			service.HTTP = &HTTPService{Readiness: &Readiness{Path: "/health"}}
 			value.Services["orders"] = service
 		},
 		"mount": func(value *TNL) {
 			service := value.Services["web"]
-			service.Paths = map[string]PathMount{"/db": {Service: "orders"}}
+			service.HTTP = &HTTPService{Paths: map[string]PathMount{"/db": {Service: "orders"}}}
 			value.Services["web"] = service
 		},
 		"protocol": func(value *TNL) {
 			invalid := "unknown"
 			service := value.Services["orders"]
-			service.Publish.Protocol = &invalid
+			service.Protocol = &invalid
+			value.Services["orders"] = service
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := TNL{OAuth: project.OAuth, Services: Services{"web": project.Services["web"], "orders": project.Services["orders"]}}
 			for key, service := range changed.Services {
-				if service.Publish != nil {
-					copy := *service.Publish
-					service.Publish = &copy
+				if service.Target != nil {
+					copy := *service.Target
+					service.Target = &copy
 					changed.Services[key] = service
 				}
 			}
@@ -303,7 +305,7 @@ func TestTCPInspectionModes(t *testing.T) {
 	for _, protocol := range []string{"postgres", "mysql", "redis"} {
 		mode := InspectionSummary
 		project := TNL{Inspection: &Inspection{Mode: &mode}, Services: Services{"service": {
-			Publish: &Publish{Protocol: &protocol},
+			Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: targetPointer("5432")},
 		}}}
 		if err := ValidateTNL(project); err != nil {
 			t.Fatalf("%s summary inspection: %v", protocol, err)
@@ -311,7 +313,7 @@ func TestTCPInspectionModes(t *testing.T) {
 	}
 	protocol, mode := "ssh", InspectionSummary
 	project := TNL{Inspection: &Inspection{Mode: &mode}, Services: Services{"service": {
-		Publish: &Publish{Protocol: &protocol},
+		Protocol: &protocol, Target: &ServiceTarget{Type: "address", Address: targetPointer("22")},
 	}}}
 	if err := ValidateTNL(project); err == nil {
 		t.Fatal("SSH accepted summary inspection")
@@ -324,8 +326,8 @@ func TestTCPInspectionModes(t *testing.T) {
 
 func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 	for extension, valid := range map[string]string{
-		"json": `{"version":1,"tnl":{"inspection":{"mode":"none"},"services":{"web":{"inspection":{"mode":"summary"}}},"tunnel":{"allow_ip":["192.0.2.1"]},"publish":{"target":3000},"readiness":{"path":"/health"}}}`,
-		"yml":  "version: 1\ntnl:\n  inspection: {mode: none}\n  services:\n    web:\n      inspection: {mode: summary}\n  tunnel:\n    allow_ip: [192.0.2.1]\n  publish:\n    target: 3000\n  readiness:\n    path: /health\n",
+		"json": `{"version":1,"tnl":{"inspection":{"mode":"none"},"services":{"web":{"inspection":{"mode":"summary"},"target":{"type":"address","address":3000},"http":{"readiness":{"path":"/health"}}}},"tunnel":{"access":{"ip":["192.0.2.1"]}}}}`,
+		"yml":  "version: 1\ntnl:\n  inspection: {mode: none}\n  services:\n    web:\n      inspection: {mode: summary}\n      target: {type: address, address: 3000}\n      http:\n        readiness: {path: /health}\n  tunnel:\n    access: {ip: [192.0.2.1]}\n",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl."+extension)
@@ -338,9 +340,9 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		})
 	}
 	for name, test := range map[string]struct{ json, yaml, category string }{
-		"zero concurrency":           {`{"version":1,"tnl":{"tunnel":{"limits":{"concurrency":0}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      concurrency: 0\n", "tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
-		"negative total":             {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"limits":{"requests":-1}}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        limits:\n          requests: -1\n", "services.web: tunnel.limits.requests and tunnel.limits.concurrency must be greater than zero"},
-		"missing rate period":        {`{"version":1,"tnl":{"tunnel":{"limits":{"rate":{"requests":2}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      rate: {requests: 2}\n", "tunnel.limits.rate requires positive requests and per"},
+		"zero concurrency":           {`{"version":1,"tnl":{"tunnel":{"limits":{"http":{"concurrency":0}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      http: {concurrency: 0}\n", "positive safe integers"},
+		"negative total":             {`{"version":1,"tnl":{"services":{"web":{"tunnel":{"limits":{"http":{"total":-1}}}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      tunnel:\n        limits:\n          http: {total: -1}\n", "positive safe integers"},
+		"missing rate period":        {`{"version":1,"tnl":{"tunnel":{"limits":{"http":{"rate":{"count":2}}}}}}`, "version: 1\ntnl:\n  tunnel:\n    limits:\n      http:\n        rate: {count: 2}\n", "rate requires count and per"},
 		"retired request limit":      {`{"version":1,"tnl":{"tunnel":{"request_limit":2}}}`, "version: 1\ntnl:\n  tunnel:\n    request_limit: 2\n", "request_limit"},
 		"invalid inspection":         {`{"version":1,"tnl":{"inspection":{"mode":"all"}}}`, "version: 1\ntnl:\n  inspection: {mode: all}\n", "inspection: mode must be none or summary"},
 		"invalid service inspection": {`{"version":1,"tnl":{"services":{"web":{"inspection":{"mode":"all"}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      inspection: {mode: all}\n", "services.web.inspection: mode must be none or summary"},
@@ -354,9 +356,9 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"service team":               {`{"version":1,"tnl":{"services":{"web":{"team":"studio"}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      team: studio\n", "team"},
 		"service feedback":           {`{"version":1,"tnl":{"services":{"web":{"feedback":true}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      feedback: true\n", "feedback"},
 		"obsolete subdomain":         {`{"version":1,"tnl":{"tunnel":{"subdomain":"api"}}}`, "version: 1\ntnl:\n  tunnel:\n    subdomain: api\n", "subdomain"},
-		"target":                     {`{"version":1,"tnl":{"publish":{"target":"https://example.com/path"}}}`, "version: 1\ntnl:\n  publish:\n    target: https://example.com/path\n", "publish.target:"},
-		"ip":                         {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.7/24"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.7/24]\n", "must be a canonical IP address or prefix"},
-		"duplicate":                  {`{"version":1,"tnl":{"tunnel":{"allow_ip":["192.0.2.1","192.0.2.1/32"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_ip: [192.0.2.1, 192.0.2.1/32]\n", "is duplicated"},
+		"target":                     {`{"version":1,"tnl":{"services":{"web":{"target":{"type":"address","address":"https://example.com/path"}}}}}`, "version: 1\ntnl:\n  services:\n    web:\n      target: {type: address, address: https://example.com/path}\n", "target.address:"},
+		"ip":                         {`{"version":1,"tnl":{"tunnel":{"access":{"ip":["192.0.2.7/24"]}}}}`, "version: 1\ntnl:\n  tunnel:\n    access: {ip: [192.0.2.7/24]}\n", "distinct canonical addresses or prefixes"},
+		"duplicate":                  {`{"version":1,"tnl":{"tunnel":{"access":{"ip":["192.0.2.1","192.0.2.1/32"]}}}}`, "version: 1\ntnl:\n  tunnel:\n    access: {ip: [192.0.2.1, 192.0.2.1/32]}\n", "distinct canonical addresses or prefixes"},
 		"obsolete provider grant":    {`{"version":1,"tnl":{"tunnel":{"allow_providers":["stripe"]}}}`, "version: 1\ntnl:\n  tunnel:\n    allow_providers: [stripe]\n", "allow_providers"},
 		"unknown webhook provider":   {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","provider":"other"}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n      provider: other\n", "provider must be"},
 		"missing webhook provider":   {`{"version":1,"tnl":{"services":{"api":{}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe"}}}}`, "version: 1\ntnl:\n  services:\n    api: {}\n  webhooks:\n    stripe:\n      service: api\n      path: /hooks/stripe\n", "provider must be"},

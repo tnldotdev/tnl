@@ -15,6 +15,7 @@ import (
 
 // Config contains settings for the built-in authority API.
 type Config struct {
+	ControlURL           string
 	OIDCIssuer           string
 	WebServiceSecret     string
 	ManagedDomain        string

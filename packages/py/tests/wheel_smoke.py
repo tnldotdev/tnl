@@ -11,32 +11,67 @@ from starlette.types import Receive, Scope, Send
 import tnl
 from tnl import _asgi
 from tnl._native import NativeRuntime
+from tnl._protocol import Endpoint
 
 
 class NativeStub(NativeRuntime):
     def __init__(self) -> None:
         self.events: list[str] = []
         self.target = ""
+        self.registration: dict[str, object] = {}
+        self.invocation_id = ""
 
-    async def start(self, directory: str) -> str:
-        return "/unused/native.sock"
+    async def start(
+        self,
+        directory: str,
+        *,
+        service: str | None = None,
+        invocation_id: str | None = None,
+        state_dir: str | None = None,
+    ) -> Endpoint:
+        self.invocation_id = invocation_id or ""
+        return Endpoint(
+            "http://127.0.0.1:1234", "b" * 64, "a" * 32, "invocation", invocation_id=invocation_id
+        )
 
-    async def request(self, socket: str, operation: str, payload: dict[str, object]) -> object:
-        if operation == "register":
+    async def request(
+        self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
+    ) -> object:
+        if operation == "ad-hoc/register":
+            assert payload is not None
             self.events.append("register")
             self.target = str(payload["target"])
+            self.registration = {
+                "version": 1,
+                "registration_id": "reg_" + "a" * 32,
+                "owner": payload["owner"],
+                "target": self.target,
+            }
+            return self.registration
         if operation == "unregister":
             self.events.append("unregister")
             return None
         if operation == "renew":
             return None
         return {
-            "version": 1,
-            "registration_id": payload["registration_id"],
-            "state": "routable",
-            "public_url_id": "url_wheel_smoke",
-            "public_url": "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test",
-            "publish_run_number": 1,
+            "schema_version": 1,
+            "project": "/project",
+            "cursor": "cursor",
+            "observed_at": "2026-10-14T12:00:00Z",
+            "services": [
+                {
+                    "service": self.invocation_id,
+                    "directory": ".",
+                    "registration_id": self.registration["registration_id"],
+                    "target": self.target,
+                    "registered": True,
+                    "routable": True,
+                    "ready": False,
+                    "readiness": {"path": "/"},
+                    "public_url": "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test",
+                    "publish_run_number": 1,
+                }
+            ],
         }
 
 
@@ -66,11 +101,7 @@ async def main() -> None:
             await send({"type": "websocket.send", "text": str(message["text"])})
             await send({"type": "websocket.close", "code": 1000})
 
-    async with tnl.open(
-        app,
-        credential="tnl_eph_" + "A" * 22 + "." + "B" * 43,
-        limits=tnl.Limits(requests=2),
-    ) as tunnel:
+    async with tnl.open(app) as tunnel:
         assert tunnel.url == "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test"
         async with httpx.AsyncClient() as client:
             response = await client.get(native.target + "/")

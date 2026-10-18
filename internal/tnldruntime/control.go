@@ -22,8 +22,15 @@ import (
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
-func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) controlapi.Config {
+func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client, visitorIssuerSeed ...string) controlapi.Config {
+	seed := ""
+	if len(visitorIssuerSeed) == 1 {
+		seed = visitorIssuerSeed[0]
+	}
 	return controlapi.Config{
+		TrafficDefaults:                   cfg.TrafficDefaults(),
+		TrafficCeiling:                    cfg.TrafficCeiling(),
+		VisitorIssuerSeed:                 seed,
 		Role:                              cfg.Role,
 		ManagedDomain:                     cfg.ManagedDomain,
 		ManagedURLMode:                    cfg.ManagedURLMode,
@@ -47,6 +54,7 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) contro
 
 func authorityAPIConfigFrom(cfg tnldconfig.Config, verifier, browserVerifier oidcauth.Verifier) authorityapi.Config {
 	return authorityapi.Config{
+		ControlURL: cfg.ControlOrigin(),
 		OIDCIssuer: cfg.OIDCIssuer, WebServiceSecret: cfg.WebServiceSecret,
 		ManagedDomain:        cfg.ManagedDomain,
 		CustomDomainsEnabled: cfg.CustomDomainsEnabled,
@@ -68,8 +76,9 @@ func newPublicAPIHandler(
 	metrics *observability.Metrics,
 	d *daemon,
 	route53Readiness func(context.Context) error,
+	visitorIssuerSeed ...string,
 ) (http.Handler, error) {
-	controlConfig := controlAPIConfigFrom(cfg, httpClient)
+	controlConfig := controlAPIConfigFrom(cfg, httpClient, visitorIssuerSeed...)
 	controlConfig.StartedAt = startedAt
 	controlConfig.Metrics = metrics
 	controlConfig.Route53CredentialsReadiness = route53Readiness
@@ -139,6 +148,28 @@ func (d *daemon) startControl(listenAddress string, requireProxyHeader bool, han
 	d.start("serve control API", func() error { return serveTLS(d.controlServer, publicListener) })
 	log.Printf("control API listening on %s", listener.Addr())
 	return nil
+}
+
+// startVisitorPermissionWorkers uses the daemon component lifetime, so expiry
+// stops before the database pool is closed during shutdown.
+func (d *daemon) startVisitorPermissionWorkers(lifetime context.Context) {
+	d.start("expire visitor IP grants", func() error {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-lifetime.Done():
+				return nil
+			case now := <-ticker.C:
+				ctx, cancel := context.WithTimeout(lifetime, 10*time.Second)
+				err := d.database.ExpireVisitorPermissions(ctx, now)
+				cancel()
+				if err != nil && lifetime.Err() == nil {
+					log.Print("visitor IP expiry failed; retrying")
+				}
+			}
+		}
+	})
 }
 
 type privateControlSettings struct {

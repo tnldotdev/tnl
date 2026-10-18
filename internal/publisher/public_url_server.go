@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,8 +18,8 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
-	projectconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
@@ -33,31 +32,39 @@ import (
 
 // PublicURLServerConfig configures publisher TLS termination and local HTTP forwarding.
 type PublicURLServerConfig struct {
-	Hostname              string
-	PreviewID             string
-	PublicURLID           string
-	PublishRunNumber      uint64
-	Target                string
-	ServiceProtocol       controlv1.PublicURLServiceProtocol
-	PublicPort            uint16
-	TargetTLSName         string
-	TargetTLS             bool
-	VisitorTLSPassthrough bool
-	TargetOptions         localproxy.TargetOptions
-	Handler               http.Handler
-	AdmitRequest          func(*http.Request) error
-	ObserveResponse       func(*http.Response) error
-	Mounts                []localproxy.Mount
-	ShareAccess           *shareAccess
-	BrowserAccess         *browserAccess
-	Feedback              *feedbackRuntime
-	RequestLimit          int // zero selects localproxy.DefaultRequestLimit.
-	Limits                ApplicationLimits
-	OnTargetFailure       func()
-	ObserveRequest        func(RequestObservation)
-	InspectionMode        projectconfig.InspectionMode
-	Certificate           tls.Certificate
-	CertificatePlan       controlv1.CertificatePlan
+	Hostname                    string
+	PreviewID                   string
+	PublicURLID                 string
+	PublishRunNumber            uint64
+	PublishRunID                string
+	Target                      string
+	ResolveTarget               func(context.Context) (string, string, error)
+	ServiceProtocol             controlv1.PublicURLServiceProtocol
+	Purpose                     controlv1.PublicURLPurpose
+	AccessMode                  controlv1.VisitorAccessMode
+	PublicPort                  uint16
+	TargetTLSName               string
+	TargetTLS                   bool
+	TargetOptions               localproxy.TargetOptions
+	Handler                     http.Handler
+	AdmitRequest                func(*http.Request) error
+	ObserveResponse             func(*http.Response) error
+	Mounts                      []localproxy.Mount
+	ShareAccess                 *shareAccess
+	BrowserAccess               *browserAccess
+	BrowserLoginAvailable       bool
+	Feedback                    *feedbackRuntime
+	Limits                      ApplicationLimits
+	OnTargetFailure             func()
+	ObserveSummary              inspection.Observer
+	PromoteVisitor              PromoteVisitor
+	AdmitVisitor                AdmitVisitor
+	AuthorizeVisitorCertificate AuthorizeVisitorCertificate
+	ReadinessProof              *ReadinessProof
+	OnWarning                   func(string)
+	InspectionMode              inspection.Mode
+	Certificate                 tls.Certificate
+	CertificatePlan             controlv1.CertificatePlan
 }
 
 type PublicURLServer struct {
@@ -81,6 +88,13 @@ type PublicURLServer struct {
 	closeOnce          sync.Once
 	closeErr           error
 	admission          *applicationAdmission
+	run                PublishRunIdentity
+	promote            PromoteVisitor
+	defaultPromote     PromoteVisitor
+	guard              AdmitVisitor
+	life               context.Context
+	cancel             context.CancelFunc
+	sessions           [publisherConnectionCount]*livePublisherSession
 
 	// certificate transactions retain challenge identity across lost control responses.
 	challengeIssuanceID string
@@ -100,7 +114,7 @@ type observedResponseWriter struct {
 func (w *observedResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *observedResponseWriter) WriteHeader(status int) {
-	if w.status == 0 && status >= http.StatusOK {
+	if w.status == 0 && (status >= http.StatusOK || status == http.StatusSwitchingProtocols) {
 		w.status = status
 	}
 	w.ResponseWriter.WriteHeader(status)
@@ -114,18 +128,13 @@ func (w *observedResponseWriter) Write(data []byte) (int, error) {
 	return n, err
 }
 
-// RequestObservation holds local HTTP observations for the CLI inspector.
-type RequestObservation struct {
-	ReceivedAt time.Time
-	Method     string
-	Path       string
-	Status     int
-	Duration   time.Duration
-	Origin     string
-}
-
 // NewPublicURLServer creates a public URL server served by publisher connections.
 func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) {
+	if config.ServiceProtocol == "" || config.ServiceProtocol == controlv1.Http {
+		if config.TargetTLSName != "" {
+			config.TargetOptions.ServerName = config.TargetTLSName
+		}
+	}
 	hostname, err := naming.CanonicalizeHostname(config.Hostname)
 	if err != nil || hostname != config.Hostname {
 		return nil, errors.New("publisher: public URL hostname must be canonical")
@@ -133,20 +142,15 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.InspectionMode != "" && !config.InspectionMode.Valid() {
 		return nil, errors.New("publisher: request inspection mode must be none or summary")
 	}
-	if config.RequestLimit < 0 {
-		return nil, errors.New("publisher: request limit cannot be negative")
-	}
 	forwarding, err := newTCPForwarding(config)
 	if err != nil {
 		return nil, err
 	}
-	if config.Limits.Concurrency == 0 {
-		config.Limits.Concurrency = config.RequestLimit
-	}
-	admission, err := newApplicationAdmission(config.Limits)
+	admission, err := newApplicationAdmission(config.Limits, forwarding != nil)
 	if err != nil {
 		return nil, err
 	}
+	config.Limits = admission.limits
 	if forwarding != nil {
 		forwarding.admission = admission
 	}
@@ -167,24 +171,35 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	} else if config.Handler != nil {
 		handler = config.Handler
 	} else {
-		handler, err = localproxy.NewWithMountsHooksOptionsAdmitted(config.Target, hostname, config.Limits.Concurrency, config.Mounts,
-			localproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
-				if request != nil {
-					if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
-						forwarded.Store(true)
-					}
+		hooks := localproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
+			if request != nil {
+				if forwarded, ok := request.Context().Value(responseOriginKey{}).(*atomic.Bool); ok {
+					forwarded.Store(true)
 				}
-			}}, config.TargetOptions, config.OnTargetFailure)
+			}
+		}}
+		if config.ResolveTarget != nil {
+			handler, err = localproxy.NewWithMountsHooksOptionsAdmittedDynamic(config.Target, hostname, config.Limits.Concurrency, config.Mounts, hooks, config.TargetOptions,
+				func(request *http.Request) (string, string, error) { return config.ResolveTarget(request.Context()) }, config.OnTargetFailure)
+		} else {
+			handler, err = localproxy.NewWithMountsHooksOptionsAdmitted(config.Target, hostname, config.Limits.Concurrency, config.Mounts, hooks, config.TargetOptions, config.OnTargetFailure)
+		}
 		if err != nil {
 			return nil, err
 		}
 	}
 	queue := newRouteListener()
 	shareSlots := make(chan struct{}, 16)
+	probeSlots := make(chan struct{}, 4)
+	life, cancelLife := context.WithCancel(context.Background())
 	route := &PublicURLServer{
-		hostname:        hostname,
-		tcp:             forwarding,
-		admission:       admission,
+		hostname:  hostname,
+		tcp:       forwarding,
+		admission: admission,
+		run:       PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber},
+		promote:   config.PromoteVisitor,
+		guard:     config.AdmitVisitor,
+		life:      life, cancel: cancelLife,
 		certificatePlan: config.CertificatePlan,
 		queue:           queue,
 		tls: &tls.Config{
@@ -194,7 +209,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		},
 		http: &http.Server{
 			Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				if config.ObserveRequest != nil && config.InspectionMode != projectconfig.InspectionNone && !sharePath(request.URL.EscapedPath()) {
+				if config.ObserveSummary != nil && config.InspectionMode != inspection.None && !strings.HasPrefix(request.URL.Path, "/__tnl/") {
 					started := time.Now()
 					forwarded := &atomic.Bool{}
 					request = request.WithContext(context.WithValue(request.Context(), responseOriginKey{}, forwarded))
@@ -213,13 +228,18 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						if status == 0 {
 							status = http.StatusOK
 						}
-						config.ObserveRequest(RequestObservation{ReceivedAt: started.UTC(), Method: request.Method,
-							Path: path, Status: status, Duration: time.Since(started), Origin: origin})
+						config.ObserveSummary(inspection.Summary{Protocol: "http", ReceivedAt: started.UTC(), Method: request.Method,
+							Path: path, Status: status, Result: inspection.HTTPResult(status), Duration: time.Since(started), Origin: origin})
 					}()
 				}
 				if code := localproxy.ValidateRequest(request, hostname); code != "" {
 					diagnostic.WriteHTTP(response, request, code)
 					return
+				}
+				proof := config.ReadinessProof.consume(request, PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber})
+				request.Header.Del(localproxy.ReadinessProbeHeader)
+				if proof {
+					request = localproxy.WithReadinessProbe(request)
 				}
 				if config.AdmitRequest != nil {
 					if err := config.AdmitRequest(request); err != nil {
@@ -249,7 +269,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						return
 					}
 					if config.ShareAccess == nil {
-						diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
 						return
 					}
 					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
@@ -257,7 +277,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 					redemption, err := config.ShareAccess.redeem(request.Context(), request.URL.EscapedPath())
 					if err != nil {
-						diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
 						return
 					}
 					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
@@ -285,57 +305,80 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						}
 					}
 				}
+				// the publisher can inspect browser credentials that ingress cannot.
+				// check each request against the bounded, run-scoped decision,
+				// including requests on an already-promoted visitor connection.
+				serverPermitted := false
 				browser := controlv1.BrowserAccessResponse{}
-				browserPermitted := false
-				if config.BrowserAccess != nil {
-					browser, browserPermitted = config.BrowserAccess.check(request)
+				if !proof && config.BrowserAccess != nil {
+					decision, err := config.BrowserAccess.decision(request)
+					if err == nil {
+						serverPermitted = decision.VisitAllowed
+						if decision.IdentityId != nil && decision.DisplayName != nil {
+							browser = controlv1.BrowserAccessResponse{IdentityId: *decision.IdentityId, DisplayName: *decision.DisplayName,
+								TeamMember: decision.TeamMember && decision.VisitAllowed, VisitAllowed: decision.VisitAllowed}
+							request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
+						}
+					}
 				}
-				if browserPermitted {
-					request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
-				}
-				allowed := !denied || sharePermitted || browserPermitted && browser.TeamMember
+				// cached share state is only a hint for the browser UI. the bounded
+				// control decision, including its revocation deadline, owns admission.
+				sharePermitted = sharePermitted && serverPermitted
+				integrationRequest := (config.Purpose == controlv1.Oauth || config.Purpose == controlv1.Webhooks) && config.AccessMode == controlv1.Anonymous && !denied
+				allowed := proof || serverPermitted || integrationRequest
 				if request.URL.Path == "/__tnl/access" {
 					if request.Method != http.MethodGet || config.PreviewID == "" {
 						http.NotFound(response, request)
 						return
 					}
-					result := previewAccessStatus(config, denied, sharePermitted, browserPermitted && browser.TeamMember, shareExpiry)
+					result := previewAccessStatus(config, serverPermitted, sharePermitted, serverPermitted && browser.TeamMember, shareExpiry)
 					request = request.WithContext(context.WithValue(request.Context(), accessStatusContextKey{}, result))
 					(&feedbackHTTP{}).GetBrowserAccessStatus(response, request)
 					return
 				}
 				if !allowed {
-					if !browserPermitted && config.BrowserAccess != nil && config.BrowserAccess.shares.permitsTeamLogin() &&
-						request.Method == http.MethodGet && strings.Contains(request.Header.Get("Accept"), "text/html") {
-						response.Header().Set("Cache-Control", "no-store")
-						response.Header().Set("Referrer-Policy", "no-referrer")
-						http.Redirect(response, request, "/__tnl/team/login?return="+url.QueryEscape(request.URL.RequestURI()), http.StatusSeeOther)
+					if config.BrowserLoginAvailable && config.BrowserAccess != nil && config.BrowserAccess.redirectRestricted(response, request) {
 						return
 					}
-					diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+					diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
 					return
 				}
-				if denied {
-					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
-						_ = connection.SetDeadline(time.Time{})
-					}
-				}
 				if config.Feedback != nil {
-					if config.Feedback.handle(response, request, denied) {
+					if config.Feedback.handle(response, request, !allowed) {
 						return
 					}
 					request = config.Feedback.prepareBrowser(response, request)
 				}
-				if config.ShareAccess != nil || config.Feedback != nil || config.BrowserAccess != nil {
-					request = stripTnlCookies(request)
+				request = stripTnlCookies(request)
+				request.Header.Del(shareAccessHeaderName)
+				if proof {
+					select {
+					case probeSlots <- struct{}{}:
+						defer func() { <-probeSlots }()
+					default:
+						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+						return
+					}
+					probeCtx, cancel := context.WithTimeout(request.Context(), 5*time.Second)
+					defer cancel()
+					request = request.WithContext(probeCtx)
+					if session, _ := request.Context().Value(visitorSessionKey{}).(*visitorSession); session != nil {
+						if err := session.admit(probeCtx, true); err != nil {
+							diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+							return
+						}
+					}
+					handler.ServeHTTP(response, request)
+					return
 				}
-				if status, retryAfter := admission.enter(time.Now()); status != 0 {
+				release, status, retryAfter := admission.acquire(request.Context())
+				if status != 0 {
 					if request.ProtoMajor == 1 {
 						// avoid draining an unread body before sending the rejection.
 						response.Header().Set("Connection", "close")
 					}
 					if retryAfter > 0 {
-						response.Header().Set("Retry-After", strconv.FormatInt(int64((retryAfter+time.Second-1)/time.Second), 10))
+						response.Header().Set("Retry-After", strconv.FormatInt(retryAfterSeconds(retryAfter), 10))
 					}
 					switch status {
 					case http.StatusTooManyRequests:
@@ -349,7 +392,18 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 					return
 				}
-				defer admission.leave()
+				if session, _ := request.Context().Value(visitorSessionKey{}).(*visitorSession); session != nil {
+					if err := session.admit(request.Context(), proof); err != nil {
+						admission.refund()
+						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+						return
+					}
+				}
+				if request.Context().Err() != nil {
+					admission.refund()
+					return
+				}
+				defer release()
 				handler.ServeHTTP(response, request)
 			}),
 			ConnContext: func(ctx context.Context, connection net.Conn) context.Context {
@@ -357,6 +411,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					if tracked, ok := secured.NetConn().(*doneConn); ok {
 						if metadata, ok := tracked.Conn.(*metadataConn); ok {
 							ctx = context.WithValue(ctx, shareConnectionKey{}, secured)
+							ctx = context.WithValue(ctx, visitorSessionKey{}, metadata.session)
 							return context.WithValue(ctx, denialContextKey{}, metadata.denied)
 						}
 					}
@@ -375,6 +430,13 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		httpDone:           make(chan error, 1),
 		certificateExpired: make(chan struct{}),
 		streams:            make(map[net.Conn]struct{}),
+	}
+	transportPromote := tunnel.NewVisitorPromoter(func(v Visitor) tunnelv1.VisitorStreamHeader { return v.Header }, route.resolvePublisherSession)
+	route.defaultPromote = func(ctx context.Context, visitor Visitor) error {
+		if route.resolvePublisherSession(visitor.Header.PublisherConnectionID) == nil {
+			return &tunnel.ProtocolError{Code: tunnelv1.Unavailable}
+		}
+		return transportPromote(ctx, visitor)
 	}
 	route.tls.GetCertificate = route.getCertificate
 	if len(config.Certificate.Certificate) != 0 || config.Certificate.PrivateKey != nil {
@@ -538,6 +600,12 @@ func (r *PublicURLServer) ServePublisherConnection(
 	if err := ref.Validate(); err != nil {
 		return err
 	}
+	live, err := r.registerPublisherSession(ctx, session, ref)
+	if err != nil {
+		return err
+	}
+	defer r.unregisterPublisherSession(live)
+	ctx = live.ctx
 	// bound header parsing while letting a slow or invalid stream coexist with
 	// healthy streams on the same publisher connection.
 	const headerReaders = 4
@@ -565,7 +633,7 @@ func (r *PublicURLServer) ServePublisherConnection(
 					_ = incoming.Stream.Close()
 					return
 				}
-				if err := r.acceptVisitor(incoming, ref); err != nil {
+				if err := r.acceptVisitorContext(acceptCtx, incoming, ref); err != nil {
 					results <- err
 					return
 				}
@@ -583,7 +651,7 @@ func (r *PublicURLServer) ServePublisherConnection(
 	}
 }
 
-func (r *PublicURLServer) acceptVisitor(incoming *tunnel.IncomingVisitorStream, ref tunnelv1.PublisherConnectionRef) error {
+func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tunnel.IncomingVisitorStream, ref tunnelv1.PublisherConnectionRef) error {
 	code := r.validateIncomingPublicURL(incoming.Header, ref)
 	r.mu.Lock()
 	if r.closed || r.draining {
@@ -611,7 +679,7 @@ func (r *PublicURLServer) acceptVisitor(incoming *tunnel.IncomingVisitorStream, 
 			delete(r.streams, incoming.Stream)
 			r.mu.Unlock()
 		}()
-		r.handleVisitor(incoming.Stream, incoming.Header.IPPolicyDenied)
+		r.handleVisitorHeaderContext(ctx, incoming.Stream, incoming.Header.AccessPending, incoming.Header)
 	}()
 	return nil
 }
@@ -645,6 +713,9 @@ func (r *PublicURLServer) stopAdmissions() {
 
 func (r *PublicURLServer) Close() error {
 	r.closeOnce.Do(func() {
+		if r.cancel != nil {
+			r.cancel()
+		}
 		r.mu.Lock()
 		r.closed = true
 		if r.certificateTimer != nil {
@@ -686,16 +757,51 @@ func (r *PublicURLServer) handle(connection net.Conn) {
 }
 
 func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
+	r.handleVisitorHeader(connection, denied, tunnelv1.VisitorStreamHeader{})
+}
+
+func (r *PublicURLServer) handleVisitorHeader(connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader) {
+	r.handleVisitorHeaderContext(r.life, connection, denied, streamHeader)
+}
+
+func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader) {
 	defer connection.Close()
+	if parent == nil {
+		parent = context.Background()
+	}
+	life, cancel := context.WithCancel(parent)
+	defer cancel()
+	stopClose := context.AfterFunc(life, func() { _ = connection.Close() })
+	defer stopClose()
 	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
 	header, replay, err := proxyproto.Decode(connection)
 	if err != nil {
 		return
 	}
-	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied}
+	promote := r.promote
+	if promote == nil && streamHeader.PublisherConnectionID != "" {
+		promote = r.defaultPromote
+	}
+	streamHeader.AccessPending = denied
+	session := &visitorSession{visitor: Visitor{Run: r.run, Header: streamHeader, Source: header.Source, Destination: header.Destination}, promote: promote, guard: r.guard, life: life, cancel: cancel}
+	defer session.close()
+	var pendingTimer *time.Timer
+	if denied {
+		pendingTimer = time.AfterFunc(visitorPromotionTimeout, cancel)
+		defer pendingTimer.Stop()
+	}
+	session.onPromoted = func() {
+		if pendingTimer != nil {
+			pendingTimer.Stop()
+		}
+		// net/http owns request-body read deadlines. clearing both deadlines
+		// here would let incomplete bodies hold application slots indefinitely.
+		_ = connection.SetWriteDeadline(time.Time{})
+	}
+	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied, session: session}
 	if r.tcp != nil {
 		if header.Destination.Port() == r.tcp.publicPort {
-			if !denied {
+			if !denied || r.tcp.protocol != controlv1.Ssh {
 				select {
 				case <-r.admission.completed:
 					return
@@ -708,7 +814,7 @@ func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
 						return
 					}
 				}
-				r.tcp.forward(metadata, r.tls, r.hostname)
+				r.tcp.forward(metadata, r.tls, session)
 			}
 			return
 		}
@@ -719,15 +825,15 @@ func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
 	}
 	tracked := newDoneConn(metadata)
 	secured := tls.Server(tracked, r.tls)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancelHandshake := context.WithTimeout(life, 10*time.Second)
 	err = secured.HandshakeContext(ctx)
-	cancel()
+	cancelHandshake()
 	if err != nil {
 		_ = secured.Close()
 		return
 	}
 	if denied {
-		_ = secured.SetDeadline(time.Now().Add(5 * time.Second))
+		_ = secured.SetDeadline(time.Now().Add(visitorPromotionTimeout))
 	} else {
 		_ = secured.SetDeadline(time.Time{})
 	}
@@ -813,9 +919,20 @@ func (c *publicURLReaderConn) Read(destination []byte) (int, error) {
 
 type metadataConn struct {
 	net.Conn
-	header proxyproto.Header
-	denied bool
+	header  proxyproto.Header
+	denied  bool
+	session *visitorSession
 }
+
+func (c *metadataConn) Close() error {
+	if c.session != nil && c.session.cancel != nil {
+		c.session.cancel()
+	}
+	return c.Conn.Close()
+}
+
+func (c *publicURLReaderConn) CloseWrite() error { return closeWrite(c.Conn) }
+func (c *metadataConn) CloseWrite() error        { return closeWrite(c.Conn) }
 
 func (c *metadataConn) RemoteAddr() net.Addr { return tcpAddress(c.header.Source) }
 func (c *metadataConn) LocalAddr() net.Addr  { return tcpAddress(c.header.Destination) }

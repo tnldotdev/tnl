@@ -277,7 +277,7 @@ func (q *Queries) CompleteACMEAuthorizationCleanup(ctx context.Context, arg Comp
 }
 
 const deleteControlTLSCacheEntry = `-- name: DeleteControlTLSCacheEntry :exec
-DELETE FROM control.control_tls_cache
+DELETE FROM control.control_tls_certificate_cache
 WHERE directory_url = $1
   AND cache_key = $2
 `
@@ -506,7 +506,7 @@ func (q *Queries) GetCertificateOrderDomainKind(ctx context.Context, publicUrlID
 
 const getControlTLSCacheEntry = `-- name: GetControlTLSCacheEntry :one
 SELECT cache_ciphertext, cache_storage_key_id
-FROM control.control_tls_cache
+FROM control.control_tls_certificate_cache
 WHERE directory_url = $1
   AND cache_key = $2
 `
@@ -529,7 +529,7 @@ func (q *Queries) GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLS
 }
 
 const getPublishRunByTokenID = `-- name: GetPublishRunByTokenID :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open, request_digest_ciphertext, request_digest_storage_key_id, share_capable
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE publish_run_token_id = $1
 `
@@ -545,6 +545,9 @@ func (q *Queries) GetPublishRunByTokenID(ctx context.Context, publishRunTokenID 
 		&i.ActingIdentityID,
 		&i.PublishRunNumber,
 		&i.IdempotencyKey,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
+		&i.ShareCapable,
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
@@ -553,6 +556,7 @@ func (q *Queries) GetPublishRunByTokenID(ctx context.Context, publishRunTokenID 
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
 		&i.CertificateChallengeMethod,
+		&i.TrafficLimits,
 		&i.State,
 		&i.CreatedAt,
 		&i.LastHeartbeatAt,
@@ -564,9 +568,6 @@ func (q *Queries) GetPublishRunByTokenID(ctx context.Context, publishRunTokenID 
 		&i.ClosedAt,
 		&i.CloseReason,
 		&i.AssignmentsOpen,
-		&i.RequestDigestCiphertext,
-		&i.RequestDigestStorageKeyID,
-		&i.ShareCapable,
 	)
 	return i, err
 }
@@ -900,7 +901,7 @@ func (q *Queries) LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrder
 const lockCertificateIssuanceControl = `-- name: LockCertificateIssuanceControl :one
 SELECT allowed
 FROM control.maintenance_controls
-WHERE control_name = 'certificate_issuance'
+WHERE operation = 'certificate_issuance'
 FOR SHARE
 `
 
@@ -992,7 +993,7 @@ func (q *Queries) MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderI
 }
 
 const putControlTLSCacheEntry = `-- name: PutControlTLSCacheEntry :exec
-INSERT INTO control.control_tls_cache (
+INSERT INTO control.control_tls_certificate_cache (
     directory_url,
     cache_key,
     cache_ciphertext,
@@ -1062,7 +1063,7 @@ func (q *Queries) RotateACMEAccountKey(ctx context.Context, arg RotateACMEAccoun
 }
 
 const rotateControlTLSCacheEntry = `-- name: RotateControlTLSCacheEntry :exec
-UPDATE control.control_tls_cache
+UPDATE control.control_tls_certificate_cache
 SET cache_ciphertext = $1,
     cache_storage_key_id = $2,
     updated_at = $3

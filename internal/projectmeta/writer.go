@@ -137,8 +137,15 @@ func renderDeclarations(metadata Metadata) []byte {
 		output.WriteString(typeScriptString(service.Namespace))
 		output.WriteString(";\n        readonly hostname: ")
 		output.WriteString(typeScriptString(service.Hostname))
-		output.WriteString(";\n        readonly url: ")
-		output.WriteString(typeScriptString(service.URL))
+		output.WriteString(";\n        readonly protocol: ")
+		output.WriteString(typeScriptString(service.Protocol))
+		if service.Protocol == "http" {
+			output.WriteString(";\n        readonly url: ")
+			output.WriteString(typeScriptString(service.URL))
+		} else {
+			output.WriteString(";\n        readonly address: " + typeScriptString(service.Address))
+			output.WriteString(fmt.Sprintf(";\n        readonly port: %d", *service.Port))
+		}
 		output.WriteString(";\n")
 		if len(service.Paths) > 0 {
 			output.WriteString("        readonly paths: {\n")

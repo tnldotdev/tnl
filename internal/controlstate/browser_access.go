@@ -18,22 +18,25 @@ import (
 const browserSessionLifetime = 24 * time.Hour
 
 type BrowserLoginAttempt struct {
-	PreviewID   string
-	PublicURLID string
-	ReturnPath  string
-	Nonce       string
-	Verifier    string
+	PublishRunID string
+	PreviewID    string
+	PublicURLID  string
+	ReturnPath   string
+	Nonce        string
+	Verifier     string
 }
 
 type BrowserAccessSession struct {
-	PreviewID       string
-	PublicURLID     string
-	IdentityID      string
-	DisplayName     string
-	AccessToken     string
-	RefreshToken    string
-	AccessExpiresAt time.Time
-	ExpiresAt       time.Time
+	TeamMember             bool
+	ParentControlSessionID string
+	PreviewID              string
+	PublicURLID            string
+	IdentityID             string
+	DisplayName            string
+	AccessToken            string
+	RefreshToken           string
+	AccessExpiresAt        time.Time
+	ExpiresAt              time.Time
 }
 
 type BrowserTokenRotation struct {
@@ -69,7 +72,7 @@ func browserDigest(token string) ([]byte, error) {
 func browserContext(digest []byte) string { return "browser-access:" + hex.EncodeToString(digest) }
 
 func (d *Database) BeginBrowserLogin(ctx context.Context, previewID, publicURLID, path, nonce, verifier string, browserBinding []byte, now time.Time) (string, error) {
-	if !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) || !opaqueid.Valid(publicURLID, opaqueid.PublicURLPrefix) ||
+	if previewID != "" && !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) || !opaqueid.Valid(publicURLID, opaqueid.PublicURLPrefix) ||
 		!validFeedbackPath(path) || len(path) > 2048 || len(nonce) < 16 || len(nonce) > 256 || len(verifier) < 43 || len(verifier) > 128 || len(browserBinding) != 32 {
 		return "", ErrPreviewAccess
 	}
@@ -87,12 +90,26 @@ func (d *Database) BeginBrowserLogin(ctx context.Context, previewID, publicURLID
 		return "", err
 	}
 	queries := controlstatedb.New(d.pool)
+	hosts, err := queries.ReadyBrowserHosts(ctx, controlstatedb.ReadyBrowserHostsParams{PublicURLID: publicURLID, PreviewID: previewID, Now: timestamptz(now)})
+	if err != nil {
+		return "", err
+	}
+	runID := ""
+	for _, host := range hosts {
+		if host.PublicURLID == publicURLID {
+			runID = host.PublishRunID
+		}
+	}
+	if runID == "" {
+		return "", ErrPreviewAccess
+	}
 	if err := queries.CleanupBrowserAccess(ctx, timestamptz(now)); err != nil {
 		return "", fmt.Errorf("controlstate: expire browser logins: %w", err)
 	}
 	if err := queries.InsertBrowserLoginAttempt(ctx, controlstatedb.InsertBrowserLoginAttemptParams{
-		StateDigest: digest, BindingDigest: bindingDigest[:], PreviewID: previewID, PublicURLID: publicURLID,
-		ReturnPath: path, Nonce: nonce, VerifierCiphertext: sealed,
+		StateDigest: digest, BindingDigest: bindingDigest[:], PreviewID: nullableText(previewID), PublicURLID: publicURLID,
+		PublishRunID: runID,
+		ReturnPath:   path, Nonce: nonce, VerifierCiphertext: sealed,
 		VerifierStorageKeyID: d.storageKey.CurrentID(), ExpiresAt: timestamptz(now.Add(5 * time.Minute)),
 	}); err != nil {
 		return "", fmt.Errorf("controlstate: start browser login: %w", err)
@@ -119,14 +136,15 @@ func (d *Database) ConsumeBrowserLogin(ctx context.Context, state string, browse
 	if err != nil {
 		return BrowserLoginAttempt{}, err
 	}
-	return BrowserLoginAttempt{PreviewID: row.PreviewID, PublicURLID: row.PublicURLID,
-		ReturnPath: row.ReturnPath, Nonce: row.Nonce, Verifier: string(verifier)}, nil
+	return BrowserLoginAttempt{PreviewID: row.PreviewID.String, PublicURLID: row.PublicURLID,
+		PublishRunID: row.PublishRunID,
+		ReturnPath:   row.ReturnPath, Nonce: row.Nonce, Verifier: string(verifier)}, nil
 }
 
 func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLoginAttempt, session BrowserAccessSession, now time.Time) (BrowserHandoff, error) {
 	if d.storageKey == nil || session.IdentityID == "" || session.DisplayName == "" || session.AccessToken == "" ||
 		session.RefreshToken == "" || !session.AccessExpiresAt.After(now) || !session.ExpiresAt.After(now) ||
-		attempt.PreviewID == "" || attempt.PublicURLID == "" {
+		attempt.PublicURLID == "" {
 		return BrowserHandoff{}, ErrPreviewAccess
 	}
 	cookie, _, err := randomBrowserSecret()
@@ -153,8 +171,9 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	defer tx.Rollback(ctx)
 	queries := controlstatedb.New(tx)
 	if err := queries.InsertBrowserAccessSession(ctx, controlstatedb.InsertBrowserAccessSessionParams{
-		TokenDigest: cookieDigest, PreviewID: attempt.PreviewID, PublicURLID: attempt.PublicURLID,
-		IdentityID: session.IdentityID, DisplayName: session.DisplayName,
+		TokenDigest: cookieDigest, PreviewID: nullableText(attempt.PreviewID), PublicURLID: attempt.PublicURLID,
+		ParentControlSessionID: nullableText(session.ParentControlSessionID),
+		IdentityID:             session.IdentityID, DisplayName: session.DisplayName,
 		AccessCiphertext: access, RefreshCiphertext: refresh, StorageKeyID: d.storageKey.CurrentID(),
 		AccessExpiresAt: timestamptz(session.AccessExpiresAt), ExpiresAt: timestamptz(session.ExpiresAt),
 	}); err != nil {
@@ -165,13 +184,13 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 		return BrowserHandoff{}, fmt.Errorf("controlstate: read preview landing URL: %w", err)
 	}
 	next := "https://" + publicURL.CanonicalHostname + attempt.ReturnPath
-	hosts, err := queries.ListReadyPreviewBrowserHostnames(ctx, controlstatedb.ListReadyPreviewBrowserHostnamesParams{
-		PreviewID: attempt.PreviewID, Now: timestamptz(now),
+	hosts, err := queries.ReadyBrowserHosts(ctx, controlstatedb.ReadyBrowserHostsParams{
+		PublicURLID: attempt.PublicURLID, PreviewID: attempt.PreviewID, Now: timestamptz(now),
 	})
 	if err != nil {
 		return BrowserHandoff{}, fmt.Errorf("controlstate: list ready preview hostnames: %w", err)
 	}
-	issue := func(publicURLID, nextURL string, bridge bool) (string, error) {
+	issue := func(publicURLID, runID, nextURL string, bridge bool) (string, error) {
 		ticket, _, err := randomBrowserSecret()
 		if err != nil {
 			return "", err
@@ -183,24 +202,30 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 		}
 		if err := queries.InsertBrowserAccessHandoff(ctx, controlstatedb.InsertBrowserAccessHandoffParams{
 			TokenDigest: digest, SessionDigest: cookieDigest, PublicURLID: publicURLID,
+			PublishRunID:     runID,
 			CookieCiphertext: ciphertext, StorageKeyID: d.storageKey.CurrentID(),
-			ReturnPath: attempt.ReturnPath, NextUrl: nextURL, Bridge: bridge, ExpiresAt: timestamptz(now.Add(time.Minute)),
+			ReturnPath: attempt.ReturnPath, RedirectUrl: nextURL, Bridge: bridge, ExpiresAt: timestamptz(now.Add(time.Minute)),
 		}); err != nil {
 			return "", err
 		}
 		return ticket, nil
 	}
+	initialRunID := ""
 	for index, host := range hosts {
 		if host.PublicURLID == attempt.PublicURLID {
+			initialRunID = host.PublishRunID
 			continue
 		}
-		ticket, err := issue(host.PublicURLID, next, index%8 == 7)
+		ticket, err := issue(host.PublicURLID, host.PublishRunID, next, index%8 == 7)
 		if err != nil {
 			return BrowserHandoff{}, fmt.Errorf("controlstate: save other-host browser handoff: %w", err)
 		}
 		next = "https://" + host.CanonicalHostname + "/__tnl/team/handoff/" + ticket
 	}
-	firstToken, err := issue(attempt.PublicURLID, next, false)
+	if initialRunID == "" || attempt.PublishRunID != "" && attempt.PublishRunID != initialRunID {
+		return BrowserHandoff{}, ErrPreviewAccess
+	}
+	firstToken, err := issue(attempt.PublicURLID, initialRunID, next, false)
 	if err != nil {
 		return BrowserHandoff{}, fmt.Errorf("controlstate: save browser handoff: %w", err)
 	}
@@ -210,13 +235,29 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	return BrowserHandoff{Token: firstToken, PublicURLID: attempt.PublicURLID, ReturnPath: attempt.ReturnPath}, nil
 }
 
-func (d *Database) RedeemBrowserHandoff(ctx context.Context, publicURLID, token string, now time.Time) (string, string, string, bool, time.Time, error) {
+func (d *Database) RedeemBrowserHandoff(ctx context.Context, auth PublishRunAuthentication, token string, now time.Time) (string, string, string, bool, time.Time, error) {
 	digest, err := browserDigest(token)
 	if err != nil {
 		return "", "", "", false, time.Time{}, err
 	}
-	row, err := controlstatedb.New(d.pool).ConsumeBrowserAccessHandoff(ctx, controlstatedb.ConsumeBrowserAccessHandoffParams{
-		Now: timestamptz(now), TokenDigest: digest, PublicURLID: publicURLID,
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return "", "", "", false, time.Time{}, err
+	}
+	defer tx.Rollback(ctx)
+	queries := controlstatedb.New(tx)
+	publicURL, err := lockVisitorURL(ctx, queries, auth.PublicURLID)
+	if err != nil {
+		return "", "", "", false, time.Time{}, err
+	}
+	if publicURL.Purpose != "app" || publicURL.ServiceProtocol != "http" {
+		return "", "", "", false, time.Time{}, ErrPreviewAccess
+	}
+	if _, err := d.lockAuthenticatedRun(ctx, queries, auth, now); err != nil {
+		return "", "", "", false, time.Time{}, err
+	}
+	row, err := queries.ConsumeBrowserAccessHandoff(ctx, controlstatedb.ConsumeBrowserAccessHandoffParams{
+		Now: timestamptz(now), TokenDigest: digest, PublicURLID: auth.PublicURLID, PublishRunID: auth.PublishRunID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", "", false, time.Time{}, ErrPreviewAccess
@@ -228,7 +269,16 @@ func (d *Database) RedeemBrowserHandoff(ctx context.Context, publicURLID, token 
 	if err != nil {
 		return "", "", "", false, time.Time{}, err
 	}
-	return string(cookie), row.ReturnPath, row.NextUrl, row.Bridge, row.ExpiresAt.Time, nil
+	if err := queries.BindBrowserSessionHost(ctx, controlstatedb.BindBrowserSessionHostParams{SessionDigest: row.SessionDigest, PublicURLID: auth.PublicURLID, PublishRunID: auth.PublishRunID}); err != nil {
+		return "", "", "", false, time.Time{}, err
+	}
+	if _, err := d.browserPermission(ctx, queries, auth.PublicURLID, string(cookie), now); err != nil {
+		return "", "", "", false, time.Time{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", "", "", false, time.Time{}, err
+	}
+	return string(cookie), row.ReturnPath, row.RedirectUrl, row.Bridge, row.ExpiresAt.Time, nil
 }
 
 func (d *Database) BrowserSession(ctx context.Context, publicURLID, token string, now time.Time) (BrowserAccessSession, error) {
@@ -259,8 +309,9 @@ func (d *Database) BrowserSession(ctx context.Context, publicURLID, token string
 	if err != nil {
 		return BrowserAccessSession{}, err
 	}
-	return BrowserAccessSession{PreviewID: row.PreviewID, PublicURLID: row.PublicURLID,
-		IdentityID: row.IdentityID, DisplayName: row.DisplayName, AccessToken: string(access), RefreshToken: string(refresh),
+	return BrowserAccessSession{PreviewID: row.PreviewID.String, PublicURLID: row.PublicURLID,
+		ParentControlSessionID: row.ParentControlSessionID.String,
+		IdentityID:             row.IdentityID, DisplayName: row.DisplayName, AccessToken: string(access), RefreshToken: string(refresh),
 		AccessExpiresAt: row.AccessExpiresAt.Time, ExpiresAt: row.ExpiresAt.Time}, nil
 }
 
@@ -320,7 +371,8 @@ func (d *Database) RefreshBrowserSession(ctx context.Context, publicURLID, token
 		return BrowserAccessSession{}, err
 	}
 	session := BrowserAccessSession{
-		PreviewID: row.PreviewID, PublicURLID: row.PublicURLID, IdentityID: row.IdentityID, DisplayName: row.DisplayName,
+		ParentControlSessionID: row.ParentControlSessionID.String,
+		PreviewID:              row.PreviewID.String, PublicURLID: row.PublicURLID, IdentityID: row.IdentityID, DisplayName: row.DisplayName,
 		AccessToken: string(access), RefreshToken: string(refreshToken),
 		AccessExpiresAt: row.AccessExpiresAt.Time, ExpiresAt: row.ExpiresAt.Time,
 	}

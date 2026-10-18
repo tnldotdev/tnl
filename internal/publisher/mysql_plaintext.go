@@ -86,6 +86,11 @@ func forwardMySQLAuthentication(visitor, backend net.Conn, scramble []byte) erro
 		if len(response) < 5 {
 			return errors.New("publisher: empty MySQL target authentication packet")
 		}
+		if response[4] == 0xfe {
+			if end := bytes.IndexByte(response[5:], 0); end >= 0 && len(response) >= 5+end+1+20 {
+				scramble = append(scramble[:0], response[5+end+1:5+end+1+20]...)
+			}
+		}
 		if response[4] == 1 && len(response) == 6 && response[5] == 4 {
 			// caching_sha2_password full authentication requires an RSA-encrypted
 			// password on a plaintext target connection. fetch the target's key
@@ -134,7 +139,10 @@ func forwardMySQLAuthentication(visitor, backend net.Conn, scramble []byte) erro
 		if _, err := io.Copy(visitor, bytes.NewReader(response)); err != nil {
 			return err
 		}
-		if response[4] == 0 || response[4] == 0xff {
+		if response[4] == 0xff {
+			return io.EOF
+		}
+		if response[4] == 0 {
 			return nil
 		}
 		if response[4] == 1 && len(response) == 6 && response[5] == 3 {
@@ -155,6 +163,79 @@ func forwardMySQLAuthentication(visitor, backend net.Conn, scramble []byte) erro
 		}
 	}
 	return errors.New("publisher: MySQL authentication exchange exceeded its limit")
+}
+
+func forwardMySQLAuthenticationFlags(visitor, backend net.Conn, scramble []byte) (uint32, error) {
+	login, err := readMySQLPacket(visitor, mysqlAuthenticationPacketLimit)
+	if err != nil {
+		return 0, err
+	}
+	defer clear(login)
+	if len(login) < 8 {
+		return 0, errors.New("publisher: invalid MySQL login flags")
+	}
+	flags := binary.LittleEndian.Uint32(login[4:8])
+	err = forwardMySQLAuthentication(&publicURLReaderConn{Conn: visitor, reader: io.MultiReader(bytes.NewReader(login), visitor)}, backend, scramble)
+	return flags, err
+}
+
+// verified target TLS uses the same packet sequence on both sides. complete
+// authentication before enabling observation; authentication bytes stay opaque.
+func forwardMySQLTLSAuthentication(visitor, backend net.Conn) (uint32, error) {
+	login, err := readMySQLPacket(visitor, mysqlAuthenticationPacketLimit)
+	if err != nil {
+		return 0, err
+	}
+	if len(login) < 8 || login[3] != 2 {
+		clear(login)
+		return 0, errors.New("publisher: invalid MySQL login")
+	}
+	flags := binary.LittleEndian.Uint32(login[4:8])
+	sequence := byte(2)
+	for step := 0; step < 32; step++ {
+		if login[3] != sequence {
+			clear(login)
+			return 0, errors.New("publisher: invalid MySQL authentication sequence")
+		}
+		sequence++
+		_, err = io.Copy(backend, bytes.NewReader(login))
+		clear(login)
+		if err != nil {
+			return 0, err
+		}
+		for {
+			response, err := readMySQLPacket(backend, mysqlAuthenticationPacketLimit)
+			if err != nil {
+				return 0, err
+			}
+			if response[3] != sequence {
+				clear(response)
+				return 0, errors.New("publisher: invalid MySQL authentication sequence")
+			}
+			sequence++
+			kind := response[4]
+			fast := len(response) == 6 && kind == 1 && response[5] == 3
+			_, err = io.Copy(visitor, bytes.NewReader(response))
+			clear(response)
+			if err != nil {
+				return 0, err
+			}
+			if kind == 0 {
+				return flags, nil
+			}
+			if kind == 0xff {
+				return 0, io.EOF
+			}
+			if !fast {
+				break
+			}
+		}
+		login, err = readMySQLPacket(visitor, mysqlAuthenticationPacketLimit)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return 0, errors.New("publisher: MySQL authentication exchange exceeded its limit")
 }
 
 func encodeMySQLPacket(sequence byte, payload []byte) []byte {

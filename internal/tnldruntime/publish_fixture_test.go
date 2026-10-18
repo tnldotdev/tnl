@@ -15,12 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -132,6 +134,7 @@ type integrationPublishingIdentity struct {
 	policyRevision                                          uint64
 	state                                                   *clientstate.Store
 	routes                                                  *controlclient.Client
+	authority                                               *authorityclient.Client
 	certificatePlan                                         controlv1.CertificatePlan
 	publicURLScope                                          controlv1.PublicURLScope
 }
@@ -199,16 +202,36 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 	hostname := hostnameLabel + "." + membership.ManagedLabel + "." + domain.CanonicalDomain
 	return &integrationPublishingIdentity{
 		controlOrigin: controlOrigin, hostname: hostname, teamID: team.Id, domainID: domain.Id, membershipID: membership.Id,
-		policyRevision: uint64(team.PolicyRevision), state: publisherState, routes: authenticated.Control, publicURLScope: controlv1.Member,
+		policyRevision: uint64(team.PolicyRevision), state: publisherState, routes: authenticated.Control, authority: authenticated.Authority, publicURLScope: controlv1.Member,
 		certificatePlan: controlv1.CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.TlsAlpn01},
 	}
 }
 
+// the fixture retains a control session for URL creation, but every run is
+// created using the publisher's own scoped identity and signing key.
+type integrationScopedRunControl struct {
+	*controlclient.Client
+	state     *clientstate.Store
+	authority *authorityclient.Client
+}
+
+func (c *integrationScopedRunControl) CreatePublishRun(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
+	route, err := c.Client.GetPublicURL(ctx, id)
+	if err != nil {
+		return controlv1.PublishRunSetup{}, err
+	}
+	native, _, err := nativeauth.EnsureOwner(ctx, c.state, c.Client, c.authority, route)
+	if err != nil {
+		return controlv1.PublishRunSetup{}, err
+	}
+	return native.CreatePublishRun(ctx, id, retry)
+}
+
 func (i *integrationPublishingIdentity) publisherConfig(target string, quicConnector, tcpConnector muxsession.Connector) publisher.Config {
 	return publisher.Config{
-		Control: i.routes, TeamID: i.teamID, DomainID: i.domainID, MembershipID: i.membershipID,
+		Control: &integrationScopedRunControl{Client: i.routes, state: i.state, authority: i.authority}, ControlURL: i.controlOrigin, TeamID: i.teamID, DomainID: i.domainID, MembershipID: i.membershipID,
 		PolicyRevision: i.policyRevision, PublicURLScope: i.publicURLScope, Purpose: controlv1.App,
-		Hostname: i.hostname, Target: target, AllowedIPPrefixes: []string{"127.0.0.1/32"},
+		Hostname: i.hostname, Target: target, AccessMode: controlv1.Anonymous, AllowedIPPrefixes: []string{"127.0.0.1/32"},
 		State: i.state, QUICConnector: quicConnector, TCPConnector: tcpConnector,
 		FallbackDelay: 10 * time.Millisecond, DrainTime: time.Second,
 	}

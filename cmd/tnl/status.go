@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 )
 
@@ -62,11 +63,10 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			project, _, resolveErr = runtimeProject(ctx, runtimeOptions{Directory: flags.Project, StateDir: root})
 		}
 		if resolveErr == nil {
-			appSnapshot, err = readAppSnapshot(ctx, project, root)
+			appSnapshot, err = readAppSnapshotFrom(ctx, project, state)
 			if err != nil {
 				return err
 			}
-			appSnapshot = mergeTCPServices(appSnapshot, project, snapshot.Tunnels)
 		}
 	} else {
 		projects, err := clientruntime.ListSnapshots(root)
@@ -74,11 +74,12 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			return err
 		}
 		for _, project := range projects {
-			socket, err := runtimeKey(project.Project, root)
+			path, err := privateprotocol.DescriptorPath(root, project.Project)
 			if err != nil {
 				return err
 			}
-			available := runtimeAvailable(ctx, socket)
+			endpoint, readErr := privateprotocol.ReadEndpoint(path)
+			available := readErr == nil && runtimeAvailable(ctx, endpoint)
 			for _, service := range project.Services {
 				service.Project = project.Project
 				if !available {

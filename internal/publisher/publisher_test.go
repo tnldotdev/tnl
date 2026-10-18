@@ -81,9 +81,9 @@ func TestCredentialPublisherKeepsTargetlessPublicURLWithoutChangingPolicy(t *tes
 	_, _, err = createOrLoadPublicURL(t.Context(), Config{
 		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App,
-		Target: "http://127.0.0.1:3000", PreserveSavedURLTarget: true,
+		Target: "http://127.0.0.1:3000", AccessMode: controlv1.Anonymous, PreserveSavedURLTarget: true,
 	})
-	if err == nil || control.updated == nil {
+	if err == nil || control.updated != nil {
 		t.Fatalf("changed visitor policy was accepted: update = %#v, err = %v", control.updated, err)
 	}
 }

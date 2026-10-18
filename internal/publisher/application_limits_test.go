@@ -1,10 +1,52 @@
 package publisher
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
 )
+
+func TestAdmissionBurstCancellationAndRefund(t *testing.T) {
+	a, err := newApplicationAdmission(ApplicationLimits{Requests: 3, Concurrency: 1, RateRequests: 1, RatePer: time.Minute, RateBurst: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if release, status, _ := a.acquire(ctx); release != nil || status == 0 || a.used != 0 || a.active != 0 {
+		t.Fatal("canceled admission spent a budget")
+	}
+	now := time.Now()
+	for range 2 {
+		if status, _ := a.enter(now); status != 0 {
+			t.Fatal(status)
+		}
+		a.leave()
+	}
+	if status, _ := a.enter(now); status != http.StatusTooManyRequests {
+		t.Fatal("burst did not cap initial tokens")
+	}
+	if status, _ := a.enter(now.Add(time.Minute)); status != 0 {
+		t.Fatal("rate did not refill")
+	}
+	a.refund()
+	if status, _ := a.enter(now.Add(time.Minute)); status != 0 {
+		t.Fatal("failed promotion spent a token or total")
+	}
+	a.leave()
+	<-a.completed
+	b, _ := newApplicationAdmission(ApplicationLimits{})
+	release, status, _ := b.acquire(t.Context())
+	if status != 0 {
+		t.Fatal(status)
+	}
+	release()
+	release()
+	if b.active != 0 {
+		t.Fatal("duplicate cleanup released a different visitor's slot")
+	}
+}
 
 func TestApplicationAdmissionDrainsTotalBudgetWithoutCountingRejections(t *testing.T) {
 	admission, err := newApplicationAdmission(ApplicationLimits{Requests: 2, Concurrency: 1})

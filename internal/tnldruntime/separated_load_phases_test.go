@@ -274,7 +274,7 @@ func verifySeparatedShutdown(t *testing.T, database *sql.DB, routes int) {
 		err := database.QueryRowContext(ctx, `SELECT
 			(SELECT count(*) FROM control.publish_runs WHERE closed_at IS NULL OR assignments_open) +
 			(SELECT count(*) FROM control.publish_run_connection_slots WHERE state <> 'closed') +
-			(SELECT coalesce(sum(assignment_count), 0) FROM control.relay_service_assignment_totals)`).Scan(&active)
+			(SELECT coalesce(sum(reserved_slot_count), 0) FROM control.relay_service_reservations)`).Scan(&active)
 		return active == 0, err
 	})
 	routingTimeout := separatedRoutingAcknowledgmentTimeout

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/inspection"
 )
 
 func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
@@ -19,10 +19,10 @@ func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	var events []RequestObservation
-	server, err := NewPublicURLServer(PublicURLServerConfig{
+	var events []inspection.Summary
+	server, err := newTestPublicURLServer(PublicURLServerConfig{
 		Hostname: "app.example", Target: upstream.URL,
-		ObserveRequest: func(event RequestObservation) { events = append(events, event) },
+		ObserveSummary: func(event inspection.Summary) { events = append(events, event) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -73,8 +73,8 @@ func TestRequestObservationNoneRecordsNothing(t *testing.T) {
 	}))
 	defer upstream.Close()
 	observed := 0
-	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "app.example", Target: upstream.URL,
-		InspectionMode: config.InspectionNone, ObserveRequest: func(RequestObservation) { observed++ }})
+	server, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "app.example", Target: upstream.URL,
+		InspectionMode: inspection.None, ObserveSummary: func(inspection.Summary) { observed++ }})
 	if err != nil {
 		t.Fatal(err)
 	}

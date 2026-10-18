@@ -293,8 +293,8 @@ WHERE sessions.closed_at IS NULL
 GROUP BY connections.relay_service_id;
 
 -- name: ListRelayServiceAssignmentTotals :many
-SELECT relay_service_id, assignment_count
-FROM control.relay_service_assignment_totals;
+SELECT relay_service_id, reserved_slot_count AS assignment_count
+FROM control.relay_service_reservations;
 
 -- name: StoreRelayTransportCertificate :one
 WITH service_guard AS MATERIALIZED (

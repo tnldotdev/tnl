@@ -15,9 +15,10 @@ import (
 )
 
 type browserAccessStub struct {
-	member bool
-	next   string
-	bridge bool
+	member  bool
+	invited bool
+	next    string
+	bridge  bool
 }
 
 func (s *browserAccessStub) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
@@ -33,7 +34,16 @@ func (s *browserAccessStub) CheckBrowserAccess(_ context.Context, _ string, _ ui
 	if secret != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" {
 		return controlv1.BrowserAccessResponse{}, errors.New("invalid browser cookie")
 	}
-	return controlv1.BrowserAccessResponse{IdentityId: "user-one", DisplayName: "Sam", TeamMember: s.member}, nil
+	return controlv1.BrowserAccessResponse{IdentityId: "user-one", DisplayName: "Sam", TeamMember: s.member, VisitAllowed: s.member || s.invited}, nil
+}
+
+func (s *browserAccessStub) AuthorizeHTTPVisitor(_ context.Context, _ string, request controlv1.HTTPVisitorRequest, _ credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
+	result := controlv1.HTTPVisitorResponse{VisitAllowed: request.BrowserCookieSecret != nil && *request.BrowserCookieSecret == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" && (s.member || s.invited), TeamMember: s.member}
+	if request.BrowserCookieSecret != nil {
+		id, name := "user-one", "Sam"
+		result.IdentityId, result.DisplayName = &id, &name
+	}
+	return result, nil
 }
 
 func (*browserAccessStub) RevokeBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
@@ -51,7 +61,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	client := &browserAccessStub{member: true}
 	access := &browserAccess{client: client, previewID: "pv_0123456789abcdefghijkl", publicURLID: "url_0123456789abcdefghijkl",
 		runID: "pr_0123456789abcdefghijkl", version: 1, controlURL: "https://control.example.test", shares: shares}
-	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, ShareAccess: shares, BrowserAccess: access})
+	server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, ShareAccess: shares, BrowserAccess: access, BrowserLoginAvailable: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +85,8 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	navigation.Host = "route.example"
 	navigation.TLS = &tls.ConnectionState{ServerName: "route.example"}
 	navigation.Header.Set("Accept", "text/html")
+	navigation.Header.Set("Sec-Fetch-Mode", "navigate")
+	navigation.Header.Set("Sec-Fetch-Dest", "document")
 	navigation = navigation.WithContext(context.WithValue(navigation.Context(), denialContextKey{}, true))
 	redirect := httptest.NewRecorder()
 	server.http.Handler.ServeHTTP(redirect, navigation)
@@ -106,15 +118,20 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	if response := serve("/settings", visitorCookie, true); response.Code != http.StatusForbidden {
 		t.Fatalf("nonmember without share or IP = %d", response.Code)
 	}
-	if response := serve("/settings", visitorCookie, false); response.Code != http.StatusOK {
-		t.Fatalf("nonmember allowed by IP = %d", response.Code)
+	client.invited = true
+	if response := serve("/settings", visitorCookie, true); response.Code != http.StatusOK {
+		t.Fatalf("invited identity outside the team = %d", response.Code)
 	}
 	if got := <-cookies; got != "app_session=ok" {
-		t.Fatalf("local app received browser credential: %q", got)
+		t.Fatalf("local app received visitor credential: %q", got)
+	}
+	client.invited = false
+	if response := serve("/settings", visitorCookie, false); response.Code != http.StatusForbidden {
+		t.Fatalf("source IP bypassed visitor access: %d", response.Code)
 	}
 	shares.teamAccessEnabled = false
-	if response := serve("/__tnl/team/login", "", true); response.Code != http.StatusForbidden {
-		t.Fatalf("disabled team login = %d", response.Code)
+	if response := serve("/__tnl/team/login", "", true); response.Code != http.StatusSeeOther {
+		t.Fatalf("identity sign-in without a preview team grant = %d", response.Code)
 	}
 	if response := serve("/__tnl/team/login", "", false); response.Code != http.StatusSeeOther {
 		t.Fatalf("optional sign-in for allowed IP = %d", response.Code)

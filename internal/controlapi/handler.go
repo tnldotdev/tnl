@@ -3,6 +3,7 @@ package controlapi
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
+	"github.com/tnldotdev/tnl/internal/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/visitorcert"
 	"github.com/tnldotdev/tnl/internal/webhookcatalog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -28,6 +31,9 @@ const (
 
 // Config contains the public API settings derived from tnld configuration.
 type Config struct {
+	VisitorIssuerSeed                 string
+	TrafficDefaults                   trafficlimits.Limits
+	TrafficCeiling                    trafficlimits.Limits
 	Role                              tnldconfig.Role
 	StartedAt                         time.Time
 	ManagedDomain                     string
@@ -73,20 +79,6 @@ type PublicURLStore interface {
 	ClosePublishRun(context.Context, string, credentials.PublishRunToken, time.Time) error
 }
 
-type PublicURLPublishCredentialStore interface {
-	CreatePublicURLPublishCredential(context.Context, controlstate.CreatePublicURLPublishCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.PublicURLPublishCredential, error)
-	CreateEphemeralCredential(context.Context, controlstate.CreateEphemeralCredentialRequest) (controlstate.PublicURLPublishCredential, credentials.EphemeralCredential, error)
-	AuthenticateEphemeralCredential(context.Context, credentials.EphemeralCredential, time.Time) (controlstate.PublicURLPublishCredential, error)
-	ValidateEphemeralCredentialPublicURL(context.Context, controlstate.PublicURLPublishCredential, controlstate.PublicURL, time.Time) error
-	RevokeEphemeralCredential(context.Context, string, string, time.Time) (controlstate.PublicURLPublishCredential, error)
-	AuthenticatePublicURLPublishCredential(context.Context, credentials.PublicURLPublishCredential, time.Time) (controlstate.PublicURLPublishCredential, []byte, error)
-	ValidatePublicURLPublishCredential(context.Context, controlstate.PublicURLPublishCredential, controlstate.PublicURL) error
-	ListPublicURLPublishCredentials(context.Context, string) ([]controlstate.PublicURLPublishCredential, error)
-	ListTeamPublicURLPublishCredentials(context.Context, string, string) (controlstate.PublicURLPublishCredentialPage, error)
-	PublicURLPublishCredentialByID(context.Context, string) (controlstate.PublicURLPublishCredential, error)
-	RevokePublicURLPublishCredential(context.Context, string, string, time.Time) (controlstate.PublicURLPublishCredential, error)
-}
-
 // CertificateStore owns publish run certificate issuance state.
 type CertificateStore interface {
 	CreateCertificateIssuance(context.Context, controlstate.CreateCertificateIssuanceRequest, time.Time) (controlstate.CertificateIssuance, error)
@@ -125,7 +117,8 @@ type BrowserAccessStore interface {
 	BeginBrowserLogin(context.Context, string, string, string, string, string, []byte, time.Time) (string, error)
 	ConsumeBrowserLogin(context.Context, string, []byte, time.Time) (controlstate.BrowserLoginAttempt, error)
 	IssueBrowserHandoff(context.Context, controlstate.BrowserLoginAttempt, controlstate.BrowserAccessSession, time.Time) (controlstate.BrowserHandoff, error)
-	RedeemBrowserHandoff(context.Context, string, string, time.Time) (string, string, string, bool, time.Time, error)
+	RedeemBrowserHandoff(context.Context, controlstate.PublishRunAuthentication, string, time.Time) (string, string, string, bool, time.Time, error)
+	BrowserAuthorizationForRun(context.Context, controlstate.PublishRunAuthentication, string, time.Time) (controlstate.VisitorPermission, error)
 	BrowserSession(context.Context, string, string, time.Time) (controlstate.BrowserAccessSession, error)
 	RotateBrowserSession(context.Context, string, string, string, time.Time) error
 	RefreshBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error)
@@ -134,6 +127,7 @@ type BrowserAccessStore interface {
 
 type ShareStore interface {
 	CreateShare(context.Context, controlstate.CreateShareRequest, time.Time) (controlstate.Share, error)
+	CreateGuestShare(context.Context, string, string, string, string, [32]byte, time.Time, time.Time) (controlstate.Share, error)
 	GetShare(context.Context, string) (controlstate.Share, error)
 	ListShares(context.Context, string, string) (controlstate.SharePage, error)
 	ListTeamShares(context.Context, string, string, string) (controlstate.SharePage, error)
@@ -167,20 +161,21 @@ type AuthorizationStore interface {
 }
 
 type handler struct {
-	config             Config
-	store              PublicURLStore
-	publishCredentials PublicURLPublishCredentialStore
-	certificates       CertificateStore
-	admin              AdminStore
-	previews           PreviewStore
-	previewTeamAccess  PreviewTeamAccessStore
-	browserAccess      BrowserAccessStore
-	browserVerifier    oidcauth.Verifier
-	browserAuthority   *authorityclient.Client
-	shares             ShareStore
-	shareAccess        ShareAccessStore
-	feedback           FeedbackStore
-	guests             interface {
+	visitorIssuer     *visitorcert.Issuer
+	visitorState      VisitorStore
+	config            Config
+	store             PublicURLStore
+	certificates      CertificateStore
+	admin             AdminStore
+	previews          PreviewStore
+	previewTeamAccess PreviewTeamAccessStore
+	browserAccess     BrowserAccessStore
+	browserVerifier   oidcauth.Verifier
+	browserAuthority  *authorityclient.Client
+	shares            ShareStore
+	shareAccess       ShareAccessStore
+	feedback          FeedbackStore
+	guests            interface {
 		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
 		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
 		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
@@ -202,9 +197,30 @@ func NewHandler(
 	authorizationStore AuthorizationStore,
 	readiness func(context.Context) error,
 ) (*http.ServeMux, error) {
+	if cfg.TrafficDefaults == (trafficlimits.Limits{}) {
+		cfg.TrafficDefaults = trafficlimits.Default()
+	}
+	if cfg.TrafficCeiling == (trafficlimits.Limits{}) {
+		cfg.TrafficCeiling = trafficlimits.Ceiling()
+	}
+	if err := tnldconfig.ValidateTraffic(cfg.TrafficDefaults, cfg.TrafficCeiling); err != nil {
+		return nil, err
+	}
+	cfg.TrafficDefaults.RatePer = cfg.TrafficDefaults.Period()
+	cfg.TrafficCeiling.RatePer = cfg.TrafficCeiling.Period()
 	h := &handler{config: cfg, store: store, certificates: store, admin: store, readiness: readiness}
-	if credentials, ok := store.(PublicURLPublishCredentialStore); ok {
-		h.publishCredentials = credentials
+	if visitorState, ok := store.(VisitorStore); ok {
+		h.visitorState = visitorState
+	}
+	if cfg.VisitorIssuerSeed != "" {
+		seed, err := base64.RawURLEncoding.Strict().DecodeString(cfg.VisitorIssuerSeed)
+		if err != nil {
+			return nil, fmt.Errorf("controlapi: invalid visitor issuer seed")
+		}
+		h.visitorIssuer, err = visitorcert.New(seed)
+		if err != nil {
+			return nil, err
+		}
 	}
 	h.webhookCatalog = cfg.WebhookCatalog
 	if h.webhookCatalog == nil {
@@ -263,6 +279,9 @@ func NewHandler(
 		if err != nil {
 			return nil, err
 		}
+	}
+	if cfg.ControlURL != "" {
+		var err error
 		h.browserAuthority, err = authorityclient.New(cfg.ControlURL, cfg.HTTPClient, "")
 		if err != nil {
 			return nil, err

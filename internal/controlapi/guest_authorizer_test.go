@@ -12,11 +12,15 @@ import (
 )
 
 type guestStoreStub struct {
-	guest controlstate.GuestTrial
-	owned bool
+	guest     controlstate.GuestTrial
+	owned     bool
+	lookupErr error
 }
 
 func (s guestStoreStub) GuestTrialByAccessToken(_ context.Context, token credentials.AccessToken) (controlstate.GuestTrial, error) {
+	if s.lookupErr != nil {
+		return controlstate.GuestTrial{}, s.lookupErr
+	}
 	if token != "guest-token" {
 		return controlstate.GuestTrial{}, controlstate.ErrGuestUnknown
 	}

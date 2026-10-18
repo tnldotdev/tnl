@@ -9,6 +9,229 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/publish-runs/{publish_run_id}/visitor-access:
+    post:
+      operationId: authorizeHTTPVisitor
+      security: [{ publishRunAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PublishRunID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HTTPVisitorRequest" }
+      responses:
+        "200":
+          description: Transaction-owned current HTTP permission and separate browser identity
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HTTPVisitorResponse" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/visitor/public-urls:
+    get:
+      operationId: listAvailablePublicURLs
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: team_id, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Identity-wide visitor inventory without targets, policies or secrets
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AvailablePublicURLPage" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/public-urls/{public_url_id}/visitor-grants:
+    parameters:
+      - { $ref: "#/components/parameters/PublicURLID" }
+    get:
+      operationId: listVisitorGrants
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Grants for an owned public URL
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/VisitorGrant" } }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createTeamVisitorGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTeamVisitorGrantRequest" }
+      responses:
+        "201":
+          description: Exact URL grant for current team members
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VisitorGrant" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/public-urls/{public_url_id}/visitor-grants/{grant_id}:
+    delete:
+      operationId: revokeVisitorGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PublicURLID" }
+        - { name: grant_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Grant revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/public-urls/{public_url_id}/visitor-invitations:
+    parameters:
+      - { $ref: "#/components/parameters/PublicURLID" }
+    get:
+      operationId: listVisitorInvitations
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Named visitor invitations
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/VisitorInvitation" } }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createVisitorInvitation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateVisitorInvitationRequest" }
+      responses:
+        "201":
+          description: One-use verified-email invitation without team membership
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VisitorInvitation" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id}:
+    delete:
+      operationId: revokeVisitorInvitation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PublicURLID" }
+        - { name: invitation_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Invitation and accepted grant revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/visitor-invitations/accept:
+    post:
+      operationId: acceptVisitorInvitation
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [secret]
+              properties:
+                secret: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: Exact identity grant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VisitorGrant" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/public-urls/{public_url_id}/access:
+    parameters:
+      - { $ref: "#/components/parameters/PublicURLID" }
+    put:
+      operationId: replaceVisitorAccess
+      summary: Replace the complete live visitor access policy
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReplaceVisitorAccessRequest" }
+      responses:
+        "200":
+          description: Saved policy for this public URL, active for new visitor work
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicURL" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/public-urls/{public_url_id}/visitor-certificate:
+    post:
+      operationId: issueVisitorCertificate
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PublicURLID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [csr]
+              properties:
+                csr: { type: string, maxLength: 16384 }
+      responses:
+        "201":
+          description: URL-bound client certificate bounded by seven days and grant expiry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VisitorCertificate" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publish-runs/{publish_run_id}/visitor-certificate:
+    post:
+      operationId: authorizeVisitorCertificate
+      security: [{ publishRunAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PublishRunID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [publish_run_number, source_ip]
+              properties:
+                publish_run_number: { type: integer, format: int64, minimum: 1 }
+                certificate: { type: string, maxLength: 16384 }
+                source_ip: { type: string, maxLength: 64 }
+      responses:
+        "200":
+          description: Current permission for this new connection
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [public_url_id]
+                properties:
+                  identity_id: { $ref: "#/components/schemas/IdentityID" }
+                  public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+                  valid_until: { type: string, format: date-time }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/guest-demo/publisher:
+    post:
+      operationId: enrollGuestPublisher
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EnrollGuestPublisherRequest" }
+      responses:
+        "200":
+          description: Trial-bound publisher for the assigned demo URL
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GuestPublisherIdentity" }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/browser/login:
     get:
       operationId: beginPreviewBrowserLogin
@@ -17,7 +240,7 @@ paths:
       parameters:
         - name: preview_id
           in: query
-          required: true
+          required: false
           schema:
             $ref: "#/components/schemas/PreviewID"
         - name: public_url_id
@@ -32,6 +255,7 @@ paths:
             type: string
             pattern: "^/"
             maxLength: 2048
+        - { name: switch_account, in: query, schema: { type: boolean } }
       responses:
         "302":
           description: Redirect to the configured identity provider
@@ -394,6 +618,29 @@ paths:
         default:
           $ref: "#/components/responses/Problem"
   /v1/shares:
+    post:
+      operationId: createURLShare
+      summary: Store one share for an exact authorized HTTP public URL
+      description: A guest trial can share only its own demo URL from the issuing IP; the share expires by the trial's end even if the requested expiry is later.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateShareRequest"
+      responses:
+        "201":
+          description: Stored share without its secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Share"
+        default:
+          $ref: "#/components/responses/Problem"
     get:
       operationId: listTeamShares
       summary: List manageable shares for one team
@@ -636,11 +883,20 @@ paths:
       operationId: createPublishRun
       summary: Create a publish run and allocate its publish run number
       security:
-        - bearerAuth: []
-        - publicURLPublishAuth: []
+        - publisherAuth: []
       parameters:
         - $ref: "#/components/parameters/PublicURLID"
         - $ref: "#/components/parameters/IdempotencyKey"
+        - name: Publisher-Run-Proof
+          in: header
+          required: true
+          schema: { type: string, minLength: 86, maxLength: 86 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePublishRunRequest"
       responses:
         "201":
           description: Publish run and two publisher connection assignments
@@ -650,75 +906,12 @@ paths:
                 $ref: "#/components/schemas/PublishRunSetup"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/public-urls/{public_url_id}/publish-credentials:
-    post:
-      operationId: createPublicURLPublishCredential
-      summary: Issue one public URL-scoped publish credential
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/PublicURLID"
-      requestBody:
-        description: Optional control-calculated credential lifetime; defaults to 90 days
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreatePublicURLPublishCredentialRequest"
-      responses:
-        "201":
-          description: One-time credential and its public metadata
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IssuedPublicURLPublishCredential"
-        default:
-          $ref: "#/components/responses/Problem"
+  /v1/publisher/public-url:
     get:
-      operationId: listPublicURLPublishCredentials
-      summary: List credentials issued for a public URL
+      operationId: getPublisherPublicURL
+      summary: Read the saved URL selected by the current grant
       security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/PublicURLID"
-      responses:
-        "200":
-          description: Credential metadata for this public URL
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [credentials]
-                properties:
-                  credentials:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/PublicURLPublishCredential"
-        default:
-          $ref: "#/components/responses/Problem"
-  /v1/public-urls/{public_url_id}/publish-credentials/{credential_id}:
-    delete:
-      operationId: revokePublicURLPublishCredential
-      summary: Revoke one public URL publish credential
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/PublicURLID"
-        - name: credential_id
-          in: path
-          required: true
-          schema:
-            $ref: "#/components/schemas/ResourceID"
-      responses:
-        "204":
-          description: Credential revoked; active run will close on heartbeat
-        default:
-          $ref: "#/components/responses/Problem"
-  /v1/publish-credentials/current:
-    get:
-      operationId: getPublicURLForPublishCredential
-      summary: Read the one public URL bound to this publish credential
-      security:
-        - publicURLPublishAuth: []
+        - publisherAuth: []
       responses:
         "200":
           description: Bound public URL
@@ -728,10 +921,10 @@ paths:
                 $ref: "#/components/schemas/PublicURL"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/publish-credentials:
+  /v1/publisher-enrollments:
     post:
-      operationId: createEphemeralPublishCredential
-      summary: Issue a credential for ad-hoc public URLs in one namespace
+      operationId: createPublisherEnrollment
+      summary: Issue an expiring one-use publisher enrollment
       security:
         - bearerAuth: []
       requestBody:
@@ -739,19 +932,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateEphemeralPublishCredentialRequest"
+              $ref: "#/components/schemas/CreatePublisherEnrollmentRequest"
       responses:
         "201":
-          description: One-time credential and its authorized namespace
+          description: One-use enrollment secret
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/IssuedEphemeralPublishCredential"
+                $ref: "#/components/schemas/PublisherEnrollment"
         default:
           $ref: "#/components/responses/Problem"
+  /v1/publisher-identities:
     get:
-      operationId: listTeamPublicURLPublishCredentials
-      summary: List publish credentials in the selected team without secrets
+      operationId: listPublisherIdentities
+      summary: List publisher identities and grants without secrets
       security:
         - bearerAuth: []
       parameters:
@@ -759,41 +953,65 @@ paths:
         - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: Page of public URL publish credentials
+          description: Publisher identities
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PublicURLPublishCredentialPage"
+                $ref: "#/components/schemas/PublisherIdentityPage"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/publish-credentials/{credential_id}:
+  /v1/publisher-identities/{publisher_identity_id}:
     delete:
-      operationId: revokePublishCredentialByID
-      summary: Revoke a publish credential by its globally unique ID
+      operationId: revokePublisherIdentity
+      summary: Revoke an identity independently of its grants
       security:
         - bearerAuth: []
       parameters:
-        - name: credential_id
-          in: path
-          required: true
-          schema:
-            $ref: "#/components/schemas/ResourceID"
+        - $ref: "#/components/parameters/PublisherIdentityID"
         - $ref: "#/components/parameters/TeamIDQuery"
       responses:
-        "200":
-          description: Revoked credential metadata
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PublicURLPublishCredential"
+        "204":
+          description: Revoked
         default:
           $ref: "#/components/responses/Problem"
-  /v1/ephemeral-public-urls:
+  /v1/publisher-identities/{publisher_identity_id}/grants:
     post:
-      operationId: allocateEphemeralPublicURL
+      operationId: createPublisherGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PublisherIdentityID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePublisherGrantRequest" }
+      responses:
+        "201":
+          description: Grant created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublisherGrant" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id}:
+    delete:
+      operationId: revokePublisherGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PublisherIdentityID"
+        - $ref: "#/components/parameters/TeamIDQuery"
+        - name: grant_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ResourceID" }
+      responses:
+        "204": { description: Grant revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publisher/public-urls:
+    post:
+      operationId: allocatePublisherPublicURL
       summary: Create a temporary public URL for one ad-hoc publication
       security:
-        - bearerAuth: []
+        - publisherAuth: []
       requestBody:
         required: true
         content:
@@ -809,12 +1027,12 @@ paths:
                 $ref: "#/components/schemas/PublicURL"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/ephemeral-public-urls/{public_url_id}:
+  /v1/publisher/public-urls/{public_url_id}:
     delete:
-      operationId: deleteEphemeralPublicURL
-      summary: Remove a temporary public URL owned by an ad-hoc credential
+      operationId: deletePublisherPublicURL
+      summary: Remove the exact URL allocated by this identity and grant
       security:
-        - bearerAuth: []
+        - publisherAuth: []
       parameters:
         - $ref: "#/components/parameters/PublicURLID"
       responses:
@@ -1269,11 +1487,16 @@ components:
       type: http
       scheme: bearer
       bearerFormat: tnl publish-run token
-    publicURLPublishAuth:
+    publisherAuth:
       type: http
       scheme: bearer
-      bearerFormat: tnl public URL publish credential
+      bearerFormat: tnl grant-scoped publisher access token
   parameters:
+    PublisherIdentityID:
+      name: publisher_identity_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ResourceID" }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -1372,6 +1595,123 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    HTTPVisitorRequest:
+      type: object
+      additionalProperties: false
+      required: [publish_run_number, source_ip]
+      properties:
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        source_ip: { type: string, maxLength: 64 }
+        browser_cookie_secret: { type: string, maxLength: 43 }
+        share_id: { type: string }
+        share_cookie_secret: { type: string, maxLength: 43 }
+        share_secret: { type: string, maxLength: 43 }
+    ReplaceVisitorAccessRequest:
+      type: object
+      additionalProperties: false
+      required: [mode, ip, expected_revision]
+      properties:
+        mode: { $ref: "#/components/schemas/VisitorAccessMode" }
+        ip:
+          type: array
+          maxItems: 256
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 64 }
+        expected_revision: { type: integer, format: int64, minimum: 1 }
+    HTTPVisitorResponse:
+      type: object
+      additionalProperties: false
+      required: [visit_allowed, team_member]
+      properties:
+        visit_allowed: { type: boolean }
+        team_member: { type: boolean }
+        identity_id: { type: string }
+        display_name: { type: string }
+        valid_until: { type: string, format: date-time }
+    CreateTeamVisitorGrantRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        expires_at: { type: string, format: date-time }
+    VisitorGrant:
+      type: object
+      additionalProperties: false
+      required: [id, public_url_id, kind, created_at]
+      properties:
+        id: { type: string }
+        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        kind: { type: string, enum: [team, identity] }
+        identity_id: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+    CreateVisitorInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [email, token_digest, expires_at]
+      properties:
+        email: { type: string, maxLength: 320 }
+        token_digest: { type: string, pattern: "^[0-9a-f]{64}$" }
+        expires_at: { type: string, format: date-time }
+    VisitorInvitation:
+      type: object
+      additionalProperties: false
+      required: [id, public_url_id, email, expires_at]
+      properties:
+        id: { type: string }
+        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        email: { type: string }
+        expires_at: { type: string, format: date-time }
+        accepted_identity_id: { type: string }
+        revoked_at: { type: string, format: date-time }
+    AvailablePublicURLPage:
+      type: object
+      additionalProperties: false
+      required: [public_urls]
+      properties:
+        next_cursor: { type: string }
+        public_urls:
+          type: array
+          items:
+            $ref: "#/components/schemas/AvailablePublicURL"
+    AvailablePublicURL:
+      type: object
+      additionalProperties: false
+      required: [id, team_id, team_name, canonical_hostname, service_protocol, visitor_access]
+      properties:
+        id: { type: string }
+        team_id: { type: string }
+        team_name: { type: string }
+        canonical_hostname: { type: string }
+        service_protocol: { type: string, pattern: "^(http|postgres|mysql|redis)$" }
+        public_port: { type: integer, format: int32, minimum: 1024, maximum: 65535 }
+        visitor_access: { type: string, enum: [owner, preview_team, team_grant, identity_grant] }
+    VisitorCertificate:
+      type: object
+      additionalProperties: false
+      required: [public_url_id, certificate_pem, issuer_pem, expires_at]
+      properties:
+        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        certificate_pem: { type: string }
+        issuer_pem: { type: string }
+        expires_at: { type: string, format: date-time }
+    EnrollGuestPublisherRequest:
+      type: object
+      additionalProperties: false
+      required: [public_url_id, public_key]
+      properties:
+        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        public_key: { type: string, minLength: 43, maxLength: 43 }
+    GuestPublisherIdentity:
+      type: object
+      additionalProperties: false
+      required: [client_id, key_id, grant_id, team_id, public_url_id]
+      properties:
+        client_id: { type: string }
+        key_id: { type: string }
+        grant_id: { type: string }
+        team_id: { $ref: "#/components/schemas/TeamID" }
+        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
     WebhookProvider:
       type: string
       enum:
@@ -1629,6 +1969,9 @@ components:
     PublicURLPurpose:
       type: string
       enum: [app, alias, demo, oauth, webhooks]
+    VisitorAccessMode:
+      type: string
+      enum: [restricted, anonymous]
     PublicURLServiceProtocol:
       type: string
       enum: [http, postgres, mysql, redis, ssh]
@@ -1648,6 +1991,8 @@ components:
           public_url_scope,
           purpose,
           service_protocol,
+          access_mode,
+          mutation_revision,
           policy_revision,
           lifecycle_state,
           next_publish_run_number,
@@ -1681,6 +2026,12 @@ components:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
           $ref: "#/components/schemas/PublicURLPurpose"
+        access_mode:
+          $ref: "#/components/schemas/VisitorAccessMode"
+        mutation_revision:
+          type: integer
+          format: int64
+          minimum: 1
         policy_revision:
           type: integer
           format: int64
@@ -1712,22 +2063,18 @@ components:
         updated_at:
           type: string
           format: date-time
-    PublicURLPublishCredential:
+    PublisherGrant:
       type: object
       additionalProperties: false
-      required: [id, kind, created_at, expires_at]
+      required: [id, kind, created_at]
       properties:
         id:
           $ref: "#/components/schemas/ResourceID"
         kind:
           type: string
-          enum: [saved_url, ephemeral]
+          enum: [saved_url, namespace]
         public_url_id:
           $ref: "#/components/schemas/PublicURLID"
-        public_url:
-          type: string
-          format: uri
-          pattern: "^https://"
         team_id:
           $ref: "#/components/schemas/TeamID"
         domain_id:
@@ -1743,42 +2090,51 @@ components:
         revoked_at:
           type: string
           format: date-time
-    PublicURLPublishCredentialPage:
+    PublisherIdentityPage:
       type: object
       additionalProperties: false
-      required: [credentials]
+      required: [identities]
       properties:
-        credentials:
+        identities:
           type: array
           items:
-            $ref: "#/components/schemas/PublicURLPublishCredential"
+            $ref: "#/components/schemas/PublisherIdentity"
         next_cursor:
           $ref: "#/components/schemas/ResourceID"
-    CreatePublicURLPublishCredentialRequest:
+    PublisherIdentity:
       type: object
       additionalProperties: false
+      required: [id, name, kind, created_at, grants]
       properties:
-        expires_in_seconds:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 7776000
-    CreateEphemeralPublishCredentialRequest:
+        id: { $ref: "#/components/schemas/ResourceID" }
+        name: { type: string }
+        kind: { type: string, enum: [installed, automation, run, guest] }
+        created_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        grants:
+          type: array
+          items: { $ref: "#/components/schemas/PublisherGrant" }
+    CreatePublisherGrantRequest:
       type: object
       additionalProperties: false
-      required: [team_id, domain_id, public_url_scope]
+      required: [team_id]
       properties:
         team_id:
           $ref: "#/components/schemas/TeamID"
         domain_id:
           $ref: "#/components/schemas/DomainID"
-        public_url_scope:
-          $ref: "#/components/schemas/PublicURLScope"
-        expires_in_seconds:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 7776000
+        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        expires_at: { type: string, format: date-time }
+    CreatePublisherEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, name, kind]
+      properties:
+        team_id: { $ref: "#/components/schemas/TeamID" }
+        name: { type: string, minLength: 1, maxLength: 63 }
+        kind: { type: string, enum: [installed, automation, run] }
+        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        domain_id: { $ref: "#/components/schemas/DomainID" }
     AllocateEphemeralPublicURLRequest:
       type: object
       additionalProperties: false
@@ -1789,14 +2145,14 @@ components:
         target:
           type: string
           description: Local service address, such as http://app.internal:3000.
-        allow_ip:
+        ip:
           type: array
           maxItems: 32
           uniqueItems: true
           items:
             type: string
-        allow_all_ips:
-          type: boolean
+        access_mode:
+          $ref: "#/components/schemas/VisitorAccessMode"
         limits:
           $ref: "#/components/schemas/PublisherApplicationLimits"
     PublisherApplicationLimits:
@@ -1819,49 +2175,28 @@ components:
               minimum: 1
             per:
               type: string
-    IssuedEphemeralPublishCredential:
+    PublisherEnrollment:
       type: object
       additionalProperties: false
-      required: [id, kind, team_id, domain_id, namespace, created_at, expires_at, credential]
+      required: [id, kind, team_id, expires_at, enrollment_key]
       properties:
         id:
           $ref: "#/components/schemas/ResourceID"
         kind:
           type: string
-          enum: [ephemeral]
+          enum: [saved_url, namespace]
         team_id:
           $ref: "#/components/schemas/TeamID"
         domain_id:
           $ref: "#/components/schemas/DomainID"
         namespace:
           type: string
-        created_at:
-          type: string
-          format: date-time
+        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
         expires_at:
           type: string
           format: date-time
-        credential:
+        enrollment_key:
           type: string
-          writeOnly: true
-    IssuedPublicURLPublishCredential:
-      type: object
-      additionalProperties: false
-      required: [id, public_url_id, created_at, expires_at, credential]
-      properties:
-        id:
-          $ref: "#/components/schemas/ResourceID"
-        public_url_id:
-          $ref: "#/components/schemas/PublicURLID"
-        created_at:
-          type: string
-          format: date-time
-        expires_at:
-          type: string
-          format: date-time
-        credential:
-          type: string
-          minLength: 1
     PublicURLPage:
       type: object
       additionalProperties: false
@@ -1896,6 +2231,8 @@ components:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
           $ref: "#/components/schemas/PublicURLPurpose"
+        access_mode:
+          $ref: "#/components/schemas/VisitorAccessMode"
         allowed_ip_prefixes:
           type: array
           uniqueItems: true
@@ -1978,7 +2315,7 @@ components:
     BrowserAccessResponse:
       type: object
       additionalProperties: false
-      required: [identity_id, display_name, team_member]
+      required: [identity_id, display_name, team_member, visit_allowed]
       properties:
         identity_id:
           $ref: "#/components/schemas/IdentityID"
@@ -1987,6 +2324,8 @@ components:
           minLength: 1
           maxLength: 256
         team_member:
+          type: boolean
+        visit_allowed:
           type: boolean
     Preview:
       type: object
@@ -2027,6 +2366,9 @@ components:
         secret_fingerprint:
           type: string
           pattern: "^[0-9a-f]{64}$"
+        label:
+          type: string
+          maxLength: 128
     Share:
       type: object
       additionalProperties: false
@@ -2034,7 +2376,8 @@ components:
         [
           schema_version,
           id,
-          preview_id,
+          scope,
+          label,
           team_id,
           public_url_ids,
           created_by_identity_id,
@@ -2048,6 +2391,11 @@ components:
           $ref: "#/components/schemas/ShareID"
         preview_id:
           $ref: "#/components/schemas/PreviewID"
+        scope:
+          type: string
+          enum: [url, preview, guest]
+        label:
+          type: string
         team_id:
           $ref: "#/components/schemas/TeamID"
         public_url_ids:
@@ -2459,10 +2807,14 @@ components:
     FeedbackReviewerAccess:
       type: object
       additionalProperties: false
-      required: [allowed_ip]
+      required: [visit_allowed]
       properties:
-        allowed_ip:
+        source_ip:
+          type: string
+          maxLength: 64
+        visit_allowed:
           type: boolean
+        share_secret: { type: string, minLength: 43, maxLength: 43 }
         share_id:
           $ref: "#/components/schemas/ShareID"
         cookie_secret:
@@ -2631,6 +2983,103 @@ components:
             pattern: "^(?:\\*\\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
         challenge_method:
           $ref: "#/components/schemas/CertificateChallengeMethod"
+    CreatePublishRunRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        traffic:
+          $ref: "#/components/schemas/TrafficSelection"
+    TrafficSelection:
+      type: object
+      additionalProperties: false
+      description: Explicit encrypted visitor traffic limits, resolved once against operator defaults and ceilings when the publish run is created. Omitted values use operator defaults. Zero totals mean unlimited.
+      properties:
+        connections:
+          type: integer
+          minimum: 1
+          maximum: 1048576
+        rate:
+          type: integer
+          minimum: 1
+          maximum: 2147483648
+        rate_per:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: Go duration between 1ms and 24h, such as 1s or 500ms.
+        burst:
+          type: integer
+          minimum: 1
+          maximum: 2147483648
+        upload_bytes:
+          type: integer
+          format: int64
+          minimum: 65536
+          maximum: 1099511627776
+          description: Encrypted upload bytes per second.
+        download_bytes:
+          type: integer
+          format: int64
+          minimum: 65536
+          maximum: 1099511627776
+          description: Encrypted download bytes per second.
+        total_connections:
+          type: integer
+          format: int64
+          minimum: 0
+        total_upload_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        total_download_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+    TrafficLimits:
+      type: object
+      additionalProperties: false
+      description: Resolved limits for one exact public URL and publish run, enforced independently on each ingress process. Omitted totals are unlimited.
+      required: [connections, rate, rate_per_ns, burst, upload_bytes, download_bytes]
+      properties:
+        connections:
+          type: integer
+          minimum: 1
+          maximum: 1048576
+        rate:
+          type: integer
+          minimum: 1
+          maximum: 2147483648
+        rate_per_ns:
+          type: integer
+          format: int64
+          minimum: 1000000
+          maximum: 86400000000000
+        burst:
+          type: integer
+          minimum: 1
+          maximum: 2147483648
+        upload_bytes:
+          type: integer
+          format: int64
+          minimum: 65536
+          maximum: 1099511627776
+        download_bytes:
+          type: integer
+          format: int64
+          minimum: 65536
+          maximum: 1099511627776
+        total_connections:
+          type: integer
+          format: int64
+          minimum: 1
+        total_upload_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+        total_download_bytes:
+          type: integer
+          format: int64
+          minimum: 1
     PublishRunState:
       type: string
       enum: [starting, ready, draining, closed, expired, canceled]
@@ -2735,6 +3184,8 @@ components:
       required:
         [public_url, publish_run, publish_run_token, certificate_plan, publisher_connections]
       properties:
+        traffic:
+          $ref: "#/components/schemas/TrafficLimits"
         public_url:
           $ref: "#/components/schemas/PublicURL"
         publish_run:
@@ -2763,7 +3214,7 @@ components:
     EnableShareAccessRequest:
       type: object
       additionalProperties: false
-      required: [publish_run_number, preview_id]
+      required: [publish_run_number]
       properties:
         publish_run_number:
           type: integer
@@ -3142,6 +3593,7 @@ components:
       enum:
         [
           invalid_request,
+          traffic_selection_invalid,
           unauthenticated,
           forbidden,
           guest_demo_only,

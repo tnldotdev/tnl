@@ -13,14 +13,13 @@ import (
 )
 
 // Alias names a saved public URL serving one configured entry service.
-// omission of the visitor policy inherits the entry service's policy.
+// an omitted visitor policy remains restricted, independent of the entry service.
 type Alias struct {
-	Service     string   `json:"service" yaml:"service"`
-	Name        *string  `json:"name,omitempty" yaml:"name,omitempty"`
-	Domain      *string  `json:"domain,omitempty" yaml:"domain,omitempty"`
-	PublicURL   *string  `json:"public_url,omitempty" yaml:"public_url,omitempty"`
-	AllowIP     []string `json:"allow_ip,omitempty" yaml:"allow_ip,omitempty" jsonschema:"uniqueItems=true"`
-	AllowAllIPs *bool    `json:"allow_all_ips,omitempty" yaml:"allow_all_ips,omitempty"`
+	Service   string  `json:"service" yaml:"service"`
+	Name      *string `json:"name,omitempty" yaml:"name,omitempty"`
+	Domain    *string `json:"domain,omitempty" yaml:"domain,omitempty"`
+	PublicURL *string `json:"public_url,omitempty" yaml:"public_url,omitempty"`
+	Access    *Access `json:"access,omitempty" yaml:"access,omitempty"`
 }
 
 func (a Alias) RelativeName(key string) string {
@@ -33,7 +32,7 @@ func (a Alias) RelativeName(key string) string {
 // DefinitionBytes normalizes equivalent relative names and IP ordering for
 // agreement between live worktrees. local targets are not alias declarations.
 func (a Alias) DefinitionBytes(key string) ([]byte, [32]byte, error) {
-	overrideVisitorPolicy := a.AllowIP != nil || a.AllowAllIPs != nil
+	overrideVisitorPolicy := a.Access != nil
 	if a.PublicURL == nil {
 		name := a.RelativeName(key)
 		a.Name = &name
@@ -45,7 +44,11 @@ func (a Alias) DefinitionBytes(key string) ([]byte, [32]byte, error) {
 		publicURL := "https://" + hostname
 		a.PublicURL = &publicURL
 	}
-	a.AllowIP = slices.Sorted(slices.Values(a.AllowIP))
+	if a.Access != nil {
+		policy := *a.Access
+		policy.IP = slices.Sorted(slices.Values(policy.IP))
+		a.Access = &policy
+	}
 	encoded, err := json.Marshal(struct {
 		Alias
 		OverrideVisitorPolicy bool `json:"override_visitor_policy"`
@@ -69,11 +72,14 @@ func ValidateAliases(config TNL) error {
 		if !found {
 			return fmt.Errorf("aliases.%s: service %q is not configured", key, alias.Service)
 		}
+		if Protocol(service) != "http" {
+			return fmt.Errorf("aliases.%s: service must use protocol http", key)
+		}
 		if alias.Name != nil && alias.PublicURL != nil {
 			return fmt.Errorf("aliases.%s: name and public_url are mutually exclusive", key)
 		}
 		// ordinary tunnel validation owns domain, exact URL, and IP policy rules.
-		if err := validateServiceValues(&Tunnel{Domain: alias.Domain, PublicURL: alias.PublicURL, AllowIP: alias.AllowIP, AllowAllIPs: alias.AllowAllIPs}, nil); err != nil {
+		if err := validateTunnel(&Tunnel{Domain: alias.Domain, PublicURL: alias.PublicURL, Access: alias.Access}); err != nil {
 			return fmt.Errorf("aliases.%s: %w", key, err)
 		}
 		identity := ""

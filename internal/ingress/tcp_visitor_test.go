@@ -166,7 +166,7 @@ func TestIngressDatabasePortForwardsServerFirstGreeting(t *testing.T) {
 	}
 }
 
-func TestIngressDatabasePortRejectsDeniedAndMismatchedRoutes(t *testing.T) {
+func TestIngressDeniedSSHAndMismatchedTCPRoutesCloseBeforePublisher(t *testing.T) {
 	a, b := net.Pipe()
 	ownIngressConn(t, a)
 	ownIngressConn(t, b)
@@ -175,7 +175,7 @@ func TestIngressDatabasePortRejectsDeniedAndMismatchedRoutes(t *testing.T) {
 	var allow atomic.Bool
 	lookup := func() PublicURL {
 		return PublicURL{ID: "public_url_db", PublishRunNumber: 1, PublicPort: testPublicPort(5432),
-			Backends: []routebackend.Backend{backend}, AllowAll: allow.Load()}
+			ServiceProtocol: "ssh", Backends: []routebackend.Backend{backend}, AllowAll: allow.Load()}
 	}
 	_, address := startIngress(t, Config{
 		RequireProxyHeader: true, OpenUsage: usage.Open,
@@ -219,5 +219,83 @@ func TestIngressDatabasePortRejectsDeniedAndMismatchedRoutes(t *testing.T) {
 	}
 	if backend.opens.Load() != 0 {
 		t.Fatal("mismatched public port opened a backend")
+	}
+}
+
+type pendingDatabaseBackend struct {
+	connection        net.Conn
+	pending, ordinary atomic.Int32
+}
+
+func (b *pendingDatabaseBackend) Open(context.Context, string) (net.Conn, error) {
+	b.ordinary.Add(1)
+	return nil, errors.New("ordinary backend opened for denied database")
+}
+func (b *pendingDatabaseBackend) OpenPending(context.Context, string) (net.Conn, error) {
+	b.pending.Add(1)
+	return b.connection, nil
+}
+
+func TestIngressDeniedDatabasesUseBoundedPendingPath(t *testing.T) {
+	for _, protocol := range []string{"postgres", "mysql", "redis"} {
+		t.Run(protocol, func(t *testing.T) {
+			a, b := net.Pipe()
+			ownIngressConn(t, a)
+			ownIngressConn(t, b)
+			backend := &pendingDatabaseBackend{connection: a}
+			received := make(chan proxyproto.Header, 1)
+			release := make(chan struct{})
+			worker := ingressWorker(t, func() { _ = a.Close(); _ = b.Close() }, func() error {
+				defer b.Close()
+				header, replay, err := proxyproto.Decode(b)
+				if err != nil {
+					return err
+				}
+				var startup [8]byte
+				if _, err := io.ReadFull(replay, startup[:]); err != nil {
+					return err
+				}
+				if string(startup[:]) != "TLSstart" {
+					return errors.New("pending TLS startup changed")
+				}
+				received <- header
+				select {
+				case <-release:
+				case <-t.Context().Done():
+				}
+				_, err = b.Write([]byte("TLS"))
+				return err
+			})
+			s, address := startIngress(t, Config{RequireProxyHeader: true, LookupPort: func(uint16) (PublicURL, LookupReason) {
+				return PublicURL{ID: "database", PublishRunNumber: 1, AccessMode: "restricted", AllowAll: true, ServiceProtocol: protocol, PublicPort: testPublicPort(5432), Backends: []routebackend.Backend{backend}}, LookupCurrent
+			}})
+			client, err := net.Dial("tcp", address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ownIngressConn(t, client)
+			header, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("198.51.100.1:40001"), Destination: netip.MustParseAddrPort("192.0.2.1:5432")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.Write(append(header, []byte("TLSstart")...)); err != nil {
+				t.Fatal(err)
+			}
+			metadata := ingressAwait(t, received)
+			if metadata.Source.String() != "198.51.100.1:40001" || metadata.Destination.Port() != 5432 {
+				t.Fatal(metadata)
+			}
+			if s.Load() != 0 || backend.ordinary.Load() != 0 || backend.pending.Load() != 1 {
+				t.Fatal("pending database consumed ordinary admission")
+			}
+			close(release)
+			var answer [3]byte
+			if _, err := io.ReadFull(client, answer[:]); err != nil || string(answer[:]) != "TLS" {
+				t.Fatal(string(answer[:]), err)
+			}
+			if err := ingressAwait(t, worker); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
