@@ -34,6 +34,7 @@ type cli struct {
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
 	Publisher   publisherCommand `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
 	Status      statusCommand    `cmd:"" help:"Show local snapshots and fresh signed-in server facts; --all includes other projects." group:"start"`
+	Ping        pingCommand      `cmd:"" help:"Check a public URL from this machine as an unauthenticated visitor." group:"start"`
 	Inspect     inspectCommand   `cmd:"" help:"Inspect recent local HTTP and supported TCP activity." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
@@ -479,6 +480,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runPublisherGrantAdd(ctx, flags.Publisher.Grant.Add, stdout, stderr)
 	case "publisher grant revoke <publisher-id> <grant-id>":
 		return runPublisherGrantRevoke(ctx, flags.Publisher.Grant.Revoke, stdout, stderr)
+	case "ping <url>":
+		return runPing(ctx, flags.Ping, stdout)
 	case "status":
 		if !flags.Status.All {
 			flags.Status.Project, err = projectRoot(ctx, flags)
