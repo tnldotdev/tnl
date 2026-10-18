@@ -74,7 +74,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			return err
 		}
 		for _, project := range projects {
-			socket, err := runtimeSocket(project.Project, root)
+			socket, err := runtimeKey(project.Project, root)
 			if err != nil {
 				return err
 			}

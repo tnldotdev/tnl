@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,8 +33,8 @@ import (
 )
 
 type runtimeCommand struct {
-	Address runtimeOptions `cmd:"" hidden:""`
-	Serve   runtimeOptions `cmd:"" hidden:""`
+	Endpoint runtimeOptions `cmd:"" hidden:""`
+	Serve    runtimeOptions `cmd:"" hidden:""`
 }
 type runtimeOptions struct {
 	Directory string `name:"directory" required:"" type:"path"`
@@ -96,14 +95,13 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 	return projectConfiguration{Project: project}, root, nil
 }
 
-func runtimeSocket(project, state string) (string, error) {
-	// a stable short directory keeps one identity across application environments
-	// and fits Darwin's Unix socket path limit.
+func runtimeKey(project, state string) (string, error) {
+	// a stable private directory keeps one identity across app environments.
 	directory, err := privateRuntimeDirectoryAt("/tmp")
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(directory, "app-"+clientruntime.Identity(project, state)+".sock"), nil
+	return filepath.Join(directory, "app-"+clientruntime.Identity(project, state)), nil
 }
 
 func privateRuntimeDirectoryAt(base string) (string, error) {
@@ -123,35 +121,46 @@ func privateRuntimeDirectoryAt(base string) (string, error) {
 	return directory, nil
 }
 
-func runtimeHTTP(socket string) *http.Client {
-	return &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-	}}}
+func localOwnerRequest(ctx context.Context, key, method, path string, body io.Reader) (*http.Response, error) {
+	endpoint, err := readRuntimeTCPEndpoint(key)
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint.URL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+endpoint.Credential)
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return client.Do(request)
 }
 
-func runtimeAvailable(ctx context.Context, socket string) bool {
-	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/v1/health", nil)
-	response, err := runtimeHTTP(socket).Do(request)
+func runtimeAvailable(ctx context.Context, key string) bool {
+	response, err := localOwnerRequest(ctx, key, http.MethodGet, "/v1/status", nil)
 	if err != nil {
 		return false
 	}
-	response.Body.Close()
-	return response.StatusCode == http.StatusNoContent
+	_, readErr := io.Copy(io.Discard, response.Body)
+	closeErr := response.Body.Close()
+	return readErr == nil && closeErr == nil && response.StatusCode == http.StatusOK
 }
 
-func runRuntimeAddress(ctx context.Context, options runtimeOptions, output io.Writer) error {
+func runRuntimeEndpoint(ctx context.Context, options runtimeOptions, output io.Writer) error {
 	project, state, err := runtimeProject(ctx, options)
 	if err != nil {
 		return err
 	}
-	socket, err := runtimeSocket(project.Root, state)
+	key, err := runtimeKey(project.Root, state)
 	if err != nil {
 		return err
 	}
 	return json.NewEncoder(output).Encode(struct {
 		Version int    `json:"version"`
-		Socket  string `json:"socket"`
-	}{privateprotocol.Version, socket})
+		Path    string `json:"path"`
+	}{privateprotocol.Version, runtimeTCPEndpointPath(key)})
 }
 
 type appPreparation struct {
@@ -207,11 +216,11 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	if err != nil {
 		return err
 	}
-	socket, err := runtimeSocket(project.Root, root)
+	key, err := runtimeKey(project.Root, root)
 	if err != nil {
 		return err
 	}
-	lock, err := filelock.Acquire(socket+".lock", filelock.Nonblocking, os.Getuid())
+	lock, err := filelock.Acquire(key+".lock", filelock.Nonblocking, os.Getuid())
 	if errors.Is(err, filelock.ErrLocked) {
 		return nil
 	}
@@ -219,25 +228,6 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		return err
 	}
 	defer lock.Close()
-	if info, err := os.Lstat(socket); err == nil {
-		if info.Mode()&os.ModeSocket == 0 {
-			return failure.Wrap("open local publisher socket", failure.ClientStateUnavailable, errors.New("local publisher socket path is occupied by a non-socket file"))
-		}
-		if err := os.Remove(socket); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	listener, err := net.Listen("unix", socket)
-	if err != nil {
-		return err
-	}
-	defer listener.Close()
-	defer os.Remove(socket)
-	if err := os.Chmod(socket, 0600); err != nil {
-		return err
-	}
 	state, err := clientstate.Open(ctx, root)
 	if err != nil {
 		return err
@@ -252,15 +242,11 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 	defer runtime.manager.Close()
 	runtime.adhoc = clientruntime.NewAdHocManager(ctx, runtime.publishAdHoc, runtime.manager.Alive, runtime.manager.BeginPreparation)
 	defer runtime.adhoc.Close()
-	server := &http.Server{Handler: runtime.handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
-	done := make(chan error, 1)
-	go func() { done <- server.Serve(listener) }()
-	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(closeCtx)
-		_ = server.Close()
-	}()
+	server, done, err := startRuntimeTCP(key, runtime.handler())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stopRuntimeTCP(context.Background(), server, key) }()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {

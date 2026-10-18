@@ -97,7 +97,7 @@ Install Chromium with `mise exec -- pnpm exec playwright install chromium`, then
 run `mise exec -- task js:test:browser` to test that bundle under browser CSP.
 
 Keep the package root safe to import in a browser. The public exports live in
-`packages/ts/package.json`; the private development socket is not an extension
+`packages/ts/package.json`; the private development HTTP API is not an extension
 API. Write npm runtime code and tooling in TypeScript. Validate external data
 before treating it as a known type. The
 [compatibility workflow](.github/workflows/checks.yml) checks supported
@@ -109,7 +109,7 @@ Run `mise exec -- task py:check` for Ruff, mypy, and pytest. The Python
 distribution source is under `packages/py/`; uv uses its committed `uv.lock`.
 After `task release:snapshot`, `task py:build` verifies four platform wheels
 against those artifacts. The ASGI tests cover
-lifespan startup, streamed responses, WebSockets, private Unix-socket bounds,
+lifespan startup, streamed responses, WebSockets, private HTTP bounds,
 and cleanup without a deployed server.
 
 ## edit generated sources

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -72,11 +71,10 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			t.Logf("local publisher output:\n%s", runtimeProcess.output.String())
 		}
 	})
-	socket := filepath.Join("/tmp", fmt.Sprintf("tnl-%d", os.Getuid()), "app-"+clientruntime.Identity(project, fixture.stateDirectory)+".sock")
+	descriptor := filepath.Join("/tmp", fmt.Sprintf("tnl-%d", os.Getuid()), "app-"+clientruntime.Identity(project, fixture.stateDirectory)+".endpoint.json")
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
-		connection, err := (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		_, err := os.Stat(descriptor)
 		if err == nil {
-			_ = connection.Close()
 			return true, nil
 		}
 		select {
@@ -86,21 +84,30 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		}
 		return false, err
 	})
-	started := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "runtime", "address", "--directory", project)
+	started := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "runtime", "endpoint", "--directory", project)
 	if err := waitForDoneWithin(started.done, 30*time.Second); err != nil {
 		t.Fatal("local publisher did not start")
 	}
 	assertIntegrationBinaryProcessResult(t, started)
 	var endpoint struct {
 		Version int    `json:"version"`
-		Socket  string `json:"socket"`
+		Path    string `json:"path"`
 	}
-	if err := json.Unmarshal([]byte(started.output.String()), &endpoint); err != nil || endpoint.Version != privateprotocol.Version || endpoint.Socket == "" {
+	if err := json.Unmarshal([]byte(started.output.String()), &endpoint); err != nil || endpoint.Version != privateprotocol.Version || endpoint.Path == "" {
 		t.Fatalf("runtime address response = %q, error %v", started.output.String(), err)
 	}
-	client := &http.Client{Timeout: 35 * time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", endpoint.Socket)
-	}}}
+	encoded, err := os.ReadFile(endpoint.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected struct {
+		URL        string `json:"url"`
+		Credential string `json:"credential"`
+	}
+	if err := json.Unmarshal(encoded, &selected); err != nil || selected.URL == "" || selected.Credential == "" {
+		t.Fatal("invalid local endpoint descriptor")
+	}
+	client := &http.Client{Timeout: 35 * time.Second, Transport: &http.Transport{Proxy: nil}}
 	request := func(operation string, value any, target any) int {
 		t.Helper()
 		body, err := json.Marshal(value)
@@ -109,11 +116,12 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		}
 		operationCtx, cancel := context.WithTimeout(t.Context(), 35*time.Second)
 		defer cancel()
-		call, err := http.NewRequestWithContext(operationCtx, http.MethodPost, "http://localhost/v1/"+operation, bytes.NewReader(body))
+		call, err := http.NewRequestWithContext(operationCtx, http.MethodPost, selected.URL+"/v1/"+operation, bytes.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
 		call.Header.Set("Content-Type", "application/json")
+		call.Header.Set("Authorization", "Bearer "+selected.Credential)
 		response, err := client.Do(call)
 		if err != nil {
 			t.Fatal(err)

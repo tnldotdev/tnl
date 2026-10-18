@@ -58,7 +58,7 @@ func readAppSnapshot(ctx context.Context, project projectConfiguration, state st
 	}
 	snapshot.Services = configured
 	snapshot.ObservedAt = time.Now().UTC()
-	socket, err := runtimeSocket(project.Root, state)
+	socket, err := runtimeKey(project.Root, state)
 	if err != nil {
 		return snapshot, err
 	}
@@ -277,16 +277,11 @@ func runAppWaitWithProbe(ctx context.Context, project projectConfiguration, stat
 				if err != nil {
 					return err
 				}
-				socket, err := runtimeSocket(project.Root, state)
+				socket, err := runtimeKey(project.Root, state)
 				if err != nil {
 					return err
 				}
-				request, err := http.NewRequestWithContext(ctx, "POST", "http://localhost/v1/observe", bytes.NewReader(data))
-				if err != nil {
-					return err
-				}
-				request.Header.Set("Content-Type", "application/json")
-				response, err := runtimeHTTP(socket).Do(request)
+				response, err := localOwnerRequest(ctx, socket, http.MethodPost, "/v1/observe", bytes.NewReader(data))
 				if err == nil {
 					response.Body.Close()
 					if response.StatusCode != http.StatusNoContent {

@@ -1,11 +1,13 @@
-"""launch and call the app-owned tnl publisher over a bounded Unix socket."""
+"""launch and call the app-owned tnl publisher over bounded loopback TCP."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -24,7 +26,7 @@ class NativeRuntime:
                 str(binary),
                 "--no-telemetry",
                 "runtime",
-                "address",
+                "endpoint",
                 "--directory",
                 directory,
                 stdout=asyncio.subprocess.PIPE,
@@ -42,15 +44,16 @@ class NativeRuntime:
             result: object = json.loads(stdout)
             if (
                 not isinstance(result, dict)
-                or set(result) != {"version", "socket"}
+                or set(result) != {"version", "path"}
                 or result["version"] != 1
-                or not isinstance(result["socket"], str)
-                or not Path(result["socket"]).is_absolute()
-                or "\0" in result["socket"]
+                or not isinstance(result["path"], str)
+                or not Path(result["path"]).is_absolute()
+                or not result["path"].endswith(".endpoint.json")
+                or "\0" in result["path"]
             ):
                 raise InvalidResponse()
-            socket = cast(str, result["socket"])
-            if not await self.healthy(socket):
+            endpoint_path = cast(str, result["path"])
+            if not await self.healthy(endpoint_path):
                 await asyncio.create_subprocess_exec(
                     str(binary),
                     "--no-telemetry",
@@ -63,39 +66,83 @@ class NativeRuntime:
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 deadline = asyncio.get_running_loop().time() + 15
-                while not await self.healthy(socket):
+                while not await self.healthy(endpoint_path):
                     if asyncio.get_running_loop().time() >= deadline:
                         raise NativeUnavailable()
                     await asyncio.sleep(0.05)
-            return socket
+            return endpoint_path
         except (OSError, TimeoutError, ValueError) as cause:
             raise NativeUnavailable() from cause
 
-    async def healthy(self, socket: str) -> bool:
+    @staticmethod
+    def _endpoint(path: str) -> tuple[str, str]:
         try:
+            with Path(path).open("rb") as file:
+                payload = file.read(4097)
+        except OSError:
+            raise InvalidResponse() from None
+        if len(payload) > 4096:
+            raise InvalidResponse()
+        try:
+            value: object = json.loads(payload)
+        except (ValueError, UnicodeDecodeError):
+            value = None
+        if not isinstance(value, dict) or set(value) != {"version", "url", "credential"}:
+            raise InvalidResponse()
+        url = value["url"]
+        credential = value["credential"]
+        if (
+            value["version"] != 1
+            or not isinstance(url, str)
+            or not isinstance(credential, str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{43}", credential) is None
+        ):
+            raise InvalidResponse()
+        try:
+            parsed = urlsplit(url)
+            port = parsed.port
+        except ValueError:
+            raise InvalidResponse() from None
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname != "127.0.0.1"
+            or port is None
+            or parsed.netloc != f"127.0.0.1:{port}"
+            or parsed.path != ""
+            or parsed.query != ""
+            or parsed.fragment != ""
+        ):
+            raise InvalidResponse()
+        return url, credential
+
+    async def healthy(self, endpoint_path: str) -> bool:
+        try:
+            url, credential = self._endpoint(endpoint_path)
             async with httpx.AsyncClient(
-                transport=httpx.AsyncHTTPTransport(uds=socket),
-                timeout=1,
-                follow_redirects=False,
+                timeout=1, follow_redirects=False, trust_env=False
             ) as client:
-                response = await client.get("http://localhost/v1/health")
-                return response.status_code == 204
-        except httpx.HTTPError:
+                response = await client.get(
+                    url + "/v1/status", headers={"Authorization": "Bearer " + credential}
+                )
+                return response.status_code == 200
+        except (httpx.HTTPError, InvalidResponse):
             return False
 
-    async def request(self, socket: str, operation: str, payload: dict[str, object]) -> object:
+    async def request(
+        self, endpoint_path: str, operation: str, payload: dict[str, object]
+    ) -> object:
         if operation not in {"register", "renew", "status", "unregister"}:
             raise InvalidResponse()
         try:
+            url, credential = self._endpoint(endpoint_path)
             async with httpx.AsyncClient(
-                transport=httpx.AsyncHTTPTransport(uds=socket),
-                timeout=10,
-                follow_redirects=False,
+                timeout=10, follow_redirects=False, trust_env=False
             ) as client:
                 async with client.stream(
                     "POST",
-                    f"http://localhost/v1/ad-hoc/{operation}",
+                    f"{url}/v1/ad-hoc/{operation}",
                     json=payload,
+                    headers={"Authorization": "Bearer " + credential},
                 ) as response:
                     data = bytearray()
                     async for chunk in response.aiter_raw():
@@ -126,6 +173,11 @@ class NativeRuntime:
                     if code == "runtime.owner_conflict":
                         raise TnlError(
                             "sdk.owner_conflict", "another live app owns this invocation"
+                        )
+                    if code == "runtime.authentication_required":
+                        raise TnlError(
+                            "sdk.authentication_required",
+                            "the local publisher rejected this local credential",
                         )
                     raise TnlError(
                         "sdk.request_rejected", "the local publisher rejected the request"

@@ -202,18 +202,18 @@ service. builds and production previews do not prepare registrations.
 
 `internal/clientruntime` owns registration leases, publisher observations,
 readiness, and a bounded durable local event journal. the private native command
-`tnl runtime address` locates one Unix socket per canonical
+`tnl runtime endpoint` locates one loopback HTTP descriptor per canonical
 project/worktree/client-state identity. the app starts `tnl runtime serve` to
-maintain it. the socket is user-owned
-and mode 0600 beneath a stable, short mode-0700 directory under `/tmp`.
+maintain it. the descriptor contains a random local bearer credential and is
+user-owned with mode 0600 beneath a mode-0700 directory under `/tmp`.
 `internal/privateprotocol` bounds and
 validates requests; golden fixtures describe its wire shape. configured-service
 control sessions remain in the native process. an ad-hoc credential crosses
-only this private socket when the app registers its bound target; it does not
+only this authenticated local API when the app registers its bound target; it does not
 enter snapshots, diagnostics, or browser metadata. the native runtime can
 start without a project file for ad-hoc registrations.
 
-the same native socket accepts several ad-hoc invocations from one app process.
+the same native HTTP API accepts several ad-hoc invocations from one app process.
 `internal/clientruntime.AdHocManager` keeps them separate from configured
 services, checks the owner, pid, renewal, and invocation ID for each registration,
 and holds the runtime open until they drain. each worker calls
@@ -263,7 +263,7 @@ observes the normal publish-run ready event, and deletes the allocated URL
 after publication drains. a registration whose setup fails after allocation
 still attempts cleanup. the caller owns its local listener and invocation ID.
 the Python binding starts ASGI lifespan on a port-0 loopback listener before
-registering it over the same private socket used by TypeScript. its status
+registering it over the same private HTTP API used by TypeScript. its status
 poller waits for the exact registration and ready publish run, never a public
 GET probe. on exit, unregister joins native drain before ASGI shutdown; a
 process crash leaves the owner/pid lease and ephemeral expiry as cleanup
@@ -565,10 +565,10 @@ implements handshakes, and `internal/streamcopy` copies bytes in both directions
 | `packages/ts`              | Browser-safe runtime and Node framework integrations                        |
 
 The npm public subpaths are the package root, `/config`, `/next`, and `/vite`.
-The private development socket is shipped implementation, not a public extension
+The private development HTTP API is shipped implementation, not a public extension
 API.
 
-Framework integrations receive browser-safe metadata and a private local socket.
+Framework integrations receive browser-safe metadata and a private local endpoint.
 They never receive control access tokens. They remain inactive during builds and
 previews.
 
