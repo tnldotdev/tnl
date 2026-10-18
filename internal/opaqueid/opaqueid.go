@@ -40,6 +40,10 @@ const (
 	PublicURLCertificateWorkerPrefix = "ucw_"
 	PublicURLUsageWorkerPrefix       = "uuw_"
 	PublisherConnectionPrefix        = "pc_"
+	PublisherIdentityPrefix          = "pub_"
+	PublisherIdentityKeyPrefix       = "pkey_"
+	PublisherGrantPrefix             = "pgrant_"
+	PublisherEnrollmentPrefix        = "pen_"
 	RelayACMEPresentationPrefix      = "rap_"
 	RelayCertificateOrderPrefix      = "rco_"
 	RelayCertificateWorkerPrefix     = "rcw_"
@@ -54,6 +58,11 @@ const (
 	UsageReportPrefix                = "ur_"
 	VisitorConnectionPrefix          = "vc_"
 	PreviewPrefix                    = "pv_"
+	PrivateServicePrefix             = "psvc_"
+	PrivateRunPrefix                 = "psrun_"
+	PrivateConnectorSessionPrefix    = "pcs_"
+	PrivateServiceInvitationPrefix   = "psivt_"
+	PrivateServiceGrantPrefix        = "psgr_"
 )
 
 // New returns a type prefix followed by 22 uniformly sampled alphanumeric characters.

@@ -81,6 +81,10 @@ type StreamKind string
 const (
 	VisitorStream            StreamKind = "visitor"
 	InternalForwardingStream StreamKind = "internal_forward"
+	PublisherAdmissionStream StreamKind = "publisher_admission"
+	IngressAdmissionStream   StreamKind = "ingress_admission"
+	PrivateVisitorStream     StreamKind = "private_visitor"
+	PrivateForwardingStream  StreamKind = "private_forward"
 )
 
 // VisitorStreamHeader identifies one visitor stream opened on a publisher connection.
