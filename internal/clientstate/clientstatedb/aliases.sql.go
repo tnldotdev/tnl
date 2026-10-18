@@ -7,6 +7,7 @@ package clientstatedb
 
 import (
 	"context"
+	"database/sql"
 )
 
 const aliasDefinitionConflicts = `-- name: AliasDefinitionConflicts :one
@@ -31,8 +32,8 @@ func (q *Queries) AliasDefinitionConflicts(ctx context.Context, arg AliasDefinit
 
 const initializeProjectAlias = `-- name: InitializeProjectAlias :exec
 INSERT INTO project_aliases (
-    id, server_origin, project_key, team_id, membership_id, namespace, name,
-    hostname, service, fingerprint, selected_project, selection_revision
+    id, server_origin, primary_project_root, team_id, membership_id, namespace, name,
+    hostname, service, fingerprint, selected_project_root, selection_revision
 )
 SELECT ?1, t.server_origin, ?2, ?3,
     ?4, ?5, ?6, ?7,
@@ -83,7 +84,7 @@ const liveAliasOwner = `-- name: LiveAliasOwner :one
 SELECT count(*) FROM alias_declarations declaration
 JOIN project_aliases alias ON alias.id = declaration.alias_id
 JOIN local_tunnels t ON t.id = declaration.tunnel_id
-WHERE alias.id = ?1 AND t.project_root = alias.selected_project
+WHERE alias.id = ?1 AND t.project_root = alias.selected_project_root
     AND declaration.fingerprint = alias.fingerprint AND t.service = alias.service
     AND t.stopped_at IS NULL AND t.lease_expires_at > ?2
 `
@@ -102,10 +103,10 @@ func (q *Queries) LiveAliasOwner(ctx context.Context, arg LiveAliasOwnerParams) 
 
 const lockAliasSelection = `-- name: LockAliasSelection :one
 UPDATE project_aliases SET selection_revision = selection_revision
-WHERE server_origin = ?1 AND project_key = ?2
+WHERE server_origin = ?1 AND primary_project_root = ?2
     AND team_id = ?3 AND membership_id = ?4
     AND namespace = ?5 AND name = ?6
-RETURNING id, server_origin, project_key, team_id, membership_id, namespace, name, hostname, service, fingerprint, selected_project, selection_revision, failure_reason
+RETURNING id, server_origin, primary_project_root, team_id, membership_id, namespace, name, hostname, service, fingerprint, selected_project_root, selection_revision, failure_reason
 `
 
 type LockAliasSelectionParams struct {
@@ -130,7 +131,7 @@ func (q *Queries) LockAliasSelection(ctx context.Context, arg LockAliasSelection
 	err := row.Scan(
 		&i.ID,
 		&i.ServerOrigin,
-		&i.ProjectKey,
+		&i.PrimaryProjectRoot,
 		&i.TeamID,
 		&i.MembershipID,
 		&i.Namespace,
@@ -138,7 +139,7 @@ func (q *Queries) LockAliasSelection(ctx context.Context, arg LockAliasSelection
 		&i.Hostname,
 		&i.Service,
 		&i.Fingerprint,
-		&i.SelectedProject,
+		&i.SelectedProjectRoot,
 		&i.SelectionRevision,
 		&i.FailureReason,
 	)
@@ -146,7 +147,7 @@ func (q *Queries) LockAliasSelection(ctx context.Context, arg LockAliasSelection
 }
 
 const projectAliasByID = `-- name: ProjectAliasByID :one
-SELECT id, server_origin, project_key, team_id, membership_id, namespace, name, hostname, service, fingerprint, selected_project, selection_revision, failure_reason FROM project_aliases WHERE id = ?1
+SELECT id, server_origin, primary_project_root, team_id, membership_id, namespace, name, hostname, service, fingerprint, selected_project_root, selection_revision, failure_reason FROM project_aliases WHERE id = ?1
 `
 
 func (q *Queries) ProjectAliasByID(ctx context.Context, aliasID string) (ProjectAlias, error) {
@@ -155,7 +156,7 @@ func (q *Queries) ProjectAliasByID(ctx context.Context, aliasID string) (Project
 	err := row.Scan(
 		&i.ID,
 		&i.ServerOrigin,
-		&i.ProjectKey,
+		&i.PrimaryProjectRoot,
 		&i.TeamID,
 		&i.MembershipID,
 		&i.Namespace,
@@ -163,7 +164,7 @@ func (q *Queries) ProjectAliasByID(ctx context.Context, aliasID string) (Project
 		&i.Hostname,
 		&i.Service,
 		&i.Fingerprint,
-		&i.SelectedProject,
+		&i.SelectedProjectRoot,
 		&i.SelectionRevision,
 		&i.FailureReason,
 	)
@@ -171,8 +172,8 @@ func (q *Queries) ProjectAliasByID(ctx context.Context, aliasID string) (Project
 }
 
 const projectAliasByScope = `-- name: ProjectAliasByScope :one
-SELECT id, server_origin, project_key, team_id, membership_id, namespace, name, hostname, service, fingerprint, selected_project, selection_revision, failure_reason FROM project_aliases
-WHERE server_origin = ?1 AND project_key = ?2
+SELECT id, server_origin, primary_project_root, team_id, membership_id, namespace, name, hostname, service, fingerprint, selected_project_root, selection_revision, failure_reason FROM project_aliases
+WHERE server_origin = ?1 AND primary_project_root = ?2
     AND team_id = ?3 AND membership_id = ?4
     AND namespace = ?5 AND name = ?6
 `
@@ -199,7 +200,7 @@ func (q *Queries) ProjectAliasByScope(ctx context.Context, arg ProjectAliasBySco
 	err := row.Scan(
 		&i.ID,
 		&i.ServerOrigin,
-		&i.ProjectKey,
+		&i.PrimaryProjectRoot,
 		&i.TeamID,
 		&i.MembershipID,
 		&i.Namespace,
@@ -207,7 +208,7 @@ func (q *Queries) ProjectAliasByScope(ctx context.Context, arg ProjectAliasBySco
 		&i.Hostname,
 		&i.Service,
 		&i.Fingerprint,
-		&i.SelectedProject,
+		&i.SelectedProjectRoot,
 		&i.SelectionRevision,
 		&i.FailureReason,
 	)
@@ -215,7 +216,7 @@ func (q *Queries) ProjectAliasByScope(ctx context.Context, arg ProjectAliasBySco
 }
 
 const readyAliasReceiver = `-- name: ReadyAliasReceiver :one
-SELECT t.id, t.command, t.process_id, t.server_origin, t.project_root, t.service, t.hostname, t.target, t.framework, t.public_url_id, t.publish_run_number, t.state, t.started_at, t.updated_at, t.heartbeat_at, t.lease_expires_at, t.stopped_at, t.last_error, t.integration_group, t.public_port, t.service_protocol FROM alias_declarations declaration
+SELECT t.id, t.command, t.process_id, t.server_origin, t.project_root, t.service, t.service_protocol, t.public_port, t.primary_project_root, t.integration_namespace, t.integration_group, t.hostname, t.target, t.framework, t.public_url_id, t.publish_run_number, t.state, t.started_at, t.updated_at, t.heartbeat_at, t.lease_expires_at, t.stopped_at, t.failure_code FROM alias_declarations declaration
 JOIN project_aliases alias ON alias.id = declaration.alias_id
 JOIN local_tunnels t ON t.id = declaration.tunnel_id
 WHERE alias.id = ?1 AND t.project_root = ?2
@@ -241,6 +242,11 @@ func (q *Queries) ReadyAliasReceiver(ctx context.Context, arg ReadyAliasReceiver
 		&i.ServerOrigin,
 		&i.ProjectRoot,
 		&i.Service,
+		&i.ServiceProtocol,
+		&i.PublicPort,
+		&i.PrimaryProjectRoot,
+		&i.IntegrationNamespace,
+		&i.IntegrationGroup,
 		&i.Hostname,
 		&i.Target,
 		&i.Framework,
@@ -252,10 +258,7 @@ func (q *Queries) ReadyAliasReceiver(ctx context.Context, arg ReadyAliasReceiver
 		&i.HeartbeatAt,
 		&i.LeaseExpiresAt,
 		&i.StoppedAt,
-		&i.LastError,
-		&i.IntegrationGroup,
-		&i.PublicPort,
-		&i.ServiceProtocol,
+		&i.FailureCode,
 	)
 	return i, err
 }
@@ -274,7 +277,7 @@ type RegisterAliasDeclarationParams struct {
 	Fingerprint      []byte
 	TunnelID         string
 	ServerOrigin     string
-	Service          string
+	Service          sql.NullString
 	IntegrationGroup string
 	Now              int64
 }
@@ -296,7 +299,7 @@ func (q *Queries) RegisterAliasDeclaration(ctx context.Context, arg RegisterAlia
 }
 
 const setAliasSelectedProject = `-- name: SetAliasSelectedProject :execrows
-UPDATE project_aliases SET selected_project = ?1, selection_revision = selection_revision + 1, failure_reason = ''
+UPDATE project_aliases SET selected_project_root = ?1, selection_revision = selection_revision + 1, failure_reason = ''
 WHERE id = ?2 AND selection_revision = ?3
     AND selection_revision < 9223372036854775807
 `

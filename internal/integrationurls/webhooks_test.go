@@ -54,7 +54,7 @@ func TestWebhookFanoutRequiresAllReceiversAndPreservesSignatureInputs(t *testing
 			t.Fatal(err)
 		}
 	}
-	handler, _, err := NewWebhooks(t.Context(), state, testServer, testOAuthHost, "hooks.project.example.test", map[string]config.Webhook{"stripe": definition}, nil)
+	handler, _, err := NewWebhooks(t.Context(), state, testServer, testIntegrationGroup, "hooks.project.example.test", map[string]config.Webhook{"stripe": definition}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func (*untrustedBody) Close() error               { return nil }
 
 func TestWebhookPathAndIPAdmissionPrecedesBodyRead(t *testing.T) {
 	state, _ := callbackState(t)
-	handler, _, err := NewWebhooks(t.Context(), state, testServer, testOAuthHost, "hooks.project.example.test", map[string]config.Webhook{
+	handler, _, err := NewWebhooks(t.Context(), state, testServer, testIntegrationGroup, "hooks.project.example.test", map[string]config.Webhook{
 		"stripe": {Service: "api", Path: "/hooks/stripe", Provider: "stripe", SourceIPs: []string{"192.0.2.0/24"}},
 		"github": {Service: "api", Path: "/hooks/github", Provider: "github", SourceIPs: []string{"198.51.100.0/24"}},
 	}, nil)
@@ -126,7 +126,7 @@ func TestWebhookPathAndIPAdmissionPrecedesBodyRead(t *testing.T) {
 
 func TestWebhookWildcardSourceDoesNotBroadenAnotherEndpoint(t *testing.T) {
 	state, _ := callbackState(t)
-	handler, ingressIPs, err := NewWebhooks(t.Context(), state, testServer, testOAuthHost, "hooks.project.example.test", map[string]config.Webhook{
+	handler, ingressIPs, err := NewWebhooks(t.Context(), state, testServer, testIntegrationGroup, "hooks.project.example.test", map[string]config.Webhook{
 		"open":       {Service: "api", Path: "/hooks/open", Provider: "custom"},
 		"restricted": {Service: "api", Path: "/hooks/restricted", Provider: "stripe", SourceIPs: []string{"192.0.2.0/24"}},
 	}, nil)
@@ -159,7 +159,7 @@ func TestUnavailableCatalogPolicyDoesNotBlockOtherWebhookOrReadFailedBody(t *tes
 	if err := tunnel.RegisterWebhookEndpoint(t.Context(), "stripe", encoded); err != nil {
 		t.Fatal(err)
 	}
-	handler, ingressIPs, err := newWebhooks(t.Context(), state, testServer, testOAuthHost, "hooks.project.example.test", map[string]config.Webhook{
+	handler, ingressIPs, err := newWebhooks(t.Context(), state, testServer, testIntegrationGroup, "hooks.project.example.test", map[string]config.Webhook{
 		"stripe": stripe,
 		"github": {Service: "api", Path: "/hooks/github", Provider: "github"},
 	}, nil, func(_ context.Context, _ webhookips.Cache, server, name string) (webhookips.Source, error) {
@@ -210,7 +210,7 @@ func TestWebhookCustomProviderCanUseAnExplicitHTTPMethod(t *testing.T) {
 	if err := tunnel.RegisterWebhookEndpoint(t.Context(), "custom", encoded); err != nil {
 		t.Fatal(err)
 	}
-	handler, prefixes, err := NewWebhooks(t.Context(), state, testServer, testOAuthHost, "hooks.project.example.test", map[string]config.Webhook{"custom": definition}, nil)
+	handler, prefixes, err := NewWebhooks(t.Context(), state, testServer, testIntegrationGroup, "hooks.project.example.test", map[string]config.Webhook{"custom": definition}, nil)
 	if err != nil || len(prefixes) != 1 || prefixes[0] != "198.51.100.0/24" {
 		t.Fatalf("custom source policy = %v, %v", prefixes, err)
 	}
@@ -253,7 +253,7 @@ func TestWebhookVerificationReturnsOnlyMatchingResponses(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	handler, _, err := NewWebhooks(t.Context(), state, testServer, testOAuthHost, "hooks.project.example.test", map[string]config.Webhook{"verify": definition}, nil)
+	handler, _, err := NewWebhooks(t.Context(), state, testServer, testIntegrationGroup, "hooks.project.example.test", map[string]config.Webhook{"verify": definition}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,6 +22,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -36,10 +37,11 @@ const (
 var ErrCertificateExpired = errors.New("clientstate: application certificate is expired")
 
 type CertificateCache struct {
-	store    *Store
-	teamID   string
-	plan     controlv1.CertificatePlan
-	planJSON string
+	store       *Store
+	teamID      string
+	publisherID string
+	plan        controlv1.CertificatePlan
+	planJSON    string
 }
 
 type Pending struct {
@@ -47,6 +49,7 @@ type Pending struct {
 	CSRDER []byte
 
 	keyDER []byte
+	scope  string
 }
 
 type Material struct {
@@ -56,6 +59,22 @@ type Material struct {
 }
 
 func (s *Store) Certificates(teamID string, plan controlv1.CertificatePlan) (*CertificateCache, error) {
+	return s.certificateCache(teamID, "", plan)
+}
+
+// CertificatesForPublisher keeps one enrolled publisher's private key and CSR
+// cache across its runs and URLs. the server-approved plan is never rewritten.
+func (s *Store) CertificatesForPublisher(teamID, publisherID string, plan controlv1.CertificatePlan) (*CertificateCache, error) {
+	if !opaqueid.Valid(publisherID, opaqueid.PublisherIdentityPrefix) {
+		return nil, errors.New("clientstate: enrolled publisher identity is required for certificate cache")
+	}
+	return s.certificateCache(teamID, publisherID, plan)
+}
+
+func (s *Store) certificateCache(teamID, publisherID string, plan controlv1.CertificatePlan) (*CertificateCache, error) {
+	if s == nil {
+		return nil, errors.New("clientstate: certificate state store is required")
+	}
 	if teamID == "" || strings.TrimSpace(teamID) != teamID {
 		return nil, errors.New("clientstate: certificate team is required")
 	}
@@ -67,15 +86,33 @@ func (s *Store) Certificates(teamID string, plan controlv1.CertificatePlan) (*Ce
 	if err != nil {
 		return nil, err
 	}
-	return &CertificateCache{store: s, teamID: teamID, plan: plan, planJSON: string(encoded)}, nil
+	return &CertificateCache{store: s, teamID: teamID, publisherID: publisherID, plan: plan, planJSON: string(encoded)}, nil
 }
 
 // Lock serializes a certificate transaction, not the tunnel using its material.
 func (r *CertificateCache) Lock(ctx context.Context) (*Lock, error) {
 	encoded, _ := json.Marshal([]string{r.teamID, r.plan.CacheKey})
+	if r.publisherID != "" {
+		encoded, _ = json.Marshal([]string{r.teamID, r.publisherID, r.plan.CacheKey})
+	}
 	digest := sha256.Sum256(encoded)
 	path := filepath.Join(r.store.locksDir, fmt.Sprintf("certificate-%x.lock", digest))
 	return openLockContext(ctx, path, "certificate")
+}
+
+// LockPublisherHostnameContext permits distinct enrolled publishers to serve
+// a pooled hostname while serializing this publisher's own local invocations.
+func LockPublisherHostnameContext(ctx context.Context, store *Store, hostname, publisherID string) (*Lock, error) {
+	if store == nil || !opaqueid.Valid(publisherID, opaqueid.PublisherIdentityPrefix) {
+		return nil, errors.New("clientstate: state store and enrolled publisher identity are required")
+	}
+	canonical, err := naming.CanonicalizeHostname(hostname)
+	if err != nil || canonical != hostname {
+		return nil, errors.New("clientstate: canonical publisher hostname is required")
+	}
+	encoded, _ := json.Marshal([]string{publisherID, hostname})
+	digest := sha256.Sum256(encoded)
+	return openLockContext(ctx, filepath.Join(store.locksDir, fmt.Sprintf("publisher-hostname-%x.lock", digest)), "publisher hostname")
 }
 
 func (r *CertificateCache) Current(ctx context.Context, hostname string) (Material, bool, error) {
@@ -100,7 +137,7 @@ func (r *CertificateCache) material(ctx context.Context, hostname string, phase 
 	if len(stored.CsrDer) == 0 || !stored.RenewAt.Valid || stored.IssuanceID == "" {
 		return Material{}, true, errors.New("clientstate: certificate metadata is invalid")
 	}
-	keyDER, err := r.store.secrets.Open(ctx, r.secretContext(), stored.StoredKey)
+	keyDER, err := r.store.secrets.Open(ctx, r.secretContext(), stored.PrivateKeyCiphertext)
 	if err != nil {
 		return Material{}, true, err
 	}
@@ -149,12 +186,13 @@ func (r *CertificateCache) Pending(ctx context.Context, hostname string) (Pendin
 	}
 	if err := r.store.database.queries.UpsertCertificateMaterial(ctx, clientstatedb.UpsertCertificateMaterialParams{
 		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: string(certificatePhasePending),
-		StoredKey: protectedKey, CsrDer: csrDER, IssuanceID: "",
+		PublisherIdentityID:  r.publisherID,
+		PrivateKeyCiphertext: protectedKey, CsrDer: csrDER, IssuanceID: "",
 		UpdatedAt: r.store.database.now().UTC().UnixNano(),
 	}); err != nil {
 		return Pending{}, fmt.Errorf("clientstate: save pending public URL certificate: %w", err)
 	}
-	return Pending{Key: key, CSRDER: csrDER, keyDER: keyDER}, nil
+	return Pending{Key: key, CSRDER: csrDER, keyDER: keyDER, scope: r.pendingScope()}, nil
 }
 
 // Stage retains issued material without replacing the last acknowledged certificate.
@@ -169,6 +207,16 @@ func (r *CertificateCache) Stage(
 ) (Material, error) {
 	if pending.Key == nil || len(pending.keyDER) == 0 || len(pending.CSRDER) == 0 || renewAt.IsZero() || issuanceID == "" {
 		return Material{}, errors.New("clientstate: pending certificate material is incomplete")
+	}
+	if pending.scope != r.pendingScope() {
+		return Material{}, errors.New("clientstate: pending certificate belongs to another publisher cache")
+	}
+	stored, err := r.record(ctx, certificatePhasePending)
+	if err != nil {
+		return Material{}, fmt.Errorf("clientstate: read pending certificate before staging: %w", err)
+	}
+	if !bytes.Equal(stored.CsrDer, pending.CSRDER) {
+		return Material{}, errors.New("clientstate: pending certificate changed before staging")
 	}
 	installed, err := certificate(pending.keyDER, certificatePEM, hostname, r.plan.Identifiers)
 	if err != nil {
@@ -187,14 +235,20 @@ func (r *CertificateCache) Stage(
 	if err != nil {
 		return Material{}, err
 	}
-	if err := r.store.database.queries.UpsertCertificateMaterial(ctx, clientstatedb.UpsertCertificateMaterialParams{
-		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: string(certificatePhasePending),
-		StoredKey: protectedKey, CsrDer: bytes.Clone(pending.CSRDER),
-		CertificatePem: bytes.Clone(certificatePEM), RenewAt: sql.NullInt64{Int64: renewAt.UTC().UnixNano(), Valid: true},
+	changed, err := r.store.database.queries.StageCertificateMaterial(ctx, clientstatedb.StageCertificateMaterialParams{
+		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON,
+		PublisherIdentityID:  r.publisherID,
+		PrivateKeyCiphertext: protectedKey, CsrDer: bytes.Clone(pending.CSRDER),
+		PreviousKeyCiphertext: stored.PrivateKeyCiphertext,
+		CertificatePem:        bytes.Clone(certificatePEM), RenewAt: sql.NullInt64{Int64: renewAt.UTC().UnixNano(), Valid: true},
 		IssuanceID: issuanceID,
 		UpdatedAt:  r.store.database.now().UTC().UnixNano(),
-	}); err != nil {
+	})
+	if err != nil {
 		return Material{}, fmt.Errorf("clientstate: stage public URL certificate: %w", err)
+	}
+	if changed != 1 {
+		return Material{}, errors.New("clientstate: pending certificate changed during staging")
 	}
 	return Material{
 		Certificate: installed, RenewAt: renewAt.UTC(), IssuanceID: issuanceID,
@@ -217,6 +271,7 @@ func (r *CertificateCache) Promote(ctx context.Context, hostname, issuanceID str
 	queries := r.store.database.queries.WithTx(tx)
 	identity := clientstatedb.GetCertificateMaterialParams{
 		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: string(certificatePhasePending),
+		PublisherIdentityID: r.publisherID,
 	}
 	stored, err := queries.GetCertificateMaterial(ctx, identity)
 	if err != nil {
@@ -227,7 +282,8 @@ func (r *CertificateCache) Promote(ctx context.Context, hostname, issuanceID str
 	}
 	if err := queries.UpsertCertificateMaterial(ctx, clientstatedb.UpsertCertificateMaterialParams{
 		ServerOrigin: stored.ServerOrigin, TeamID: stored.TeamID, CacheKey: stored.CacheKey, Plan: stored.Plan, Phase: string(certificatePhaseCurrent),
-		StoredKey: stored.StoredKey, CsrDer: stored.CsrDer, CertificatePem: stored.CertificatePem,
+		PublisherIdentityID:  stored.PublisherIdentityID,
+		PrivateKeyCiphertext: stored.PrivateKeyCiphertext, CsrDer: stored.CsrDer, CertificatePem: stored.CertificatePem,
 		RenewAt: stored.RenewAt, IssuanceID: stored.IssuanceID, UpdatedAt: r.store.database.now().UTC().UnixNano(),
 	}); err != nil {
 		return err
@@ -244,17 +300,18 @@ func (r *CertificateCache) NewPending(ctx context.Context, hostname string) (Pen
 	}
 	if err := r.store.database.queries.DeleteCertificateMaterial(ctx, clientstatedb.DeleteCertificateMaterialParams{
 		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: string(certificatePhasePending),
+		PublisherIdentityID: r.publisherID,
 	}); err != nil {
 		return Pending{}, fmt.Errorf("clientstate: replace pending public URL certificate: %w", err)
 	}
 	return r.Pending(ctx, hostname)
 }
 
-func (r *CertificateCache) pendingFromDB(ctx context.Context, stored clientstatedb.CertificateMaterial, hostname string) (Pending, error) {
+func (r *CertificateCache) pendingFromDB(ctx context.Context, stored clientstatedb.PublicUrlCertificateCache, hostname string) (Pending, error) {
 	if !certificateidentity.Covers(r.plan.Identifiers, hostname) {
 		return Pending{}, errors.New("clientstate: pending certificate metadata is invalid")
 	}
-	keyDER, err := r.store.secrets.Open(ctx, r.secretContext(), stored.StoredKey)
+	keyDER, err := r.store.secrets.Open(ctx, r.secretContext(), stored.PrivateKeyCiphertext)
 	if err != nil {
 		return Pending{}, err
 	}
@@ -265,18 +322,28 @@ func (r *CertificateCache) pendingFromDB(ctx context.Context, stored clientstate
 	if err := validateCSR(stored.CsrDer, key, r.plan.Identifiers); err != nil {
 		return Pending{}, err
 	}
-	return Pending{Key: key, CSRDER: bytes.Clone(stored.CsrDer), keyDER: keyDER}, nil
+	return Pending{Key: key, CSRDER: bytes.Clone(stored.CsrDer), keyDER: keyDER, scope: r.pendingScope()}, nil
 }
 
-func (r *CertificateCache) record(ctx context.Context, phase certificatePhase) (clientstatedb.CertificateMaterial, error) {
+func (r *CertificateCache) record(ctx context.Context, phase certificatePhase) (clientstatedb.PublicUrlCertificateCache, error) {
 	return r.store.database.queries.GetCertificateMaterial(ctx, clientstatedb.GetCertificateMaterialParams{
 		ServerOrigin: r.store.controlEndpoint, TeamID: r.teamID, CacheKey: r.plan.CacheKey, Plan: r.planJSON, Phase: string(phase),
+		PublisherIdentityID: r.publisherID,
 	})
 }
 
 func (r *CertificateCache) secretContext() string {
+	if r.publisherID != "" {
+		encoded, _ := json.Marshal([]string{r.teamID, r.publisherID, r.planJSON})
+		return "publisher-certificate-private-key:" + string(encoded)
+	}
 	encoded, _ := json.Marshal([]string{r.teamID, r.planJSON})
 	return "certificate-private-key:" + string(encoded)
+}
+
+func (r *CertificateCache) pendingScope() string {
+	encoded, _ := json.Marshal([]string{r.store.controlEndpoint, r.teamID, r.publisherID, r.planJSON})
+	return string(encoded)
 }
 
 func validateCSR(csrDER []byte, key any, identifiers []string) error {

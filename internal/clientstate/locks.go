@@ -32,6 +32,16 @@ func (s *Store) LockControlSession() (*Lock, error) {
 	return openLock(filepath.Join(s.locksDir, "control-session.lock"), "control session")
 }
 
+// LockPublisherSigningIdentity serializes key creation and registration for one
+// server-scoped publisher identity. callers hold it across read, create, save.
+func (s *Store) LockPublisherSigningIdentity(ctx context.Context, scope string) (*Lock, error) {
+	if !validOpaqueValue(scope, 1024) {
+		return nil, errors.New("clientstate: invalid publisher identity scope")
+	}
+	digest := sha256.Sum256([]byte(scope))
+	return openLockContext(ctx, filepath.Join(s.locksDir, fmt.Sprintf("publisher-identity-%x.lock", digest)), "publisher identity")
+}
+
 func LockControlSessionContext(ctx context.Context, store *Store) (*Lock, error) {
 	if store == nil {
 		return nil, errors.New("clientstate: state store is required")
@@ -53,6 +63,46 @@ func LockGuestSessionContext(ctx context.Context, store *Store) (*Lock, error) {
 		return nil, failure.Wrap("lock guest demo state", failure.ClientStateLocked, err)
 	}
 	return lock, failure.Wrap("lock guest demo state", failure.ClientStateUnavailable, err)
+}
+
+// PrepareRoot creates or validates an owner-only canonical state root. local
+// HTTP API descriptors use the same trust boundary as the database.
+func PrepareRoot(root string) (string, error) { return prepareRoot(root) }
+
+// ValidatePrivateFile validates descriptor metadata without changing permissions.
+func ValidatePrivateFile(info os.FileInfo, directory bool) error {
+	return validatePrivateFile(info, directory)
+}
+
+// OpenPrivateFile validates both the path and opened descriptor and rejects
+// symlinks, public permissions, wrong owners, and a replaced path.
+// do not use it for sqlite database or sidecar files: closing an extra descriptor
+// can release locks held by live sqlite connections in this process.
+func OpenPrivateFile(path string) (*os.File, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePrivateFile(info, false); err != nil {
+		return nil, err
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	opened, err := file.Stat()
+	if err == nil {
+		err = validatePrivateFile(opened, false)
+	}
+	if err == nil && !os.SameFile(info, opened) {
+		err = errors.New("clientstate: private file changed while opening")
+	}
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	return file, nil
 }
 
 func prepareRoot(root string) (string, error) {

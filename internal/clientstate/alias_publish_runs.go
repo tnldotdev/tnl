@@ -2,6 +2,7 @@ package clientstate
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/tnldotdev/tnl/internal/clientstate/clientstatedb"
@@ -28,7 +29,8 @@ func (d *Database) MarkAliasRunReady(ctx context.Context, run AliasPublishRun) e
 	count, err := d.queries.MarkAliasRunReady(ctx, clientstatedb.MarkAliasRunReadyParams{
 		AliasID: run.Selection.ID, Owner: run.Owner, TunnelID: run.Receiver.ID,
 		SelectionRevision: int64(run.Selection.Revision), PublicURLID: run.PublicURLID, PublishRunNumber: number,
-		TargetPublicURLID: run.Receiver.PublicURLID, TargetPublishRunNumber: targetNumber, Now: d.now().UTC().UnixNano(),
+		TargetPublicURLID:      sql.NullString{String: run.Receiver.PublicURLID, Valid: true},
+		TargetPublishRunNumber: sql.NullInt64{Int64: targetNumber, Valid: true}, Now: d.now().UTC().UnixNano(),
 	})
 	if err != nil {
 		return err

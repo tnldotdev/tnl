@@ -10,7 +10,7 @@ import (
 )
 
 const deleteGuestSession = `-- name: DeleteGuestSession :exec
-DELETE FROM guest_sessions WHERE server_origin = ?1
+DELETE FROM guest_demo_sessions WHERE server_origin = ?1
 `
 
 func (q *Queries) DeleteGuestSession(ctx context.Context, serverOrigin string) error {
@@ -19,16 +19,16 @@ func (q *Queries) DeleteGuestSession(ctx context.Context, serverOrigin string) e
 }
 
 const getGuestSession = `-- name: GetGuestSession :one
-SELECT server_origin, guest_id, stored_access_token, team_id, membership_id, domain_id, namespace, expires_at, created_at FROM guest_sessions WHERE server_origin = ?1
+SELECT server_origin, guest_id, access_token_ciphertext, team_id, membership_id, domain_id, namespace, expires_at, created_at FROM guest_demo_sessions WHERE server_origin = ?1
 `
 
-func (q *Queries) GetGuestSession(ctx context.Context, serverOrigin string) (GuestSession, error) {
+func (q *Queries) GetGuestSession(ctx context.Context, serverOrigin string) (GuestDemoSession, error) {
 	row := q.db.QueryRowContext(ctx, getGuestSession, serverOrigin)
-	var i GuestSession
+	var i GuestDemoSession
 	err := row.Scan(
 		&i.ServerOrigin,
 		&i.GuestID,
-		&i.StoredAccessToken,
+		&i.AccessTokenCiphertext,
 		&i.TeamID,
 		&i.MembershipID,
 		&i.DomainID,
@@ -40,8 +40,8 @@ func (q *Queries) GetGuestSession(ctx context.Context, serverOrigin string) (Gue
 }
 
 const saveGuestSession = `-- name: SaveGuestSession :exec
-INSERT INTO guest_sessions (
-    server_origin, guest_id, stored_access_token, team_id,
+INSERT INTO guest_demo_sessions (
+    server_origin, guest_id, access_token_ciphertext, team_id,
     membership_id, domain_id, namespace, expires_at, created_at
 ) VALUES (
     ?1, ?2, ?3, ?4,
@@ -51,22 +51,22 @@ ON CONFLICT (server_origin) DO NOTHING
 `
 
 type SaveGuestSessionParams struct {
-	ServerOrigin      string
-	GuestID           string
-	StoredAccessToken []byte
-	TeamID            string
-	MembershipID      string
-	DomainID          string
-	Namespace         string
-	ExpiresAt         int64
-	CreatedAt         int64
+	ServerOrigin          string
+	GuestID               string
+	AccessTokenCiphertext []byte
+	TeamID                string
+	MembershipID          string
+	DomainID              string
+	Namespace             string
+	ExpiresAt             int64
+	CreatedAt             int64
 }
 
 func (q *Queries) SaveGuestSession(ctx context.Context, arg SaveGuestSessionParams) error {
 	_, err := q.db.ExecContext(ctx, saveGuestSession,
 		arg.ServerOrigin,
 		arg.GuestID,
-		arg.StoredAccessToken,
+		arg.AccessTokenCiphertext,
 		arg.TeamID,
 		arg.MembershipID,
 		arg.DomainID,

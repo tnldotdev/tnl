@@ -113,6 +113,7 @@ type TunnelInfo struct {
 	UpdatedAt        time.Time                          `json:"updated_at"`
 	HeartbeatAt      time.Time                          `json:"heartbeat_at"`
 	LeaseExpiresAt   time.Time                          `json:"lease_expires_at"`
+	Failure          string                             `json:"failure,omitempty"`
 }
 
 // BeginTunnel registers a local tunnel and maintains its liveness lease until
@@ -155,6 +156,10 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if len(options.IntegrationGroup) > 1024 {
 		return nil, failure.Wrap("validate integration URL group", failure.ProjectConfigInvalid, errors.New("integration group exceeds limit"))
 	}
+	primary, namespace, err := splitIntegrationGroup(options.IntegrationGroup)
+	if err != nil {
+		return nil, failure.Wrap("validate integration URL group", failure.ProjectConfigInvalid, err)
+	}
 	if _, err := d.Server(ctx, server); err != nil {
 		return nil, err
 	}
@@ -172,7 +177,8 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if err := d.queries.InsertTunnel(ctx, clientstatedb.InsertTunnelParams{
 		ID: id, Command: string(options.Command), ProcessID: int64(os.Getpid()), ServerOrigin: server,
 		ProjectRoot: options.Project, Service: options.Service, ServiceProtocol: string(options.ServiceProtocol), Target: options.Target,
-		Now: now.UnixNano(), LeaseExpiresAt: now.Add(tunnelLeaseDuration).UnixNano(), IntegrationGroup: options.IntegrationGroup,
+		Now: now.UnixNano(), LeaseExpiresAt: now.Add(tunnelLeaseDuration).UnixNano(),
+		PrimaryProjectRoot: primary, IntegrationNamespace: namespace,
 	}); err != nil {
 		return nil, fmt.Errorf("clientstate: begin tunnel: %w", err)
 	}
@@ -189,8 +195,12 @@ func (t *Tunnel) SetIntegrationGroup(ctx context.Context, group string) error {
 	if group == "" || len(group) > 1024 {
 		return failure.Wrap("validate integration URL group", failure.ProjectConfigInvalid, errors.New("group must be nonempty and within 1024 bytes"))
 	}
+	primary, namespace, err := splitIntegrationGroup(group)
+	if err != nil {
+		return failure.Wrap("validate integration URL group", failure.ProjectConfigInvalid, err)
+	}
 	count, err := t.database.queries.SetTunnelIntegrationGroup(ctx, clientstatedb.SetTunnelIntegrationGroupParams{
-		IntegrationGroup: group, TunnelID: t.id,
+		PrimaryProjectRoot: primary, IntegrationNamespace: namespace, TunnelID: t.id,
 	})
 	if err != nil {
 		return failure.Wrap("register integration URL group", failure.ClientStateUnavailable, err)
@@ -199,6 +209,17 @@ func (t *Tunnel) SetIntegrationGroup(ctx context.Context, group string) error {
 		return failure.Wrap("register integration URL group", failure.ClientStateUnavailable, errors.New("tunnel stopped before registration"))
 	}
 	return nil
+}
+
+func splitIntegrationGroup(value string) (sql.NullString, sql.NullString, error) {
+	if value == "" {
+		return sql.NullString{}, sql.NullString{}, nil
+	}
+	primary, namespace, ok := strings.Cut(value, "\x00")
+	if !ok || primary == "" || namespace == "" || strings.ContainsRune(namespace, '\x00') {
+		return sql.NullString{}, sql.NullString{}, errors.New("integration group requires a project and namespace")
+	}
+	return sql.NullString{String: primary, Valid: true}, sql.NullString{String: namespace, Valid: true}, nil
 }
 
 // Context is canceled if the parent ends or a failed heartbeat leaves the
@@ -218,7 +239,7 @@ func (t *Tunnel) SetDevTarget(ctx context.Context, framework, target string) err
 		return errors.New("clientstate: invalid tunnel framework")
 	}
 	rows, err := t.database.queries.SetTunnelDevTarget(ctx, clientstatedb.SetTunnelDevTargetParams{
-		Target: target, Framework: framework, Now: t.database.now().UTC().UnixNano(), ID: t.id,
+		Target: target, Framework: sql.NullString{String: framework, Valid: true}, Now: t.database.now().UTC().UnixNano(), ID: t.id,
 	})
 	return tunnelUpdateResult(rows, err)
 }
@@ -229,7 +250,8 @@ func (t *Tunnel) SetPublicURL(ctx context.Context, publicURLID, hostname string)
 		return errors.New("clientstate: invalid tunnel route")
 	}
 	rows, err := t.database.queries.SetTunnelPublicURL(ctx, clientstatedb.SetTunnelPublicURLParams{
-		PublicURLID: publicURLID, Hostname: hostname, Now: t.database.now().UTC().UnixNano(), ID: t.id,
+		PublicURLID: sql.NullString{String: publicURLID, Valid: true}, Hostname: sql.NullString{String: hostname, Valid: true},
+		Now: t.database.now().UTC().UnixNano(), ID: t.id,
 	})
 	return tunnelUpdateResult(rows, err)
 }
@@ -240,7 +262,7 @@ func (t *Tunnel) SetProvisioning(ctx context.Context, publishRunNumber uint64) e
 		return errors.New("clientstate: invalid tunnel publish run number")
 	}
 	rows, err := t.database.queries.SetTunnelProvisioning(ctx, clientstatedb.SetTunnelProvisioningParams{
-		PublishRunNumber: versionValue, Now: t.database.now().UTC().UnixNano(), ID: t.id,
+		PublishRunNumber: sql.NullInt64{Int64: versionValue, Valid: true}, Now: t.database.now().UTC().UnixNano(), ID: t.id,
 	})
 	return tunnelUpdateResult(rows, err)
 }
@@ -255,8 +277,9 @@ func (t *Tunnel) SetReady(ctx context.Context, publicURL string, publishRunNumbe
 		return errors.New("clientstate: invalid tunnel publish run number")
 	}
 	rows, err := t.database.queries.SetTunnelReady(ctx, clientstatedb.SetTunnelReadyParams{
-		Hostname: hostname, PublicPort: int64(publicPort), PublishRunNumber: versionValue,
-		Now: t.database.now().UTC().UnixNano(), ID: t.id,
+		Hostname: sql.NullString{String: hostname, Valid: true}, PublicPort: int64(publicPort),
+		PublishRunNumber: sql.NullInt64{Int64: versionValue, Valid: true},
+		Now:              t.database.now().UTC().UnixNano(), ID: t.id,
 	})
 	return tunnelUpdateResult(rows, err)
 }
@@ -309,7 +332,7 @@ func (t *Tunnel) Finish(ctx context.Context, runErr error) error {
 		}
 		now := t.database.now().UTC().UnixNano()
 		rows, err := t.database.queries.FinishTunnel(ctx, clientstatedb.FinishTunnelParams{
-			State: string(state), LastError: message, Now: now, ID: t.id,
+			State: string(state), FailureCode: message, Now: now, ID: t.id,
 		})
 		t.finishErr = tunnelUpdateResult(rows, err)
 	})
@@ -371,9 +394,9 @@ func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnap
 		}
 		info := TunnelInfo{
 			ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
-			Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service,
-			PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber), PublicPort: uint16(row.PublicPort),
-			Hostname: row.Hostname, Target: row.Target, Framework: row.Framework, IntegrationGroup: row.IntegrationGroup,
+			Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service.String,
+			PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64), PublicPort: uint16(row.PublicPort.Int64),
+			Hostname: row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String, IntegrationGroup: row.IntegrationGroup,
 			StartedAt: unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
 			HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
 		}
@@ -424,6 +447,33 @@ func (t *Tunnel) heartbeat(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func tunnelInfo(row clientstatedb.LocalTunnel, observedAt time.Time) TunnelInfo {
+	state := TunnelState(row.State)
+	if !row.StoppedAt.Valid && !unixNanoTime(row.LeaseExpiresAt).After(observedAt) {
+		state = TunnelStateStale
+	}
+	info := TunnelInfo{
+		ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
+		Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service.String,
+		PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64), PublicPort: uint16(row.PublicPort.Int64),
+		Hostname: row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String, IntegrationGroup: row.IntegrationGroup,
+		StartedAt: unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
+		HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
+		Failure: row.FailureCode.String,
+	}
+	if row.ServiceProtocol != string(controlv1.Http) {
+		info.ServiceProtocol = controlv1.PublicURLServiceProtocol(row.ServiceProtocol)
+	}
+	if info.Hostname != "" {
+		if info.PublicPort != 0 {
+			info.PublicURL = net.JoinHostPort(info.Hostname, strconv.Itoa(int(info.PublicPort)))
+		} else if info.ServiceProtocol == "" {
+			info.PublicURL = "https://" + info.Hostname
+		}
+	}
+	return info
 }
 
 func newTunnelID() (string, error) {

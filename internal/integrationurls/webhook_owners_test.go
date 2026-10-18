@@ -46,25 +46,25 @@ func TestExclusiveWebhookOwnerCannotBeStolenDuringReprovisioning(t *testing.T) {
 			other = tunnel
 		}
 	}
-	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testOAuthHost, "respond", owner.ID(), digest, false); err != nil {
+	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testIntegrationGroup, "respond", owner.ID(), digest, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testOAuthHost, "respond", other.ID(), digest, false); !errors.Is(err, clientstate.ErrWebhookOwned) {
+	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testIntegrationGroup, "respond", other.ID(), digest, false); !errors.Is(err, clientstate.ErrWebhookOwned) {
 		t.Fatalf("stole ready owner: %v", err)
 	}
-	if err := state.ReleaseWebhookReceiver(t.Context(), testServer, testOAuthHost, "respond", other.ID()); !errors.Is(err, clientstate.ErrWebhookNotSelected) {
+	if err := state.ReleaseWebhookReceiver(t.Context(), testServer, testIntegrationGroup, "respond", other.ID()); !errors.Is(err, clientstate.ErrWebhookNotSelected) {
 		t.Fatalf("another worktree released the owner: %v", err)
 	}
 	if err := owner.SetProvisioning(t.Context(), 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testOAuthHost, "respond", other.ID(), digest, false); !errors.Is(err, clientstate.ErrWebhookOwned) {
+	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testIntegrationGroup, "respond", other.ID(), digest, false); !errors.Is(err, clientstate.ErrWebhookOwned) {
 		t.Fatalf("reprovisioning lost the live owner's claim: %v", err)
 	}
 	if err := owner.SetReady(t.Context(), "https://main.example.test", 2); err != nil {
 		t.Fatal(err)
 	}
-	handler, _, err := NewWebhooks(t.Context(), state, testServer, testOAuthHost, "hooks.project.example.test", map[string]config.Webhook{"respond": definition}, nil)
+	handler, _, err := NewWebhooks(t.Context(), state, testServer, testIntegrationGroup, "hooks.project.example.test", map[string]config.Webhook{"respond": definition}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestExclusiveWebhookOwnerCannotBeStolenDuringReprovisioning(t *testing.T) {
 	if err := owner.Finish(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testOAuthHost, "respond", other.ID(), digest, false); err != nil {
+	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testIntegrationGroup, "respond", other.ID(), digest, false); err != nil {
 		t.Fatal(err)
 	}
 	// the sole receiver's HTTP error is meaningful to the provider too.
@@ -116,30 +116,30 @@ func TestExclusiveWebhookForceRequiresReadyReceiverAndSwitchesAtomically(t *test
 			t.Fatal(err)
 		}
 	}
-	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testOAuthHost, "payments", owner.ID(), digest, false); err != nil {
+	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testIntegrationGroup, "payments", owner.ID(), digest, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := other.SetProvisioning(t.Context(), 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testOAuthHost, "payments", other.ID(), digest, true); !errors.Is(err, clientstate.ErrWebhookReceiverUnavailable) {
+	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testIntegrationGroup, "payments", other.ID(), digest, true); !errors.Is(err, clientstate.ErrWebhookReceiverUnavailable) {
 		t.Fatalf("unready receiver displaced its owner: %v", err)
 	}
-	selected, err := state.ExclusiveWebhookReceiver(t.Context(), testServer, testOAuthHost, "payments", digest)
+	selected, err := state.ExclusiveWebhookReceiver(t.Context(), testServer, testIntegrationGroup, "payments", digest)
 	if err != nil || selected.ID != owner.ID() {
 		t.Fatalf("owner changed after rejected takeover: %+v, %v", selected, err)
 	}
 	if err := other.SetReady(t.Context(), "https://feature.example.test", 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testOAuthHost, "payments", other.ID(), digest, true); err != nil {
+	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testIntegrationGroup, "payments", other.ID(), digest, true); err != nil {
 		t.Fatal(err)
 	}
-	selected, err = state.ExclusiveWebhookReceiver(t.Context(), testServer, testOAuthHost, "payments", digest)
+	selected, err = state.ExclusiveWebhookReceiver(t.Context(), testServer, testIntegrationGroup, "payments", digest)
 	if err != nil || selected.ID != other.ID() {
 		t.Fatalf("forced takeover did not switch: %+v, %v", selected, err)
 	}
-	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testOAuthHost, "payments", owner.ID(), digest, false); !errors.Is(err, clientstate.ErrWebhookOwned) {
+	if err := state.ClaimWebhookReceiver(t.Context(), testServer, testIntegrationGroup, "payments", owner.ID(), digest, false); !errors.Is(err, clientstate.ErrWebhookOwned) {
 		t.Fatalf("old owner silently reclaimed selection: %v", err)
 	}
 }
