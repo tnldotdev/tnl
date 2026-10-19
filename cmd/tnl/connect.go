@@ -22,8 +22,8 @@ import (
 )
 
 type connectCommand struct {
-	Start     connectStartCommand     `cmd:"" default:"withargs" help:"Open a loopback listener for a private service; start is optional."`
-	Available connectAvailableCommand `cmd:"" help:"List private services this identity can visit."`
+	Start     connectStartCommand     `cmd:"" default:"withargs" help:"Connect by approved service protocol and access; start is optional and disambiguates command names."`
+	Available connectAvailableCommand `cmd:"" help:"List services this identity can visit."`
 	List      connectListCommand      `cmd:"" help:"List installed local connectors."`
 	Stop      connectJobCommand       `cmd:"" help:"Stop an installed connector without revoking access."`
 	Remove    connectJobCommand       `cmd:"" help:"Remove an installed connector and its remembered port."`
@@ -31,16 +31,19 @@ type connectCommand struct {
 
 type connectStartCommand struct {
 	scopedTeamFlags `embed:""`
-	Name            string `arg:"" name:"name" help:"Private service name or ID."`
-	Listen          string `name:"listen" help:"Loopback IP and port; defaults to the remembered port for this identity and service."`
-	Protocol        string `name:"protocol" help:"Local client protocol: http, tcp, mysql, or postgres; defaults to the approved service protocol."`
-	Foreground      bool   `name:"foreground" help:"Run in this terminal (the default)."`
-	Detach          bool   `name:"detach" help:"Run independently of this terminal without automatic restart."`
-	Install         bool   `name:"install" help:"Keep this connector running with the installed user supervisor."`
-	System          bool   `name:"system" hidden:""`
-	SystemStateDir  string `name:"system-state-dir" type:"path" help:"Private user supervisor state directory."`
-	DetachedChild   string `name:"detached-child" hidden:""`
+	Name            string           `arg:"" name:"name" help:"Configured service name or exact service ID."`
+	Listen          string           `name:"listen" help:"Loopback IP and port; defaults to 127.0.0.1 and the allocated service port."`
+	Protocol        string           `name:"protocol" help:"Require an exact match to the approved service protocol: http, tcp, mysql, or postgres."`
+	Foreground      bool             `name:"foreground" help:"Run in this terminal (the default)."`
+	Detach          bool             `name:"detach" help:"Run independently of this terminal without automatic restart."`
+	Install         bool             `name:"install" help:"Keep this connector running with the installed user supervisor."`
+	System          bool             `name:"system" hidden:""`
+	SystemStateDir  string           `name:"system-state-dir" type:"path" help:"Private user supervisor state directory."`
+	DetachedChild   string           `name:"detached-child" hidden:""`
+	Stdio           bool             `name:"stdio" help:"Carry one opaque TCP stream on stdin/stdout; sign in explicitly before use."`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Finite public HTTP/database connection instructions."`
 	project         projectConfiguration
+	detach          func() error
 }
 
 type connectListCommand struct {
@@ -54,6 +57,9 @@ type connectJobCommand struct {
 }
 
 func validateConnectMode(flags connectStartCommand) error {
+	if flags.Stdio && (flags.Listen != "" || flags.Install || flags.Detach || flags.Foreground || flags.DetachedChild != "" || flags.Output == statusOutputJSON) {
+		return connectModeError(failure.ConnectModeInvalid)
+	}
 	if flags.Protocol != "" && !config.ValidProtocol(flags.Protocol) {
 		return publisherCLIError("--protocol must be http, tcp, mysql, or postgres")
 	}
@@ -61,7 +67,7 @@ func validateConnectMode(flags connectStartCommand) error {
 		return publisherCLIError("connectors use the user supervisor; --system is only for explicit publishers")
 	}
 	if flags.Install && flags.Detach || flags.Foreground && (flags.Install || flags.Detach) {
-		return publisherCLIError("select only one of --foreground, --detach, or --install")
+		return connectModeError(failure.ConnectModeInvalid)
 	}
 	if flags.SystemStateDir != "" && !flags.Install {
 		return publisherCLIError("--system-state-dir requires --install")
@@ -70,6 +76,39 @@ func validateConnectMode(flags connectStartCommand) error {
 		return publisherCLIError("installed connectors require a saved sign-in; access tokens are not installed")
 	}
 	return nil
+}
+
+func connectModeError(reason failure.Reason) error {
+	return failure.Wrap("select connection mode", reason, errors.New("connect mode validation failed"))
+}
+
+func validateConnectServiceMode(flags connectStartCommand, service controlv1.PrivateService) error {
+	if err := validateProfileService(service); err != nil {
+		return err
+	}
+	if service.Protocol == controlv1.Mysql {
+		if _, err := nativeMySQLRoots(); err != nil {
+			return err
+		}
+	}
+	if flags.Protocol != "" && flags.Protocol != string(service.Protocol) {
+		return connectModeError(failure.ConnectProtocolMismatch)
+	}
+	if flags.Stdio && service.Protocol != controlv1.Tcp {
+		return connectModeError(failure.ConnectStdioProtocolInvalid)
+	}
+	if finiteConnectService(service) {
+		if flags.Install || flags.Detach || flags.Foreground || flags.Listen != "" || flags.DetachedChild != "" {
+			return connectModeError(failure.ConnectNativeModeRequired)
+		}
+	} else if flags.Output == statusOutputJSON {
+		return connectModeError(failure.ConnectOutputModeInvalid)
+	}
+	return nil
+}
+
+func finiteConnectService(service controlv1.PrivateService) bool {
+	return service.ManagedTls != nil && service.ManagedTls.Public && service.Protocol != controlv1.Tcp
 }
 
 func privateServiceSelection(services []controlv1.PrivateService, name, team string) (controlv1.PrivateService, error) {
@@ -127,27 +166,39 @@ func configuredConnectService(project projectConfiguration, name string) (string
 }
 
 func (project projectConfiguration) applyConnect(flags *connectStartCommand) error {
-	key, err := configuredConnectService(project, flags.Name)
+	remote, err := project.connectScope(flags.Name, flags.scopedTeamFlags)
 	if err != nil {
 		return err
+	}
+	flags.project, flags.scopedTeamFlags = project, remote
+	return nil
+}
+
+func (project projectConfiguration) connectScope(name string, remote scopedTeamFlags) (scopedTeamFlags, error) {
+	key, err := configuredConnectService(project, name)
+	if err != nil {
+		return remote, err
 	}
 	effective, err := project.EffectiveService(key)
 	if err != nil {
-		return err
+		return remote, err
 	}
-	flags.project = project
-	flags.ServerURL, _, err = resolveProjectServer(flags.ServerURL, effective.Server, flags.AccessToken)
+	remote.ServerURL, _, err = resolveProjectServer(remote.ServerURL, effective.Server, remote.AccessToken)
 	if err != nil {
-		return err
+		return remote, err
 	}
-	flags.ProjectTeam, err = projectTeamForServer(flags.ServerURL, effective.Server, effective.Team)
-	return err
+	remote.ProjectTeam, err = projectTeamForServer(remote.ServerURL, effective.Server, effective.Team)
+	return remote, err
+}
+
+type connectInventoryReader interface {
+	ListAvailablePrivateServices(context.Context) ([]controlv1.PrivateService, error)
 }
 
 type connectServiceReader interface {
+	connectInventoryReader
 	GetLocalProjectService(context.Context, string, string, controlv1.GetLocalProjectServiceParams) (controlv1.LocalProjectService, error)
 	GetProjectPrivateService(context.Context, string, string, controlv1.GetProjectPrivateServiceParams) (controlv1.PrivateService, error)
-	ListAvailablePrivateServices(context.Context) ([]controlv1.PrivateService, error)
 }
 
 func selectConnectService(ctx context.Context, control connectServiceReader, project projectConfiguration, name, team string) (controlv1.PrivateService, error) {
@@ -210,7 +261,12 @@ func connectListen(value string) (string, error) {
 	return net.JoinHostPort(address.String(), strconv.Itoa(n)), nil
 }
 
-func runConnectStart(ctx context.Context, flags connectStartCommand, output, diagnostics io.Writer) error {
+func runConnectStart(ctx context.Context, flags connectStartCommand, output, diagnostics io.Writer) (result error) {
+	defer func() {
+		if reason, ok := failure.ReasonOf(result); ok && reason == failure.ServerDenied {
+			result = failure.Wrap("authorize service connection", failure.ConnectAccessRequired, result)
+		}
+	}()
 	requestedProtocol := flags.Protocol
 	if err := validateConnectMode(flags); err != nil {
 		return err
@@ -237,24 +293,32 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 		return err
 	}
 	defer session.Close()
-	key, err := configuredConnectService(flags.project, flags.Name)
+	service, err := selectSessionConnectService(ctx, session, flags.project, flags.Name, flags.scopedTeamFlags)
 	if err != nil {
 		return err
 	}
-	team := ""
-	if flags.Team != "" || flags.ProjectTeam != "" || key != "" {
-		membership, err := session.currentMembership(ctx)
+	if err := validateConnectServiceMode(flags, service); err != nil {
+		return err
+	}
+	if finiteConnectService(service) {
+		material, err := ensureConnectCertificate(ctx, session, service.Id)
 		if err != nil {
 			return err
 		}
-		team = membership.TeamId
+		profile, err := serviceConnectionProfile(service, &material)
+		if err != nil {
+			return err
+		}
+		return writeNativeConnection(output, profile, flags.Output, "")
 	}
-	service, err := selectConnectService(ctx, session.authenticated.Control, flags.project, flags.Name, team)
-	if err != nil {
-		return err
+	if flags.Detach {
+		if flags.detach == nil {
+			return publisherCLIError("detached connector launcher is unavailable")
+		}
+		return flags.detach()
 	}
-	if flags.Protocol != "" && flags.Protocol != string(service.Protocol) {
-		return publisherCLIError("--protocol differs from the approved private service")
+	if flags.Stdio {
+		return runConnectStdio(ctx, session, service, output)
 	}
 	flags.Protocol = string(service.Protocol)
 	if flags.Listen == "" && service.ManagedTls != nil {
@@ -328,6 +392,16 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 			return servePrivateConnector(ctx, session, listener, job, ready)
 		},
 		ready: func(job publisherjob.Job) error {
+			if job.Protocol != config.ProtocolTCP {
+				endpoint := *job.ManagedTLS
+				_, port, _ := net.SplitHostPort(job.Target)
+				endpoint.Port, _ = strconv.Atoi(port)
+				profile, err := serviceConnectionProfile(controlv1.PrivateService{Id: job.PrivateServiceID, Protocol: controlv1.PrivateServiceProtocol(job.Protocol), Enabled: true, ManagedTls: &endpoint}, nil)
+				if err != nil {
+					return err
+				}
+				return writeNativeConnection(diagnostics, profile, statusOutputHuman, job.Target)
+			}
 			return writeHumanFrame(diagnostics, "tnl connect", "ready", "", clioutput.Fields(
 				clioutput.Field{Label: "name", Value: job.Name}, clioutput.Field{Label: "private service ID", Value: job.PrivateServiceID},
 				clioutput.Field{Label: "listen", Value: job.Target}, clioutput.Field{Label: "protocol", Value: string(job.Protocol)}))
@@ -335,13 +409,27 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 	})
 }
 
-type privateConnectorLifecycle struct {
-	services interface {
-		ListAvailablePrivateServices(context.Context) ([]controlv1.PrivateService, error)
+func selectSessionConnectService(ctx context.Context, session *teamSession, project projectConfiguration, name string, flags scopedTeamFlags) (controlv1.PrivateService, error) {
+	key, err := configuredConnectService(project, name)
+	if err != nil {
+		return controlv1.PrivateService{}, err
 	}
-	listen func(context.Context, publisherjob.Job) (net.Listener, error)
-	serve  func(context.Context, net.Listener, publisherjob.Job, func() error) error
-	ready  func(publisherjob.Job) error
+	team := ""
+	if flags.Team != "" || flags.ProjectTeam != "" || key != "" {
+		membership, err := session.currentMembership(ctx)
+		if err != nil {
+			return controlv1.PrivateService{}, err
+		}
+		team = membership.TeamId
+	}
+	return selectConnectService(ctx, session.authenticated.Control, project, name, team)
+}
+
+type privateConnectorLifecycle struct {
+	services connectInventoryReader
+	listen   func(context.Context, publisherjob.Job) (net.Listener, error)
+	serve    func(context.Context, net.Listener, publisherjob.Job, func() error) error
+	ready    func(publisherjob.Job) error
 }
 
 // Serve joins its streams, paths and assignment owner before returning. only its
@@ -370,8 +458,11 @@ func runPrivateConnectorLifecycle(ctx context.Context, listener net.Listener, jo
 		if err != nil {
 			return err
 		}
+		if finiteConnectService(service) {
+			return connectModeError(failure.ConnectNativeModeRequired)
+		}
 		if requestedProtocol != "" && requestedProtocol != string(service.Protocol) {
-			return publisherCLIError("--protocol differs from the approved private service")
+			return connectModeError(failure.ConnectProtocolMismatch)
 		}
 		job.Trust = nil
 		job.Name, job.Protocol, job.TrustRevision = service.Name, config.ProtocolName(service.Protocol), service.TrustRevision
@@ -384,16 +475,25 @@ func runPrivateConnectorLifecycle(ctx context.Context, listener net.Listener, jo
 }
 
 func servePrivateConnector(ctx context.Context, session *teamSession, listener net.Listener, job publisherjob.Job, ready func() error) error {
-	control, err := tcpconnect.NewControl(session.authenticated.Control, session.store, job.IdentityID)
+	configuration, err := connectConfiguration(ctx, session, job)
 	if err != nil {
 		return err
+	}
+	configuration.Ready = ready
+	return tcpconnect.Serve(ctx, listener, configuration)
+}
+
+func connectConfiguration(ctx context.Context, session *teamSession, job publisherjob.Job) (tcpconnect.Config, error) {
+	control, err := tcpconnect.NewControl(session.authenticated.Control, session.store, job.IdentityID)
+	if err != nil {
+		return tcpconnect.Config{}, err
 	}
 	var serviceTLS *tls.Config
 	if job.ManagedTLS != nil {
 		serviceTLS = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: job.ManagedTLS.Hostname}
 		if job.ManagedTLS.Public && job.Protocol == config.ProtocolTCP {
 			if _, err := ensureConnectCertificate(ctx, session, job.PrivateServiceID); err != nil {
-				return err
+				return tcpconnect.Config{}, err
 			}
 			serviceTLS.GetClientCertificate = func(info *tls.CertificateRequestInfo) (*tls.Certificate, error) {
 				material, err := ensureConnectCertificate(info.Context(), session, job.PrivateServiceID)
@@ -404,8 +504,8 @@ func servePrivateConnector(ctx context.Context, session *teamSession, listener n
 			}
 		}
 	}
-	return tcpconnect.Serve(ctx, listener, tcpconnect.Config{Control: control, PrivateServiceID: job.PrivateServiceID,
-		IdentityID: job.IdentityID, Protocol: string(job.Protocol), TrustRevision: job.TrustRevision, Ready: ready, ManagedTLS: job.ManagedTLS, ServiceTLS: serviceTLS})
+	return tcpconnect.Config{Control: control, PrivateServiceID: job.PrivateServiceID,
+		IdentityID: job.IdentityID, Protocol: string(job.Protocol), TrustRevision: job.TrustRevision, ManagedTLS: job.ManagedTLS, ServiceTLS: serviceTLS}, nil
 }
 
 func runInstalledConnector(ctx context.Context, job publisherjob.Job, ready func() error) error {
@@ -423,6 +523,9 @@ func runInstalledConnector(ctx context.Context, job publisherjob.Job, ready func
 	}
 	service, err := privateServiceIDSelection(services, job.PrivateServiceID, "")
 	if err != nil {
+		return err
+	}
+	if err := validateConnectServiceMode(connectStartCommand{Install: true}, service); err != nil {
 		return err
 	}
 	job.Protocol = config.ProtocolName(service.Protocol)

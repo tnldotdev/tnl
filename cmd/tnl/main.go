@@ -396,7 +396,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			}
 		}
 		if connect.Detach {
-			return detachPublish(ctx, args, connect.StateDir, stdout, "tnl connect")
+			// resolve and validate the service mode before creating a child.
+			connect.detach = func() error { return detachPublish(ctx, args, connect.StateDir, stdout, "tnl connect") }
 		}
 		root, err := clientStateRoot(connect.StateDir)
 		if err != nil {
