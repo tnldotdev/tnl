@@ -185,6 +185,9 @@ func ValidateTNL(config TNL) error {
 		return errors.New("publishers may contain at most 32 entries")
 	}
 	for name, group := range config.Publishers {
+		if group.AWS != nil && (group.AWS.ReplicaCount() < 1 || group.AWS.ReplicaCount() > MaxPublisherReplicas) {
+			return fmt.Errorf("publishers.%s.aws.replicas must be between 1 and %d", name, MaxPublisherReplicas)
+		}
 		if name == "local" || !naming.ValidServiceName(name) {
 			return fmt.Errorf("publisher group %q must be a lowercase DNS label other than reserved local", name)
 		}

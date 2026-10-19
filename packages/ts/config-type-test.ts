@@ -8,7 +8,7 @@ import {
 } from "@tnldotdev/tnl/config";
 
 export const grouped = defineConfig({
-  publishers: { cloud: { description: "database publisher" } },
+  publishers: { cloud: { description: "database publisher", aws: { replicas: 2 } } },
   services: {
     db: {
       publisher: "cloud",
@@ -36,8 +36,34 @@ defineConfig({ publishers: { local: {} } });
 const infrastructureGroup = {
   publishers: { cloud: { description: "db", type: "self-hosted" } },
 } as const;
-// @ts-expect-error groups contain only description, including inferred values.
+// @ts-expect-error provider selection uses the aws key, including inferred values.
 defineConfig(infrastructureGroup);
+const detailedAWSGroup = {
+  publishers: { production: { aws: { replicas: 2, vpcId: "vpc-12345678" } } },
+} as const;
+// @ts-expect-error inferred AWS objects also reject deploy-time settings.
+defineConfig(detailedAWSGroup);
+defineConfig({ publishers: { production: { aws: {} } } });
+defineConfig({
+  publishers: {
+    production: {
+      aws: {
+        // @ts-expect-error capacity must be numeric.
+        replicas: "2",
+      },
+    },
+  },
+});
+defineConfig({
+  publishers: {
+    production: {
+      aws: {
+        // @ts-expect-error detailed infrastructure settings belong in deploy-time parameters.
+        vpcId: "vpc-12345678",
+      },
+    },
+  },
+});
 
 export const config = defineConfig({
   inspection: { mode: "summary", retention: "24h", maxBytes: "64MiB" },

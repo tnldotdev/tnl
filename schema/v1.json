@@ -237,6 +237,19 @@
               "public": {
                 "type": "boolean",
                 "default": false
+              },
+              "aws": {
+                "properties": {
+                  "replicas": {
+                    "type": "integer",
+                    "maximum": 8,
+                    "minimum": 1,
+                    "default": 1
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "Generate an AWS Fargate group stack; supply infrastructure settings as deployment parameters."
               }
             },
             "additionalProperties": false,

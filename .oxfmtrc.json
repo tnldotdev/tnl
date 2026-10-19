@@ -1,3 +1,8 @@
 {
-  "ignorePatterns": ["internal/feedbacktoolbar/toolbar.js"]
+  "ignorePatterns": [
+    "internal/feedbacktoolbar/toolbar.js",
+    "deploy/publishers/fargate.yaml",
+    "deploy/publishers/fargate.parameters.example.json",
+    "deploy/publishers/fargate.manifest.example.json"
+  ]
 }

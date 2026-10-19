@@ -90,6 +90,9 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		properties.Set("description", &jsonschema.Schema{Type: "string", MaxLength: integerPointer(1024)})
 		properties.Set("domain", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253)})
 		properties.Set("public", &jsonschema.Schema{Type: "boolean", Default: false})
+		aws := jsonschema.NewProperties()
+		aws.Set("replicas", &jsonschema.Schema{Type: "integer", Minimum: json.Number("1"), Maximum: json.Number(strconv.Itoa(config.MaxPublisherReplicas)), Default: 1})
+		properties.Set("aws", &jsonschema.Schema{Type: "object", Properties: aws, AdditionalProperties: jsonschema.FalseSchema, Description: "Generate an AWS Fargate group stack; supply infrastructure settings as deployment parameters."})
 		return &jsonschema.Schema{Type: "object", MaxProperties: integerPointer(32),
 			PropertyNames:        &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`, Not: &jsonschema.Schema{Const: "local"}},
 			AdditionalProperties: &jsonschema.Schema{Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema}}

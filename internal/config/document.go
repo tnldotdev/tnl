@@ -50,9 +50,24 @@ type TNL struct {
 type Services map[string]Service
 
 type Publisher struct {
-	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
-	Domain      *string `json:"domain,omitempty" yaml:"domain,omitempty" jsonschema_description:"Ready team domain; defaults to the team's default domain when the namespace is first allocated."`
-	Public      bool    `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Enable direct ingress access. Omitted or false uses loopback DNS and requires tnl connect. Native TLS and visitor authorization apply in either mode."`
+	AWS         *PublisherAWS `json:"aws,omitempty" yaml:"aws,omitempty" jsonschema_description:"Generate one AWS Fargate group stack. Deployment parameters belong in CloudFormation, not project configuration."`
+	Description *string       `json:"description,omitempty" yaml:"description,omitempty"`
+	Domain      *string       `json:"domain,omitempty" yaml:"domain,omitempty" jsonschema_description:"Ready team domain; defaults to the team's default domain when the namespace is first allocated."`
+	Public      bool          `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Enable direct ingress access. Omitted or false uses loopback DNS and requires tnl connect. Native TLS and visitor authorization apply in either mode."`
+}
+
+// MaxPublisherReplicas bounds generated stacks below CloudFormation quotas.
+const MaxPublisherReplicas = 8
+
+type PublisherAWS struct {
+	Replicas *int `json:"replicas,omitempty" yaml:"replicas,omitempty"`
+}
+
+func (a PublisherAWS) ReplicaCount() int {
+	if a.Replicas == nil {
+		return 1
+	}
+	return *a.Replicas
 }
 
 // ServiceAccess declares a team grant for either a public or private service.

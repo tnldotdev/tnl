@@ -78,10 +78,22 @@ type TargetReferences<Config> = {
       ? never
       : {
           [
-            Key in keyof Config[Field][Name] as Key extends "description" | "domain" | "public"
+            Key in keyof Config[Field][Name] as Key extends
+              | "description"
+              | "domain"
+              | "public"
+              | "aws"
               ? never
               : Key
           ]: never;
+        } & {
+          [Key in keyof Config[Field][Name] as Key extends "aws" ? Key : never]: {
+            [
+              Setting in keyof Config[Field][Name][Key] as Setting extends "replicas"
+                ? never
+                : Setting
+            ]: never;
+          };
         };
   };
 };

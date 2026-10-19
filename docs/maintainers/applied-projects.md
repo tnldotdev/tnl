@@ -115,7 +115,9 @@ export default defineConfig({
 ```
 
 Each `publishers.NAME` value accepts optional `description`, `domain`, and
-`public` settings. Cloud capacity and host provisioning belong to infrastructure.
+`public` settings. An optional `aws: {replicas: 2}` declares structural capacity
+for offline `tnl generate`; detailed cloud settings are deploy-time parameters.
+This AWS declaration is excluded from control assignments and their hash.
 `local` is reserved and cannot be declared. Services default to the built-in
 `local` publisher; an explicit `publisher` must select a declared group. Named
 groups require reachable address targets, not app, Docker, or Compose discovery
@@ -206,8 +208,9 @@ Server status reports observed revision, health, and lease expiry. An observed
 revision means the member reconciled it, not that a visitor successfully used
 the target. Named groups use publisher pools for public and private services.
 Each member retains its own identity, grants, runs, and connection assignments;
-control selects ready runs without combining their credentials. No separate
-pool or replica property belongs in project configuration.
+control selects ready runs without combining their credentials. There is no
+separate pool declaration. AWS replica count belongs under `publishers.NAME.aws`
+and is consumed only by [publisher generation](publisher-generation.md).
 
 An operator can provision one portable group identity with `tnl publisher
 provision --group NAME --instance replica-1 --output-file FILE`. The bounded,

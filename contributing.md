@@ -165,8 +165,10 @@ Project configuration stays in Git. `tnl apply` stores an evaluated revision in
 control; named group publishers pull and acknowledge only their assignments.
 The reserved `local` publisher handles app-reported development listeners by
 default. Starting an app does not apply production configuration. Group entries
-accept `description`, `domain`, and `public`; cloud capacity belongs in infrastructure
-configuration. See [applied projects](docs/maintainers/applied-projects.md) and
+accept `description`, `domain`, and `public`, plus an optional `aws: {replicas: 2}`
+deployment declaration. `tnl generate` writes a trackable group stack; detailed
+AWS settings remain CloudFormation deployment parameters. AWS capacity is excluded
+from control assignments. See [applied projects](docs/maintainers/applied-projects.md) and
 the [publisher infrastructure templates](deploy/publishers/readme.md).
 
 | Source                                                                                    | Generated output                                                                          |
@@ -176,14 +178,15 @@ the [publisher infrastructure templates](deploy/publishers/readme.md).
 | SQLite migrations and queries under `internal/clientstate`                                | `internal/clientstate/clientstatedb`                                                      |
 | `internal/config`, project configuration mappings, and `scripts/generate-config-types.ts` | `schema/v1.json`, `internal/projectconfig/keys.gen.json`, `packages/ts/src/config.gen.ts` |
 | `internal/projectconfig/loader.ts`                                                        | `internal/projectconfig/loader.mjs`, embedded by Go                                       |
+| `internal/publisherdeployment`                                                            | `deploy/publishers/fargate.yaml` and its example manifest/parameters                      |
 | `internal/diagnostic/catalog.json`                                                        | `internal/diagnostic/codes.gen.go` and the tnl.dev diagnostic pages                       |
 | `internal/failure/reasons.go`                                                             | `internal/failure/catalog.gen.json` and the tnl.dev client-error pages                    |
 
 `packages/ts/dist` is disposable build output. The CLI generates project-local
 `.tnl/local/project.json` and `.tnl/local/project.d.ts`. Both contain values tied
 to the current worktree and client installation. Ignore only `/.tnl/local/` at
-the selected project root; `.tnl/generated/` is reserved for future trackable
-output. See the
+the selected project root; `.tnl/generated/` contains trackable publisher
+deployment output from `tnl generate`. See the
 [framework guide](https://tnl.dev/docs/frameworks) for their use.
 
 ## try the local stack

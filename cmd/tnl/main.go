@@ -30,6 +30,7 @@ type cli struct {
 	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
 	Apply       applyCommand     `cmd:"" help:"Reconcile this project's declared services and publisher groups with control." group:"manage"`
+	Generate    generateCommand  `cmd:"" help:"Generate trackable publisher infrastructure without contacting a server." group:"manage"`
 	Audit       auditCommand     `cmd:"" help:"Read team service audit history." group:"manage"`
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
@@ -342,6 +343,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	parsedCommand := canonicalParsedCommand(parsed.Command())
 	applyTunnelCLIUnits(parsed, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
+	if parsedCommand == "generate" {
+		return runGenerate(ctx, flags, stdout)
+	}
 	if parsedCommand == "publisher serve" {
 		serve := &flags.Publisher.Serve
 		if err := validatePublisherServe(*serve); err != nil {

@@ -1,198 +1,252 @@
-# publisher infrastructure templates
+# generated aws publishers
 
-run a named publisher group near its targets with [`fargate.yaml`](fargate.yaml).
-ECS replaces a failed task using the same replica identity, pending certificate
-keys and installed certificates. the publisher uses the same filesystem store
-as local development:
+Generate a CloudFormation stack for a named publisher group, then deploy it with
+your infrastructure workflow. Keep only structural capacity in project config:
+
+```yaml
+version: 1
+tnl:
+  publishers:
+    production:
+      aws: { replicas: 2 }
+  services:
+    orders:
+      publisher: production
+      protocol: postgres
+      target: { type: address, address: "orders.internal:5432", tls: {} }
+      access: { team: true }
+```
+
+TypeScript uses the same `publishers.production.aws` object. An empty `aws: {}`
+defaults to one replica; the supported range is 1–8. Omit `aws` for groups whose
+infrastructure you manage separately. `local` remains reserved.
+
+```console
+tnl generate
+tnl generate --check
+tnl generate --output-dir infrastructure/generated
+tnl generate --check --output-dir infrastructure/generated
+```
+
+The default output is relative to the selected project's root:
+
+```text
+.tnl/generated/manifest.json
+.tnl/generated/readme.md
+.tnl/generated/aws/production.yaml
+.tnl/generated/aws/production.parameters.example.json
+```
+
+Commit these files. Ignore only `/.tnl/local/`, whose worktree metadata remains
+local. `--output-dir` also accepts an absolute directory. Use a real directory,
+without symlink components. The command rejects symlinks and conflicting unowned
+files. It preserves unrelated custom templates and actual parameter files.
+When a group is removed, generation removes its old manifest-owned files only
+if they still match their recorded hashes; move edited retired files first.
+
+Generation evaluates trusted project config and reads the local Git origin and
+configuration path. It uses the same stable source identity as `tnl apply`,
+independent of Git branch, checkout directory, HEAD, or installation salt. It
+opens no session or client database and makes no control, AWS, or network calls.
+TypeScript config is executable project code: keep its capacity declaration
+independent of local paths, time, environment, or network for repeatable output.
+`--check` reads all expected bytes, including the manifest ownership list; it
+creates no output directories or temporary artifacts. Normal ephemeral
+TypeScript evaluation is still allowed.
+
+`tnl apply` reconciles services and group policy with control. AWS capacity is
+excluded from its wire declaration and configuration hash, so changing replica
+count does not restart assigned remote apps through apply. `tnl generate` does
+not provision identities or apply infrastructure. There is no deploy flag.
+
+## one group stack
+
+Each replica is a separate single-task ECS Fargate service with its own pinned
+signing identity secret, execution role, task role, log group and retained EFS
+access point. Logical IDs use replica numbers rather than mutable group or
+physical names. Scaling preserves `replica-1` through `replica-N`; adding a
+replica appends a new independent identity. Scaling down removes services but
+retains their access points and managed log groups.
 
 | directory   | contents                                                                              | storage                    |
 | ----------- | ------------------------------------------------------------------------------------- | -------------------------- |
 | `/identity` | signing identity, pending keys/CSRs, staged/current certificates and renewal metadata | private EFS access point   |
-| `/state`    | runtime SQLite, its wrapping key, local events and caches                             | disposable task filesystem |
+| `/state`    | runtime SQLite, wrapping key, local events and caches                                 | disposable task filesystem |
 
-the template creates an ECS cluster, one single-replica service, separate execution
-and task roles, a retained replica-specific EFS access point and a log group. it
-uses an existing encrypted Regional EFS filesystem and a digest-pinned image
-containing `tnl`. the publisher uses ordinary file operations; it needs no AWS
-storage client or object-store checkpoint protocol.
+The stack creates encrypted **Regional** EFS by default, with backups enabled,
+retention on removal/replacement, and a private root at
+`/tnl/DEPLOYMENT_ID/replica-N`. Access points enforce UID/GID 65532 and mode 0700.
+The task role permits only IAM-authorized, encrypted mounts and writes through
+that replica's access point; it cannot read Secrets Manager or mount as root.
+The filesystem denies insecure and anonymous client access. EFS retains identity
+files across task replacement; the publisher's existing advisory writer lock
+and atomic file store provide the durable ownership boundary.
 
-## keep declarations in git
-
-commit the group and its address targets in the application's `tnl.config.ts`:
-
-```ts
-import { defineConfig } from "@tnldotdev/tnl/config";
-
-export default defineConfig({
-  team: "shop",
-  publishers: {
-    production: { description: "services in the production VPC" },
-  },
-  services: {
-    orders: {
-      publisher: "production",
-      protocol: "postgres",
-      target: {
-        type: "address",
-        address: "orders.internal:5432",
-        tls: { caFile: "certs/database-ca.pem", serverName: "orders.internal" },
-      },
-      access: { team: true },
-    },
-  },
-});
-```
-
-run `tnl config check`, then `tnl apply`. record its project key. group declarations
-accept optional `description`, `domain` and `public` settings; `public` defaults
-to false. infrastructure owns replicas, placement, storage and network rules.
-development startup reports local listeners without applying remote changes.
-hosted and self-hosted control use the same assignments and authorization boundary;
-see [applied project boundaries](../../docs/maintainers/applied-projects.md).
-
-## provision one replica identity
-
-on an operator machine signed in as a manager for the project's team, choose a
-new private output path outside the repository:
+Every task launch receives `TNL_GROUP_IDENTITY` from an existing Secrets Manager
+container at an explicit version. Bootstrap owns those containers and their JSON;
+the template contains references only. The publisher consumes and clears the
+injected JSON before starting workers. A stale or revoked identity fails closed.
+The runtime command remains:
 
 ```console
-tnl publisher provision --server "$CONTROL_URL" --project-key "$PROJECT_KEY" --team shop --group production --instance replica-1 --output-file "$IDENTITY_FILE"
+tnl --no-config publisher serve --server CONTROL_URL --project-key PROJECT_KEY --group GROUP --state-dir /state --instance INSTANCE --identity-dir /identity
 ```
 
-provision creates and redeems a one-member enrollment, verifies the key with
-control, and writes a mode-0600 file without replacing an existing path. its
-protected pending key makes retries recover the same member after a lost response.
-the bounded JSON contains the canonical control URL, team/project/group/member/key
-identifiers, instance name and signing key. it contains no person session, target,
-enrollment secret or runtime lease. output contains only public identifiers and
-the file path.
+The image must provide `/usr/local/bin/tnl` and writable private `/state` owned by 65532. It runs nonroot with all Linux capabilities dropped, no inbound ports,
+execute-command disabled, and a 120-second shutdown timeout. Desired count is
+zero or one per service. Minimum healthy percent 0, maximum percent 100, and
+disabled AZ rebalancing prevent a rolling surge using the same signing identity.
+Connections end during replacement and are never replayed. Independent replicas
+provide capacity while another replica is replaced.
 
-store that file as a replica-private Secrets Manager `SecretString`:
+## deployment parameters
+
+Copy the generated `.parameters.example.json` to a separately named, reviewed
+parameter file. Generation updates the example, never an actual parameter file.
+The example is AWS's `[{"ParameterKey":"...","ParameterValue":"..."}]` shape.
+`REQUIRED` entries must be resolved before deployment. The manifest's SHA-256
+values identify exact artifact bytes; templates are deterministic YAML.
+Do not manually edit manifest-owned files.
+
+### bootstrap identity contract
+
+| parameter                       | value                                                                                                     |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `ControlURL`                    | canonical HTTPS control origin, no trailing slash                                                         |
+| `ProjectKey`                    | source project key, also present in the manifest                                                          |
+| `Group`                         | configuration group selector, also the manifest publisher `name`                                          |
+| `TeamID`                        | actual immutable team ID, resolved during bootstrap                                                       |
+| `PublisherGroupID`              | actual immutable group ID, resolved during bootstrap                                                      |
+| `DeploymentID`                  | immutable, unique lowercase deployment ID, 1–48 characters; preserve for the lifetime of these identities |
+| `TemplateSHA256`                | exact template hash from the manifest; output attestation supplied by the caller, not a self-hash         |
+| `ReplicaNInstance`              | provisioned instance name, normally `replica-N`                                                           |
+| `ReplicaNPublisherIdentityID`   | public identity ID returned by bootstrap                                                                  |
+| `ReplicaNIdentitySecretArn`     | ARN of that replica's existing private identity JSON secret                                               |
+| `ReplicaNIdentitySecretVersion` | pinned Secrets Manager version ID, 32–64 characters                                                       |
+
+The template rejects repeated instance names, publisher IDs, or secret ARNs
+within one stack. Bootstrap must also verify the JSON identities and scope;
+CloudFormation cannot inspect private JSON. Each secret must contain the exact
+canonical control/team/project/group/member/instance identity provisioned by
+control, never a person session, enrollment key, database credential or target.
+Team/group/publisher ID parameters are public metadata and outputs; the signed
+identity JSON remains authoritative at runtime.
+
+See [the bootstrap API contract](../../docs/maintainers/publisher-generation.md)
+for exported Go types and stale-artifact validation.
+
+### networking and storage
+
+| parameter                          | behavior                                                                                             |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `VpcId`, `Subnets`                 | existing VPC and task subnet IDs; no VPC or subnet creation                                          |
+| `ExistingPublisherSecurityGroupId` | optional existing primary task group; otherwise create no-inbound, standard IPv4/IPv6-outbound group |
+| `AdditionalSecurityGroup1` … `4`   | optional additional task groups; maximum five including primary                                      |
+| `AssignPublicIp`                   | `DISABLED` by default; `ENABLED` requires appropriate public routing                                 |
+| `ExistingFileSystemId`             | optional encrypted Regional EFS; otherwise create retained EFS                                       |
+| `MountSubnetCount`                 | for new EFS: 1–6 mount targets, default 2                                                            |
+| `MountSubnet1` … `6`               | fill exactly the selected count with **one subnet per distinct AZ**, covering all task AZs           |
+| `FileSystemKMSKeyArn`              | optional customer key for new EFS; empty uses the EFS default key                                    |
+
+There are no subnet lookups or custom Lambda resources. CloudFormation requires
+every selected mount subnet; operators must select one per AZ, even when task
+subnets include several in one AZ. The new EFS group permits TCP 2049 only from
+the primary task group. Services depend on their created mount targets through
+conditional resource tags, including the existing-resource branch.
+
+For existing EFS, mount-subnet inputs are unused; clear their example placeholders
+to empty strings. The customer supplies mount
+targets reachable in every task AZ, NFS ingress from the selected task group,
+encrypted transport, and a filesystem policy allowing the selected task roles
+and access points. Existing security groups keep their current rules. Targets
+separately permit publisher traffic. Tasks need DNS, control HTTPS, advertised
+relay TCP/UDP ports, targets, EFS, the image registry, Secrets Manager and logs
+through NAT or appropriate endpoints. The template does not claim to establish
+live network reachability.
+
+### names, roles, logs and runtime
+
+| parameter                                                           | behavior                                                                                         |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `ResourcePrefix`                                                    | optional 1–32 character physical-name prefix; empty uses CloudFormation names                    |
+| `ClusterName`, `PublisherSecurityGroupName`, `EFSSecurityGroupName` | individual overrides for new resources                                                           |
+| `ExistingClusterArn`                                                | existing cluster; stack creates only its services                                                |
+| `ReplicaNServiceName`, `ReplicaNTaskFamily`, `ReplicaNLogGroupName` | individual physical-name overrides                                                               |
+| `ReplicaNExecutionRoleName`, `ReplicaNTaskRoleName`                 | individual new role names, maximum 64 characters                                                 |
+| `ReplicaNExistingExecutionRoleArn`, `ReplicaNExistingTaskRoleArn`   | customer-owned roles with equivalent replica-scoped policies; stack does not alter them          |
+| `PermissionsBoundaryArn`                                            | boundary applied to all newly created roles                                                      |
+| `ReplicaNExistingLogGroupName`                                      | customer-owned log group; retention and KMS settings remain external                             |
+| `LogRetentionDays`                                                  | allowed CloudWatch retention, default 30 days, new groups only                                   |
+| `LogsKMSKeyArn`                                                     | optional key for new log groups                                                                  |
+| `ReplicaNIdentityKMSKeyArn`                                         | optional key for the corresponding identity secret                                               |
+| `PublisherImage`                                                    | publicly pullable `registry/path@sha256:...`; mutable tags rejected                              |
+| `TaskCPU`, `TaskMemory`                                             | default 256 units/512 MiB; rules enforce Fargate's supported combinations for 256–4096 CPU units |
+| `CPUArchitecture`                                                   | `X86_64` (default) or `ARM64`; match the image digest                                            |
+| `PlatformVersion`                                                   | Linux `1.4.0` (default) or `LATEST`                                                              |
+| `ReplicaNDesiredCount`                                              | `1` (default) to run, `0` to stop without removing identity state                                |
+
+Individual names override the prefix. Existing-resource inputs override managed
+resource creation; those resources never become stack-owned. Physical-name
+changes can replace managed resources, but do not change logical IDs or EFS
+identity paths. Keep `DeploymentID` and replica identity inputs stable across
+renames and updates. A nonempty prefix or explicit IAM role name requires
+`CAPABILITY_NAMED_IAM`; unnamed generated roles require `CAPABILITY_IAM`.
+
+The execution role reads only its secret and pinned version and writes only its
+log group's streams. With a customer secret key, decrypt is restricted by
+`kms:ViaService=secretsmanager.REGION.URL_SUFFIX` and
+`kms:EncryptionContext:SecretARN=SECRET_ARN`. Permit that execution role in the
+key policy. Logs encryption belongs to `logs.REGION.URL_SUFFIX`, with
+`kms:EncryptionContext:aws:logs:arn` equal to the log group ARN **without** `:*`;
+permit the regional Logs service in the key policy. EFS encryption belongs to
+the EFS service, using `kms:ViaService=elasticfilesystem.REGION.URL_SUFFIX` and
+`kms:EncryptionContext:aws:elasticfilesystem:fs-id` for the filesystem. The
+deployment principal needs the relevant key/grant permissions. Task roles need
+no KMS decrypt for logs or EFS. Keys and key policies remain customer-owned.
+All constructed resource ARNs use `AWS::Partition`; regional service endpoints
+use `AWS::URLSuffix`.
+
+Apply customer tags on the stack. Explicit supported resource tags include
+deployment, project, team and group IDs; ECS propagates service tags to tasks.
+The output contract has `OutputSchemaVersion=1`, `TemplateVersion=1`,
+`TemplateSHA256`, identity metadata, `ClusterArn`, `PublisherSecurityGroupId`,
+`IdentityFileSystemId`, and per-replica service/task-definition/log/access-point,
+execution/task role, publisher ID and secret ARN/version references. Outputs
+contain no private key or secret JSON.
+
+## limits, lifecycle and validation
+
+Templates are bounded below CloudFormation's 200 parameters, 500 resources,
+200 outputs and 1 MiB S3 template limit at eight replicas. Even small generated
+stacks can exceed the 51,200-byte inline template-body limit. Use an external
+S3 `template_url`/`TemplateURL` in that case. Deployment tooling must preserve
+the exact hashed bytes. Account Fargate vCPU/service, EFS access-point, IAM and
+network quotas still apply; request account quota increases separately.
+
+Before retiring a replica, stop its service and wait for tasks to stop, then
+revoke its publisher identity in control. Removing ECS or a secret does not
+revoke identity. Keep retained EFS data and access points until no publisher
+uses them. Recover the same replica with its original signing identity and
+DeploymentID; deliberately replacing an identity requires a separately reviewed
+state transition rather than copying another replica's JSON into its secret.
+New filesystem mount targets are stack-owned and removed on stack deletion;
+the retained filesystem and data remain. Customer-owned resources remain
+customer-owned. ECS `RUNNING` alone does not prove successful visitor traffic.
+
+[`fargate.yaml`](fargate.yaml) is a generated, reviewed two-replica fixture, not a
+second template source. `internal/publisherdeployment` owns the renderer;
+`task generate` refreshes this fixture and its example manifest/parameters.
+The fixture manifest describes the normal generated directory layout, not these
+renamed fixture paths. Use `tnl generate` for a deployable project bundle.
 
 ```console
-aws secretsmanager create-secret --name tnl/shop/production/replica-1 --secret-string "file://$IDENTITY_FILE" --query '{arn:ARN,version:VersionId}' --output json
-```
-
-record the returned ARN and version ID as infrastructure inputs. an existing
-secret can receive the same private file with `put-secret-value`; pin the returned
-version. ECS injects the JSON as `TNL_GROUP_IDENTITY`, which `tnl` consumes and
-clears before workers start. a mounted private file can instead use
-`--identity-file /run/tnl/replica.json`. each independent replica needs its own
-identity, instance name and access point.
-
-## deploy the service
-
-use your reviewed CloudFormation workflow with `CAPABILITY_IAM`. supply:
-
-- `ControlURL`: the HTTPS control origin without a trailing slash.
-- `ProjectKey`, `Group`, `Instance`: the applied project, publisher selector and
-  provisioned replica instance. `local` is reserved.
-- `IdentitySecretArn`, `IdentitySecretVersion`: the private bootstrap secret and
-  explicit version. replacements reuse this member without enrollment.
-- `IdentityKMSKeyArn`: the customer-managed key if the bootstrap secret uses one;
-  otherwise leave empty. permit the execution role in that key's policy.
-- `IdentityFileSystemId`: an existing encrypted Regional EFS filesystem in the
-  task VPC. provide mount targets reachable from the selected subnets. permit
-  TCP 2049 from the task security groups to the mount-target security groups.
-  the filesystem policy must allow IAM-authorized mounts through this access
-  point; filesystem creation, backup and mount-target management belong to your
-  infrastructure.
-- `Subnets`, `SecurityGroupIds`: private subnets and task security groups. permit
-  DNS, control HTTPS, advertised relay TCP/UDP ports, EFS and assigned targets.
-  image pulls, Secrets Manager and CloudWatch Logs need appropriate outbound
-  connectivity. target security groups separately permit publisher connections.
-- `PublisherImage`: a publicly pullable `@sha256:` reference. the image contains
-  `/usr/local/bin/tnl` and private `/state` owned by UID/GID 65532. the template
-  runs that nonroot user with Linux capabilities dropped.
-- `DesiredCount`: `1` runs this replica; `0` stops it. deploy another stack and
-  identity for an additional replica.
-
-the execution role can read the selected secret/version and write operational
-logs. the task role can mount and write only the selected EFS filesystem through
-its replica-specific access point over encrypted transport. the access point
-enforces UID/GID 65532 and a mode-0700 root beneath `/tnl/STACK_NAME`. only that
-volume is mounted; runtime SQLite remains local. the command contains no secret:
-
-```console
-tnl --no-config publisher serve --server CONTROL_URL --project-key PROJECT_KEY --group production --state-dir /state --identity-dir /identity --instance replica-1
-```
-
-## replacement and durable ownership
-
-a new task starts with empty `/state`, proves its signing key and current group
-membership to control, then uses the existing identity files on `/identity`.
-the same member and certificate state survive a crash, image update, subnet
-change or scale-to-zero/one cycle. invalid or revoked bootstrap input fails
-without fallback to another identity or enrollment. the durable directory can
-also restore the signing identity without bootstrap input when the control URL,
-project, selector and instance are supplied.
-
-identity records are scoped to the control and immutable publisher identity.
-certificate records include the exact team and approved plan. complete records
-are written to private temporary files, synced, atomically replaced and synced
-again before external issuance or installation. a pending key survives a crash
-without becoming another CSR; staged material remains recoverable before its
-installation acknowledgement. compatible sibling services share only their own
-replica's wildcard material. control never stores publisher TLS private keys.
-
-the publisher holds an advisory writer lock on the durable filesystem throughout
-the group's lifetime. replacement waits for the previous owner; independent
-runtime directories cannot bypass this lock. the filesystem must support the
-required atomic replacement, sync and advisory-lock semantics, including NFSv4
-locking for EFS. all writers for a replica must use the same durable directory.
-control leases continue to enforce current authorization independently.
-
-the service keeps desired count at most one, `MinimumHealthyPercent=0`,
-`MaximumPercent=100` and availability-zone rebalancing disabled. these settings
-avoid a rolling surge with a shared member. `StopTimeout=120` gives the old
-process time to drain. existing visitor connections end during replacement and
-are never replayed. another independently enrolled replica in the group provides
-capacity while this one is replaced.
-
-temporary write/sync failures prevent new issuance or installation from relying
-on unsaved material. an existing valid certificate remains available during
-retryable renewal failures. invalid, mismatched or missing required certificate
-files fail instead of silently replacing the keys. control records when issuance
-first starts; restore the replica's valid identity directory when recovery fails.
-back up that directory using your filesystem's normal backup facilities.
-
-keep SQLite and its WAL on the task filesystem. only the durable identity files
-and their writer locks belong on EFS. local development defaults to `identities`
-beneath the normal state directory and uses this same implementation.
-
-check `tnl status --scope=server`, then use `tnl connect orders` and a native
-database client. ECS `RUNNING` alone does not establish target reachability or
-successful visitor traffic.
-
-## rotate or remove a replica
-
-1. set `DesiredCount=0` and wait for its tasks to reach `STOPPED`.
-2. revoke the old member through control using its project, group and publisher
-   identity from server status.
-3. provision a fresh instance name and identity, then store its private JSON in
-   the replica's secret.
-4. update `Instance` and `IdentitySecretVersion`, retain the filesystem inputs,
-   and set `DesiredCount=1`. check revision, health and visitor traffic.
-
-stopping ECS or deleting a secret does not revoke the identity. the access point
-and log group are retained when the stack is removed; the external filesystem
-and its data remain owned by your infrastructure. remove retired identity files
-and retained resources through that workflow after no publisher depends on them.
-
-## validate locally
-
-```console
+mise exec -- task generate
 mise exec -- task deploy:publishers:check
-mise exec -- task go:test:publisher-identity
-mise exec -- task go:test:publisher-state
-mise exec -- task go:test:integration:publisher-replacement
 ```
 
-the template target runs Vitest, TypeScript, lint and pinned offline cfn-lint
-checks. filesystem tests cover complete records, scope validation, unsafe paths,
-uncertain writes, independent runtime directories and a killed lock-holder.
-integration targets own disposable PostgreSQL. the Linux CLI workflow runs real
-control, ingress, relays and publisher workers, substituting the external CA/DNS
-boundary. it deletes runtime state during issuance and after installation and
-checks the same member, issuance and real visitor traffic. these checks do not
-deploy AWS resources or establish live EFS/VPC behavior.
+The check runs deterministic and read-only Go tests, typed template tests, and
+pinned offline cfn-lint for the full template and explicit new/existing-resource
+branches. Runtime durable identity and replacement coverage remains in
+`task go:test:publisher-identity`, `task go:test:publisher-state` and
+`task go:test:integration:publisher-replacement`. These checks do not deploy AWS
+resources or establish live EFS/VPC behavior.

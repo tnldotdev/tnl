@@ -194,6 +194,8 @@ tasks:
       - task: go:generate
       - git diff --exit-code HEAD -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/diagnostic/codes.gen.go internal/failure/catalog.gen.json internal/feedbacktoolbar/toolbar.js internal/publisherapi/model.gen.ts internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/ts/src/config.gen.ts schema/v1.json scripts/install.sh
       - test -z "$(git ls-files --others --exclude-standard -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/diagnostic/codes.gen.go internal/failure/catalog.gen.json internal/feedbacktoolbar/toolbar.js internal/publisherapi/model.gen.ts internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/ts/src/config.gen.ts schema/v1.json scripts/install.sh)"
+      - git diff --exit-code HEAD -- deploy/publishers/fargate.yaml deploy/publishers/fargate.parameters.example.json deploy/publishers/fargate.manifest.example.json
+      - test -z "$(git ls-files --others --exclude-standard -- deploy/publishers/fargate.yaml deploy/publishers/fargate.parameters.example.json deploy/publishers/fargate.manifest.example.json)"
 
   go:format:
     cmds:
@@ -324,10 +326,13 @@ tasks:
   deploy:publishers:check:
     desc: Validate publisher templates, TypeScript contracts, and CloudFormation schemas without AWS
     cmds:
+      - go test ./internal/publisherdeployment ./cmd/tnl -run='^Test(GoldenAndReplicaStability|ReadValidateAndReadOnlyCheck|ManifestRejectsUnsafeAndUnboundedInputs|OutputOwnershipAndSymlinks|ParameterContract|GenerateOfflineAcrossWorktreesAndReadOnlyCheck|ApplyIgnoresPublisherInfrastructure)$' -count=1
       - pnpm exec vitest run deploy/publishers/fargate.test.ts
       - pnpm exec tsc --project deploy/publishers/tsconfig.json
       - pnpm exec oxlint --deny-warnings --report-unused-disable-directives deploy/publishers/*.ts
       - uvx --from cfn-lint==1.40.2 cfn-lint --regions us-east-1 --template deploy/publishers/fargate.yaml
+      - uvx --from cfn-lint==1.40.2 cfn-lint --regions us-east-1 --template deploy/publishers/fargate.yaml --parameters VpcId=vpc-0123456789abcdef0 MountSubnet1=subnet-0123456789abcdef0 MountSubnet2=subnet-0123456789abcdef1 ResourcePrefix=tnl-test FileSystemKMSKeyArn=arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012 LogsKMSKeyArn=arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012 Replica1IdentityKMSKeyArn=arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012 Replica2IdentityKMSKeyArn=arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012
+      - uvx --from cfn-lint==1.40.2 cfn-lint --regions us-east-1 --template deploy/publishers/fargate.yaml --parameters VpcId=vpc-0123456789abcdef0 ExistingFileSystemId=fs-0123456789abcdef0 ExistingClusterArn=arn:aws:ecs:us-east-1:123456789012:cluster/existing ExistingPublisherSecurityGroupId=sg-0123456789abcdef0 Replica1ExistingLogGroupName=/customer/replica-1 Replica2ExistingLogGroupName=/customer/replica-2 Replica1ExistingTaskRoleArn=arn:aws:iam::123456789012:role/task-1 Replica2ExistingTaskRoleArn=arn:aws:iam::123456789012:role/task-2 Replica1ExistingExecutionRoleArn=arn:aws:iam::123456789012:role/execution-1 Replica2ExistingExecutionRoleArn=arn:aws:iam::123456789012:role/execution-2
 
   go:test:publisher-identity:
     desc: Check the portable group identity file and injected-secret contract

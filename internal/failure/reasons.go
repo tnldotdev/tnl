@@ -70,6 +70,8 @@ const (
 	MemberHostnameDepthExceeded         Reason = "TNL_CLIENT_MEMBER_HOSTNAME_DEPTH_EXCEEDED"
 	InvalidDomainName                   Reason = "TNL_CLIENT_INVALID_DOMAIN_NAME"
 	ProjectConfigInvalid                Reason = "TNL_CLIENT_PROJECT_CONFIG_INVALID"
+	PublisherDeploymentInvalid          Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_INVALID"
+	PublisherDeploymentWriteFailed      Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_WRITE_FAILED"
 	AliasOwned                          Reason = "TNL_CLIENT_ALIAS_OWNED"
 	AliasReceiverUnready                Reason = "TNL_CLIENT_ALIAS_RECEIVER_UNREADY"
 	AliasNotSelected                    Reason = "TNL_CLIENT_ALIAS_NOT_SELECTED"
@@ -388,6 +390,14 @@ var definitions = map[Reason]Definition{
 	ProjectConfigInvalid: {
 		Class: Invalid, Message: "tnl could not use the project configuration",
 		Action: "run tnl config check and correct the reported setting", Retry: RetryAfterChange,
+	},
+	PublisherDeploymentInvalid: {
+		Class: Invalid, Message: "publisher deployment artifacts are missing, stale, or unsafe",
+		Action: "run tnl generate with the same --output-dir; use regular files and directories without symlinks", Retry: RetryAfterChange,
+	},
+	PublisherDeploymentWriteFailed: {
+		Class: Invalid, Message: "tnl could not write publisher deployment artifacts",
+		Action: "check output directory permissions and symlinks; move custom files that conflict with generated paths, then run tnl generate", Retry: RetryAfterChange,
 	},
 	AliasOwned: {
 		Class: Conflict, Message: "another live worktree owns this alias",

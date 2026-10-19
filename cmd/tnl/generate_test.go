@@ -1,0 +1,172 @@
+package main
+
+import (
+	"bytes"
+	"errors"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/publisherdeployment"
+)
+
+func generationGit(t *testing.T, directory string, args ...string) []byte {
+	t.Helper()
+	command := exec.CommandContext(t.Context(), "git", args...)
+	command.Dir = directory
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
+	return output
+}
+
+func TestGenerateOfflineAcrossWorktreesAndReadOnlyCheck(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second := filepath.Join(root, "first"), filepath.Join(root, "second")
+	if err := os.Mkdir(first, 0755); err != nil {
+		t.Fatal(err)
+	}
+	generationGit(t, first, "init", "-b", "main")
+	generationGit(t, first, "remote", "add", "origin", "https://user:git-credential@example.test/company/project.git")
+	generationGit(t, first, "worktree", "add", "--orphan", "-b", "other", second)
+	state := filepath.Join(root, "unused-client-state")
+	t.Setenv("TNL_STATE_DIR", state)
+	t.Setenv("TNL_ACCESS_TOKEN", "do-not-serialize-session")
+	t.Setenv("TNL_SERVER", "https://do-not-contact.invalid")
+	configSource := `export default { publishers: { production: { aws: { replicas: 2 } } } };`
+	var expected map[string][]byte
+	for _, directory := range []string{first, second} {
+		if err := os.WriteFile(filepath.Join(directory, "tnl.config.ts"), []byte(configSource), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, ".gitignore"), []byte("/.tnl/local/\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(directory)
+		var stdout, stderr bytes.Buffer
+		runCommand := func(args ...string) error {
+			return run(t.Context(), args, &stdout, &stderr, func(string) telemetryReporter { t.Fatal("generation opened telemetry"); return nil })
+		}
+		if err := runCommand("generate", "--check"); err == nil {
+			t.Fatal("check accepted missing artifacts")
+		} else {
+			reason, _ := failure.ReasonOf(err)
+			if reason != failure.PublisherDeploymentInvalid || !errors.Is(err, fs.ErrNotExist) {
+				t.Fatal("generation error lost classification or cause", err)
+			}
+			var rendered bytes.Buffer
+			writeCommandError(&rendered, err)
+			if !strings.Contains(rendered.String(), "tnl generate") || strings.Contains(rendered.String(), directory) {
+				t.Fatal("generation error leaked the filesystem cause or lost the command")
+			}
+		}
+		if _, err := os.Stat(filepath.Join(directory, ".tnl")); !os.IsNotExist(err) {
+			t.Fatal("check created .tnl")
+		}
+		if err := runCommand("generate"); err != nil {
+			t.Fatal(err)
+		}
+		before := generationSnapshot(t, directory)
+		if err := runCommand("generate", "--check"); err != nil {
+			t.Fatal(err)
+		}
+		if after := generationSnapshot(t, directory); !reflect.DeepEqual(before, after) {
+			t.Fatal("check changed tracked/generated files")
+		}
+		manifest, err := publisherdeployment.Read(filepath.Join(directory, publisherdeployment.DefaultOutputDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files := map[string][]byte{}
+		for _, name := range []string{"manifest.json", manifest.DocumentationPath, manifest.Publishers[0].TemplatePath, manifest.Publishers[0].ParametersExamplePath} {
+			data, err := os.ReadFile(filepath.Join(directory, publisherdeployment.DefaultOutputDir, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, forbidden := range []string{root, "do-not-serialize-session", "git-credential", "do-not-contact.invalid"} {
+				if bytes.Contains(data, []byte(forbidden)) {
+					t.Fatal("generation leaked local or secret input")
+				}
+			}
+			files[name] = data
+		}
+		if expected == nil {
+			expected = files
+		} else if !reflect.DeepEqual(expected, files) {
+			t.Fatal("equivalent linked worktrees generated different artifacts")
+		}
+		ignored := generationGit(t, directory, "check-ignore", "--no-index", ".tnl/local/project.json")
+		if strings.TrimSpace(string(ignored)) != ".tnl/local/project.json" {
+			t.Fatal("local metadata not ignored")
+		}
+		tracked := generationGit(t, directory, "ls-files", "--others", "--exclude-standard", ".tnl/generated")
+		if len(strings.Fields(string(tracked))) != 4 {
+			t.Fatalf("generated outputs are not trackable: %s", tracked)
+		}
+		if err := runCommand("generate", "--output-dir", "infrastructure/generated"); err != nil {
+			t.Fatal(err)
+		}
+		if err := runCommand("generate", "--check", "--output-dir", "infrastructure/generated"); err != nil {
+			t.Fatal(err)
+		}
+		if stderr.Len() != 0 {
+			t.Fatalf("unexpected diagnostics: %s", stderr.String())
+		}
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatal("offline generation opened client state")
+	}
+}
+
+type generationFile struct {
+	Data     string
+	Mode     fs.FileMode
+	Modified time.Time
+}
+
+func generationSnapshot(t *testing.T, root string) map[string]generationFile {
+	t.Helper()
+	result := map[string]generationFile{}
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Name() == ".git" {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		result[relative] = generationFile{string(data), info.Mode(), info.ModTime()}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}

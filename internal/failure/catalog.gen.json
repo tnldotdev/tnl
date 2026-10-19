@@ -569,6 +569,20 @@
       "action": "restore this replica's identity directory and select it with --identity-dir"
     },
     {
+      "code": "TNL_CLIENT_PUBLISHER_DEPLOYMENT_INVALID",
+      "slug": "publisher-deployment-invalid",
+      "class": "invalid",
+      "message": "publisher deployment artifacts are missing, stale, or unsafe",
+      "action": "run tnl generate with the same --output-dir; use regular files and directories without symlinks"
+    },
+    {
+      "code": "TNL_CLIENT_PUBLISHER_DEPLOYMENT_WRITE_FAILED",
+      "slug": "publisher-deployment-write-failed",
+      "class": "invalid",
+      "message": "tnl could not write publisher deployment artifacts",
+      "action": "check output directory permissions and symlinks; move custom files that conflict with generated paths, then run tnl generate"
+    },
+    {
       "code": "TNL_CLIENT_PUBLISHER_IDENTITY_STATE_INVALID",
       "slug": "publisher-identity-state-invalid",
       "class": "invalid",
