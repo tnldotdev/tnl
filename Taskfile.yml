@@ -231,12 +231,12 @@ tasks:
   go:test:aws-bootstrap:
     desc: Check publisher bootstrap with signed local AWS HTTPS fixtures
     cmds:
-      - go test -race ./internal/awsbootstrap ./internal/publisherprovision ./internal/clientstate -run='Test(Prepare|Bootstrap|ExternalContainer|CustomerDeployment|PublisherProvision)' -count=1
+      - go test -race ./internal/awsbootstrap ./internal/publisherprovision ./internal/clientstate ./cmd/tnl -run='Test(Prepare|Bootstrap|ExternalContainer|CustomerDeployment|PublisherProvision)' -count=1
 
   go:test:integration:aws-bootstrap:
     desc: Check applied publisher identity bootstrap with disposable PostgreSQL and local AWS HTTPS
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/awsbootstrap -run='^TestIntegrationAWSBootstrap' -count=1 -timeout=3m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/awsbootstrap ./cmd/tnl -run='^TestIntegrationAWSBootstrap' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   go:test:coverage:
     desc: Produce a diagnostic Go coverage report

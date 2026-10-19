@@ -3,6 +3,7 @@ package awsbootstrap
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"os"
@@ -199,7 +200,14 @@ func TestPrepareRejectsForeignAndRevokedSecrets(t *testing.T) {
 					if kind == "scope" {
 						v.Member.GroupId = "pgrp_foreign"
 					} else {
-						v.PrivateKey = strings.Repeat("a", 86)
+						_, key, err := ed25519.GenerateKey(rand.Reader)
+						if err != nil {
+							t.Fatal(err)
+						}
+						v, err = credentialfile.NewGroup(v.ControlURL, v.Instance, v.Member, key)
+						if err != nil {
+							t.Fatal(err)
+						}
 					}
 					data, _ := json.Marshal(v)
 					s.Versions[ref.SecretVersion] = string(data)

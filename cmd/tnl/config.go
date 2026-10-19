@@ -428,7 +428,7 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 }
 
 func projectSensitiveCommand(command string) bool {
-	return command == "apply" || command == "audit list" || strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "admin ") ||
+	return command == "apply" || command == "bootstrap <publisher>" || command == "audit list" || strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "admin ") ||
 		command == "connect available" ||
 		strings.HasPrefix(command, "publisher ") ||
 		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ") || strings.HasPrefix(command, "alias ")
@@ -480,6 +480,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 	switch command {
 	case "apply":
 		apply(&flags.Apply.remoteFlags, true)
+	case "bootstrap <publisher>":
+		apply(&flags.Bootstrap.remoteFlags, true)
 	case "audit list":
 		apply(&flags.Audit.List.remoteFlags, true)
 	case "publisher serve":

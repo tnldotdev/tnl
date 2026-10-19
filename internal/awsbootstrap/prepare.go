@@ -288,6 +288,9 @@ func (p Preparer) Prepare(ctx context.Context, r Request) (Reference, error) {
 	if err := matchVersion(value, j.ARN, j.ValueToken, *j.Identity); err != nil {
 		return Reference{}, err
 	}
+	if err := p.verify(ctx, r, *j.Identity); err != nil {
+		return Reference{}, err
+	}
 	if err := p.save(ctx, &j, &revision, "durable"); err != nil {
 		return Reference{}, err
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 // DeploymentFile is customer-owned, separate from generated artifacts and tnl
@@ -45,6 +46,7 @@ var accountPattern = regexp.MustCompile(`^[0-9]{12}$`)
 var regionPattern = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+){1,2}-[0-9]$`)
 var secretPattern = regexp.MustCompile(`^[A-Za-z0-9/_+=.@-]{1,512}$`)
 var parameterPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]{0,254}$`)
+var versionPattern = regexp.MustCompile(`^[A-Za-z0-9-]{32,64}$`)
 
 func invalid() error {
 	return failure.Wrap("validate publisher deployment", failure.AWSBootstrapInvalid, errScope)
@@ -104,7 +106,12 @@ func (d Deployment) Validate() error {
 		if s.ExistingARN != "" && (!secretARN(s.ExistingARN, d.AccountID, d.Region) || s.KMSKeyID != "") {
 			return invalid()
 		}
-		if (s.ExistingVersion != "") != (s.PublisherIdentityID != "") || s.ExistingVersion != "" && (s.ExistingARN == "" || len(s.ExistingVersion) < 32 || len(s.ExistingVersion) > 64) {
+		// keep customer names within the generated secret ARN parameter's bound,
+		// including the longest supported partition and AWS's random suffix.
+		if s.Name != "" && len("arn:aws-us-gov:secretsmanager:"+d.Region+":"+d.AccountID+":secret:"+s.Name+"-ABCDEF") > 512 {
+			return invalid()
+		}
+		if (s.ExistingVersion != "") != (s.PublisherIdentityID != "") || s.ExistingVersion != "" && (s.ExistingARN == "" || !versionPattern.MatchString(s.ExistingVersion) || !opaqueid.Valid(s.PublisherIdentityID, opaqueid.PublisherIdentityPrefix)) {
 			return invalid()
 		}
 	}
@@ -113,7 +120,7 @@ func (d Deployment) Validate() error {
 
 func secretARN(value, account, region string) bool {
 	a, err := arn.Parse(value)
-	return err == nil && (a.Partition == "aws" || a.Partition == "aws-us-gov" || a.Partition == "aws-cn") && a.Service == "secretsmanager" && a.AccountID == account && a.Region == region && strings.HasPrefix(a.Resource, "secret:") && len(a.Resource) > 13 && len(value) < 2048
+	return err == nil && (a.Partition == "aws" || a.Partition == "aws-us-gov" || a.Partition == "aws-cn") && a.Service == "secretsmanager" && a.AccountID == account && a.Region == region && strings.HasPrefix(a.Resource, "secret:") && len(a.Resource) > 13 && len(value) <= 512
 }
 
 // Binding uses immutable group identity, never the mutable configuration name or
