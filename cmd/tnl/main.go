@@ -28,6 +28,7 @@ type cli struct {
 	NoConfig    bool             `name:"no-config" help:"Skip project configuration; put this flag before the command."`
 	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
+	Audit       auditCommand     `cmd:"" help:"Read team service audit history." group:"manage"`
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
 	Watch       watchCommand     `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
@@ -543,6 +544,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	switch parsedCommand {
 	case "init":
 		return runInit(ctx, flags.Init, stdout, stderr)
+	case "audit list":
+		return runAuditList(ctx, flags.Audit.List, stdout, stderr)
 	case "config path":
 		return runConfigPath(ctx, flags, stdout)
 	case "config check":

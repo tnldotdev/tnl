@@ -478,6 +478,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		}
 	}
 	switch command {
+	case "audit list":
+		apply(&flags.Audit.List.remoteFlags, true)
 	case "connect available":
 		apply(&flags.Connect.Available.remoteFlags, false)
 	case "webhook use <endpoint>":
