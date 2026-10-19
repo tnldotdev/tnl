@@ -53,11 +53,13 @@ type statusServerURL struct {
 }
 
 type statusServer struct {
-	Available  bool              `json:"available"`
-	CheckedAt  time.Time         `json:"checked_at"`
-	ControlURL string            `json:"control_url,omitempty"`
-	Reason     string            `json:"reason,omitempty"`
-	URLs       []statusServerURL `json:"public_urls"`
+	Applied       *controlv1.AppliedProjectConfiguration `json:"applied,omitempty"`
+	AppliedReason string                                 `json:"applied_reason,omitempty"`
+	Available     bool                                   `json:"available"`
+	CheckedAt     time.Time                              `json:"checked_at"`
+	ControlURL    string                                 `json:"control_url,omitempty"`
+	Reason        string                                 `json:"reason,omitempty"`
+	URLs          []statusServerURL                      `json:"public_urls"`
 }
 
 type projectStatus struct {
@@ -208,6 +210,13 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 				}
 			}
 			projects[index].Server = readStatusServer(ctx, state, selected, flags.AccessToken, projects[index].Project, localTunnels)
+			configuration := flags.Configuration
+			if flags.All {
+				configuration, _, _ = runtimeProject(ctx, runtimeOptions{Directory: projects[index].Project, StateDir: root})
+			}
+			if configuration.Found() {
+				readAppliedStatus(ctx, state, selected, flags.AccessToken, configuration, projects[index].Server)
+			}
 		}
 	}
 	result := statusResult{SchemaVersion: 1, Scope: flags.Scope, Projects: projects}
@@ -253,8 +262,60 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 				blocks = append(blocks, clioutput.Section("server "+item.Lifecycle, clioutput.Fields(clioutput.Field{Label: "hostname", Value: item.Hostname}, clioutput.Field{Label: "public URL ID", Value: item.PublicURLID}, clioutput.Field{Label: "open publish run", Value: item.OpenRunID}, clioutput.Field{Label: "next publish run", Value: strconv.FormatInt(item.NextRun, 10)}, clioutput.Field{Label: "publish run state", Value: item.RunState}, clioutput.Field{Label: "server updated at", Value: item.UpdatedAt.Format(time.RFC3339Nano)})))
 			}
 		}
+		if project.Server != nil && project.Server.Applied != nil {
+			blocks = append(blocks, appliedProjectBlocks(*project.Server.Applied)...)
+		} else if project.Server != nil && project.Server.AppliedReason != "" {
+			blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "applied configuration", Value: project.Server.AppliedReason}))
+		}
 	}
 	return writeHumanFrame(output, "tnl status", countState(len(projects), "project", "projects"), "", blocks...)
+}
+
+func readAppliedStatus(ctx context.Context, state *clientstate.Database, server, token string, project projectConfiguration, result *statusServer) {
+	source, err := project.SourceIdentity(ctx)
+	if err != nil {
+		result.AppliedReason = "portable Git configuration source unavailable"
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	auth, err := clientauth.Authenticate(ctx, clientauth.Config{ServerEndpoint: server, State: state, AccessToken: token})
+	if err != nil {
+		result.AppliedReason = "control API or signed-in session unavailable"
+		return
+	}
+	identity, err := auth.Authority.IdentityContext(ctx)
+	if err != nil {
+		result.AppliedReason = "identity inventory unavailable"
+		return
+	}
+	profile, err := state.Server(ctx, server)
+	if err != nil {
+		result.AppliedReason = "client state unavailable"
+		return
+	}
+	team, err := projectTeamForServer(server, project.Config.Server, project.Config.Team)
+	if err != nil {
+		result.AppliedReason = "project team selection unavailable"
+		return
+	}
+	session := &teamSession{store: profile, authenticated: auth, api: auth.Authority, identity: identity, projectTeam: team}
+	current, err := session.current(ctx)
+	if err != nil {
+		result.AppliedReason = "select a project team"
+		return
+	}
+	applied, err := auth.Control.GetProjectConfiguration(ctx, current.team.Id, source.Key)
+	if err != nil {
+		result.AppliedReason = "not applied or unavailable; run tnl apply"
+		return
+	}
+	if applied.SourceFingerprint != source.Fingerprint || applied.ProjectKey != source.Key || applied.TeamId != current.team.Id {
+		result.AppliedReason = "server returned another project source"
+		return
+	}
+	result.Applied = &applied
+	result.Available, result.Reason = true, ""
 }
 
 func readStatusServer(ctx context.Context, state *clientstate.Database, server, token, project string, tunnels clientstate.TunnelSnapshot) *statusServer {

@@ -54,6 +54,7 @@ type Engine struct {
 	Clients      ClientFactory
 	Publish      func(context.Context, publisher.Config) error
 	Connect      func(context.Context, Job, func() error) error
+	Group        func(context.Context, Job, func(int64, bool) error) error
 	PollInterval time.Duration
 	RetryMin     time.Duration
 	RetryMax     time.Duration
@@ -262,6 +263,21 @@ func safeFailure(err error) string {
 func (e Engine) attempt(ctx context.Context, job Job, attempts uint64) (bool, error) {
 	if err := validateJob(&job); err != nil {
 		return false, err
+	}
+	if job.Kind == KindGroup {
+		if e.Group == nil || !e.Registry.user {
+			return false, ErrScope
+		}
+		var ready atomic.Bool
+		err := e.Group(ctx, job, func(revision int64, healthy bool) error {
+			ready.Store(healthy)
+			state := "reconciling"
+			if healthy {
+				state = "ready"
+			}
+			return e.Registry.status(ctx, job.ID, job.Revision, Status{State: state, Attempts: attempts, ObservedRevision: revision})
+		})
+		return ready.Load(), err
 	}
 	if job.Kind == KindConnector {
 		if e.Connect == nil || !e.Registry.user {

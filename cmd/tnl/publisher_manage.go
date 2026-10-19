@@ -19,6 +19,7 @@ import (
 )
 
 type publisherCommand struct {
+	Serve     publisherServeCommand     `cmd:"" help:"Run this replica's assigned services with a saved or portable group identity."`
 	Current   publisherCurrentCommand   `cmd:"" help:"Show the selected local or file-backed publisher without exposing its key."`
 	Setup     publisherSetupCommand     `cmd:"" help:"Set up a local publisher for your HTTP namespace."`
 	Provision publisherProvisionCommand `cmd:"" help:"Write a portable scoped publisher file for deployment."`
@@ -189,12 +190,16 @@ func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, pro
 
 type publisherEnrollCommand struct {
 	scopedTeamFlags  `embed:""`
-	PublicURLID      string `arg:"" optional:"" name:"public-url-id" help:"Enabled saved public URL ID."`
-	PrivateServiceID string `name:"private-service" help:"Exact saved private service ID."`
-	Name             string `default:"publisher" help:"Lowercase publisher name."`
-	Namespace        bool   `help:"Grant temporary HTTP URLs in your authorized namespace."`
-	Domain           string `help:"Ready team domain for namespace enrollment."`
-	Automation       bool   `help:"Expire the initial grant after one hour."`
+	Group            string        `name:"group" help:"Issue one-use bootstrap for one replica of this configured publisher group."`
+	ProjectKey       string        `name:"project-key" help:"Applied project key for group bootstrap; defaults to this Git configuration source."`
+	Members          int           `name:"members" default:"1" help:"Maximum distinct task keys redeeming a group bootstrap, from 1 to 256."`
+	ExpiresIn        time.Duration `name:"expires-in" default:"10m" help:"Group bootstrap lifetime, from 1m to 24h; each replica creates its own protected key."`
+	PublicURLID      string        `arg:"" optional:"" name:"public-url-id" help:"Enabled saved public URL ID."`
+	PrivateServiceID string        `name:"private-service" help:"Exact saved private service ID."`
+	Name             string        `default:"publisher" help:"Lowercase publisher name."`
+	Namespace        bool          `help:"Grant temporary HTTP URLs in your authorized namespace."`
+	Domain           string        `help:"Ready team domain for namespace enrollment."`
+	Automation       bool          `help:"Expire the initial grant after one hour."`
 }
 type publisherListCommand struct {
 	scopedTeamFlags `embed:""`

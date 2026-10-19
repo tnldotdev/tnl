@@ -54,28 +54,32 @@ const (
 	KindPublicURL      Kind = ""
 	KindPrivateService Kind = "private"
 	KindConnector      Kind = "connector"
+	KindGroup          Kind = "group"
 )
 
 type Job struct {
-	ManagedTLS       *controlv1.ManagedServiceTLS `json:"managed_tls,omitempty"`
-	Kind             Kind                         `json:"kind,omitempty"`
-	PrivateServiceID string                       `json:"private_service_id,omitempty"`
-	TrustRevision    int64                        `json:"trust_revision,omitempty"`
-	PublisherPool    bool                         `json:"publisher_pool,omitempty"`
-	IdentityID       string                       `json:"identity_id,omitempty"`
-	StateDir         string                       `json:"state_dir,omitempty"`
-	Project          *projectconfig.Project       `json:"project,omitempty"`
-	ProjectService   string                       `json:"project_service,omitempty"`
-	Trust            *privatetrust.Snapshot       `json:"trust,omitempty"`
-	ID               string                       `json:"job_id"`
-	Name             string                       `json:"name,omitempty"`
-	Server           string                       `json:"server"`
-	PublisherID      string                       `json:"publisher_id"`
-	GrantID          string                       `json:"grant_id"`
-	PublicURLID      string                       `json:"public_url_id"`
-	Target           string                       `json:"target"`
-	Protocol         config.ProtocolName          `json:"protocol"`
-	TargetTLSName    string                       `json:"target_tls_name,omitempty"`
+	GroupMember      *controlv1.PublisherGroupMember `json:"group_member,omitempty"`
+	GroupInstance    string                          `json:"group_instance,omitempty"`
+	IdentityDir      string                          `json:"identity_dir,omitempty"`
+	Kind             Kind                            `json:"kind,omitempty"`
+	PrivateServiceID string                          `json:"private_service_id,omitempty"`
+	TrustRevision    int64                           `json:"trust_revision,omitempty"`
+	PublisherPool    bool                            `json:"publisher_pool,omitempty"`
+	IdentityID       string                          `json:"identity_id,omitempty"`
+	StateDir         string                          `json:"state_dir,omitempty"`
+	Project          *projectconfig.Project          `json:"project,omitempty"`
+	ProjectService   string                          `json:"project_service,omitempty"`
+	Trust            *privatetrust.Snapshot          `json:"trust,omitempty"`
+	ManagedTLS       *controlv1.ManagedServiceTLS    `json:"managed_tls,omitempty"`
+	ID               string                          `json:"job_id"`
+	Name             string                          `json:"name,omitempty"`
+	Server           string                          `json:"server"`
+	PublisherID      string                          `json:"publisher_id"`
+	GrantID          string                          `json:"grant_id"`
+	PublicURLID      string                          `json:"public_url_id"`
+	Target           string                          `json:"target"`
+	Protocol         config.ProtocolName             `json:"protocol"`
+	TargetTLSName    string                          `json:"target_tls_name,omitempty"`
 	// trust is captured at install time, so boot never depends on a user's files.
 	TargetCAPEM []byte                      `json:"target_ca_pem,omitempty"`
 	ServerCAPEM []byte                      `json:"server_ca_pem,omitempty"`
@@ -261,7 +265,7 @@ func (r *Registry) Remove(ctx context.Context, id string) error {
 			if job.Enabled || job.Status.State != "stopped" {
 				return ErrScope
 			}
-			if job.Kind != KindConnector {
+			if job.Kind != KindConnector && job.Kind != KindGroup {
 				profile, err := r.database.Server(ctx, job.Server)
 				if err != nil {
 					return err
@@ -466,12 +470,30 @@ func validateJob(job *Job) error {
 	if !naming.ValidServiceName(job.ID) || len(job.Name) > 128 || strings.TrimSpace(job.Name) != job.Name || strings.ContainsAny(job.Name, "\x00\r\n") || job.Server == "" {
 		return ErrScope
 	}
-	if job.Kind != KindConnector && (job.IdentityID != "" || job.StateDir != "") ||
+	if job.Kind != KindGroup && job.GroupMember != nil ||
+		job.Kind != KindGroup && job.GroupInstance != "" ||
+		job.Kind != KindGroup && job.IdentityDir != "" ||
+		job.Kind != KindConnector && (job.IdentityID != "" || job.StateDir != "") ||
 		job.Kind != KindPrivateService && (job.Project != nil || job.ProjectService != "" || job.PublisherPool) ||
-		job.Kind == KindPublicURL && (job.Trust != nil || job.TrustRevision != 0) {
+		(job.Kind == KindPublicURL || job.Kind == KindGroup) && (job.Trust != nil || job.TrustRevision != 0) {
 		return ErrScope
 	}
 	switch job.Kind {
+	case KindGroup:
+		if !naming.ValidServiceName(job.GroupInstance) {
+			return ErrScope
+		}
+		if job.IdentityDir != "" && (!filepath.IsAbs(job.IdentityDir) || filepath.Clean(job.IdentityDir) != job.IdentityDir) {
+			return ErrScope
+		}
+		if job.GroupMember == nil || job.GroupMember.PublisherIdentityId != job.PublisherID ||
+			job.GroupMember.GroupName == "local" || !naming.ValidServiceName(job.GroupMember.GroupName) ||
+			!opaqueid.Valid(job.PublisherID, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(job.GroupMember.KeyId, opaqueid.PublisherIdentityKeyPrefix) ||
+			job.GroupMember.TeamId == "" || job.GroupMember.GroupId == "" || job.GroupMember.ProjectKey == "" ||
+			job.PrivateServiceID != "" || job.PublicURLID != "" || job.Target != "" || job.GrantID != "" || job.Protocol != "" ||
+			job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 || job.Limits != (publisher.ApplicationLimits{}) {
+			return ErrScope
+		}
 	case KindConnector:
 		if !opaqueid.Valid(job.PrivateServiceID, opaqueid.PrivateServicePrefix) || job.PublicURLID != "" || job.PublisherID != "" || job.GrantID != "" ||
 			!opaqueid.Valid(job.IdentityID, opaqueid.IdentityPrefix) || !filepath.IsAbs(job.StateDir) || job.TrustRevision < 1 ||
@@ -499,6 +521,9 @@ func validateJob(job *Job) error {
 	job.Server = server
 	if err := ValidateTrust(job.ServerCAPEM); err != nil {
 		return err
+	}
+	if job.Kind == KindGroup {
+		return nil
 	}
 	if err := job.Limits.Validate(); err != nil {
 		return ErrScope

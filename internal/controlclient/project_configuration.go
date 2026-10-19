@@ -15,6 +15,12 @@ func (c *Client) GetProjectPrivateService(ctx context.Context, project, service 
 	})
 }
 
+func (c *Client) ApplyProjectConfiguration(ctx context.Context, project string, body controlv1.ApplyProjectConfigurationRequest) (controlv1.AppliedProjectConfiguration, error) {
+	return requestWithAccess[controlv1.AppliedProjectConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.ApplyProjectConfiguration(ctx, project, body, editors...)
+	})
+}
+
 func (c *Client) GetProjectConfiguration(ctx context.Context, team, project string) (controlv1.AppliedProjectConfiguration, error) {
 	return requestWithAccess[controlv1.AppliedProjectConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.GetProjectConfiguration(ctx, project, &controlv1.GetProjectConfigurationParams{TeamId: team}, editors...)

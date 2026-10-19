@@ -478,8 +478,20 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		}
 	}
 	switch command {
+	case "apply":
+		apply(&flags.Apply.remoteFlags, true)
 	case "audit list":
 		apply(&flags.Audit.List.remoteFlags, true)
+	case "publisher serve":
+		serve := &flags.Publisher.Serve
+		credential := serve.AccessToken
+		if credential == "" {
+			credential = serve.EnrollmentKey
+		}
+		serve.ServerURL, _, contextErr = resolveProjectServer(serve.ServerURL, project.Config.Server, credential)
+		if contextErr == nil {
+			serve.ProjectTeam, contextErr = projectTeamForServer(serve.ServerURL, project.Config.Server, project.Config.Team)
+		}
 	case "connect available":
 		apply(&flags.Connect.Available.remoteFlags, false)
 	case "webhook use <endpoint>":

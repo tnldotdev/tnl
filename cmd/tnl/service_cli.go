@@ -251,6 +251,13 @@ func runServiceServeWithUserJobs(ctx context.Context, flags serviceServeCommand,
 	engine := publisherjob.Engine{Registry: registry, UserJobs: runners}
 	if options.User {
 		engine.Connect = runInstalledConnector
+		engine.Group = func(ctx context.Context, job publisherjob.Job, observe func(int64, bool) error) error {
+			_, private, profile, err := registry.GroupIdentity(ctx, job)
+			if err != nil {
+				return err
+			}
+			return servePublisherGroup(ctx, job, profile, private, observe)
+		}
 	}
 	return engine.Serve(ctx)
 }
@@ -259,6 +266,17 @@ func writeSystemJobs(ctx context.Context, registry *publisherjob.Registry, outpu
 	jobs, err := registry.List(ctx)
 	if err != nil {
 		return err
+	}
+	for i := range jobs {
+		if jobs[i].Kind != publisherjob.KindGroup {
+			continue
+		}
+		member, _, _, err := registry.GroupIdentity(ctx, jobs[i])
+		if err != nil {
+			return err
+		}
+		jobs[i].GroupMember = &member
+		jobs[i].Name = member.GroupName + "-" + jobs[i].GroupInstance
 	}
 	return renderSystemJobs(output, command, jobs, selected)
 }
@@ -279,7 +297,9 @@ func renderSystemJobs(output io.Writer, command string, jobs []publisherjob.Job,
 			desired = "running"
 		}
 		fields := []clioutput.Field{{Label: "name", Value: displayJobName(job)}, {Label: "job ID", Value: job.ID}, {Label: "server", Value: job.Server}, {Label: "protocol", Value: string(job.Protocol)}, {Label: "desired", Value: desired}, {Label: "state", Value: job.Status.State}}
-		if job.Kind == "private" || job.Kind == "connector" {
+		if job.Kind == "group" && job.GroupMember != nil {
+			fields = append(fields, clioutput.Field{Label: "group", Value: job.GroupMember.GroupName}, clioutput.Field{Label: "project key", Value: job.GroupMember.ProjectKey}, clioutput.Field{Label: "observed revision", Value: strconv.FormatInt(job.Status.ObservedRevision, 10)})
+		} else if job.Kind == "private" || job.Kind == "connector" {
 			fields = append(fields, clioutput.Field{Label: "private service ID", Value: job.PrivateServiceID})
 		} else {
 			fields = append(fields, clioutput.Field{Label: "public URL", Value: job.PublicURLID})

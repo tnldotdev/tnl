@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/authorityclient"
@@ -28,12 +29,13 @@ type cli struct {
 	NoConfig    bool             `name:"no-config" help:"Skip project configuration; put this flag before the command."`
 	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
+	Apply       applyCommand     `cmd:"" help:"Reconcile this project's declared services and publisher groups with control." group:"manage"`
 	Audit       auditCommand     `cmd:"" help:"Read team service audit history." group:"manage"`
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
 	Watch       watchCommand     `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
 	Publish     publishCommand   `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
-	Connect     connectCommand   `cmd:"" help:"Connect a local client to a private service." group:"start"`
+	Connect     connectCommand   `cmd:"" help:"Connect to a service with native instructions or an authenticated helper." group:"start"`
 	Publisher   publisherCommand `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
 	Service     serviceCommand   `cmd:"" help:"Manage installed publications." group:"operate"`
 	Detached    detachedCommand  `cmd:"" help:"Inspect and stop detached publications." group:"operate"`
@@ -340,6 +342,45 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	parsedCommand := canonicalParsedCommand(parsed.Command())
 	applyTunnelCLIUnits(parsed, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
+	if parsedCommand == "publisher serve" {
+		serve := &flags.Publisher.Serve
+		if err := validatePublisherServe(*serve); err != nil {
+			return err
+		}
+		if serve.Install {
+			options, err := (systemStateFlags{SystemStateDir: serve.SystemStateDir}).options()
+			if err != nil {
+				return err
+			}
+			if err := requireInstalledService(ctx, options, nil); err != nil {
+				return err
+			}
+		}
+		if serve.Detach {
+			if serve.EnrollmentKey == "-" {
+				return publisherCLIError("--detach cannot read an enrollment key from stdin; enroll this instance in the foreground first")
+			}
+			// the owning child consumes the injected secret before loading project
+			// configuration; clear the launching process's copy after handoff too.
+			defer os.Unsetenv("TNL_GROUP_IDENTITY")
+			return detachPublish(ctx, args, serve.StateDir, stdout, "tnl publisher serve")
+		}
+		if err := preparePublisherGroupIdentity(serve); err != nil {
+			return err
+		}
+		if serve.DetachedChild != "" {
+			root, err := clientStateRoot(serve.StateDir)
+			if err != nil {
+				return err
+			}
+			var cleanup func()
+			ctx, cleanup, err = serveDetached(ctx, root, serve.DetachedChild)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+		}
+	}
 	if parsedCommand == "connect start <name>" {
 		connect := &flags.Connect.Start
 		if err := validateConnectMode(*connect); err != nil {
@@ -544,6 +585,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	switch parsedCommand {
 	case "init":
 		return runInit(ctx, flags.Init, stdout, stderr)
+	case "apply":
+		return runApply(ctx, flags.Apply, project, stdout, stderr)
 	case "audit list":
 		return runAuditList(ctx, flags.Audit.List, stdout, stderr)
 	case "config path":
@@ -590,11 +633,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	case "connect remove <name>":
 		return runConnectJobs(ctx, flags.Connect.Remove.connectListCommand, flags.Connect.Remove.Name, "remove", stdout)
 	case "publisher enroll <public-url-id>", "publisher enroll":
+		if flags.Publisher.Enroll.Group != "" {
+			return runPublisherGroupEnrollment(ctx, flags.Publisher.Enroll, project, stdout, stderr)
+		}
+		if flags.Publisher.Enroll.ProjectKey != "" || flags.Publisher.Enroll.Members != 1 || flags.Publisher.Enroll.ExpiresIn != 10*time.Minute {
+			return publisherCLIError("--project-key, --members, and --expires-in require --group")
+		}
 		return runPublisherEnroll(ctx, flags.Publisher.Enroll, stdout, stderr)
 	case "publisher current":
 		return runPublisherCurrent(ctx, flags.Publisher.Current, stdout)
 	case "publisher setup":
 		return runPublisherSetup(ctx, flags.Publisher.Setup, stdout, stderr)
+	case "publisher serve":
+		return runPublisherServe(ctx, flags.Publisher.Serve, project, stdout, stderr)
 	case "publisher provision":
 		return runPublisherProvision(ctx, flags.Publisher.Provision, project, stdout, stderr)
 	case "publisher list":

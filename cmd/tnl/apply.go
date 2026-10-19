@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 
+	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/privatetrust"
@@ -17,6 +21,57 @@ import (
 	"github.com/tnldotdev/tnl/internal/projectpublisher"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+type applyCommand struct {
+	scopedTeamFlags `embed:""`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human"`
+}
+
+// apply sends evaluated declarations, never executable TypeScript or local paths
+// that a remote publisher would need to reopen on this machine.
+func runApply(ctx context.Context, flags applyCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+	source, err := project.SourceIdentity(ctx)
+	if err != nil {
+		return failure.Wrap("identify applied project", failure.ProjectConfigInvalid, err)
+	}
+	session, err := openTeamSession(ctx, flags.selection(), "tnl apply", diagnostics)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	current, err := session.currentWithDomains(ctx)
+	if err != nil {
+		return err
+	}
+	declaration, err := projectDeclaration(ctx, project, current, source)
+	if err != nil {
+		return err
+	}
+	revision := int64(0)
+	existing, err := session.authenticated.Control.GetProjectConfiguration(ctx, current.team.Id, source.Key)
+	if err == nil {
+		if existing.SourceFingerprint != source.Fingerprint {
+			return publisherCLIError("project key belongs to another configuration source")
+		}
+		revision = existing.Revision
+	} else if !errors.Is(err, controlclient.ErrNotFound) {
+		return err
+	}
+	applied, err := session.authenticated.Control.ApplyProjectConfiguration(ctx, source.Key, controlv1.ApplyProjectConfigurationRequest{
+		TeamId: current.team.Id, SourceFingerprint: source.Fingerprint, ExpectedRevision: revision, Configuration: declaration,
+		ProjectLabel: &source.Label,
+	})
+	if err != nil {
+		return err
+	}
+	if applied.ProjectKey != source.Key || applied.TeamId != current.team.Id || applied.SourceFingerprint != source.Fingerprint || applied.Revision < 1 {
+		return failure.Wrap("read applied project", failure.ServerResponseInvalid, errors.New("control returned another project configuration"))
+	}
+	if flags.Output == statusOutputJSON {
+		return json.NewEncoder(output).Encode(applied)
+	}
+	return writeHumanFrame(output, "tnl apply", "applied", "start remote publishers with tnl publisher serve --group NAME", appliedProjectBlocks(applied)...)
+}
 
 func projectDeclaration(ctx context.Context, project projectConfiguration, current teamContext, source projectconfig.SourceIdentity, selected ...string) (controlv1.ProjectConfiguration, error) {
 	declaration := controlv1.ProjectConfiguration{Oauth: project.Config.OAuth, Webhooks: map[string]controlv1.ProjectWebhook{}, Publishers: map[string]controlv1.ProjectPublisherGroup{}, Services: map[string]controlv1.ProjectServiceConfiguration{}}
@@ -185,4 +240,19 @@ func projectPublicURL(tunnel *config.Tunnel) (*controlv1.ProjectServicePublicURL
 		value.Limits = wire
 	}
 	return value, nil
+}
+
+func appliedProjectBlocks(applied controlv1.AppliedProjectConfiguration) []clioutput.Block {
+	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "project key", Value: applied.ProjectKey}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(applied.Revision, 10)})}
+	for _, service := range applied.Services {
+		id := ""
+		if service.ServiceId != nil {
+			id = *service.ServiceId
+		}
+		blocks = append(blocks, clioutput.Section(service.Service, clioutput.Fields(clioutput.Field{Label: "publisher", Value: service.Publisher}, clioutput.Field{Label: "service ID", Value: id}, clioutput.Field{Label: "assignment", Value: string(service.ServiceKind)}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(service.DesiredRevision, 10)})))
+	}
+	for _, member := range applied.Members {
+		blocks = append(blocks, clioutput.Section(member.GroupName, clioutput.Fields(clioutput.Field{Label: "publisher ID", Value: member.PublisherIdentityId}, clioutput.Field{Label: "observed revision", Value: strconv.FormatInt(member.ObservedRevision, 10)}, clioutput.Field{Label: "healthy", Value: strconv.FormatBool(member.Healthy)})))
+	}
+	return blocks
 }

@@ -457,6 +457,30 @@ paths:
           required: true,
           schema: { type: string, pattern: "^[a-z][a-z0-9-]{0,62}$" },
         }
+    put:
+      operationId: applyProjectConfiguration
+      security: [{ bearerAuth: [] }]
+      description: Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/ApplyProjectConfigurationRequest" } },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Applied desired state and observed publisher revisions,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AppliedProjectConfiguration" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
     get:
       operationId: getProjectConfiguration
       security: [{ bearerAuth: [] }]

@@ -1404,6 +1404,16 @@ type AppliedPublisherGroup struct {
 	Public     bool     `json:"public"`
 }
 
+// ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
+type ApplyProjectConfigurationRequest struct {
+	// Configuration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
+	Configuration     ProjectConfiguration `json:"configuration"`
+	ExpectedRevision  int64                `json:"expected_revision"`
+	ProjectLabel      *string              `json:"project_label,omitempty"`
+	SourceFingerprint string               `json:"source_fingerprint"`
+	TeamId            string               `json:"team_id"`
+}
+
 // AuthenticationFacts defines model for AuthenticationFacts.
 type AuthenticationFacts struct {
 	Methods []AuthenticationFactsMethods `json:"methods"`
@@ -3492,6 +3502,9 @@ type StartManagedServiceRunJSONRequestBody StartManagedServiceRunJSONBody
 // SelectPrivateServiceRunJSONRequestBody defines body for SelectPrivateServiceRun for application/json ContentType.
 type SelectPrivateServiceRunJSONRequestBody SelectPrivateServiceRunJSONBody
 
+// ApplyProjectConfigurationJSONRequestBody defines body for ApplyProjectConfiguration for application/json ContentType.
+type ApplyProjectConfigurationJSONRequestBody = ApplyProjectConfigurationRequest
+
 // RealizeLocalProjectServiceJSONRequestBody defines body for RealizeLocalProjectService for application/json ContentType.
 type RealizeLocalProjectServiceJSONRequestBody = RealizeLocalProjectServiceRequest
 
@@ -4181,6 +4194,18 @@ type ClientInterface interface {
 
 	// GetProjectConfiguration performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
 	GetProjectConfiguration(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyProjectConfigurationWithBody performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	ApplyProjectConfigurationWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyProjectConfiguration performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	ApplyProjectConfiguration(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetLocalProjectService performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 	//
@@ -6076,6 +6101,38 @@ func (c *Client) SelectPrivateServiceRun(ctx context.Context, privateServiceId P
 // GetProjectConfiguration performs a GET /v1/projects/{project_key}/configuration (the `GetProjectConfiguration` operationId) request.
 func (c *Client) GetProjectConfiguration(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetProjectConfigurationRequest(c.Server, projectKey, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyProjectConfigurationWithBody performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
+// with any type of body and a specified content type.
+//
+// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+func (c *Client) ApplyProjectConfigurationWithBody(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyProjectConfigurationRequestWithBody(c.Server, projectKey, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApplyProjectConfiguration performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+func (c *Client) ApplyProjectConfiguration(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyProjectConfigurationRequest(c.Server, projectKey, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10493,6 +10550,53 @@ func NewGetProjectConfigurationRequest(server string, projectKey string, params 
 	return req, nil
 }
 
+// NewApplyProjectConfigurationRequest calls the generic ApplyProjectConfiguration builder with application/json body
+func NewApplyProjectConfigurationRequest(server string, projectKey string, body ApplyProjectConfigurationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApplyProjectConfigurationRequestWithBody(server, projectKey, "application/json", bodyReader)
+}
+
+// NewApplyProjectConfigurationRequestWithBody constructs an http.Request for the ApplyProjectConfiguration method, with any body, and a specified content type
+func NewApplyProjectConfigurationRequestWithBody(server string, projectKey string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/configuration", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetLocalProjectServiceRequest constructs an http.Request for the GetLocalProjectService method
 func NewGetLocalProjectServiceRequest(server string, projectKey string, service string, params *GetLocalProjectServiceParams) (*http.Request, error) {
 	var err error
@@ -14338,6 +14442,20 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	GetProjectConfigurationWithResponse(ctx context.Context, projectKey string, params *GetProjectConfigurationParams, reqEditors ...RequestEditorFn) (*GetProjectConfigurationResponse, error)
 
+	// ApplyProjectConfigurationWithBodyWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ApplyProjectConfigurationWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error)
+
+	// ApplyProjectConfigurationWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+	ApplyProjectConfigurationWithResponse(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error)
+
 	// GetLocalProjectServiceWithResponse performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 	//
 	// Read the exact private service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
@@ -17723,6 +17841,54 @@ func (r GetProjectConfigurationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetProjectConfigurationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ApplyProjectConfigurationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AppliedProjectConfiguration
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ApplyProjectConfigurationResponse) GetJSON200() *AppliedProjectConfiguration {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ApplyProjectConfigurationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ApplyProjectConfigurationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApplyProjectConfigurationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApplyProjectConfigurationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApplyProjectConfigurationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -21936,6 +22102,32 @@ func (c *ClientWithResponses) GetProjectConfigurationWithResponse(ctx context.Co
 	return ParseGetProjectConfigurationResponse(rsp)
 }
 
+// ApplyProjectConfigurationWithBodyWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request,
+// with any type of body and a specified content type.
+//
+// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ApplyProjectConfigurationWithBodyWithResponse(ctx context.Context, projectKey string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error) {
+	rsp, err := c.ApplyProjectConfigurationWithBody(ctx, projectKey, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyProjectConfigurationResponse(rsp)
+}
+
+// ApplyProjectConfigurationWithResponse performs a PUT /v1/projects/{project_key}/configuration (the `ApplyProjectConfiguration` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Atomically reconcile normalized declarations. The source fingerprint is stable across clones and worktrees. Identical content is idempotent; different content requires the current revision. Targets are encrypted and only returned to project managers and scoped publishers.
+func (c *ClientWithResponses) ApplyProjectConfigurationWithResponse(ctx context.Context, projectKey string, body ApplyProjectConfigurationJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyProjectConfigurationResponse, error) {
+	rsp, err := c.ApplyProjectConfiguration(ctx, projectKey, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyProjectConfigurationResponse(rsp)
+}
+
 // GetLocalProjectServiceWithResponse performs a GET /v1/projects/{project_key}/local-services/{service} (the `GetLocalProjectService` operationId) request.
 //
 // Read the exact private service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
@@ -25110,6 +25302,39 @@ func ParseGetProjectConfigurationResponse(rsp *http.Response) (*GetProjectConfig
 	return response, nil
 }
 
+// ParseApplyProjectConfigurationResponse parses an HTTP response from a ApplyProjectConfigurationWithResponse call
+func ParseApplyProjectConfigurationResponse(rsp *http.Response) (*ApplyProjectConfigurationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApplyProjectConfigurationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AppliedProjectConfiguration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetLocalProjectServiceResponse parses an HTTP response from a GetLocalProjectServiceWithResponse call
 func ParseGetLocalProjectServiceResponse(rsp *http.Response) (*GetLocalProjectServiceResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -27476,6 +27701,9 @@ type ServerInterface interface {
 	// (GET /v1/projects/{project_key}/configuration)
 	GetProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectConfigurationParams)
 
+	// (PUT /v1/projects/{project_key}/configuration)
+	ApplyProjectConfiguration(w http.ResponseWriter, r *http.Request, projectKey string)
+
 	// (GET /v1/projects/{project_key}/local-services/{service})
 	GetLocalProjectService(w http.ResponseWriter, r *http.Request, projectKey string, service string, params GetLocalProjectServiceParams)
 
@@ -29642,6 +29870,32 @@ func (siw *ServerInterfaceWrapper) GetProjectConfiguration(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetProjectConfiguration(w, r, projectKey, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApplyProjectConfiguration operation middleware
+func (siw *ServerInterfaceWrapper) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApplyProjectConfiguration(w, r, projectKey)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -32058,6 +32312,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/local-services/{service}", wrapper.RealizeLocalProjectService)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id}", wrapper.RevokePublisherGroupMember)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/configuration", wrapper.GetProjectConfiguration)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/configuration", wrapper.ApplyProjectConfiguration)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/enrollments", wrapper.CreatePublisherGroupEnrollment)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/enroll", wrapper.RedeemPublisherGroupEnrollment)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/verify", wrapper.VerifyPublisherGroupIdentity)
