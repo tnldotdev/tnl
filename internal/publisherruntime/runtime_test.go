@@ -5,12 +5,14 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisheridentity"
+	"github.com/tnldotdev/tnl/internal/publisherprovenance"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -51,7 +53,7 @@ func TestInvalidRuntimeReplyCannotStartOrRenew(t *testing.T) {
 
 func (c *lostStartControl) PublisherRuntime(_ context.Context, r controlv1.PublisherRuntimeRequest) (controlv1.PublisherRuntimeResponse, error) {
 	c.requests = append(c.requests, r)
-	if _, err := publisheridentity.Verify(r.Assertion, "publisher", "key", publisheridentity.RuntimeScope("scope", string(r.Action), r.ProcessRunId, r.ExpectedEpoch), "https://control.example/v1/publisher-runtime", c.public, time.Now()); err != nil {
+	if _, err := publisheridentity.Verify(r.Assertion, "publisher", "key", publisheridentity.RuntimeScope("scope", string(r.Action), r.ProcessRunId, r.ExpectedEpoch, publisherprovenance.Digest(r.Deployment)), "https://control.example/v1/publisher-runtime", c.public, time.Now()); err != nil {
 		return controlv1.PublisherRuntimeResponse{}, err
 	}
 	if c.replaced {
@@ -66,6 +68,38 @@ func (c *lostStartControl) PublisherRuntime(_ context.Context, r controlv1.Publi
 		return controlv1.PublisherRuntimeResponse{}, controlclient.ErrUnavailable
 	}
 	return controlv1.PublisherRuntimeResponse{Epoch: epoch, LeaseExpiresAt: new(time.Now().Add(time.Minute))}, nil
+}
+
+func TestRuntimeDeploymentRetainedAcrossLostReply(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := &lostStartControl{public: public}
+	report := controlv1.PublisherDeploymentReport{DeploymentId: "aws-example", Provider: "aws", ReplicaKey: "replica-1", Instance: "instance", Image: "ghcr.io/tnldotdev/tnl@sha256:" + strings.Repeat("a", 64), SoftwareVersion: "devel", TemplateVersion: "2", TemplateSha256: strings.Repeat("b", 64)}
+	expected := report
+	owner, err := New(control, "https://control.example", "publisher", "key", "scope", private, &report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.Image = "changed after construction"
+	if _, err := owner.Renew(t.Context()); !errors.Is(err, controlclient.ErrUnavailable) {
+		t.Fatal(err)
+	}
+	if _, err := owner.Renew(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Renew(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range control.requests {
+		if request.Deployment == nil || *request.Deployment != expected {
+			t.Fatal("runtime metadata changed during lifecycle")
+		}
+	}
 }
 
 func TestLostStartRetainsProcessAndExpectedEpoch(t *testing.T) {

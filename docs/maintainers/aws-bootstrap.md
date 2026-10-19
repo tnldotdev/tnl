@@ -126,6 +126,13 @@ contains references and instructions, while human output uses the shared ASCII
 renderer. The result includes only already-observed control runtime records for
 the selected identities; it does not claim egress for tasks that have not run.
 
+Prepared output includes the expected `deployment_id`, `template_version` and
+`template_sha256`. A running generated publisher reports these values through
+the signed runtime lifecycle. Its `observed_members[].runtime.deployment` is
+separate [publisher-reported evidence](publisher-provenance.md), with control
+receipt timestamps and server-bound publisher/team/group identity. Bootstrap
+remains `prepared` even when earlier runtime observations are available.
+
 ## verification
 
 ```console

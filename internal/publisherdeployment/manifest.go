@@ -20,7 +20,7 @@ import (
 
 const (
 	SchemaVersion             = 1
-	TemplateVersion           = "1"
+	TemplateVersion           = "2"
 	DefaultOutputDir          = ".tnl/generated"
 	ManifestPath              = "manifest.json"
 	DocumentationPath         = "readme.md"

@@ -744,6 +744,36 @@ func (e PublisherConnectionState) Valid() bool {
 	}
 }
 
+// Defines values for PublisherDeploymentObservationEvidence.
+const (
+	PublisherReported PublisherDeploymentObservationEvidence = "publisher_reported"
+)
+
+// Valid indicates whether the value is a known member of the PublisherDeploymentObservationEvidence enum.
+func (e PublisherDeploymentObservationEvidence) Valid() bool {
+	switch e {
+	case PublisherReported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherDeploymentReportProvider.
+const (
+	Aws PublisherDeploymentReportProvider = "aws"
+)
+
+// Valid indicates whether the value is a known member of the PublisherDeploymentReportProvider enum.
+func (e PublisherDeploymentReportProvider) Valid() bool {
+	switch e {
+	case Aws:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PublisherEnrollmentKind.
 const (
 	PublisherEnrollmentKindNamespace      PublisherEnrollmentKind = "namespace"
@@ -2678,6 +2708,37 @@ type PublisherConnectionID = ResourceID
 // PublisherConnectionState defines model for PublisherConnectionState.
 type PublisherConnectionState string
 
+// PublisherDeploymentObservation A deployment report accepted through the signed runtime lifecycle. Publisher and team are the surrounding runtime's authenticated identity; group_id is derived by control from current publisher membership. Timestamps are control receipt times. This is evidence of a publisher report, not cloud deployment state, image attestation or target health. The group/deployment/replica tuple is reserved for this publisher identity.
+type PublisherDeploymentObservation struct {
+	Evidence        PublisherDeploymentObservationEvidence `json:"evidence"`
+	FirstObservedAt time.Time                              `json:"first_observed_at"`
+	GroupId         string                                 `json:"group_id"`
+	ObservedAt      time.Time                              `json:"observed_at"`
+
+	// Report Optional, bounded metadata reported by a signed group publisher process. The runtime assertion binds every field. It supplies no tenant, group, or publisher authority and is not AWS attestation. Values stay fixed within a process run. Deployment, provider, replica and instance stay bound to the same publisher identity across replacement processes.
+	Report PublisherDeploymentReport `json:"report"`
+}
+
+// PublisherDeploymentObservationEvidence defines model for PublisherDeploymentObservation.Evidence.
+type PublisherDeploymentObservationEvidence string
+
+// PublisherDeploymentReport Optional, bounded metadata reported by a signed group publisher process. The runtime assertion binds every field. It supplies no tenant, group, or publisher authority and is not AWS attestation. Values stay fixed within a process run. Deployment, provider, replica and instance stay bound to the same publisher identity across replacement processes.
+type PublisherDeploymentReport struct {
+	DeploymentId string `json:"deployment_id"`
+
+	// Image Reported digest-pinned image reference, without a tag, scheme or credentials. Control does not inspect the running image.
+	Image           string                            `json:"image"`
+	Instance        string                            `json:"instance"`
+	Provider        PublisherDeploymentReportProvider `json:"provider"`
+	ReplicaKey      string                            `json:"replica_key"`
+	SoftwareVersion string                            `json:"software_version"`
+	TemplateSha256  string                            `json:"template_sha256"`
+	TemplateVersion string                            `json:"template_version"`
+}
+
+// PublisherDeploymentReportProvider defines model for PublisherDeploymentReport.Provider.
+type PublisherDeploymentReportProvider string
+
 // PublisherEnrollment defines model for PublisherEnrollment.
 type PublisherEnrollment struct {
 	DomainId         *DomainID               `json:"domain_id,omitempty"`
@@ -2824,11 +2885,14 @@ type PublisherIdentityPage struct {
 
 // PublisherRuntimeRequest defines model for PublisherRuntimeRequest.
 type PublisherRuntimeRequest struct {
-	Action              PublisherRuntimeRequestAction `json:"action"`
-	Assertion           string                        `json:"assertion"`
-	ExpectedEpoch       int64                         `json:"expected_epoch"`
-	ProcessRunId        string                        `json:"process_run_id"`
-	PublisherIdentityId string                        `json:"publisher_identity_id"`
+	Action    PublisherRuntimeRequestAction `json:"action"`
+	Assertion string                        `json:"assertion"`
+
+	// Deployment Optional, bounded metadata reported by a signed group publisher process. The runtime assertion binds every field. It supplies no tenant, group, or publisher authority and is not AWS attestation. Values stay fixed within a process run. Deployment, provider, replica and instance stay bound to the same publisher identity across replacement processes.
+	Deployment          *PublisherDeploymentReport `json:"deployment,omitempty"`
+	ExpectedEpoch       int64                      `json:"expected_epoch"`
+	ProcessRunId        string                     `json:"process_run_id"`
+	PublisherIdentityId string                     `json:"publisher_identity_id"`
 
 	// ScopeId Immutable group ID for a group replica, or an exact live grant ID for an installed publisher.
 	ScopeId string `json:"scope_id"`
@@ -2849,18 +2913,21 @@ type PublisherRuntimeStatus struct {
 	Active bool `json:"active"`
 
 	// Address Canonical public routable IPv4 or IPv6 host, never a CIDR. Absent for private or non-routable sources.
-	Address             *string                             `json:"address,omitempty"`
-	AddressFamily       PublisherRuntimeStatusAddressFamily `json:"address_family"`
-	Epoch               int64                               `json:"epoch"`
-	Evidence            PublisherRuntimeStatusEvidence      `json:"evidence"`
-	LastSeenAt          time.Time                           `json:"last_seen_at"`
-	LeaseExpiresAt      time.Time                           `json:"lease_expires_at"`
-	ObservedAt          time.Time                           `json:"observed_at"`
-	ProcessRunId        string                              `json:"process_run_id"`
-	PublisherIdentityId string                              `json:"publisher_identity_id"`
-	StartedAt           time.Time                           `json:"started_at"`
-	StoppedAt           *time.Time                          `json:"stopped_at,omitempty"`
-	TeamId              string                              `json:"team_id"`
+	Address       *string                             `json:"address,omitempty"`
+	AddressFamily PublisherRuntimeStatusAddressFamily `json:"address_family"`
+
+	// Deployment A deployment report accepted through the signed runtime lifecycle. Publisher and team are the surrounding runtime's authenticated identity; group_id is derived by control from current publisher membership. Timestamps are control receipt times. This is evidence of a publisher report, not cloud deployment state, image attestation or target health. The group/deployment/replica tuple is reserved for this publisher identity.
+	Deployment          *PublisherDeploymentObservation `json:"deployment,omitempty"`
+	Epoch               int64                           `json:"epoch"`
+	Evidence            PublisherRuntimeStatusEvidence  `json:"evidence"`
+	LastSeenAt          time.Time                       `json:"last_seen_at"`
+	LeaseExpiresAt      time.Time                       `json:"lease_expires_at"`
+	ObservedAt          time.Time                       `json:"observed_at"`
+	ProcessRunId        string                          `json:"process_run_id"`
+	PublisherIdentityId string                          `json:"publisher_identity_id"`
+	StartedAt           time.Time                       `json:"started_at"`
+	StoppedAt           *time.Time                      `json:"stopped_at,omitempty"`
+	TeamId              string                          `json:"team_id"`
 }
 
 // PublisherRuntimeStatusAddressFamily defines model for PublisherRuntimeStatus.AddressFamily.

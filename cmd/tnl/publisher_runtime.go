@@ -39,7 +39,7 @@ func publisherRuntimeFields(r *controlv1.PublisherRuntimeStatus) []clioutput.Fie
 	if r.Address != nil {
 		address = *r.Address + " (" + string(r.AddressFamily) + ")"
 	}
-	return []clioutput.Field{
+	fields := []clioutput.Field{
 		{Label: "runtime", Value: state}, {Label: "process run", Value: r.ProcessRunId},
 		{Label: "runtime epoch", Value: strconv.FormatInt(r.Epoch, 10)},
 		{Label: "control observed egress", Value: address},
@@ -47,4 +47,21 @@ func publisherRuntimeFields(r *controlv1.PublisherRuntimeStatus) []clioutput.Fie
 		{Label: "last seen", Value: r.LastSeenAt.UTC().Format(time.RFC3339)},
 		{Label: "lease expires", Value: r.LeaseExpiresAt.UTC().Format(time.RFC3339)},
 	}
+	if d := r.Deployment; d != nil {
+		fields = append(fields,
+			clioutput.Field{Label: "deployment evidence", Value: string(d.Evidence)},
+			clioutput.Field{Label: "deployment", Value: d.Report.DeploymentId},
+			clioutput.Field{Label: "group ID", Value: d.GroupId},
+			clioutput.Field{Label: "replica", Value: d.Report.ReplicaKey},
+			clioutput.Field{Label: "instance", Value: d.Report.Instance},
+			clioutput.Field{Label: "provider", Value: string(d.Report.Provider)},
+			clioutput.Field{Label: "reported image", Value: d.Report.Image},
+			clioutput.Field{Label: "software version", Value: d.Report.SoftwareVersion},
+			clioutput.Field{Label: "template version", Value: d.Report.TemplateVersion},
+			clioutput.Field{Label: "template sha256", Value: d.Report.TemplateSha256},
+			clioutput.Field{Label: "first reported", Value: d.FirstObservedAt.UTC().Format(time.RFC3339)},
+			clioutput.Field{Label: "last reported", Value: d.ObservedAt.UTC().Format(time.RFC3339)},
+		)
+	}
+	return fields
 }

@@ -33,6 +33,7 @@ type Runtime struct {
 	Observe       func(int64, bool) error
 	MemberChanged func(controlv1.PublisherGroupMember) error
 	PollInterval  time.Duration
+	Deployment    *controlv1.PublisherDeploymentReport
 }
 
 func (Runtime) String() string   { return "publisher group runtime" }
@@ -60,7 +61,7 @@ func (r Runtime) Serve(ctx context.Context) error {
 		return ErrAssignment
 	}
 	workers := map[string]*running{}
-	owner, err := publisherruntime.New(r.Control, r.Control.ServerURL(), r.Member.PublisherIdentityId, r.Member.KeyId, r.Member.GroupId, r.Private)
+	owner, err := publisherruntime.New(r.Control, r.Control.ServerURL(), r.Member.PublisherIdentityId, r.Member.KeyId, r.Member.GroupId, r.Private, r.Deployment)
 	if err != nil {
 		return err
 	}

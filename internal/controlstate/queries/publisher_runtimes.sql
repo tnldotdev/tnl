@@ -2,9 +2,9 @@
 SELECT * FROM control.publisher_runtimes WHERE publisher_identity_id = sqlc.arg(publisher_identity_id);
 
 -- name: StartPublisherRuntime :one
-INSERT INTO control.publisher_runtimes(publisher_identity_id,team_id,key_id,scope_id,process_run_id,epoch,address,address_family,started_at,observed_at,last_seen_at,lease_expires_at)
-VALUES(sqlc.arg(publisher_identity_id),sqlc.arg(team_id),sqlc.arg(key_id),sqlc.arg(scope_id),sqlc.arg(process_run_id),sqlc.arg(epoch),sqlc.narg(address),sqlc.arg(address_family),sqlc.arg(now),sqlc.arg(now),sqlc.arg(now),sqlc.arg(lease_expires_at))
-ON CONFLICT(publisher_identity_id) DO UPDATE SET key_id=EXCLUDED.key_id,scope_id=EXCLUDED.scope_id,process_run_id=EXCLUDED.process_run_id,epoch=EXCLUDED.epoch,address=EXCLUDED.address,address_family=EXCLUDED.address_family,started_at=EXCLUDED.started_at,observed_at=EXCLUDED.observed_at,last_seen_at=EXCLUDED.last_seen_at,lease_expires_at=EXCLUDED.lease_expires_at,stopped_at=NULL
+INSERT INTO control.publisher_runtimes(publisher_identity_id,team_id,key_id,scope_id,process_run_id,epoch,address,address_family,started_at,observed_at,last_seen_at,lease_expires_at,deployment_report,deployment_group_id,deployment_first_observed_at)
+VALUES(sqlc.arg(publisher_identity_id),sqlc.arg(team_id),sqlc.arg(key_id),sqlc.arg(scope_id),sqlc.arg(process_run_id),sqlc.arg(epoch),sqlc.narg(address),sqlc.arg(address_family),sqlc.arg(now),sqlc.arg(now),sqlc.arg(now),sqlc.arg(lease_expires_at),convert_from(sqlc.narg(deployment_report)::bytea,'UTF8')::jsonb,sqlc.narg(deployment_group_id),sqlc.narg(deployment_first_observed_at))
+ON CONFLICT(publisher_identity_id) DO UPDATE SET key_id=EXCLUDED.key_id,scope_id=EXCLUDED.scope_id,process_run_id=EXCLUDED.process_run_id,epoch=EXCLUDED.epoch,address=EXCLUDED.address,address_family=EXCLUDED.address_family,started_at=EXCLUDED.started_at,observed_at=EXCLUDED.observed_at,last_seen_at=EXCLUDED.last_seen_at,lease_expires_at=EXCLUDED.lease_expires_at,stopped_at=NULL,deployment_report=EXCLUDED.deployment_report,deployment_group_id=EXCLUDED.deployment_group_id,deployment_first_observed_at=COALESCE(control.publisher_runtimes.deployment_first_observed_at,EXCLUDED.deployment_first_observed_at)
 RETURNING *;
 
 -- name: RenewPublisherRuntime :one

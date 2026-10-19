@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: 'tnl publisher group: independent single-task replicas, pinned signing identities, durable private EFS identity files, task-local runtime state.'
 Metadata:
   tnl:parameter-contract-version: 1
-  tnl:template-version: "1"
+  tnl:template-version: "2"
 Parameters:
   AdditionalSecurityGroup1:
     Type: String
@@ -1495,6 +1495,22 @@ Resources:
             - /identity
           EntryPoint:
             - /usr/local/bin/tnl
+          Environment:
+            - Name: TNL_DEPLOYMENT_ID
+              Value:
+                Ref: DeploymentID
+            - Name: TNL_DEPLOYMENT_PROVIDER
+              Value: aws
+            - Name: TNL_DEPLOYMENT_REPLICA_KEY
+              Value: replica-1
+            - Name: TNL_DEPLOYMENT_IMAGE
+              Value:
+                Ref: PublisherImage
+            - Name: TNL_DEPLOYMENT_TEMPLATE_VERSION
+              Value: "2"
+            - Name: TNL_DEPLOYMENT_TEMPLATE_SHA256
+              Value:
+                Ref: TemplateSHA256
           Essential: true
           Image:
             Ref: PublisherImage
@@ -1926,6 +1942,22 @@ Resources:
             - /identity
           EntryPoint:
             - /usr/local/bin/tnl
+          Environment:
+            - Name: TNL_DEPLOYMENT_ID
+              Value:
+                Ref: DeploymentID
+            - Name: TNL_DEPLOYMENT_PROVIDER
+              Value: aws
+            - Name: TNL_DEPLOYMENT_REPLICA_KEY
+              Value: replica-2
+            - Name: TNL_DEPLOYMENT_IMAGE
+              Value:
+                Ref: PublisherImage
+            - Name: TNL_DEPLOYMENT_TEMPLATE_VERSION
+              Value: "2"
+            - Name: TNL_DEPLOYMENT_TEMPLATE_SHA256
+              Value:
+                Ref: TemplateSHA256
           Essential: true
           Image:
             Ref: PublisherImage
@@ -2202,4 +2234,4 @@ Outputs:
     Value:
       Ref: TemplateSHA256
   TemplateVersion:
-    Value: "1"
+    Value: "2"

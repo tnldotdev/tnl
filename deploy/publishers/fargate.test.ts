@@ -84,7 +84,14 @@ describe("generated Fargate group boundary", () => {
           },
         ],
       });
-      expect(container).not.toHaveProperty("Environment");
+      expect(container?.Environment).toEqual([
+        { Name: "TNL_DEPLOYMENT_ID", Value: { Ref: "DeploymentID" } },
+        { Name: "TNL_DEPLOYMENT_PROVIDER", Value: "aws" },
+        { Name: "TNL_DEPLOYMENT_REPLICA_KEY", Value: `replica-${index}` },
+        { Name: "TNL_DEPLOYMENT_IMAGE", Value: { Ref: "PublisherImage" } },
+        { Name: "TNL_DEPLOYMENT_TEMPLATE_VERSION", Value: "2" },
+        { Name: "TNL_DEPLOYMENT_TEMPLATE_SHA256", Value: { Ref: "TemplateSHA256" } },
+      ]);
       expect(container).not.toHaveProperty("PortMappings");
       expect(container).not.toHaveProperty("Privileged", true);
       expect(task.Volumes).toMatchObject([

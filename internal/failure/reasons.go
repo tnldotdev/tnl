@@ -71,6 +71,7 @@ const (
 	InvalidDomainName                   Reason = "TNL_CLIENT_INVALID_DOMAIN_NAME"
 	ProjectConfigInvalid                Reason = "TNL_CLIENT_PROJECT_CONFIG_INVALID"
 	PublisherDeploymentInvalid          Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_INVALID"
+	PublisherDeploymentMetadataInvalid  Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_METADATA_INVALID"
 	PublisherDeploymentWriteFailed      Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_WRITE_FAILED"
 	AliasOwned                          Reason = "TNL_CLIENT_ALIAS_OWNED"
 	AliasReceiverUnready                Reason = "TNL_CLIENT_ALIAS_RECEIVER_UNREADY"
@@ -166,15 +167,16 @@ const (
 )
 
 var definitions = map[Reason]Definition{
-	AWSBootstrapInvalid:         {Class: Invalid, Message: "publisher deployment input is invalid or stale", Action: "check the customer deployment file and run tnl generate for the current project", Retry: RetryAfterChange},
-	AWSBootstrapScope:           {Class: Conflict, Message: "publisher deployment scope does not match the current project, team, or AWS account", Action: "check the applied project, selected company, AWS profile, account and region", Retry: RetryAfterChange},
-	AWSBootstrapStateLost:       {Class: Conflict, Message: "publisher bootstrap state or its protected key is missing", Action: "restore the original client state before retrying this deployment; do not enroll replacement keys", Retry: RetryAfterChange},
-	AWSBootstrapSecretConflict:  {Class: Conflict, Message: "the identity secret name or container belongs to another operation", Action: "check the exact secret ARN and deployment binding; select a new deployment only for a new replica identity", Retry: RetryAfterChange},
-	AWSBootstrapVersionConflict: {Class: Conflict, Message: "the pinned secret version does not match this publisher identity", Action: "restore the original secret version and protected client state; do not overwrite another identity", Retry: RetryAfterChange},
-	AWSBootstrapDenied:          {Class: Forbidden, Message: "AWS denied the publisher bootstrap operation", Action: "check Secrets Manager and KMS permissions for the selected credentials", Retry: RetryAfterChange},
-	AWSBootstrapAuthentication:  {Class: Unauthenticated, Message: "AWS credentials are missing, expired, or rejected", Action: "renew the selected AWS credentials and retry bootstrap", Retry: RetryAfterChange},
-	AWSBootstrapThrottled:       {Class: Unavailable, Message: "AWS throttled publisher bootstrap", Action: "wait before retrying the same deployment", Retry: RetryLater},
-	AWSBootstrapUnavailable:     {Class: Unavailable, Message: "AWS publisher bootstrap could not complete its request", Action: "check network access and AWS service availability, then retry the same deployment", Retry: RetryLater},
+	PublisherDeploymentMetadataInvalid: {Class: Invalid, Message: "publisher deployment metadata is incomplete or invalid", Action: "supply all TNL_DEPLOYMENT_* metadata fields from the generated deployment and use the provisioned instance", Retry: RetryAfterChange},
+	AWSBootstrapInvalid:                {Class: Invalid, Message: "publisher deployment input is invalid or stale", Action: "check the customer deployment file and run tnl generate for the current project", Retry: RetryAfterChange},
+	AWSBootstrapScope:                  {Class: Conflict, Message: "publisher deployment scope does not match the current project, team, or AWS account", Action: "check the applied project, selected company, AWS profile, account and region", Retry: RetryAfterChange},
+	AWSBootstrapStateLost:              {Class: Conflict, Message: "publisher bootstrap state or its protected key is missing", Action: "restore the original client state before retrying this deployment; do not enroll replacement keys", Retry: RetryAfterChange},
+	AWSBootstrapSecretConflict:         {Class: Conflict, Message: "the identity secret name or container belongs to another operation", Action: "check the exact secret ARN and deployment binding; select a new deployment only for a new replica identity", Retry: RetryAfterChange},
+	AWSBootstrapVersionConflict:        {Class: Conflict, Message: "the pinned secret version does not match this publisher identity", Action: "restore the original secret version and protected client state; do not overwrite another identity", Retry: RetryAfterChange},
+	AWSBootstrapDenied:                 {Class: Forbidden, Message: "AWS denied the publisher bootstrap operation", Action: "check Secrets Manager and KMS permissions for the selected credentials", Retry: RetryAfterChange},
+	AWSBootstrapAuthentication:         {Class: Unauthenticated, Message: "AWS credentials are missing, expired, or rejected", Action: "renew the selected AWS credentials and retry bootstrap", Retry: RetryAfterChange},
+	AWSBootstrapThrottled:              {Class: Unavailable, Message: "AWS throttled publisher bootstrap", Action: "wait before retrying the same deployment", Retry: RetryLater},
+	AWSBootstrapUnavailable:            {Class: Unavailable, Message: "AWS publisher bootstrap could not complete its request", Action: "check network access and AWS service availability, then retry the same deployment", Retry: RetryLater},
 	TargetTLSRejected: {
 		Class: Invalid, Message: "target TLS could not be verified or negotiated",
 		Action: "check the target protocol, target.tls.server_name, and target.tls.ca_file, then retry", Retry: RetryAfterChange,

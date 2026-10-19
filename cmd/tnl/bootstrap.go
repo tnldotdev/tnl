@@ -39,6 +39,7 @@ type bootstrapResult struct {
 	AppliedRevision int64                                  `json:"applied_revision"`
 	TemplatePath    string                                 `json:"template_path"`
 	TemplateSHA256  string                                 `json:"template_sha256"`
+	TemplateVersion string                                 `json:"template_version"`
 	Parameters      []publisherdeployment.Parameter        `json:"parameters"`
 	Replicas        []awsbootstrap.Reference               `json:"replicas"`
 	ObservedMembers []controlv1.PublisherGroupMemberStatus `json:"observed_members"`
@@ -179,11 +180,12 @@ func runBootstrapUsing(ctx context.Context, flags bootstrapCommand, project proj
 	// these observations came from control at the start of this finite command;
 	// bootstrap does not start tasks or claim fresh egress on their behalf.
 	for _, member := range applied.Members {
-		if slices.ContainsFunc(result.Replicas, func(ref awsbootstrap.Reference) bool { return ref.PublisherIdentityID == member.PublisherIdentityId }) {
+		if member.Runtime != nil && slices.ContainsFunc(result.Replicas, func(ref awsbootstrap.Reference) bool { return ref.PublisherIdentityID == member.PublisherIdentityId }) {
 			result.ObservedMembers = append(result.ObservedMembers, member)
 		}
 	}
 	result.Parameters = parameters.CloudFormation()
+	result.TemplateVersion = publisherdeployment.TemplateVersion
 	data, err := json.Marshal(result)
 	if err != nil {
 		return err

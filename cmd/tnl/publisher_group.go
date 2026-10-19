@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -24,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
 	"github.com/tnldotdev/tnl/internal/publisherjob"
+	"github.com/tnldotdev/tnl/internal/publisherprovenance"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -60,7 +62,8 @@ func validatePublisherServe(flags publisherServeCommand) error {
 	if flags.SystemStateDir != "" && !flags.Install {
 		return publisherCLIError("--system-state-dir requires --install")
 	}
-	return nil
+	_, err := publisherprovenance.ReadEnvironment(os.LookupEnv, flags.Instance, buildinfo.Version)
+	return err
 }
 
 func runPublisherGroupEnrollment(ctx context.Context, flags publisherEnrollCommand, project projectConfiguration, output, diagnostics io.Writer) error {
@@ -330,6 +333,10 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 }
 
 func servePublisherGroup(ctx context.Context, job publisherjob.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error, progress ...func(string, publisher.Event) error) error {
+	deployment, err := publisherprovenance.ReadEnvironment(os.LookupEnv, job.GroupInstance, buildinfo.Version)
+	if err != nil {
+		return err
+	}
 	if job.IdentityDir != "" {
 		var err error
 		profile, err = profile.WithIdentityDirectory(job.IdentityDir)
@@ -347,7 +354,7 @@ func servePublisherGroup(ctx context.Context, job publisherjob.Job, profile *cli
 	}
 	member := *job.GroupMember
 	return withPublisherCertificateState(ctx, job, profile, private, client, func(ctx context.Context) error {
-		err := (grouppublisher.Runtime{Control: client, Member: member, Private: private, Observe: observe, MemberChanged: func(current controlv1.PublisherGroupMember) error {
+		err := (grouppublisher.Runtime{Control: client, Member: member, Private: private, Deployment: deployment, Observe: observe, MemberChanged: func(current controlv1.PublisherGroupMember) error {
 			value, err := credentialfile.NewGroup(job.Server, job.GroupInstance, current, private)
 			if err != nil {
 				return err

@@ -12,7 +12,7 @@ import (
 )
 
 const getPublisherRuntime = `-- name: GetPublisherRuntime :one
-SELECT publisher_identity_id, team_id, key_id, scope_id, process_run_id, epoch, address, address_family, evidence, started_at, observed_at, last_seen_at, lease_expires_at, stopped_at FROM control.publisher_runtimes WHERE publisher_identity_id = $1
+SELECT publisher_identity_id, team_id, key_id, scope_id, process_run_id, epoch, address, address_family, evidence, started_at, observed_at, last_seen_at, lease_expires_at, stopped_at, deployment_report, deployment_group_id, deployment_first_observed_at FROM control.publisher_runtimes WHERE publisher_identity_id = $1
 `
 
 func (q *Queries) GetPublisherRuntime(ctx context.Context, publisherIdentityID string) (ControlPublisherRuntime, error) {
@@ -33,6 +33,9 @@ func (q *Queries) GetPublisherRuntime(ctx context.Context, publisherIdentityID s
 		&i.LastSeenAt,
 		&i.LeaseExpiresAt,
 		&i.StoppedAt,
+		&i.DeploymentReport,
+		&i.DeploymentGroupID,
+		&i.DeploymentFirstObservedAt,
 	)
 	return i, err
 }
@@ -80,7 +83,7 @@ func (q *Queries) PublisherRuntimeActive(ctx context.Context, arg PublisherRunti
 const renewPublisherRuntime = `-- name: RenewPublisherRuntime :one
 UPDATE control.publisher_runtimes SET address=$1,address_family=$2,observed_at=$3,last_seen_at=$3,lease_expires_at=$4
 WHERE publisher_identity_id=$5 AND process_run_id=$6 AND epoch=$7 AND stopped_at IS NULL
-RETURNING publisher_identity_id, team_id, key_id, scope_id, process_run_id, epoch, address, address_family, evidence, started_at, observed_at, last_seen_at, lease_expires_at, stopped_at
+RETURNING publisher_identity_id, team_id, key_id, scope_id, process_run_id, epoch, address, address_family, evidence, started_at, observed_at, last_seen_at, lease_expires_at, stopped_at, deployment_report, deployment_group_id, deployment_first_observed_at
 `
 
 type RenewPublisherRuntimeParams struct {
@@ -119,28 +122,34 @@ func (q *Queries) RenewPublisherRuntime(ctx context.Context, arg RenewPublisherR
 		&i.LastSeenAt,
 		&i.LeaseExpiresAt,
 		&i.StoppedAt,
+		&i.DeploymentReport,
+		&i.DeploymentGroupID,
+		&i.DeploymentFirstObservedAt,
 	)
 	return i, err
 }
 
 const startPublisherRuntime = `-- name: StartPublisherRuntime :one
-INSERT INTO control.publisher_runtimes(publisher_identity_id,team_id,key_id,scope_id,process_run_id,epoch,address,address_family,started_at,observed_at,last_seen_at,lease_expires_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$9,$10)
-ON CONFLICT(publisher_identity_id) DO UPDATE SET key_id=EXCLUDED.key_id,scope_id=EXCLUDED.scope_id,process_run_id=EXCLUDED.process_run_id,epoch=EXCLUDED.epoch,address=EXCLUDED.address,address_family=EXCLUDED.address_family,started_at=EXCLUDED.started_at,observed_at=EXCLUDED.observed_at,last_seen_at=EXCLUDED.last_seen_at,lease_expires_at=EXCLUDED.lease_expires_at,stopped_at=NULL
-RETURNING publisher_identity_id, team_id, key_id, scope_id, process_run_id, epoch, address, address_family, evidence, started_at, observed_at, last_seen_at, lease_expires_at, stopped_at
+INSERT INTO control.publisher_runtimes(publisher_identity_id,team_id,key_id,scope_id,process_run_id,epoch,address,address_family,started_at,observed_at,last_seen_at,lease_expires_at,deployment_report,deployment_group_id,deployment_first_observed_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$9,$10,convert_from($11::bytea,'UTF8')::jsonb,$12,$13)
+ON CONFLICT(publisher_identity_id) DO UPDATE SET key_id=EXCLUDED.key_id,scope_id=EXCLUDED.scope_id,process_run_id=EXCLUDED.process_run_id,epoch=EXCLUDED.epoch,address=EXCLUDED.address,address_family=EXCLUDED.address_family,started_at=EXCLUDED.started_at,observed_at=EXCLUDED.observed_at,last_seen_at=EXCLUDED.last_seen_at,lease_expires_at=EXCLUDED.lease_expires_at,stopped_at=NULL,deployment_report=EXCLUDED.deployment_report,deployment_group_id=EXCLUDED.deployment_group_id,deployment_first_observed_at=COALESCE(control.publisher_runtimes.deployment_first_observed_at,EXCLUDED.deployment_first_observed_at)
+RETURNING publisher_identity_id, team_id, key_id, scope_id, process_run_id, epoch, address, address_family, evidence, started_at, observed_at, last_seen_at, lease_expires_at, stopped_at, deployment_report, deployment_group_id, deployment_first_observed_at
 `
 
 type StartPublisherRuntimeParams struct {
-	PublisherIdentityID string
-	TeamID              string
-	KeyID               string
-	ScopeID             string
-	ProcessRunID        string
-	Epoch               int64
-	Address             pgtype.Text
-	AddressFamily       string
-	Now                 pgtype.Timestamptz
-	LeaseExpiresAt      pgtype.Timestamptz
+	PublisherIdentityID       string
+	TeamID                    string
+	KeyID                     string
+	ScopeID                   string
+	ProcessRunID              string
+	Epoch                     int64
+	Address                   pgtype.Text
+	AddressFamily             string
+	Now                       pgtype.Timestamptz
+	LeaseExpiresAt            pgtype.Timestamptz
+	DeploymentReport          []byte
+	DeploymentGroupID         pgtype.Text
+	DeploymentFirstObservedAt pgtype.Timestamptz
 }
 
 func (q *Queries) StartPublisherRuntime(ctx context.Context, arg StartPublisherRuntimeParams) (ControlPublisherRuntime, error) {
@@ -155,6 +164,9 @@ func (q *Queries) StartPublisherRuntime(ctx context.Context, arg StartPublisherR
 		arg.AddressFamily,
 		arg.Now,
 		arg.LeaseExpiresAt,
+		arg.DeploymentReport,
+		arg.DeploymentGroupID,
+		arg.DeploymentFirstObservedAt,
 	)
 	var i ControlPublisherRuntime
 	err := row.Scan(
@@ -172,6 +184,9 @@ func (q *Queries) StartPublisherRuntime(ctx context.Context, arg StartPublisherR
 		&i.LastSeenAt,
 		&i.LeaseExpiresAt,
 		&i.StoppedAt,
+		&i.DeploymentReport,
+		&i.DeploymentGroupID,
+		&i.DeploymentFirstObservedAt,
 	)
 	return i, err
 }
@@ -179,7 +194,7 @@ func (q *Queries) StartPublisherRuntime(ctx context.Context, arg StartPublisherR
 const stopPublisherRuntime = `-- name: StopPublisherRuntime :one
 UPDATE control.publisher_runtimes SET stopped_at=COALESCE(stopped_at,$1),lease_expires_at=LEAST(lease_expires_at,$1),last_seen_at=CASE WHEN stopped_at IS NULL THEN $1 ELSE last_seen_at END
 WHERE publisher_identity_id=$2 AND process_run_id=$3 AND epoch=$4
-RETURNING publisher_identity_id, team_id, key_id, scope_id, process_run_id, epoch, address, address_family, evidence, started_at, observed_at, last_seen_at, lease_expires_at, stopped_at
+RETURNING publisher_identity_id, team_id, key_id, scope_id, process_run_id, epoch, address, address_family, evidence, started_at, observed_at, last_seen_at, lease_expires_at, stopped_at, deployment_report, deployment_group_id, deployment_first_observed_at
 `
 
 type StopPublisherRuntimeParams struct {
@@ -212,6 +227,9 @@ func (q *Queries) StopPublisherRuntime(ctx context.Context, arg StopPublisherRun
 		&i.LastSeenAt,
 		&i.LeaseExpiresAt,
 		&i.StoppedAt,
+		&i.DeploymentReport,
+		&i.DeploymentGroupID,
+		&i.DeploymentFirstObservedAt,
 	)
 	return i, err
 }

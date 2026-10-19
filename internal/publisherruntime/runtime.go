@@ -14,6 +14,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisheridentity"
+	"github.com/tnldotdev/tnl/internal/publisherprovenance"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -28,30 +29,47 @@ type Owner struct {
 	private                     ed25519.PrivateKey
 	epoch                       int64
 	prepared, started           bool
+	deployment                  *controlv1.PublisherDeploymentReport
 }
 
 func (*Owner) String() string   { return "publisher runtime" }
 func (*Owner) GoString() string { return "publisher runtime" }
 
-func New(control Control, server, id, key, scope string, private ed25519.PrivateKey) (*Owner, error) {
+func New(control Control, server, id, key, scope string, private ed25519.PrivateKey, deployment ...*controlv1.PublisherDeploymentReport) (*Owner, error) {
 	if control == nil || server == "" || id == "" || key == "" || scope == "" || len(private) != ed25519.PrivateKeySize {
 		return nil, publisheridentity.ErrProof
+	}
+	var report *controlv1.PublisherDeploymentReport
+	if len(deployment) > 1 {
+		return nil, publisherprovenance.ErrInvalid
+	}
+	if len(deployment) == 1 && deployment[0] != nil {
+		if err := publisherprovenance.Validate(deployment[0]); err != nil {
+			return nil, err
+		}
+		copy := *deployment[0]
+		report = &copy
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, err
 	}
-	return &Owner{control: control, server: strings.TrimSuffix(server, "/"), id: id, key: key, scope: scope, private: private, run: hex.EncodeToString(nonce[:])}, nil
+	return &Owner{control: control, server: strings.TrimSuffix(server, "/"), id: id, key: key, scope: scope, private: private, run: hex.EncodeToString(nonce[:]), deployment: report}, nil
 }
 
 func (o *Owner) call(ctx context.Context, action controlv1.PublisherRuntimeRequestAction) (controlv1.PublisherRuntimeResponse, error) {
-	proof, err := publisheridentity.Sign(o.id, o.key, publisheridentity.RuntimeScope(o.scope, string(action), o.run, o.epoch), o.server+"/v1/publisher-runtime", o.private, time.Now())
+	proof, err := publisheridentity.Sign(o.id, o.key, publisheridentity.RuntimeScope(o.scope, string(action), o.run, o.epoch, publisherprovenance.Digest(o.deployment)), o.server+"/v1/publisher-runtime", o.private, time.Now())
 	if err != nil {
 		return controlv1.PublisherRuntimeResponse{}, err
 	}
 	call, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	return o.control.PublisherRuntime(call, controlv1.PublisherRuntimeRequest{PublisherIdentityId: o.id, ScopeId: o.scope, ProcessRunId: o.run, ExpectedEpoch: o.epoch, Action: action, Assertion: proof})
+	var report *controlv1.PublisherDeploymentReport
+	if o.deployment != nil {
+		copy := *o.deployment
+		report = &copy
+	}
+	return o.control.PublisherRuntime(call, controlv1.PublisherRuntimeRequest{PublisherIdentityId: o.id, ScopeId: o.scope, ProcessRunId: o.run, ExpectedEpoch: o.epoch, Action: action, Assertion: proof, Deployment: report})
 }
 
 func (o *Owner) Renew(ctx context.Context) (controlv1.PublisherRuntimeResponse, error) {

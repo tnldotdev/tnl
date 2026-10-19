@@ -3,16 +3,22 @@ package controlstate
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/publisheridentity"
+	"github.com/tnldotdev/tnl/internal/publisherprovenance"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 var ErrPublisherRuntimeStale = errors.New("publisher runtime has been replaced or stopped")
+var ErrPublisherDeploymentConflict = errors.New("publisher deployment binding conflicts with the recorded replica")
 
 type PublisherRuntimeRequest struct {
 	PublisherIdentityID string
@@ -24,6 +30,7 @@ type PublisherRuntimeRequest struct {
 	SourceIP            string
 	ExpectedEpoch       int64
 	Now                 time.Time
+	Deployment          *controlv1.PublisherDeploymentReport
 }
 
 type PublisherRuntimeResponse struct {
@@ -33,19 +40,20 @@ type PublisherRuntimeResponse struct {
 }
 
 type PublisherRuntimeStatus struct {
-	PublisherIdentityID string     `json:"publisher_identity_id"`
-	TeamID              string     `json:"team_id"`
-	ProcessRunID        string     `json:"process_run_id"`
-	Epoch               int64      `json:"epoch"`
-	Evidence            string     `json:"evidence"`
-	Address             string     `json:"address,omitempty"`
-	AddressFamily       string     `json:"address_family"`
-	StartedAt           time.Time  `json:"started_at"`
-	ObservedAt          time.Time  `json:"observed_at"`
-	LastSeenAt          time.Time  `json:"last_seen_at"`
-	LeaseExpiresAt      time.Time  `json:"lease_expires_at"`
-	StoppedAt           *time.Time `json:"stopped_at,omitempty"`
-	Active              bool       `json:"active"`
+	PublisherIdentityID string                                    `json:"publisher_identity_id"`
+	TeamID              string                                    `json:"team_id"`
+	ProcessRunID        string                                    `json:"process_run_id"`
+	Epoch               int64                                     `json:"epoch"`
+	Evidence            string                                    `json:"evidence"`
+	Address             string                                    `json:"address,omitempty"`
+	AddressFamily       string                                    `json:"address_family"`
+	StartedAt           time.Time                                 `json:"started_at"`
+	ObservedAt          time.Time                                 `json:"observed_at"`
+	LastSeenAt          time.Time                                 `json:"last_seen_at"`
+	LeaseExpiresAt      time.Time                                 `json:"lease_expires_at"`
+	StoppedAt           *time.Time                                `json:"stopped_at,omitempty"`
+	Active              bool                                      `json:"active"`
+	Deployment          *controlv1.PublisherDeploymentObservation `json:"deployment,omitempty"`
 }
 
 // PublisherRuntime is the sole observation writer. enrollment, key verification,
@@ -53,6 +61,9 @@ type PublisherRuntimeStatus struct {
 func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeRequest) (result PublisherRuntimeResponse, retErr error) {
 	run, err := hex.DecodeString(r.ProcessRunID)
 	if err != nil || len(run) != 16 || hex.EncodeToString(run) != r.ProcessRunID || r.ExpectedEpoch < 0 || r.ExpectedEpoch == math.MaxInt64 || (r.Action != "inspect" && r.Action != "start" && r.Action != "renew" && r.Action != "stop") {
+		return result, ErrPublisherIdentity
+	}
+	if publisherprovenance.Validate(r.Deployment) != nil {
 		return result, ErrPublisherIdentity
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -85,6 +96,9 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 			return result, ErrPublisherIdentity
 		}
 	} else {
+		if r.Deployment != nil {
+			return result, ErrPublisherIdentity
+		}
 		if _, _, err = d.livePublisher(ctx, q, i.ID, r.ScopeID, "", r.Now); err != nil {
 			return result, err
 		}
@@ -100,7 +114,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 	if k.RetiredAt.Valid || group != "" && groupKey != kid {
 		return result, ErrPublisherIdentity
 	}
-	a, err := publisheridentity.Verify(r.Assertion, i.ID, kid, publisheridentity.RuntimeScope(r.ScopeID, r.Action, r.ProcessRunID, r.ExpectedEpoch), r.Audience, k.PublicKey, r.Now)
+	a, err := publisheridentity.Verify(r.Assertion, i.ID, kid, publisheridentity.RuntimeScope(r.ScopeID, r.Action, r.ProcessRunID, r.ExpectedEpoch, publisherprovenance.Digest(r.Deployment)), r.Audience, k.PublicKey, r.Now)
 	if err != nil {
 		return result, ErrPublisherIdentity
 	}
@@ -122,6 +136,34 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 	if r.Action == "inspect" {
 		return result, tx.Commit(ctx)
 	}
+	var previous *controlv1.PublisherDeploymentReport
+	if len(current.DeploymentReport) != 0 {
+		previous = &controlv1.PublisherDeploymentReport{}
+		if err := json.Unmarshal(current.DeploymentReport, previous); err != nil {
+			return result, err
+		}
+		if !publisherprovenance.SameBinding(previous, r.Deployment) {
+			return result, ErrPublisherDeploymentConflict
+		}
+	}
+	// a fresh process may report new software/template bytes. renewal and lost
+	// start replies must preserve the complete report originally accepted.
+	if r.Action != "start" || current.ProcessRunID == r.ProcessRunID {
+		if publisherprovenance.Digest(previous) != publisherprovenance.Digest(r.Deployment) {
+			return result, ErrPublisherDeploymentConflict
+		}
+	}
+	var deploymentJSON []byte
+	var deploymentGroup pgtype.Text
+	var deploymentFirst pgtype.Timestamptz
+	if r.Deployment != nil {
+		deploymentJSON, err = json.Marshal(r.Deployment)
+		if err != nil {
+			return result, err
+		}
+		deploymentGroup = nullableText(group)
+		deploymentFirst = timestamptz(r.Now)
+	}
 	address, family := publicPublisherAddress(r.SourceIP)
 	until := r.Now.Add(PublisherGroupLeaseLifetime)
 	if r.Action == "start" {
@@ -132,7 +174,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 			if current.Epoch != r.ExpectedEpoch || current.ProcessRunID == r.ProcessRunID {
 				return result, ErrPublisherRuntimeStale
 			}
-			current, err = q.StartPublisherRuntime(ctx, controlstatedb.StartPublisherRuntimeParams{PublisherIdentityID: i.ID, TeamID: team, KeyID: kid, ScopeID: r.ScopeID, ProcessRunID: r.ProcessRunID, Epoch: r.ExpectedEpoch + 1, Address: nullableText(address), AddressFamily: family, Now: timestamptz(r.Now), LeaseExpiresAt: timestamptz(until)})
+			current, err = q.StartPublisherRuntime(ctx, controlstatedb.StartPublisherRuntimeParams{PublisherIdentityID: i.ID, TeamID: team, KeyID: kid, ScopeID: r.ScopeID, ProcessRunID: r.ProcessRunID, Epoch: r.ExpectedEpoch + 1, Address: nullableText(address), AddressFamily: family, Now: timestamptz(r.Now), LeaseExpiresAt: timestamptz(until), DeploymentReport: deploymentJSON, DeploymentGroupID: deploymentGroup, DeploymentFirstObservedAt: deploymentFirst})
 		}
 	} else {
 		if current.ProcessRunID != r.ProcessRunID || current.Epoch != r.ExpectedEpoch || current.ScopeID != r.ScopeID || current.KeyID != kid || r.Action == "renew" && current.StoppedAt.Valid {
@@ -145,6 +187,10 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 		}
 	}
 	if err != nil {
+		var pgError *pgconn.PgError
+		if errors.As(err, &pgError) && pgError.Code == "23505" && pgError.ConstraintName == "publisher_runtime_deployment_replica" {
+			return result, ErrPublisherDeploymentConflict
+		}
 		return result, err
 	}
 	result.Epoch, result.LeaseExpiresAt = current.Epoch, &current.LeaseExpiresAt.Time
@@ -178,6 +224,13 @@ func publisherRuntimeStatus(ctx context.Context, q *controlstatedb.Queries, id s
 		return nil, err
 	}
 	s := &PublisherRuntimeStatus{PublisherIdentityID: id, TeamID: r.TeamID, ProcessRunID: r.ProcessRunID, Epoch: r.Epoch, Evidence: r.Evidence, Address: r.Address.String, AddressFamily: r.AddressFamily, StartedAt: r.StartedAt.Time, ObservedAt: r.ObservedAt.Time, LastSeenAt: r.LastSeenAt.Time, LeaseExpiresAt: r.LeaseExpiresAt.Time, Active: active}
+	if len(r.DeploymentReport) != 0 {
+		var report controlv1.PublisherDeploymentReport
+		if err := json.Unmarshal(r.DeploymentReport, &report); err != nil {
+			return nil, err
+		}
+		s.Deployment = &controlv1.PublisherDeploymentObservation{Report: report, GroupId: r.DeploymentGroupID.String, Evidence: "publisher_reported", FirstObservedAt: r.DeploymentFirstObservedAt.Time, ObservedAt: r.LastSeenAt.Time}
+	}
 	if r.StoppedAt.Valid {
 		s.StoppedAt = &r.StoppedAt.Time
 	}

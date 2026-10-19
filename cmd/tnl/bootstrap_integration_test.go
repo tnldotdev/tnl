@@ -114,7 +114,7 @@ func TestIntegrationAWSBootstrapCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	var result bootstrapResult
-	if json.Unmarshal(output.Bytes(), &result) != nil || result.State != "prepared" || len(result.Replicas) != 2 || len(result.Parameters) != 15 {
+	if json.Unmarshal(output.Bytes(), &result) != nil || result.State != "prepared" || len(result.Replicas) != 2 || len(result.Parameters) != 15 || len(result.ObservedMembers) != 0 || result.TemplateVersion != publisherdeployment.TemplateVersion {
 		t.Fatal("bootstrap did not compile the actual generated parameter contract")
 	}
 	for _, ref := range result.Replicas {
@@ -124,6 +124,13 @@ func TestIntegrationAWSBootstrapCLI(t *testing.T) {
 		}
 	}
 	before := len(f.Calls())
+	output.Reset()
+	if err := runBootstrapUsing(ctx, flags, project, &output, io.Discard, load); err != nil {
+		t.Fatal(err)
+	}
+	if json.Unmarshal(output.Bytes(), &result) != nil || result.State != "prepared" || len(result.ObservedMembers) != 0 {
+		t.Fatal("enrollment was presented as an observed deployment")
+	}
 	output.Reset()
 	flags.Output = "human"
 	if err := runBootstrapUsing(ctx, flags, project, &output, io.Discard, load); err != nil {

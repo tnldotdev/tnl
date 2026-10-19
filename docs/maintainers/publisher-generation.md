@@ -122,7 +122,7 @@ values := publisherdeployment.Parameters{
 }
 for _, replica := range publisher.Replicas {
     // use the independently provisioned result for this stable replica key.
-    values[replica.InstanceParameter] = replica.Key
+    values[replica.InstanceParameter] = provisioned[replica.Key].Instance
     values[replica.PublisherIdentityIDParameter] = provisioned[replica.Key].PublisherID
     values[replica.IdentitySecretARNParameter] = provisioned[replica.Key].SecretARN
     values[replica.IdentitySecretVersionParameter] = provisioned[replica.Key].VersionID
@@ -144,3 +144,9 @@ input (`Type`, `Description`, `Default`, `AllowedPattern`, `AllowedValues`,
 `RenderAWS(Publisher, projectKey)` produces template and example bytes for a
 validated fixed replica contract. There is no general IaC compiler or
 infrastructure apply API in this package.
+
+Template version 2 injects the nonsecret deployment ID, provider, manifest replica
+key, image reference and template version/hash into each publisher process. The
+publisher reports these through its existing signed runtime owner; see
+[deployment provenance](publisher-provenance.md) for exact environment and API
+fields and the limits of this publisher-reported evidence.

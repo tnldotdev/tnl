@@ -26,7 +26,7 @@ import (
 const (
 	// the coordinated baseline requires the exact migration and identity.
 	schemaVersion       int64 = 1
-	baselineID                = "tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress"
+	baselineID                = "tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment"
 	versionTable              = "control.goose_db_version"
 	bootstrapRetryDelay       = 25 * time.Millisecond
 )

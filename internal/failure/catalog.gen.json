@@ -576,6 +576,13 @@
       "action": "run tnl generate with the same --output-dir; use regular files and directories without symlinks"
     },
     {
+      "code": "TNL_CLIENT_PUBLISHER_DEPLOYMENT_METADATA_INVALID",
+      "slug": "publisher-deployment-metadata-invalid",
+      "class": "invalid",
+      "message": "publisher deployment metadata is incomplete or invalid",
+      "action": "supply all TNL_DEPLOYMENT_* metadata fields from the generated deployment and use the provisioned instance"
+    },
+    {
       "code": "TNL_CLIENT_PUBLISHER_DEPLOYMENT_WRITE_FAILED",
       "slug": "publisher-deployment-write-failed",
       "class": "invalid",

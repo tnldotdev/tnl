@@ -118,8 +118,8 @@ Do not manually edit manifest-owned files.
 | `TeamID`                        | actual immutable team ID, resolved during bootstrap                                                       |
 | `PublisherGroupID`              | actual immutable group ID, resolved during bootstrap                                                      |
 | `DeploymentID`                  | immutable, unique lowercase deployment ID, 1–48 characters; preserve for the lifetime of these identities |
-| `TemplateSHA256`                | exact template hash from the manifest; output attestation supplied by the caller, not a self-hash         |
-| `ReplicaNInstance`              | provisioned instance name, normally `replica-N`                                                           |
+| `TemplateSHA256`                | exact template hash from the manifest; caller-supplied metadata, not AWS attestation                      |
+| `ReplicaNInstance`              | exact provisioned instance name from bootstrap                                                            |
 | `ReplicaNPublisherIdentityID`   | public identity ID returned by bootstrap                                                                  |
 | `ReplicaNIdentitySecretArn`     | ARN of that replica's existing private identity JSON secret                                               |
 | `ReplicaNIdentitySecretVersion` | pinned Secrets Manager version ID, 32–64 characters                                                       |
@@ -131,6 +131,14 @@ canonical control/team/project/group/member/instance identity provisioned by
 control, never a person session, enrollment key, database credential or target.
 Team/group/publisher ID parameters are public metadata and outputs; the signed
 identity JSON remains authoritative at runtime.
+
+Template version 2 supplies deployment metadata as nonsecret `TNL_DEPLOYMENT_*`
+environment values. The running publisher binds its report into the existing
+signed runtime lease. Control shows it as `publisher_reported`, with its actual
+publisher/team/group identity and control receipt times. The report is not AWS
+attestation or a health check. Bootstrap's `prepared` result remains distinct from
+an actual runtime observation. See [deployment provenance](../../docs/maintainers/publisher-provenance.md)
+for the complete field and environment contract.
 
 See [the bootstrap API contract](../../docs/maintainers/publisher-generation.md)
 for exported Go types and stale-artifact validation.

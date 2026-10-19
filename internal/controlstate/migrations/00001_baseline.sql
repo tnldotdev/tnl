@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2320,12 +2320,25 @@ CREATE TABLE control.publisher_runtimes (
     last_seen_at timestamptz NOT NULL,
     lease_expires_at timestamptz NOT NULL,
     stopped_at timestamptz,
+    deployment_report jsonb,
+    deployment_group_id text,
+    deployment_first_observed_at timestamptz,
+    FOREIGN KEY (deployment_group_id,publisher_identity_id) REFERENCES control.publisher_group_members(group_id,publisher_identity_id) ON DELETE RESTRICT,
+    CHECK ((deployment_report IS NULL) = (deployment_group_id IS NULL)),
+    CHECK ((deployment_report IS NULL) = (deployment_first_observed_at IS NULL)),
+    CHECK (deployment_report IS NULL OR (jsonb_typeof(deployment_report) = 'object' AND octet_length(deployment_report::text) <= 2048 AND deployment_group_id = scope_id)),
     FOREIGN KEY (publisher_identity_id,team_id) REFERENCES control.publisher_identities(id,team_id) ON DELETE CASCADE,
     FOREIGN KEY (key_id,publisher_identity_id) REFERENCES control.publisher_identity_keys(id,publisher_identity_id) ON DELETE RESTRICT,
     CHECK ((address IS NULL) = (address_family = 'unknown')),
     CHECK (address IS NULL OR (address = host(address::inet) AND masklen(address::inet) = CASE family(address::inet) WHEN 4 THEN 32 ELSE 128 END
         AND address_family = CASE family(address::inet) WHEN 4 THEN 'ipv4' ELSE 'ipv6' END))
 );
+
+-- one authenticated publisher owns an observed replica slot, including while
+-- stopped or revoked. process replacement reuses that publisher's signing key.
+CREATE UNIQUE INDEX publisher_runtime_deployment_replica ON control.publisher_runtimes
+    (deployment_group_id, (deployment_report->>'deployment_id'), (deployment_report->>'replica_key'))
+    WHERE deployment_report IS NOT NULL;
 
 -- a group identity can never acquire a namespace or an unrelated exact grant,
 -- including through the general publisher-management API.

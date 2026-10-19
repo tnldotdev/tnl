@@ -16,6 +16,11 @@ Secrets Manager ARN and pinned version. The manifest records exact per-replica
 parameter names. Preserve DeploymentID and surviving replica identities across
 updates; their EFS paths are `/tnl/DEPLOYMENT_ID/replica-N`.
 
+The template injects nonsecret deployment/provider/replica/image/template metadata
+into the publisher process. A signed runtime observation labels it
+`publisher_reported`; it is not AWS attestation. Bootstrap being prepared does not
+mean a publisher has run, and observed runtime metadata does not prove readiness.
+
 Customer deployment settings include an existing VPC and task subnets, a
 digest-pinned publicly pullable image, names, CPU/memory, architecture, logging,
 KMS keys, permissions boundaries and optional existing compute resources. For EFS,

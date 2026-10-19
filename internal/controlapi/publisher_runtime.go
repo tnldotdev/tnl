@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/publisherprovenance"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -21,14 +22,18 @@ func (h *handler) ObservePublisherRuntime(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var b controlv1.PublisherRuntimeRequest
-	if decodeJSONLimited(w, r, &b, 8192) != nil || !b.Action.Valid() {
+	if decodeJSONLimited(w, r, &b, 8192) != nil || !b.Action.Valid() || publisherprovenance.Validate(b.Deployment) != nil {
 		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publisher runtime request")
 		return
 	}
 	// controlproxy replaces RemoteAddr only after trusted-peer validation. raw
 	// forwarding headers are never source evidence at this handler boundary.
 	source, _, _ := net.SplitHostPort(r.RemoteAddr)
-	result, err := store.PublisherRuntime(r.Context(), controlstate.PublisherRuntimeRequest{PublisherIdentityID: b.PublisherIdentityId, ScopeID: b.ScopeId, ProcessRunID: b.ProcessRunId, Action: string(b.Action), Assertion: b.Assertion, ExpectedEpoch: b.ExpectedEpoch, Audience: h.config.ControlURL + "/v1/publisher-runtime", SourceIP: source, Now: time.Now()})
+	result, err := store.PublisherRuntime(r.Context(), controlstate.PublisherRuntimeRequest{PublisherIdentityID: b.PublisherIdentityId, ScopeID: b.ScopeId, ProcessRunID: b.ProcessRunId, Action: string(b.Action), Assertion: b.Assertion, ExpectedEpoch: b.ExpectedEpoch, Audience: h.config.ControlURL + "/v1/publisher-runtime", SourceIP: source, Now: time.Now(), Deployment: b.Deployment})
+	if errors.Is(err, controlstate.ErrPublisherDeploymentConflict) {
+		writeProblem(w, http.StatusConflict, controlv1.Conflict, "publisher deployment binding conflicts with the recorded replica")
+		return
+	}
 	if errors.Is(err, controlstate.ErrPublisherRuntimeStale) {
 		writeProblem(w, http.StatusConflict, controlv1.Conflict, "publisher runtime has been replaced or stopped")
 		return
@@ -44,7 +49,7 @@ func runtimeResponse(s *controlstate.PublisherRuntimeStatus) *controlv1.Publishe
 	if s == nil {
 		return nil
 	}
-	r := &controlv1.PublisherRuntimeStatus{PublisherIdentityId: s.PublisherIdentityID, TeamId: s.TeamID, ProcessRunId: s.ProcessRunID, Epoch: s.Epoch, Evidence: controlv1.PublisherRuntimeStatusEvidence(s.Evidence), AddressFamily: controlv1.PublisherRuntimeStatusAddressFamily(s.AddressFamily), StartedAt: s.StartedAt, ObservedAt: s.ObservedAt, LastSeenAt: s.LastSeenAt, LeaseExpiresAt: s.LeaseExpiresAt, StoppedAt: s.StoppedAt, Active: s.Active}
+	r := &controlv1.PublisherRuntimeStatus{PublisherIdentityId: s.PublisherIdentityID, TeamId: s.TeamID, ProcessRunId: s.ProcessRunID, Epoch: s.Epoch, Evidence: controlv1.PublisherRuntimeStatusEvidence(s.Evidence), AddressFamily: controlv1.PublisherRuntimeStatusAddressFamily(s.AddressFamily), StartedAt: s.StartedAt, ObservedAt: s.ObservedAt, LastSeenAt: s.LastSeenAt, LeaseExpiresAt: s.LeaseExpiresAt, StoppedAt: s.StoppedAt, Active: s.Active, Deployment: s.Deployment}
 	if s.Address != "" {
 		r.Address = &s.Address
 	}

@@ -3091,6 +3091,59 @@ components:
           enum: [inspect, start, renew, stop]
           x-enum-varnames: [RuntimeInspect, RuntimeStart, RuntimeRenew, RuntimeStop]
         assertion: { type: string, maxLength: 4096 }
+        deployment: { $ref: "#/components/schemas/PublisherDeploymentReport" }
+    PublisherDeploymentReport:
+      type: object
+      additionalProperties: false
+      description: >-
+        Optional, bounded metadata reported by a signed group publisher process.
+        The runtime assertion binds every field. It supplies no tenant, group, or
+        publisher authority and is not AWS attestation. Values stay fixed within
+        a process run. Deployment, provider, replica and instance stay bound to
+        the same publisher identity across replacement processes.
+      required:
+        [
+          deployment_id,
+          provider,
+          replica_key,
+          instance,
+          image,
+          software_version,
+          template_version,
+          template_sha256,
+        ]
+      properties:
+        deployment_id: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,47}$", maxLength: 48 }
+        provider: { type: string, enum: [aws] }
+        replica_key: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$", maxLength: 32 }
+        instance: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$", maxLength: 32 }
+        image:
+          type: string
+          maxLength: 512
+          pattern: "^[a-z0-9.-]+(:[0-9]+)?/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$"
+          description: Reported digest-pinned image reference, without a tag, scheme or credentials. Control does not inspect the running image.
+        software_version:
+          { type: string, maxLength: 64, pattern: "^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$" }
+        template_version:
+          { type: string, maxLength: 32, pattern: "^[A-Za-z0-9][A-Za-z0-9.+_-]{0,31}$" }
+        template_sha256: { type: string, pattern: "^[a-f0-9]{64}$", maxLength: 64 }
+    PublisherDeploymentObservation:
+      type: object
+      additionalProperties: false
+      description: >-
+        A deployment report accepted through the signed runtime lifecycle.
+        Publisher and team are the surrounding runtime's authenticated identity;
+        group_id is derived by control from current publisher membership.
+        Timestamps are control receipt times. This is evidence of a publisher
+        report, not cloud deployment state, image attestation or target health.
+        The group/deployment/replica tuple is reserved for this publisher identity.
+      required: [report, group_id, evidence, first_observed_at, observed_at]
+      properties:
+        report: { $ref: "#/components/schemas/PublisherDeploymentReport" }
+        group_id: { type: string }
+        evidence: { type: string, enum: [publisher_reported] }
+        first_observed_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
     PublisherRuntimeResponse:
       type: object
       required: [epoch]
@@ -3137,6 +3190,7 @@ components:
         lease_expires_at: { type: string, format: date-time }
         stopped_at: { type: string, format: date-time }
         active: { type: boolean }
+        deployment: { $ref: "#/components/schemas/PublisherDeploymentObservation" }
     PublisherGroupLeaseRequest:
       type: object
       additionalProperties: false

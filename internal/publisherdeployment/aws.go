@@ -8,6 +8,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/publisherprovenance"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -279,6 +280,15 @@ func (t *awsTemplate) addReplica(index int, r Replica, cluster, taskSG, filesyst
 		"Volumes":              []any{object{"Name": "identity", "EFSVolumeConfiguration": object{"FilesystemId": filesystem, "TransitEncryption": "ENABLED", "AuthorizationConfig": object{"AccessPointId": ref(prefix + "IdentityAccessPoint"), "IAM": "ENABLED"}}}},
 		"ContainerDefinitions": []any{object{"Name": "publisher", "Essential": true, "Image": ref("PublisherImage"), "User": "65532:65532", "EntryPoint": []string{"/usr/local/bin/tnl"}, "Command": []any{"--no-config", "publisher", "serve", "--server", ref(ControlURLParameter), "--project-key", ref(ProjectKeyParameter), "--group", ref(GroupParameter), "--state-dir", "/state", "--instance", ref(r.InstanceParameter), "--identity-dir", "/identity"}, "MountPoints": []any{object{"SourceVolume": "identity", "ContainerPath": "/identity", "ReadOnly": false}}, "Secrets": []any{object{"Name": "TNL_GROUP_IDENTITY", "ValueFrom": sub("${" + r.IdentitySecretARNParameter + "}:::${" + r.IdentitySecretVersionParameter + "}")}}, "LinuxParameters": object{"Capabilities": object{"Drop": []string{"ALL"}}}, "StopTimeout": 120, "LogConfiguration": object{"LogDriver": "awslogs", "Options": object{"awslogs-group": logs, "awslogs-region": ref("AWS::Region"), "awslogs-stream-prefix": "publisher"}}}},
 	})
+	container := t.Resources[prefix+"TaskDefinition"].(object)["Properties"].(object)["ContainerDefinitions"].([]any)[0].(object)
+	container["Environment"] = []any{
+		object{"Name": publisherprovenance.DeploymentIDEnv, "Value": ref(DeploymentIDParameter)},
+		object{"Name": publisherprovenance.ProviderEnv, "Value": "aws"},
+		object{"Name": publisherprovenance.ReplicaKeyEnv, "Value": r.Key},
+		object{"Name": publisherprovenance.ImageEnv, "Value": ref("PublisherImage")},
+		object{"Name": publisherprovenance.TemplateVersionEnv, "Value": TemplateVersion},
+		object{"Name": publisherprovenance.TemplateSHA256Env, "Value": ref(TemplateSHA256Parameter)},
+	}
 	securityGroups := []any{taskSG}
 	for i := 1; i <= 4; i++ {
 		name := fmt.Sprintf("AdditionalSecurityGroup%d", i)

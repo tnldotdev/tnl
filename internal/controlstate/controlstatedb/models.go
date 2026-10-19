@@ -1270,20 +1270,23 @@ type ControlPublisherNamespaceRename struct {
 }
 
 type ControlPublisherRuntime struct {
-	PublisherIdentityID string
-	TeamID              string
-	KeyID               string
-	ScopeID             string
-	ProcessRunID        string
-	Epoch               int64
-	Address             pgtype.Text
-	AddressFamily       string
-	Evidence            string
-	StartedAt           pgtype.Timestamptz
-	ObservedAt          pgtype.Timestamptz
-	LastSeenAt          pgtype.Timestamptz
-	LeaseExpiresAt      pgtype.Timestamptz
-	StoppedAt           pgtype.Timestamptz
+	PublisherIdentityID       string
+	TeamID                    string
+	KeyID                     string
+	ScopeID                   string
+	ProcessRunID              string
+	Epoch                     int64
+	Address                   pgtype.Text
+	AddressFamily             string
+	Evidence                  string
+	StartedAt                 pgtype.Timestamptz
+	ObservedAt                pgtype.Timestamptz
+	LastSeenAt                pgtype.Timestamptz
+	LeaseExpiresAt            pgtype.Timestamptz
+	StoppedAt                 pgtype.Timestamptz
+	DeploymentReport          []byte
+	DeploymentGroupID         pgtype.Text
+	DeploymentFirstObservedAt pgtype.Timestamptz
 }
 
 type ControlPublisherServiceConnectionSlot struct {
