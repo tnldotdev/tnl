@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpsubject"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -337,6 +338,7 @@ func (h *handler) CheckPreviewBrowserAccess(response http.ResponseWriter, reques
 		}
 		return
 	}
+	observability.AuthorizationDecision(request.Context(), "preview_browser_session", member)
 	writeJSON(response, http.StatusOK, controlv1.BrowserAccessResponse{
 		IdentityId: session.IdentityID, DisplayName: principal.displayName, VisitAllowed: member, TeamMember: session.TeamMember,
 	})

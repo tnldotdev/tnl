@@ -565,6 +565,7 @@ type Querier interface {
 	SelectIngressRoutingRetentionFloor(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error)
 	// only an exact grant for an active team and service permits publication.
 	SelectPrivateServiceForPublisher(ctx context.Context, arg SelectPrivateServiceForPublisherParams) (ControlPrivateService, error)
+	ServicePortPoolCapacity(ctx context.Context) ([]ServicePortPoolCapacityRow, error)
 	SetDNSReadyDomainDefault(ctx context.Context, arg SetDNSReadyDomainDefaultParams) (int64, error)
 	SetDomainAuthorityRevision(ctx context.Context, arg SetDomainAuthorityRevisionParams) error
 	SetIdentityInitialTeam(ctx context.Context, arg SetIdentityInitialTeamParams) error

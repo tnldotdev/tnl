@@ -14,6 +14,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -245,7 +246,10 @@ func (b *Bound) ConnectSlotWithTransports(ctx context.Context, slot uint8, prefe
 	if preferTCP {
 		primary, fallback = fallback, primary
 	}
-	session, transport, err := tunnel.Race(ctx, primary, fallback, 250*time.Millisecond, hello)
+	connectCtx, finish := observability.PublisherOperation(ctx, "private_connect")
+	session, transport, err := tunnel.Race(connectCtx, primary, fallback, 250*time.Millisecond, hello)
+	finish(err)
+	observability.PublisherConnection(ctx, string(transport), preferTCP, err)
 	if err != nil {
 		return nil, err
 	}
@@ -348,6 +352,7 @@ func (b *Bound) Invalidate() {
 }
 
 func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.PrivatePublisherConnectionRef, stream net.Conn, header tunnelv1.PrivateForwardingHeader) error {
+	ctx = observability.WithVisitor(ctx, header.VisitorConnectionID)
 	if b == nil || stream == nil || !b.current(ref) ||
 		!headerMatches(ref, header, time.Now()) {
 		return ErrPrivateStream

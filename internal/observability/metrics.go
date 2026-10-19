@@ -7,204 +7,173 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/readiness"
+	"go.opentelemetry.io/otel/metric"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// Metrics owns a process-local Prometheus registry.
+// Metrics owns one process's OTel instruments, providers, and scrape exporter.
 type Metrics struct {
-	serviceAudit            *prometheus.CounterVec
-	registry                *prometheus.Registry
-	relayLeaseMu            sync.Mutex
-	relayLeaseExpiry        map[string]time.Time
-	relayCertificateExpiry  map[string]time.Time
-	relayLeases             *prometheus.GaugeVec
-	publisherConnections    prometheus.Gauge
-	registeredConnections   prometheus.Gauge
-	publisherExits          *prometheus.CounterVec
-	ingressStreams          prometheus.Gauge
-	relayStreams            prometheus.Gauge
-	ingressConnections      *prometheus.GaugeVec
-	visitorConnections      *prometheus.CounterVec
-	visitorOpenDuration     *prometheus.HistogramVec
-	relayStreamRejections   *prometheus.CounterVec
-	capacityRejections      *prometheus.CounterVec
-	drainingRejections      prometheus.Counter
-	capacityLimits          *prometheus.GaugeVec
-	inspectionFailures      *prometheus.CounterVec
-	forwardedBytes          *prometheus.CounterVec
-	trafficAdmissions       *prometheus.CounterVec
-	relayAttempts           *prometheus.CounterVec
-	apiDuration             *prometheus.HistogramVec
-	apiInFlight             *prometheus.GaugeVec
-	webhookProviderSources  *prometheus.CounterVec
-	publicURLsCreated       *prometheus.CounterVec
-	publishRunsReady        *prometheus.CounterVec
-	readinessDuration       *prometheus.HistogramVec
-	readinessAge            *prometheus.HistogramVec
-	certificateDuration     *prometheus.HistogramVec
-	certificateMilestone    *prometheus.HistogramVec
-	controlOperations       *prometheus.HistogramVec
-	ingressOperations       *prometheus.HistogramVec
-	relayOperations         *prometheus.HistogramVec
-	databaseQueryDuration   *prometheus.HistogramVec
-	databaseGuardDuration   *prometheus.HistogramVec
-	databaseAcquireDuration *prometheus.HistogramVec
-	databaseFailures        *prometheus.CounterVec
-	recoveryDuration        prometheus.Histogram
-	recoveryPending         prometheus.Gauge
-	recoveryAttempts        *prometheus.CounterVec
-	certificateClaims       *prometheus.CounterVec
-	certificateOrders       *prometheus.CounterVec
-	certificateTransitions  *prometheus.CounterVec
-	dnsWork                 *prometheus.HistogramVec
-	dnsTransitions          *prometheus.CounterVec
-	usageWork               *prometheus.CounterVec
-	usageItems              *prometheus.CounterVec
-	usageReceiverDuration   *prometheus.HistogramVec
-	usageLastSuccess        *prometheus.GaugeVec
-	usageRetained           prometheus.Gauge
-	cleanupRuns             *prometheus.CounterVec
-	cleanupItems            *prometheus.CounterVec
-	cleanupLastSuccess      *prometheus.GaugeVec
-	tcpPortPoolCapacity     *prometheus.GaugeVec
-	guestTrialStats         *prometheus.GaugeVec
-	placementDecisions      *prometheus.CounterVec
-	assignmentReplacements  *prometheus.CounterVec
-	routingHistoryFloor     atomic.Uint64
-	routingHistoryRows      *prometheus.CounterVec
-	routingHistorySkipped   prometheus.Counter
+	relayBytes                  *counter
+	relayCompletions            *counter
+	meter                       metric.Meter
+	meterProvider               *sdkmetric.MeterProvider
+	tracerProvider              *sdktrace.TracerProvider
+	publisherOperations         metric.Float64Histogram
+	publisherLease              metric.Float64Gauge
+	publisherReadiness          metric.Float64Gauge
+	publisherConnectionAttempts metric.Int64Counter
+	authDecisions               *counter
+	serviceAudit                *counter
+	registry                    *prometheus.Registry
+	runtimeRegistry             *prometheus.Registry
+	relayLeaseMu                sync.Mutex
+	relayLeaseExpiry            map[string]time.Time
+	relayCertificateExpiry      map[string]time.Time
+	relayLeases                 *gauge
+	publisherConnections        *gauge
+	registeredConnections       *gauge
+	publisherExits              *counter
+	ingressStreams              *gauge
+	relayStreams                *gauge
+	ingressConnections          *gauge
+	visitorConnections          *counter
+	visitorOpenDuration         *histogram
+	relayStreamRejections       *counter
+	capacityRejections          *counter
+	drainingRejections          *counter
+	capacityLimits              *gauge
+	inspectionFailures          *counter
+	forwardedBytes              *counter
+	trafficAdmissions           *counter
+	relayAttempts               *counter
+	apiDuration                 *histogram
+	apiInFlight                 *gauge
+	webhookProviderSources      *counter
+	publicURLsCreated           *counter
+	publishRunsReady            *counter
+	readinessDuration           *histogram
+	readinessAge                *histogram
+	certificateDuration         *histogram
+	certificateMilestone        *histogram
+	controlOperations           *histogram
+	ingressOperations           *histogram
+	relayOperations             *histogram
+	databaseQueryDuration       *histogram
+	databaseGuardDuration       *histogram
+	databaseAcquireDuration     *histogram
+	databaseFailures            *counter
+	recoveryDuration            *histogram
+	recoveryPending             *gauge
+	recoveryAttempts            *counter
+	certificateClaims           *counter
+	certificateOrders           *counter
+	certificateTransitions      *counter
+	dnsWork                     *histogram
+	dnsTransitions              *counter
+	usageWork                   *counter
+	usageItems                  *counter
+	usageReceiverDuration       *histogram
+	usageLastSuccess            *gauge
+	usageRetained               *gauge
+	cleanupRuns                 *counter
+	cleanupItems                *counter
+	cleanupLastSuccess          *gauge
+	tcpPortPoolCapacity         *gauge
+	guestTrialStats             *gauge
+	placementDecisions          *counter
+	assignmentReplacements      *counter
+	routingHistoryFloor         atomic.Uint64
+	routingHistoryRows          *counter
+	routingHistorySkipped       *counter
 }
 
-// New constructs an isolated registry for one tnld role.
+// New constructs an isolated, local-only owner. it never reads export settings.
 func New(role string) *Metrics {
-	registry := prometheus.NewRegistry()
-	info := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "tnl_process_info", Help: "Process role (one for this process).", ConstLabels: prometheus.Labels{"role": role},
-	})
-	info.Set(1)
-	metrics := &Metrics{
-		serviceAudit:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_service_audit_events_total", Help: "Process-local service audit queue and ingestion counts by fixed result; queued observations can be lost on a crash."}, []string{"result"}),
-		registry:               registry,
-		relayLeaseExpiry:       make(map[string]time.Time),
-		relayCertificateExpiry: make(map[string]time.Time),
-		routingHistoryRows:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_routing_history_cleanup_rows_total", Help: "Committed routing-history cleanup rows by action."}, []string{"action"}),
-		routingHistorySkipped:  prometheus.NewCounter(prometheus.CounterOpts{Name: "tnl_control_routing_history_cleanup_skipped_total", Help: "Cleanup batches skipped because another control holds the cleanup guard."}),
-		relayLeases: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "tnl_relay_local_leases", Help: "Relay leases held by this process by state; not a control-wide lease count.",
-		}, []string{"state"}),
-		publisherConnections:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "tnl_relay_publisher_connections_ready", Help: "Publisher connections marked ready on relays in this process."}),
-		registeredConnections: prometheus.NewGauge(prometheus.GaugeOpts{Name: "tnl_relay_publisher_connections_registered", Help: "Locally registered publisher connections, including those not yet ready; not authoritative database claims."}),
-		publisherExits:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_relay_publisher_connection_exits_total", Help: "Ready publisher connections that ended, by expectedness."}, []string{"reason"}),
-		ingressStreams:        prometheus.NewGauge(prometheus.GaugeOpts{Name: "tnl_ingress_backend_streams", Help: "Tracked backend streams including streams being opened, challenges, and denied connections."}),
-		relayStreams:          prometheus.NewGauge(prometheus.GaugeOpts{Name: "tnl_relay_visitor_stream_slots_occupied", Help: "Occupied relay forwarding-stream slots, including opens in progress."}),
-		ingressConnections:    prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tnl_ingress_connections", Help: "Current ingress admission slots by fixed connection class."}, []string{"class"}),
-		visitorConnections:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_ingress_visitor_connections_total", Help: "Classified ordinary visitor connections by forwarding outcome; forwarded does not imply visitor TLS success."}, []string{"outcome"}),
-		visitorOpenDuration:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tnl_ingress_visitor_stream_open_duration_seconds", Help: "Time from a classified visitor to a forwarding decision, excluding TLS and copy time.", Buckets: DurationBucketsSeconds()}, []string{"outcome"}),
-		relayStreamRejections: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_relay_visitor_stream_rejections_total", Help: "Relay stream rejections other than capacity exhaustion, by fixed reason."}, []string{"reason"}),
-		capacityRejections: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_admission_rejections_total", Help: "Admission rejected because a bounded resource was full.",
-		}, []string{"resource"}),
-		drainingRejections: prometheus.NewCounter(prometheus.CounterOpts{Name: "tnl_ingress_draining_rejections_total", Help: "Connections rejected because ingress was draining."}),
-		capacityLimits: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "tnl_admission_limit", Help: "Resolved admission limit by fixed resource; per-URL and per-hostname resources are per key.",
-		}, []string{"resource"}),
-		inspectionFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_ingress_inspection_failures_total", Help: "Ingress connections rejected before classification by fixed failure stage.",
-		}, []string{"stage"}),
-		forwardedBytes: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_ingress_forwarded_bytes_total", Help: "Bytes forwarded through ingress, recorded after a copy finishes.",
-		}, []string{"direction"}),
-		trafficAdmissions: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_ingress_traffic_admissions_total", Help: "Process-local traffic decisions by fixed stage and result; excludes identities and network addresses."}, []string{"stage", "result"}),
-		relayAttempts: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_ingress_relay_attempts_total", Help: "Ingress internal-forwarding attempts by connection slot and bounded outcome.",
-		}, []string{"connection_slot", "outcome"}),
-		apiDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_control_api_request_duration_seconds", Help: "Control-served HTTP handler duration including long polls; count is the request total.", Buckets: DurationBucketsSeconds(),
-		}, []string{"surface", "operation", "outcome"}),
-		apiInFlight: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "tnl_control_api_requests_in_flight", Help: "Control-served HTTP requests currently executing by API surface.",
-		}, []string{"surface"}),
-		webhookProviderSources: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_control_webhook_provider_source_requests_total", Help: "Webhook sender-policy lookups by fixed provider and bounded outcome; not configured endpoints or webhook deliveries.",
-		}, []string{"provider", "outcome"}),
-		publicURLsCreated: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_control_public_urls_created_total", Help: "New public URLs committed by client-declared purpose; excludes idempotent retries.",
-		}, []string{"purpose"}),
-		publishRunsReady: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_control_publish_runs_ready_total", Help: "Publish runs first marked ready by their saved public URL purpose.",
-		}, []string{"purpose"}),
-		readinessDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_control_publish_run_readiness_duration_seconds", Help: "Time spent checking and publishing publish run readiness; count is the number of attempts.", Buckets: DurationBucketsSeconds(),
-		}, []string{"outcome"}),
-		readinessAge: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_control_publish_run_readiness_age_seconds", Help: "Age of the publish run at a readiness decision; excludes other errors.",
-			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600},
-		}, []string{"outcome"}),
-		certificateDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_control_certificate_work_duration_seconds", Help: "Certificate worker advance and save duration; count is the number of claimed iterations.", Buckets: DurationBucketsSeconds(),
-		}, []string{"kind", "stage", "outcome"}),
-		certificateMilestone: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_control_public_url_certificate_milestone_age_seconds", Help: "Time from issuance creation to certificate availability or DNS cleanup; availability does not imply installation.",
-			Buckets: []float64{1, 5, 10, 20, 30, 45, 60, 90, 120, 300, 600},
-		}, []string{"milestone"}),
-		controlOperations: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_control_operation_duration_seconds", Help: "Completed control state operation duration by fixed operation and outcome.", Buckets: DurationBucketsSeconds(),
-		}, []string{"operation", "outcome"}),
-		ingressOperations: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_ingress_operation_duration_seconds", Help: "Completed ingress operation duration by fixed operation and outcome.", Buckets: DurationBucketsSeconds(),
-		}, []string{"operation", "outcome"}),
-		relayOperations: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_relay_operation_duration_seconds", Help: "Completed relay operation duration by fixed operation and outcome.", Buckets: DurationBucketsSeconds(),
-		}, []string{"operation", "outcome"}),
-		databaseQueryDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_database_query_duration_seconds", Help: "Completed request-pool SQL duration observed by the driver, excluding pool acquisition.", Buckets: DurationBucketsSeconds(),
-		}, []string{"operation", "outcome"}),
-		databaseGuardDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "tnl_database_guard_held_duration_seconds", Help: "Driver-observed interval from successful guard query completion through transaction completion; not exact PostgreSQL lock time.", Buckets: DurationBucketsSeconds(),
-		}, []string{"operation", "outcome"}),
-		databaseAcquireDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tnl_database_pool_acquire_duration_seconds", Help: "Time to acquire a request-pool connection, including waits and failed acquisitions.", Buckets: DurationBucketsSeconds()}, []string{"outcome"}),
-		databaseFailures:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_database_failures_total", Help: "Request-pool failures by fixed boundary and outcome; acquire has no SQL operation name."}, []string{"phase", "outcome"}),
-		recoveryDuration:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "tnl_control_public_url_recovery_duration_seconds", Help: "Duration of newly committed public URL recovery observations on this control process.", Buckets: DurationBucketsSeconds()}),
-		recoveryPending:         prometheus.NewGauge(prometheus.GaugeOpts{Name: "tnl_ingress_recovery_observations_pending", Help: "Recovery observations awaiting a successful or stale response."}),
-		recoveryAttempts:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_ingress_recovery_observation_attempts_total", Help: "Recovery reporting attempts by bounded outcome."}, []string{"outcome"}),
-		certificateClaims:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_certificate_claims_total", Help: "Certificate worker claims by certificate kind and outcome."}, []string{"kind", "outcome"}),
-		certificateOrders:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_public_url_certificate_orders_total", Help: "New public URL certificate orders committed by this control process, excluding idempotent retries and certificate reuse; not a CA issuance quota."}, []string{"domain_kind", "plan"}),
-		certificateTransitions:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_certificate_transitions_total", Help: "Committed certificate work transitions by kind and resulting state."}, []string{"kind", "state"}),
-		dnsWork:                 prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tnl_control_dns_work_duration_seconds", Help: "DNS worker phase duration; count is the number of attempts.", Buckets: DurationBucketsSeconds()}, []string{"kind", "phase", "outcome"}),
-		dnsTransitions:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_dns_transitions_total", Help: "Committed DNS work transitions by kind and resulting state."}, []string{"kind", "state"}),
-		usageWork:               prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_public_url_usage_work_total", Help: "Usage worker operations by fixed phase and outcome."}, []string{"phase", "outcome"}),
-		usageItems:              prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_public_url_usage_items_total", Help: "Usage runs, buckets or deliveries committed by result."}, []string{"result"}),
-		usageReceiverDuration:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tnl_control_public_url_usage_receiver_duration_seconds", Help: "Usage receiver request duration by bounded outcome.", Buckets: DurationBucketsSeconds()}, []string{"outcome"}),
-		usageLastSuccess:        prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tnl_control_public_url_usage_last_success_timestamp_seconds", Help: "Unix time of the last successful finalization call or committed delivery; zero before success."}, []string{"phase"}),
-		usageRetained:           prometheus.NewGauge(prometheus.GaugeOpts{Name: "tnl_ingress_usage_retained_buckets", Help: "Ingress usage buckets retained in memory, including dirty and pending buckets."}),
-		cleanupRuns:             prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_cleanup_runs_total", Help: "Cleanup calls by fixed kind and outcome."}, []string{"kind", "outcome"}),
-		cleanupItems:            prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_cleanup_items_total", Help: "Committed items removed by cleanup kind."}, []string{"kind"}),
-		cleanupLastSuccess:      prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tnl_control_cleanup_last_success_timestamp_seconds", Help: "Unix time of last successful cleanup by kind; zero before success."}, []string{"kind"}),
-		tcpPortPoolCapacity:     prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tnl_control_tcp_port_pool_ports", Help: "Configured, claimed, quarantined and available public TCP ports by ingress pool; use maximum across control replicas."}, []string{"pool", "state"}),
-		guestTrialStats:         prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tnl_control_guest_trials_last_24h", Help: "Service-wide trial counts from committed state over the last 24 hours; use max rather than sum across control replicas."}, []string{"stage"}),
-		placementDecisions:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_placement_decisions_total", Help: "Publish run placement decisions by action and bounded result."}, []string{"action", "outcome"}),
-		assignmentReplacements:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_connection_assignments_replaced_total", Help: "Committed replacement of connection assignments by fixed reason."}, []string{"reason"}),
+	m, err := newOwner(role, Config{})
+	if err != nil {
+		panic(err)
 	}
-	registered := []prometheus.Collector{
-		info, metrics.serviceAudit, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-	}
+	return m
+}
+
+func (metrics *Metrics) initInstruments(role string) {
+	m := metrics.meter
+	metrics.publisherOperations = newHistogram(m, "tnl_publisher_operation_duration_seconds", "Finite publisher operations by authenticated identity and bounded outcome.", DurationBucketsSeconds()).instrument
+	metrics.publisherLease, _ = m.Float64Gauge("tnl_publisher_lease_expiration_timestamp_seconds", metric.WithDescription("Last confirmed control lease expiration, not locally extended on failed refreshes."))
+	metrics.publisherReadiness, _ = m.Float64Gauge("tnl_publisher_readiness_check_timestamp_seconds", metric.WithDescription("Most recent readiness decision by outcome; use its timestamp to check freshness."))
+	metrics.publisherConnectionAttempts, _ = m.Int64Counter("tnl_publisher_connection_attempts_total", metric.WithDescription("Completed connection races by selected transport and initial preference; replacements and failed attempts count independently."))
+	metrics.authDecisions = newCounter(m, "tnl_authorization_decisions_total", "Semantic authorization results, independent of HTTP status.", "operation", "result")
+	metrics.relayLeaseExpiry = make(map[string]time.Time)
+	metrics.relayCertificateExpiry = make(map[string]time.Time)
+	newGauge(m, "tnl_process_info", "Process role (one for this process).", "role").WithLabelValues(role).Set(1)
+	metrics.serviceAudit = newCounter(m, "tnl_service_audit_events_total", "Process-local service audit queue and ingestion counts by fixed result; queued observations can be lost on a crash.", "result")
+	metrics.routingHistoryRows = newCounter(m, "tnl_control_routing_history_cleanup_rows_total", "Committed routing-history cleanup rows by action.", "action")
+	metrics.routingHistorySkipped = newCounter(m, "tnl_control_routing_history_cleanup_skipped_total", "Cleanup batches skipped because another control holds the cleanup guard.")
+	metrics.relayLeases = newGauge(m, "tnl_relay_local_leases", "Relay leases held by this process by state; not a control-wide lease count.", "state")
+	metrics.publisherConnections = newGauge(m, "tnl_relay_publisher_connections_ready", "Publisher connections marked ready on relays in this process.")
+	metrics.registeredConnections = newGauge(m, "tnl_relay_publisher_connections_registered", "Locally registered publisher connections, including those not yet ready; not authoritative database claims.")
+	metrics.publisherExits = newCounter(m, "tnl_relay_publisher_connection_exits_total", "Ready publisher connections that ended, by expectedness.", "reason")
+	metrics.ingressStreams = newGauge(m, "tnl_ingress_backend_streams", "Tracked backend streams including streams being opened, challenges, and denied connections.")
+	metrics.relayStreams = newGauge(m, "tnl_relay_visitor_stream_slots_occupied", "Occupied relay forwarding-stream slots, including opens in progress.")
+	metrics.ingressConnections = newGauge(m, "tnl_ingress_connections", "Current ingress admission slots by fixed connection class.", "class")
+	metrics.visitorConnections = newCounter(m, "tnl_ingress_visitor_connections_total", "Classified visitor connections by forwarding outcome; forwarded does not imply visitor TLS success.", "outcome")
+	metrics.visitorOpenDuration = newHistogram(m, "tnl_ingress_visitor_stream_open_duration_seconds", "Time from a classified visitor to a forwarding decision, excluding TLS and copy time.", DurationBucketsSeconds(), "outcome")
+	metrics.relayStreamRejections = newCounter(m, "tnl_relay_visitor_stream_rejections_total", "Relay stream rejections other than capacity exhaustion, by fixed reason.", "reason")
+	metrics.capacityRejections = newCounter(m, "tnl_admission_rejections_total", "Admission rejected because a bounded resource was full.", "resource")
+	metrics.drainingRejections = newCounter(m, "tnl_ingress_draining_rejections_total", "Connections rejected because ingress was draining.")
+	metrics.capacityLimits = newGauge(m, "tnl_admission_limit", "Resolved admission limit by fixed resource; per-URL and per-hostname resources are per key.", "resource")
+	metrics.inspectionFailures = newCounter(m, "tnl_ingress_inspection_failures_total", "Ingress connections rejected before classification by fixed failure stage.", "stage")
+	metrics.forwardedBytes = newCounter(m, "tnl_ingress_forwarded_bytes_total", "Bytes forwarded through ingress, recorded after a copy finishes.", "direction")
+	metrics.trafficAdmissions = newCounter(m, "tnl_ingress_traffic_admissions_total", "Process-local traffic decisions by fixed stage and result; excludes identities and network addresses.", "stage", "result")
+	metrics.relayAttempts = newCounter(m, "tnl_ingress_relay_attempts_total", "Ingress internal-forwarding attempts by connection slot and bounded outcome.", "connection_slot", "outcome")
+	metrics.apiDuration = newHistogram(m, "tnl_control_api_request_duration_seconds", "Control-served HTTP handler duration including long polls; count is the request total.", DurationBucketsSeconds(), "surface", "operation", "outcome")
+	metrics.apiInFlight = newGauge(m, "tnl_control_api_requests_in_flight", "Control-served HTTP requests currently executing by API surface.", "surface")
+	metrics.webhookProviderSources = newCounter(m, "tnl_control_webhook_provider_source_requests_total", "Webhook sender-policy lookups by fixed provider and bounded outcome; not configured endpoints or webhook deliveries.", "provider", "outcome")
+	metrics.publicURLsCreated = newCounter(m, "tnl_control_public_urls_created_total", "New public URLs committed by client-declared purpose; excludes idempotent retries.", "purpose")
+	metrics.publishRunsReady = newCounter(m, "tnl_control_publish_runs_ready_total", "Publish runs first marked ready by their saved public URL purpose.", "purpose")
+	metrics.readinessDuration = newHistogram(m, "tnl_control_publish_run_readiness_duration_seconds", "Time spent checking and publishing publish run readiness; count is the number of attempts.", DurationBucketsSeconds(), "outcome")
+	metrics.readinessAge = newHistogram(m, "tnl_control_publish_run_readiness_age_seconds", "Age of the publish run at a readiness decision; excludes other errors.", []float64{1, 5, 10, 30, 60, 120, 300, 600}, "outcome")
+	metrics.certificateDuration = newHistogram(m, "tnl_control_certificate_work_duration_seconds", "Certificate worker advance and save duration; count is the number of claimed iterations.", DurationBucketsSeconds(), "kind", "stage", "outcome")
+	metrics.certificateMilestone = newHistogram(m, "tnl_control_public_url_certificate_milestone_age_seconds", "Time from issuance creation to certificate availability or DNS cleanup; availability does not imply installation.", []float64{1, 5, 10, 20, 30, 45, 60, 90, 120, 300, 600}, "milestone")
+	metrics.controlOperations = newHistogram(m, "tnl_control_operation_duration_seconds", "Completed control state operation duration by fixed operation and outcome.", DurationBucketsSeconds(), "operation", "outcome")
+	metrics.ingressOperations = newHistogram(m, "tnl_ingress_operation_duration_seconds", "Completed ingress operation duration by fixed operation and outcome.", DurationBucketsSeconds(), "operation", "outcome")
+	metrics.relayOperations = newHistogram(m, "tnl_relay_operation_duration_seconds", "Completed relay operation duration by fixed operation and outcome.", DurationBucketsSeconds(), "operation", "outcome")
+	metrics.relayBytes = newCounter(m, "tnl_relay_forwarded_bytes_total", "Wire bytes copied by relay, including preserved PROXY metadata; recorded at stream close.", "kind", "direction")
+	metrics.relayCompletions = newCounter(m, "tnl_relay_visitor_stream_completions_total", "Opened visitor streams whose relay copy ended, not application request outcomes.", "kind", "outcome")
+	metrics.databaseQueryDuration = newHistogram(m, "tnl_database_query_duration_seconds", "Completed request-pool SQL duration observed by the driver, excluding pool acquisition.", DurationBucketsSeconds(), "operation", "outcome")
+	metrics.databaseGuardDuration = newHistogram(m, "tnl_database_guard_held_duration_seconds", "Driver-observed interval from successful guard query completion through transaction completion; not exact PostgreSQL lock time.", DurationBucketsSeconds(), "operation", "outcome")
+	metrics.databaseAcquireDuration = newHistogram(m, "tnl_database_pool_acquire_duration_seconds", "Time to acquire a request-pool connection, including waits and failed acquisitions.", DurationBucketsSeconds(), "outcome")
+	metrics.databaseFailures = newCounter(m, "tnl_database_failures_total", "Request-pool failures by fixed boundary and outcome; acquire has no SQL operation name.", "phase", "outcome")
+	metrics.recoveryDuration = newHistogram(m, "tnl_control_public_url_recovery_duration_seconds", "Duration of newly committed public URL recovery observations on this control process.", DurationBucketsSeconds())
+	metrics.recoveryPending = newGauge(m, "tnl_ingress_recovery_observations_pending", "Recovery observations awaiting a successful or stale response.")
+	metrics.recoveryAttempts = newCounter(m, "tnl_ingress_recovery_observation_attempts_total", "Recovery reporting attempts by bounded outcome.", "outcome")
+	metrics.certificateClaims = newCounter(m, "tnl_control_certificate_claims_total", "Certificate worker claims by certificate kind and outcome.", "kind", "outcome")
+	metrics.certificateOrders = newCounter(m, "tnl_control_public_url_certificate_orders_total", "New public URL certificate orders committed by this control process, excluding idempotent retries and certificate reuse; not a CA issuance quota.", "domain_kind", "plan")
+	metrics.certificateTransitions = newCounter(m, "tnl_control_certificate_transitions_total", "Committed certificate work transitions by kind and resulting state.", "kind", "state")
+	metrics.dnsWork = newHistogram(m, "tnl_control_dns_work_duration_seconds", "DNS worker phase duration; count is the number of attempts.", DurationBucketsSeconds(), "kind", "phase", "outcome")
+	metrics.dnsTransitions = newCounter(m, "tnl_control_dns_transitions_total", "Committed DNS work transitions by kind and resulting state.", "kind", "state")
+	metrics.usageWork = newCounter(m, "tnl_control_public_url_usage_work_total", "Usage worker operations by fixed phase and outcome.", "phase", "outcome")
+	metrics.usageItems = newCounter(m, "tnl_control_public_url_usage_items_total", "Usage runs, buckets or deliveries committed by result.", "result")
+	metrics.usageReceiverDuration = newHistogram(m, "tnl_control_public_url_usage_receiver_duration_seconds", "Usage receiver request duration by bounded outcome.", DurationBucketsSeconds(), "outcome")
+	metrics.usageLastSuccess = newGauge(m, "tnl_control_public_url_usage_last_success_timestamp_seconds", "Unix time of the last successful finalization call or committed delivery; zero before success.", "phase")
+	metrics.usageRetained = newGauge(m, "tnl_ingress_usage_retained_buckets", "Ingress usage buckets retained in memory, including dirty and pending buckets.")
+	metrics.cleanupRuns = newCounter(m, "tnl_control_cleanup_runs_total", "Cleanup calls by fixed kind and outcome.", "kind", "outcome")
+	metrics.cleanupItems = newCounter(m, "tnl_control_cleanup_items_total", "Committed items removed by cleanup kind.", "kind")
+	metrics.cleanupLastSuccess = newGauge(m, "tnl_control_cleanup_last_success_timestamp_seconds", "Unix time of last successful cleanup by kind; zero before success.", "kind")
+	metrics.tcpPortPoolCapacity = newGauge(m, "tnl_control_tcp_port_pool_ports", "Configured, claimed, quarantined and available public TCP ports by ingress pool; use maximum across control replicas.", "pool", "state")
+	metrics.guestTrialStats = newGauge(m, "tnl_control_guest_trials_last_24h", "Service-wide trial counts from committed state over the last 24 hours; use max rather than sum across control replicas.", "stage")
+	metrics.placementDecisions = newCounter(m, "tnl_control_placement_decisions_total", "Publish run placement decisions by action and bounded result.", "action", "outcome")
+	metrics.assignmentReplacements = newCounter(m, "tnl_control_connection_assignments_replaced_total", "Committed replacement of connection assignments by fixed reason.", "reason")
 	for _, result := range []string{"queued", "delivered", "retry", "dropped", "accepted", "duplicate"} {
 		metrics.serviceAudit.WithLabelValues(result).Add(0)
 	}
 	if role == "control" || role == "standalone" {
-		registered = append(registered, metrics.routingHistoryRows, metrics.routingHistorySkipped,
-			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "tnl_control_routing_history_retained_after_revision", Help: "Highest committed routing-history retention floor observed by this process."}, func() float64 { return float64(metrics.routingHistoryFloor.Load()) }))
-		registered = append(registered, metrics.apiDuration, metrics.apiInFlight, metrics.webhookProviderSources,
-			metrics.publicURLsCreated, metrics.publishRunsReady,
-			metrics.readinessDuration, metrics.readinessAge, metrics.certificateDuration, metrics.certificateMilestone,
-			metrics.databaseQueryDuration, metrics.databaseGuardDuration, metrics.databaseAcquireDuration, metrics.databaseFailures, metrics.controlOperations, metrics.recoveryDuration,
-			metrics.certificateClaims, metrics.certificateOrders, metrics.certificateTransitions, metrics.dnsWork, metrics.dnsTransitions,
-			metrics.usageWork, metrics.usageItems, metrics.usageReceiverDuration, metrics.usageLastSuccess,
-			metrics.cleanupRuns, metrics.cleanupItems, metrics.cleanupLastSuccess, metrics.tcpPortPoolCapacity, metrics.placementDecisions, metrics.assignmentReplacements)
-		registered = append(registered, metrics.guestTrialStats)
+		metrics.routingHistorySkipped.Add(0)
+		metrics.gaugeFunc("tnl_control_routing_history_retained_after_revision", "Highest committed routing-history retention floor observed by this process.", func() float64 { return float64(metrics.routingHistoryFloor.Load()) })
 		for _, stage := range []string{"issued", "allocated", "ready", "expired", "ready_limit", "transfer_limit"} {
 			metrics.guestTrialStats.WithLabelValues(stage).Set(0)
 		}
@@ -215,30 +184,22 @@ func New(role string) *Metrics {
 			metrics.usageLastSuccess.WithLabelValues(phase).Set(0)
 		}
 	}
-	registered = append(registered, metrics.capacityLimits)
 	if role == "ingress" || role == "standalone" {
-		registered = append(registered,
-			metrics.ingressStreams, metrics.ingressConnections, metrics.visitorConnections, metrics.visitorOpenDuration,
-			metrics.capacityRejections, metrics.drainingRejections, metrics.forwardedBytes, metrics.relayAttempts,
-			metrics.trafficAdmissions,
-			metrics.inspectionFailures, metrics.ingressOperations,
-			metrics.recoveryPending, metrics.recoveryAttempts, metrics.usageRetained,
-		)
+		metrics.ingressStreams.Set(0)
+		metrics.drainingRejections.Add(0)
+		metrics.recoveryPending.Set(0)
+		metrics.usageRetained.Set(0)
 		for _, class := range []string{"client_hello", "public", "denied", "control", "relay_tcp"} {
 			metrics.ingressConnections.WithLabelValues(class).Set(0)
 		}
 	}
 	if role == "relay" || role == "standalone" {
-		registered = append(registered, metrics.relayLeases, metrics.publisherConnections, metrics.registeredConnections,
-			metrics.publisherExits, metrics.relayStreamRejections, metrics.relayStreams, metrics.relayOperations,
-			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "tnl_relay_earliest_lease_expiration_timestamp_seconds", Help: "Earliest known relay lease expiration in this process; zero without a lease."}, metrics.earliestRelayLeaseExpiry),
-			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "tnl_relay_transport_certificate_expiration_timestamp_seconds", Help: "Earliest locally known relay transport certificate expiry; zero before material is observed."}, metrics.earliestRelayCertificateExpiry))
-		if role == "relay" {
-			registered = append(registered, metrics.capacityRejections)
-		}
+		metrics.publisherConnections.Set(0)
+		metrics.registeredConnections.Set(0)
+		metrics.relayStreams.Set(0)
+		metrics.gaugeFunc("tnl_relay_earliest_lease_expiration_timestamp_seconds", "Earliest known relay lease expiration in this process; zero without a lease.", metrics.earliestRelayLeaseExpiry)
+		metrics.gaugeFunc("tnl_relay_transport_certificate_expiration_timestamp_seconds", "Earliest locally known relay transport certificate expiry; zero before material is observed.", metrics.earliestRelayCertificateExpiry)
 	}
-	registry.MustRegister(registered...)
-	return metrics
 }
 
 func (m *Metrics) SetRelayLeaseExpiry(identity string, expires time.Time) {
@@ -285,16 +246,12 @@ func earliestExpiry(expiresByIdentity map[string]time.Time) float64 {
 
 // RegisterIngressLease reads a local controller snapshot without external I/O.
 func (m *Metrics) RegisterIngressLease(source func() time.Time) {
-	m.registry.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "tnl_ingress_lease_expiration_timestamp_seconds", Help: "Local ingress lease expiration; zero before registration or after lease loss.",
-	}, func() float64 { return routingTimestamp(source()) }))
+	m.gaugeFunc("tnl_ingress_lease_expiration_timestamp_seconds", "Local ingress lease expiration; zero before registration or after lease loss.", func() float64 { return routingTimestamp(source()) })
 }
 
 // RegisterControlCertificate reads certificate material already in this process.
 func (m *Metrics) RegisterControlCertificate(source func() time.Time) {
-	m.registry.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "tnl_control_tls_certificate_expiration_timestamp_seconds", Help: "Locally loaded internal control certificate expiry. Public control TLS belongs to the deployment proxy.",
-	}, func() float64 { return routingTimestamp(source()) }))
+	m.gaugeFunc("tnl_control_tls_certificate_expiration_timestamp_seconds", "Locally loaded internal control certificate expiry. Public control TLS belongs to the deployment proxy.", func() float64 { return routingTimestamp(source()) })
 }
 
 // SetGuestTrialStats observes committed service-wide counts without identity labels.
@@ -318,12 +275,12 @@ func (m *Metrics) SetTCPPortPoolCapacity(pool string, configured, claimed, quara
 }
 
 func (m *Metrics) Handler() http.Handler {
-	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
+	return promhttp.HandlerFor(prometheus.Gatherers{m.registry, m.runtimeRegistry}, promhttp.HandlerOpts{})
 }
 
 // Gather captures this process's registry using only passive collectors.
 func (m *Metrics) Gather() ([]*dto.MetricFamily, error) {
-	return m.registry.Gather()
+	return (prometheus.Gatherers{m.registry, m.runtimeRegistry}).Gather()
 }
 
 func (m *Metrics) SetRelayLeases(state string, count int) {
@@ -439,6 +396,7 @@ func (m *Metrics) ObserveCertificateIteration(kind, stage string, outcome Certif
 		outcome = CertificateRetry
 	}
 	m.certificateDuration.WithLabelValues(kind, stage, string(outcome)).Observe(duration.Seconds())
+	m.completedSpan("certificate."+kind+"."+stage, string(outcome), duration)
 }
 
 func (m *Metrics) ObserveCertificateMilestone(milestone string, age time.Duration) {

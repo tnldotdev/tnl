@@ -9,6 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/httpsubject"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -55,6 +56,7 @@ func (h *handler) AuthorizeManagedHTTPVisitor(w http.ResponseWriter, r *http.Req
 		writeManagedCertificateProblem(w, "authorize managed HTTP visitor", err)
 		return
 	}
+	observability.AuthorizationDecision(r.Context(), "managed_http_visitor", result.Allowed)
 	writeJSON(w, 200, controlv1.ServiceClientCertificateDecision{Allowed: result.Allowed, Admitted: result.Admitted, ValidUntil: result.ValidUntil})
 }
 
@@ -109,6 +111,7 @@ func (h *handler) managedBrowserSession(w http.ResponseWriter, r *http.Request, 
 		w.WriteHeader(204)
 		return
 	}
+	observability.AuthorizationDecision(r.Context(), "managed_browser_session", result.VisitAllowed)
 	writeJSON(w, 200, controlv1.BrowserAccessResponse{IdentityId: result.IdentityID, DisplayName: result.DisplayName, VisitAllowed: result.VisitAllowed, TeamMember: result.TeamMember})
 }
 

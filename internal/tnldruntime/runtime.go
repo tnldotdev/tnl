@@ -43,6 +43,11 @@ type daemon struct {
 
 // Serve runs one configured tnld process until its context is canceled.
 func Serve(ctx context.Context, cfg tnldconfig.Config) error {
+	ctx, metrics, err := observability.StartProcess(ctx, string(cfg.Role))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = metrics.Shutdown(context.Background()) }()
 	return serveWithHTTPClients(
 		ctx, cfg, &http.Client{Timeout: 30 * time.Second}, &http.Client{Timeout: 30 * time.Second},
 	)
@@ -89,9 +94,14 @@ func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPCli
 		serviceHTTP: serviceHTTPClient, clusterSecret: clusterSecret, clusterSecrets: clusterSecrets,
 		relayClientTLS: relayClientTLS, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now().UTC(),
 	}
+	metrics := observability.FromContext(ctx)
+	if metrics == nil {
+		metrics = observability.New(string(cfg.Role))
+		defer func() { _ = metrics.Shutdown(context.Background()) }()
+		ctx = observability.WithMetrics(ctx, metrics)
+		lifetime = observability.WithMetrics(lifetime, metrics)
+	}
 	defer func() { retErr = errors.Join(retErr, d.shutdown(cfg.DrainTimeout)) }()
-
-	metrics := observability.New(string(cfg.Role))
 	if cfg.Role.RunsIngress() {
 		metrics.SetCapacityLimit("client_hello_connections", int64(cfg.ClientHelloConnectionLimit))
 		metrics.SetCapacityLimit("public_connections", cfg.VisitorConnectionLimit)

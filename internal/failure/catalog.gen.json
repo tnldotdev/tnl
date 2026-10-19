@@ -520,6 +520,13 @@
       "action": "pass an HTTP or HTTPS origin or local port, or set publish.target in the project configuration"
     },
     {
+      "code": "TNL_CLIENT_OBSERVABILITY_CONFIG_INVALID",
+      "slug": "observability-config-invalid",
+      "class": "invalid",
+      "message": "operational observability configuration is invalid",
+      "action": "correct the named OTEL setting or remove optional export configuration"
+    },
+    {
       "code": "TNL_CLIENT_OUTPUT_UNAVAILABLE",
       "slug": "output-unavailable",
       "class": "unavailable",

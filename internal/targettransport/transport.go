@@ -12,6 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 var ErrTargetTLS = errors.New("target TLS negotiation failed")
@@ -58,7 +59,9 @@ func (t Transport) Secure(ctx context.Context, backend net.Conn) (net.Conn, erro
 }
 
 // Handshake starts TLS only after the caller has finished native negotiation.
-func (t Transport) Handshake(ctx context.Context, backend net.Conn) (net.Conn, error) {
+func (t Transport) Handshake(ctx context.Context, backend net.Conn) (_ net.Conn, result error) {
+	ctx, finish := observability.PublisherOperation(ctx, "target_tls")
+	defer func() { finish(result) }()
 	if err := t.Validate(); err != nil || t.TLS == nil {
 		return backend, errors.Join(ErrTargetTLS, err)
 	}
@@ -86,6 +89,8 @@ func (t Transport) Handshake(ctx context.Context, backend net.Conn) (net.Conn, e
 // Preflight opens a disposable connection and sends no login or application
 // bytes. MySQL reads the greeting before its SSLRequest; it is never HTTPS.
 func (t Transport) Preflight(ctx context.Context, address string) (result error) {
+	ctx, finish := observability.PublisherOperation(ctx, "target_preflight")
+	defer func() { finish(result) }()
 	if err := t.Validate(); err != nil {
 		return err
 	}
@@ -96,7 +101,7 @@ func (t Transport) Preflight(ctx context.Context, address string) (result error)
 			result = context.Cause(ctx)
 		}
 	}()
-	backend, err := (&net.Dialer{}).DialContext(setup, "tcp", address)
+	backend, err := observability.DialTarget(setup, "tcp", address)
 	if err != nil {
 		if ctx.Err() != nil {
 			return context.Cause(ctx)

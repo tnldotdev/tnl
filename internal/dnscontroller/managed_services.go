@@ -20,7 +20,11 @@ func (w *Worker) processManagedEndpoint(ctx context.Context, now time.Time) (boo
 	if !ok {
 		return false, nil
 	}
+	started := time.Now()
 	work, found, err := store.ClaimManagedEndpointDNSWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
+	if ctx.Err() == nil {
+		observeDNS(w.config.Observer, "managed_service", "claim", started, found, err)
+	}
 	if err != nil || !found {
 		return found, err
 	}
@@ -37,6 +41,7 @@ func (w *Worker) processManagedEndpoint(ctx context.Context, now time.Time) (boo
 }
 
 func (w *Worker) advanceManagedEndpoint(ctx context.Context, store managedEndpointStore, work controlstate.ManagedEndpointDNSWork) error {
+	started, initial := time.Now(), work.State
 	record := AddressRecord{Owner: ManagedServiceOwner(work.OwnerID), DomainID: work.DomainID, CanonicalHostname: work.Hostname, AuthorityReference: work.AuthorityReference, IngressIPv4Addresses: []string{"127.0.0.1"}}
 	ready := true
 	var err error
@@ -62,6 +67,7 @@ func (w *Worker) advanceManagedEndpoint(ctx context.Context, store managedEndpoi
 	if ctx.Err() != nil {
 		return context.Cause(ctx)
 	}
+	observeDNS(w.config.Observer, "managed_service", "advance", started, ready, err)
 	if err != nil {
 		work.LastError = storedFailureReason(err)
 		work.AvailableAt = w.retryAvailableAt(uint64(work.Attempts), w.now())
@@ -72,6 +78,13 @@ func (w *Worker) advanceManagedEndpoint(ctx context.Context, store managedEndpoi
 	} else if !ready {
 		work.AvailableAt = w.now().Add(w.config.PollInterval)
 	}
-	_, err = store.SaveManagedEndpointDNSWork(ctx, work, w.now())
+	started = time.Now()
+	saved, err := store.SaveManagedEndpointDNSWork(ctx, work, w.now())
+	if ctx.Err() == nil {
+		observeDNS(w.config.Observer, "managed_service", "save", started, true, err)
+	}
+	if err == nil && w.config.Observer != nil && saved.State != initial {
+		w.config.Observer.ObserveDNSTransition("managed_service", string(saved.State))
+	}
 	return err
 }

@@ -49,6 +49,7 @@ func (d *daemon) startControlWorkers(
 	}
 	database.Instrument(metrics)
 	metrics.RegisterDatabase(database.PrometheusMetrics)
+	d.start("observe service port capacity", func() error { return runPortPoolMetrics(lifetime, database, metrics) })
 	d.start("expire saved publish runs", func() error {
 		return runExpiredPublishRunCleanup(lifetime, database, metrics)
 	})
@@ -61,7 +62,7 @@ func (d *daemon) startControlWorkers(
 	d.start("clean up routing history", func() error {
 		return runRoutingHistoryCleanup(lifetime, database, metrics)
 	})
-	d.start("clean up service audit", func() error { return runServiceAuditCleanup(lifetime, database) })
+	d.start("clean up service audit", func() error { return runServiceAuditCleanup(lifetime, database, metrics) })
 	if err := database.CompleteStorageKeyRotation(ctx); err != nil {
 		return fmt.Errorf("rotate stored secrets: %w", err)
 	}

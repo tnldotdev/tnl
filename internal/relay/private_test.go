@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
@@ -91,7 +92,10 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 	paths := &PublisherConnection{session: relayPublisher, streams: make(map[*trackedConn]struct{}), changed: make(chan struct{})}
 	lease := relayv1.RelayLease{RelayServiceId: ref.RelayServiceID, RelayId: "relay-process", RelayRunId: privateRelayID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().Add(time.Minute), ConnectionCapacity: 4}
 	registry := NewPrivateRegistry()
-	if err := registry.insert(&privateConnection{ref: ref, lease: lease, paths: paths}); err != nil {
+	metrics := observability.New("relay")
+	registry.Instrument(metrics)
+	connection := &privateConnection{ref: ref, lease: lease, paths: paths}
+	if err := registry.insert(connection); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = registry.Close() })
@@ -99,7 +103,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	forwarder, err := NewForwardingAcceptor(ForwardingAcceptorConfig{Registry: NewRegistry(), PrivateRegistry: registry, CurrentLease: func() relayv1.RelayLease { return lease }, ClusterSecrets: secrets, StreamCapacity: 2})
+	forwarder, err := NewForwardingAcceptor(ForwardingAcceptorConfig{Registry: NewRegistry(), PrivateRegistry: registry, CurrentLease: func() relayv1.RelayLease { return lease }, ClusterSecrets: secrets, StreamCapacity: 2, Observer: metrics, StreamsDelta: metrics.AddRelayStreams, StreamRejected: metrics.ObserveRelayStreamRejection})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,4 +168,34 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		t.Fatal("stale private assignment admitted")
 	}
 	_ = relayAwait(t, denied)
+	assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "success", 1)
+	assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "error", 1)
+	registry.remove(connection)
+	registry.remove(connection) // duplicate removal cannot make the gauge negative.
+	families, err := metrics.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenBytes := 0
+	for _, family := range families {
+		if family.GetName() == "tnl_relay_forwarded_bytes_total" {
+			for _, point := range family.Metric {
+				if point.GetCounter().GetValue() != float64(len(payload)) {
+					t.Fatal("private relay bytes differ from the wire transfer", point)
+				}
+				seenBytes++
+			}
+		}
+		if family.GetName() == "tnl_relay_publisher_connections_registered" || family.GetName() == "tnl_relay_visitor_stream_slots_occupied" {
+			if family.Metric[0].GetGauge().GetValue() != 0 {
+				t.Fatal("private relay leaked occupancy", family)
+			}
+		}
+		if family.GetName() == "tnl_relay_visitor_stream_rejections_total" && family.Metric[0].GetCounter().GetValue() != 1 {
+			t.Fatal("stale stream was not counted exactly once", family)
+		}
+	}
+	if seenBytes != 2 {
+		t.Fatal("missing private relay byte directions")
+	}
 }

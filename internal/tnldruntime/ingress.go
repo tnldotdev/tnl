@@ -388,7 +388,7 @@ func newIngressControlClient(endpoint, clusterSecret string, base *http.Client, 
 	if err != nil {
 		return nil, err
 	}
-	generated, err := ingressv1.NewClientWithResponses(endpoint, ingressv1.WithHTTPClient(client))
+	generated, err := ingressv1.NewClientWithResponses(endpoint, ingressv1.WithHTTPClient(observability.OwnedHTTPClient(client, "private_ingress")))
 	if err != nil {
 		return nil, err
 	}

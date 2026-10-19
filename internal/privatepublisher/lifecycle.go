@@ -12,6 +12,7 @@ import (
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/privatetrust"
 	"github.com/tnldotdev/tnl/internal/targettransport"
@@ -90,6 +91,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		return ErrPrivateStream
 	}
 	config.Metadata.TrustRevision = approved.TrustRevision
+	ctx = observability.WithIdentity(ctx, observability.Identity{TeamID: approved.TeamId, PublisherID: config.Identity.ClientId, ServiceID: approved.Id})
+	_, startup := observability.PublisherOperation(ctx, "private_startup")
+	defer func() { startup(result) }()
 	trust, err := targetTrust(approved)
 	if err != nil {
 		return err
@@ -186,7 +190,14 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			}
 		}()
 	}
-	heartbeat := func(ctx context.Context) (controlv1.PrivateServiceRunState, error) {
+	heartbeat := func(ctx context.Context) (state controlv1.PrivateServiceRunState, err error) {
+		ctx, finish := observability.PublisherOperation(ctx, "private_heartbeat")
+		defer func() {
+			finish(err)
+			if err == nil {
+				observability.PublisherLease(ctx, state.PublisherExpiresAt)
+			}
+		}()
 		bound.mu.Lock()
 		active := len(bound.active)
 		bound.mu.Unlock()
@@ -233,6 +244,8 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 				}
 			}
 			ready = true
+			startup(nil)
+			observability.PublisherReadiness(ctx, true)
 		}
 		expires := time.NewTimer(time.Until(state.PublisherExpiresAt))
 		select {
@@ -260,6 +273,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			cancel()
 			if err != nil {
 				heartbeatOK = false
+				observability.PublisherReadiness(ctx, false)
 				if ctx.Err() != nil {
 					return nil
 				}

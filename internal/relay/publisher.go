@@ -85,6 +85,10 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		if message.PrivateConnection != nil {
 			var err error
 			private, err = a.private.claim(authCtx, message)
+			var protocol *tunnel.ProtocolError
+			if errors.As(err, &protocol) && protocol.Code == tunnelv1.CapacityExceeded {
+				a.capacity()
+			}
 			return err
 		}
 		if message.Role != tunnelv1.Publisher || message.PublisherConnection == nil {
@@ -110,8 +114,7 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		return nil
 	})
 	if private != nil {
-		finishAdmission(err)
-		return errors.Join(err, private.serve(ctx, session))
+		return errors.Join(err, private.serve(ctx, session, a, finishAdmission))
 	}
 	registered := false
 	// a successful claim must be disconnected with its exact identity, even if

@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // DurationBucketsSeconds returns independent boundaries shared by operation,
@@ -34,9 +32,9 @@ func (m *Metrics) ObserveOperation(operation string, err error, elapsed time.Dur
 	if m == nil {
 		return
 	}
-	var histogram *prometheus.HistogramVec
+	var histogram *histogram
 	switch operation {
-	case "CreatePublishRun", "HeartbeatPublishRun", "ClosePublishRun", "ReadIngressRoutingTableSnapshot",
+	case "CreatePublishRun", "HeartbeatPublishRun", "ClosePublishRun", "ReadIngressRoutingTableSnapshot", "RefreshPortPoolMetrics",
 		"AdvanceIngressRoutingRetention", "PruneIngressRoutingHistory",
 		"ReadIngressRoutingTableEvents", "ReportIngressUsage", "RenewIngress",
 		"ClaimPublisherConnection", "MarkPublisherConnectionReady":
@@ -54,6 +52,7 @@ func (m *Metrics) ObserveOperation(operation string, err error, elapsed time.Dur
 		return
 	}
 	histogram.WithLabelValues(operation, durationOutcome(err)).Observe(elapsed.Seconds())
+	m.completedSpan(operation, durationOutcome(err), elapsed)
 }
 
 // ObserveDatabaseQuery accepts only names sanitized by the controlstate tracer:
@@ -64,6 +63,7 @@ func (m *Metrics) ObserveDatabaseQuery(operation string, err error, elapsed time
 	}
 	outcome := durationOutcome(err)
 	m.databaseQueryDuration.WithLabelValues(operation, outcome).Observe(elapsed.Seconds())
+	m.completedSpan("database."+operation, outcome, elapsed)
 	if err != nil {
 		phase := "query"
 		switch operation {

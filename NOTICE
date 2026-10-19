@@ -5,6 +5,11 @@ This product includes software developed for the tnl project.
 
 Third-party license terms and notices are provided in THIRD_PARTY_LICENSES.txt.
 
+Operational metrics and tracing use OpenTelemetry Go, its OTLP/HTTP and
+Prometheus exporters, and the OpenTelemetry Prometheus bridge (Apache-2.0),
+developed by the OpenTelemetry Authors. Prometheus metric name translation uses
+otlptranslator (Apache-2.0), developed by the Prometheus Authors.
+
 DNS automation and publisher identity bootstrap (Secrets Manager and STS) use the AWS SDK for Go v2 and Smithy
 for Go (Apache-2.0), developed by Amazon Web Services and contributors.
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -221,7 +222,10 @@ func (m *publisherConnectionManager) connect(
 	if preferTCP {
 		quic, tcp = tcp, quic
 	}
-	session, transport, err := tunnel.Race(ctx, quic, tcp, m.config.FallbackDelay, hello)
+	connectCtx, finish := observability.PublisherOperation(ctx, "connect")
+	session, transport, err := tunnel.Race(connectCtx, quic, tcp, m.config.FallbackDelay, hello)
+	finish(err)
+	observability.PublisherConnection(ctx, string(transport), preferTCP, err)
 	if err != nil {
 		if ctx.Err() == nil {
 			if tunnel.IsTerminalHandshakeError(err) {

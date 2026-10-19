@@ -9,9 +9,13 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/observability"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestTargetTLSServerNameMatchesPreflightAndForwarding(t *testing.T) {
@@ -36,6 +40,9 @@ func TestTargetTLSServerNameMatchesPreflightAndForwarding(t *testing.T) {
 		if r.TLS.ServerName != "target.internal" || r.Host != "route.example" {
 			t.Error("target TLS name changed visitor authority")
 		}
+		if r.Header.Get("traceparent") != "" || r.Header.Get("tracestate") != "" || r.Header.Get("baggage") != "" {
+			t.Error("tnl injected tracing headers into the customer target")
+		}
 		w.WriteHeader(204)
 	}))
 	backend.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
@@ -52,6 +59,9 @@ func TestTargetTLSServerNameMatchesPreflightAndForwarding(t *testing.T) {
 		{"untrusted certificate", TargetOptions{ServerName: "target.internal"}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			metrics := observability.New("publisher")
+			ctx := observability.WithMetrics(t.Context(), metrics)
+			ctx = trace.ContextWithSpanContext(ctx, trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{1}, TraceFlags: trace.FlagsSampled}))
 			err := PreflightWithOptions(t.Context(), backend.URL, test.options)
 			if (err == nil) != test.valid {
 				t.Fatalf("preflight success=%t, want %t", err == nil, test.valid)
@@ -60,7 +70,7 @@ func TestTargetTLSServerNameMatchesPreflightAndForwarding(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r := httptest.NewRequest("GET", "/", nil)
+			r := httptest.NewRequestWithContext(ctx, "GET", "/", nil)
 			r.Host = "route.example"
 			r.TLS = &tls.ConnectionState{ServerName: "route.example"}
 			w := httptest.NewRecorder()
@@ -71,6 +81,15 @@ func TestTargetTLSServerNameMatchesPreflightAndForwarding(t *testing.T) {
 			}
 			if w.Code != want {
 				t.Fatalf("forwarding status=%d", w.Code)
+			}
+			observed := httptest.NewRecorder()
+			metrics.Handler().ServeHTTP(observed, httptest.NewRequest("GET", "/metrics", nil))
+			outcome := "error"
+			if test.valid {
+				outcome = "success"
+			}
+			if !strings.Contains(observed.Body.String(), `tnl_publisher_operation_duration_seconds_count{operation="target_tls",outcome="`+outcome+`"} 1`) {
+				t.Fatal("missing target TLS result")
 			}
 		})
 	}

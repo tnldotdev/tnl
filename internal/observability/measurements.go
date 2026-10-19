@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"slices"
+	"strings"
 
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
@@ -57,7 +58,8 @@ func ParseMetrics(reader io.Reader) ([]*dto.MetricFamily, error) {
 // process_start_time_seconds and histogram creation timestamps, when present,
 // also detect restarts. new lazy series start at zero. missing end series,
 // changed layouts, invalid samples, and detectable resets invalidate the interval.
-// all histogram families are included; callers should supply durations in seconds.
+// only histogram names ending in _seconds are durations. SDK queue/batch size
+// histograms and future byte distributions must not be interpreted as time.
 func DurationSummaries(before, after []*dto.MetricFamily) ([]DurationSummary, error) {
 	start, err := measurementSeries(before)
 	if err != nil {
@@ -111,7 +113,7 @@ func measurementSeries(families []*dto.MetricFamily) (map[string]durationSeries,
 	seen := make(map[string]bool)
 	for _, family := range families {
 		name := family.GetName()
-		if family.GetType() != dto.MetricType_HISTOGRAM && name != "process_start_time_seconds" {
+		if (family.GetType() != dto.MetricType_HISTOGRAM || !strings.HasSuffix(name, "_seconds")) && name != "process_start_time_seconds" {
 			continue
 		}
 		if name == "" || seen[name] {

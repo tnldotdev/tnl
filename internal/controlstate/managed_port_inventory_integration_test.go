@@ -2,17 +2,37 @@ package controlstate
 
 import (
 	"errors"
+	"fmt"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
 func TestIntegrationManagedServicePortInventory(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "managed_ports")
 	ctx := t.Context()
+	metrics := observability.New("control")
+	assertCapacity := func(configured, claimed, quarantined, available int) {
+		t.Helper()
+		if err := d.RefreshPortPoolMetrics(ctx, metrics); err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		metrics.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+		for state, value := range map[string]int{"configured": configured, "claimed": claimed, "quarantined": quarantined, "available": available} {
+			want := fmt.Sprintf("tnl_control_tcp_port_pool_ports{pool=%q,state=%q} %d", PrimaryIngressPoolID, state, value)
+			if !strings.Contains(w.Body.String(), want) {
+				t.Errorf("missing %s", want)
+			}
+		}
+	}
 	if err := d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, []tcpport.Range{{First: 25443, Last: 25443}}); err != nil {
 		t.Fatal(err)
 	}
+	assertCapacity(1, 0, 0, 1)
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Publishers: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{
 		"api": {Publisher: "production", Target: "localhost:3000"},
@@ -21,6 +41,7 @@ func TestIntegrationManagedServicePortInventory(t *testing.T) {
 	if err != nil || first.Services[0].Port != 25443 {
 		t.Fatal("allocation ignored pool inventory", first, err)
 	}
+	assertCapacity(1, 1, 0, 0)
 	if err = d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, []tcpport.Range{{First: 25000, Last: 25001}}); !errors.Is(err, ErrManagedPortsInUse) {
 		t.Fatal("removed a held port", err)
 	}
@@ -48,4 +69,5 @@ func TestIntegrationManagedServicePortInventory(t *testing.T) {
 	if err = d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, []tcpport.Range{{First: 25443, Last: 25443}}); !errors.Is(err, ErrManagedPortsInUse) {
 		t.Fatal("removed a quarantined port", err)
 	}
+	assertCapacity(2, 1, 1, 0)
 }

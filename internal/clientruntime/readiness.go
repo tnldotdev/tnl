@@ -2,10 +2,12 @@ package clientruntime
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 const ProbeHeader = localproxy.ReadinessProbeHeader
@@ -33,8 +35,20 @@ func Probe(ctx context.Context, service Service, transport http.RoundTripper) Ob
 	return ProbeWithProof(ctx, service, transport, "")
 }
 
-func ProbeWithProof(ctx context.Context, service Service, transport http.RoundTripper, proof string) Observation {
-	observation := Observation{Target: service.Target, RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness}
+func ProbeWithProof(ctx context.Context, service Service, transport http.RoundTripper, proof string) (observation Observation) {
+	ctx, finish := observability.PublisherOperation(ctx, "readiness_probe")
+	defer func() {
+		var err error
+		if !observation.Ready {
+			err = errors.New("readiness check failed")
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+		}
+		finish(err)
+		observability.PublisherReadiness(ctx, observation.Ready)
+	}()
+	observation = Observation{Target: service.Target, RegistrationID: service.RegistrationID, PublishRunNumber: service.PublishRunNumber, CheckedAt: time.Now().UTC(), Readiness: service.Readiness}
 	path := service.Readiness.Path
 	if path == "" {
 		path = "/"

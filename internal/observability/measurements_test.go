@@ -68,6 +68,17 @@ func TestDurationSummariesEmptyLazyAndOverflow(t *testing.T) {
 	}
 }
 
+func TestDurationSummariesIgnoreNonDurationHistograms(t *testing.T) {
+	durations := durationFixture(t, 1, 1, 1, 1)
+	bytes := proto.Clone(durations[0]).(*dto.MetricFamily)
+	bytes.Name = proto.String("tnl_example_bytes")
+	bytes.Metric[0].Histogram = nil // not a supported duration shape, still irrelevant.
+	result, err := DurationSummaries(nil, append(durations, bytes))
+	if err != nil || len(result) != 1 || result[0].Name != durations[0].GetName() {
+		t.Fatalf("non-duration histogram entered duration summaries: %+v %v", result, err)
+	}
+}
+
 func TestDurationSummariesRejectInvalidIntervals(t *testing.T) {
 	for _, test := range []struct {
 		name string

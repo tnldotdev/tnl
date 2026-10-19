@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -194,6 +195,7 @@ func Run(ctx context.Context, config Config) (result error) {
 		return err
 	}
 	publicURLID := route.Id
+	ctx = observability.WithIdentity(ctx, observability.Identity{TeamID: route.TeamId, PublisherID: config.PublisherID, ServiceID: route.Id})
 	if config.Ephemeral && createdPublicURL {
 		defer func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -247,6 +249,9 @@ func configuredPublisherID(config Config) (string, error) {
 }
 
 func runPublishRun(ctx context.Context, config Config, setup controlv1.PublishRunSetup, ready func() error) (result error) {
+	_, startup := observability.PublisherOperation(ctx, "startup")
+	defer func() { startup(result) }()
+	observability.PublisherLease(ctx, setup.PublishRun.ExpiresAt)
 	defer func() {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -261,7 +266,12 @@ func runPublishRun(ctx context.Context, config Config, setup controlv1.PublishRu
 	}); err != nil {
 		return err
 	}
-	return runSession(ctx, config, setup, ready)
+	return runSession(ctx, config, setup, func() error {
+		err := ready()
+		startup(err)
+		observability.PublisherReadiness(ctx, err == nil)
+		return err
+	})
 }
 
 func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.PublicURL, bool, error) {

@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/httpstream"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/internal/targettransport"
 )
@@ -37,7 +38,9 @@ type ManagedStream struct {
 	Visitor      ManagedVisitorAuthentication
 }
 
-func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) error {
+func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result error) {
+	ctx, admissionDone := observability.PublisherOperation(ctx, "visitor_admission")
+	defer func() { admissionDone(result) }()
 	canonical, nameErr := naming.CanonicalizeHostname(s.Hostname)
 	transport := targettransport.Transport{Protocol: s.Protocol, TLS: s.TargetTLS}
 	if transport.Validate() != nil || nameErr != nil || canonical != s.Hostname || s.Target == "" || s.TLS == nil || s.TLS.GetConfigForClient != nil || s.Visitor == nil || !s.Visitor.valid() {
@@ -68,7 +71,7 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) error {
 			return err
 		}
 	case config.ProtocolMySQL:
-		backend, err = (&net.Dialer{}).DialContext(setup, "tcp", s.Target)
+		backend, err = observability.DialTarget(setup, "tcp", s.Target)
 		if err != nil {
 			return err
 		}
@@ -91,7 +94,10 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) error {
 		return nil, nil
 	}
 	secured := tls.Server(visitor, frontTLS)
-	if err = secured.HandshakeContext(setup); err != nil {
+	tlsCtx, tlsDone := observability.PublisherOperation(setup, "visitor_tls")
+	err = secured.HandshakeContext(tlsCtx)
+	tlsDone(err)
+	if err != nil {
 		return err
 	}
 	if httpVisitor, ok := s.Visitor.(PublicHTTPVisitor); ok {
@@ -104,13 +110,16 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) error {
 		if err := visitor.SetDeadline(time.Time{}); err != nil {
 			return err
 		}
+		admissionDone(nil)
 		return httpVisitor.Frontend.Forward(ctx, secured, ManagedHTTPTarget{Address: s.Target, Transport: transport})
 	}
 	decision, err := s.Visitor.authorize(setup, secured.ConnectionState())
+	observability.AuthorizationDecision(ctx, "managed_visitor", err == nil && decision.Allowed && decision.ValidUntil.After(time.Now()))
 	if err != nil || !decision.Allowed || !decision.ValidUntil.After(time.Now()) {
 		return errors.Join(ErrManagedTLS, err)
 	}
 	if s.Protocol == config.ProtocolHTTP {
+		admissionDone(nil)
 		if !stop() && setup.Err() != nil {
 			return context.Cause(setup)
 		}
@@ -129,7 +138,7 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) error {
 		return httpstream.Serve(live, secured, &url.URL{Scheme: scheme, Host: s.Target}, func(ctx context.Context) (net.Conn, error) {
 			setup, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			conn, err := (&net.Dialer{}).DialContext(setup, "tcp", s.Target)
+			conn, err := observability.DialTarget(setup, "tcp", s.Target)
 			if err != nil {
 				return nil, err
 			}
@@ -160,7 +169,7 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) error {
 		})
 	}
 	if backend == nil {
-		backend, err = (&net.Dialer{}).DialContext(setup, "tcp", s.Target)
+		backend, err = observability.DialTarget(setup, "tcp", s.Target)
 		if err != nil {
 			return err
 		}
@@ -191,6 +200,7 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) error {
 		return err
 	}
 	live, cancel := context.WithCancel(ctx)
+	admissionDone(nil)
 	defer cancel()
 	guardDone := make(chan struct{})
 	go func() {

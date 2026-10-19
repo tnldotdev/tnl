@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -61,6 +62,7 @@ func (h *handler) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *ht
 		writeManagedCertificateProblem(w, "authorize service client certificate", err)
 		return
 	}
+	observability.AuthorizationDecision(r.Context(), "service_client_certificate", decision.Allowed)
 	writeJSON(w, http.StatusOK, controlv1.ServiceClientCertificateDecision{Allowed: decision.Allowed, Admitted: decision.Admitted, ValidUntil: decision.ValidUntil})
 }
 
@@ -90,5 +92,6 @@ func (h *handler) AuthorizeServiceConnector(w http.ResponseWriter, r *http.Reque
 		writeManagedCertificateProblem(w, "authorize service connector", err)
 		return
 	}
+	observability.AuthorizationDecision(r.Context(), "service_connector", decision.Allowed)
 	writeJSON(w, http.StatusOK, controlv1.ServiceClientCertificateDecision{Allowed: decision.Allowed, Admitted: decision.Admitted, ValidUntil: decision.ValidUntil})
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -97,10 +98,13 @@ func heartbeatResponseOnce(
 	expiresAt time.Time,
 ) (controlv1.PublishRunHeartbeat, bool, error) {
 	callCtx, cancel := context.WithTimeout(ctx, heartbeatCallTimeout)
+	callCtx, finish := observability.PublisherOperation(callCtx, "heartbeat")
 	response, err := server.HeartbeatPublishRun(callCtx, publicURLID, version, publishRunToken)
+	finish(err)
 	callTimedOut := errors.Is(err, context.DeadlineExceeded) && errors.Is(callCtx.Err(), context.DeadlineExceeded)
 	cancel()
 	if err == nil {
+		observability.PublisherLease(ctx, response.PublishRun.ExpiresAt)
 		return response, true, nil
 	}
 	if ctx.Err() != nil {

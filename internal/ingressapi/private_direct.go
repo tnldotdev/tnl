@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -156,5 +157,6 @@ func (s *service) RecheckPrivateServiceVisitor(ctx context.Context, id string, b
 	if err != nil {
 		return result, s.privateStateError(ctx, err)
 	}
+	observability.AuthorizationDecision(ctx, "private_visitor_recheck", decision.Allowed)
 	return privateVisitorRecheckResult(decision, now), nil
 }

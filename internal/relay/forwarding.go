@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/internal/tunnel"
@@ -141,12 +142,15 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 	if incoming.PrivateHeader != nil {
 		return a.forwardPrivate(ctx, incoming)
 	}
+	ctx, endSpan := observability.Start(ctx, "relay.open_visitor_stream")
+	observability.Visitor(ctx, incoming.Header.VisitorConnectionID)
 	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
 	opened := false
 	var rejected error
 	defer func() {
 		if !opened {
 			finishOpen(errors.Join(retErr, rejected))
+			endSpan(errors.Join(retErr, rejected))
 		}
 	}()
 	if !a.acquireStream() {
@@ -173,6 +177,8 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 			return ok && current == connection
 		})
 		if !ok {
+			a.streamRejected("stale_assignment")
+			rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 			return incoming.Reject(tunnelv1.StaleConnectionAssignment)
 		}
 		defer remove()
@@ -194,8 +200,15 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 	}
 	opened = true
 	finishOpen(nil)
+	endSpan(nil)
 	defer incoming.Stream.Close()
-	if _, err := streamcopy.Copy(incoming.Stream, publisher); err != nil {
+	copied, err := streamcopy.Copy(incoming.Stream, publisher)
+	if observer, ok := a.observer.(interface {
+		ObserveRelayTransfer(string, int64, int64, error)
+	}); ok {
+		observer.ObserveRelayTransfer("public_url", copied.LeftToRight, copied.RightToLeft, err)
+	}
+	if err != nil {
 		return fmt.Errorf("relay: forward visitor connection %s: %w", incoming.Header.VisitorConnectionID, err)
 	}
 	return nil

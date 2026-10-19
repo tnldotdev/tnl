@@ -23,6 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
@@ -54,7 +55,7 @@ func New(endpoint string, httpClient *http.Client, access credentials.AccessToke
 		}
 		return nil, failure.Wrap("validate authority endpoint", failure.InvalidAuthorityURL, err)
 	}
-	httpClient = httpclient.NoRedirects(httpClient)
+	httpClient = observability.OwnedHTTPClient(httpclient.NoRedirects(httpClient), "authority")
 	apiClient, err := authorityv1.NewClient(
 		canonical,
 		authorityv1.WithHTTPClient(httpClient),

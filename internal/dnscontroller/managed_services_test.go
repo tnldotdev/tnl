@@ -3,11 +3,15 @@ package dnscontroller
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 type managedDNSStoreStub struct {
@@ -64,6 +68,8 @@ func TestManagedEndpointDNSUsesOwnedExactRecords(t *testing.T) {
 				t.Fatal(err)
 			}
 			worker.now = func() time.Time { return now }
+			metrics := observability.New("control")
+			worker.config.Observer = metrics
 			if found, err := worker.processManagedEndpoint(t.Context(), now); !found || err != nil {
 				t.Fatal(found, err)
 			}
@@ -71,6 +77,18 @@ func TestManagedEndpointDNSUsesOwnedExactRecords(t *testing.T) {
 				t.Fatal("managed endpoint used another DNS owner or a broad wildcard", provider.record, store.saved)
 			}
 			removing := test.state == controlstate.PublicURLDNSRemoving
+			response := httptest.NewRecorder()
+			metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
+			for _, phase := range []string{"claim", "provider", "verify", "advance", "save"} {
+				outcome := "success"
+				if !test.propagated && (phase == "verify" || phase == "advance") {
+					outcome = "pending"
+				}
+				want := fmt.Sprintf(`tnl_control_dns_work_duration_seconds_count{kind="managed_service",outcome=%q,phase=%q} 1`, outcome, phase)
+				if !strings.Contains(response.Body.String(), want) {
+					t.Errorf("missing managed DNS stage %s", want)
+				}
+			}
 			if removing {
 				if provider.removeCalls != 1 || provider.publishCalls != 0 || store.saved.State != controlstate.PublicURLDNSRemoved {
 					t.Fatal("removal did not reconcile", provider, store.saved)

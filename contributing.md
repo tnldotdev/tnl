@@ -228,8 +228,8 @@ digests; deploying and qualifying them requires separate operator approval.
 - [Architecture](docs/maintainers/architecture.md) explains package ownership,
   APIs, and runtime boundaries. [AGENTS.md](AGENTS.md) defines the terms and CLI
   output rules used in this repo.
-- [Metrics](docs/maintainers/metrics.md) lists the process-local Prometheus
-  families and their operational boundaries.
+- [Metrics](docs/maintainers/metrics.md) lists OTel process ownership, optional
+  export settings, instrumentation boundaries, and compatible Prometheus families.
 - [Benchmarks](docs/benchmarks/readme.md) covers local results and deployed
   workloads. Deployed runs require explicit approval.
 - [Releasing](docs/maintainers/releasing.md) covers maintainer release rules.

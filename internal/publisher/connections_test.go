@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -190,6 +191,8 @@ func TestStaleTLSFallbackDoesNotPublishFallback(t *testing.T) {
 func TestTLSFallbackIsPublishedBeforeConnectionReadiness(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
+	metrics := observability.New("publisher")
+	ctx = observability.WithMetrics(ctx, metrics)
 	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Target: "http://127.0.0.1:8080"})
 	if err != nil {
 		t.Fatal(err)
@@ -218,6 +221,28 @@ func TestTLSFallbackIsPublishedBeforeConnectionReadiness(t *testing.T) {
 	case <-manager.Fallback():
 	default:
 		t.Fatal("TLS/TCP connection became ready before publishing fallback")
+	}
+	manager.Close()
+	families, err := metrics.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, family := range families {
+		if family.GetName() == "tnl_publisher_connection_attempts_total" {
+			for _, point := range family.Metric {
+				labels := map[string]string{}
+				for _, label := range point.Label {
+					labels[label.GetName()] = label.GetValue()
+				}
+				if labels["transport"] == "tls-tcp" && labels["preference"] == "quic" && labels["outcome"] == "success" && point.GetCounter().GetValue() >= 1 {
+					seen = true
+				}
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("successful TCP fallback was not observed")
 	}
 }
 

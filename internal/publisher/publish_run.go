@@ -224,6 +224,7 @@ func runSession(
 		}
 	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
+		Context:               ctx,
 		AuditSink:             auditSink,
 		BrowserAccess:         browser,
 		BrowserLoginAvailable: config.BrowserLoginAvailable,

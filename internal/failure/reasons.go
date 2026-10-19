@@ -70,6 +70,7 @@ const (
 	MemberHostnameDepthExceeded         Reason = "TNL_CLIENT_MEMBER_HOSTNAME_DEPTH_EXCEEDED"
 	InvalidDomainName                   Reason = "TNL_CLIENT_INVALID_DOMAIN_NAME"
 	ProjectConfigInvalid                Reason = "TNL_CLIENT_PROJECT_CONFIG_INVALID"
+	ObservabilityConfigInvalid          Reason = "TNL_CLIENT_OBSERVABILITY_CONFIG_INVALID"
 	PublisherDeploymentInvalid          Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_INVALID"
 	PublisherDeploymentMetadataInvalid  Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_METADATA_INVALID"
 	PublisherDeploymentWriteFailed      Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_WRITE_FAILED"
@@ -392,6 +393,10 @@ var definitions = map[Reason]Definition{
 	ProjectConfigInvalid: {
 		Class: Invalid, Message: "tnl could not use the project configuration",
 		Action: "run tnl config check and correct the reported setting", Retry: RetryAfterChange,
+	},
+	ObservabilityConfigInvalid: {
+		Class: Invalid, Message: "operational observability configuration is invalid",
+		Action: "correct the named OTEL setting or remove optional export configuration", Retry: RetryAfterChange,
 	},
 	PublisherDeploymentInvalid: {
 		Class: Invalid, Message: "publisher deployment artifacts are missing, stale, or unsafe",

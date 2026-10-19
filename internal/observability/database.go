@@ -1,10 +1,12 @@
 package observability
 
 import (
+	"context"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 // DatabaseSnapshot is process-local database state collected without I/O.
@@ -32,115 +34,75 @@ type DatabaseOperationSnapshot struct {
 // acquire a connection because collection must remain available under database
 // contention and pool exhaustion.
 func (m *Metrics) RegisterDatabase(source func(time.Time) DatabaseSnapshot) {
-	m.registry.MustRegister(newDatabaseCollector(source))
-}
-
-type databaseCollector struct {
-	source func(time.Time) DatabaseSnapshot
-
-	poolMaxConnections      *prometheus.Desc
-	poolAcquiredConnections *prometheus.Desc
-	poolIdleConnections     *prometheus.Desc
-	poolTotalConnections    *prometheus.Desc
-	poolAcquires            *prometheus.Desc
-	poolWaitedAcquires      *prometheus.Desc
-	poolAcquireWaitSeconds  *prometheus.Desc
-	poolCanceledAcquires    *prometheus.Desc
-	clientConnections       *prometheus.Desc
-	clientConnectionEvents  *prometheus.Desc
-	operationsActive        *prometheus.Desc
-	operationOldestAge      *prometheus.Desc
-	operationsOmitted       *prometheus.Desc
-}
-
-func newDatabaseCollector(source func(time.Time) DatabaseSnapshot) *databaseCollector {
-	return &databaseCollector{
-		source: source,
-		poolMaxConnections: prometheus.NewDesc(
-			"tnl_database_pool_max_connections", "Configured connection limit.", nil, nil,
-		),
-		poolAcquiredConnections: prometheus.NewDesc(
-			"tnl_database_pool_acquired_connections", "Connections currently in use.", nil, nil,
-		),
-		poolIdleConnections: prometheus.NewDesc(
-			"tnl_database_pool_idle_connections", "Connections available for acquisition.", nil, nil,
-		),
-		poolTotalConnections: prometheus.NewDesc(
-			"tnl_database_pool_total_connections", "Total pool connections, including those being constructed.", nil, nil,
-		),
-		poolAcquires: prometheus.NewDesc(
-			"tnl_database_pool_acquires_total", "Successful connection acquisitions.", nil, nil,
-		),
-		poolWaitedAcquires: prometheus.NewDesc(
-			"tnl_database_pool_waited_acquires_total", "Successful acquisitions that waited for an available connection.", nil, nil,
-		),
-		poolAcquireWaitSeconds: prometheus.NewDesc(
-			"tnl_database_pool_acquire_wait_seconds_total", "Time spent waiting on successful acquisitions from an empty pool.", nil, nil,
-		),
-		poolCanceledAcquires: prometheus.NewDesc(
-			"tnl_database_pool_canceled_acquires_total", "Connection acquisitions canceled before completion.", nil, nil,
-		),
-		clientConnections: prometheus.NewDesc(
-			"tnl_database_client_connections", "Current local database client sockets by purpose and state.", []string{"purpose", "state"}, nil,
-		),
-		clientConnectionEvents: prometheus.NewDesc(
-			"tnl_database_client_connection_events_total", "Local database client connection lifecycle events.", []string{"purpose", "event"}, nil,
-		),
-		operationsActive: prometheus.NewDesc(
-			"tnl_database_operations_active", "Current active request-pool operations by compiled operation name.", []string{"operation"}, nil,
-		),
-		operationOldestAge: prometheus.NewDesc(
-			"tnl_database_operation_oldest_age_seconds", "Age of the oldest active request-pool operation by compiled operation name.", []string{"operation"}, nil,
-		),
-		operationsOmitted: prometheus.NewDesc(
-			"tnl_database_operations_omitted", "Current active request-pool operations omitted by the bounded tracker.", nil, nil,
-		),
+	var instruments []metric.Observable
+	gauge := func(name, help string) metric.Float64ObservableGauge {
+		g, err := m.meter.Float64ObservableGauge("tnl_database_"+name, metric.WithDescription(help))
+		if err != nil {
+			panic(err)
+		}
+		instruments = append(instruments, g)
+		return g
 	}
-}
-
-func (c *databaseCollector) Describe(descriptions chan<- *prometheus.Desc) {
-	for _, description := range []*prometheus.Desc{
-		c.poolMaxConnections, c.poolAcquiredConnections, c.poolIdleConnections, c.poolTotalConnections,
-		c.poolAcquires, c.poolWaitedAcquires, c.poolAcquireWaitSeconds, c.poolCanceledAcquires,
-		c.clientConnections, c.clientConnectionEvents, c.operationsActive, c.operationOldestAge, c.operationsOmitted,
-	} {
-		descriptions <- description
+	counter := func(name, help string) metric.Float64ObservableCounter {
+		c, err := m.meter.Float64ObservableCounter("tnl_database_"+name, metric.WithDescription(help))
+		if err != nil {
+			panic(err)
+		}
+		instruments = append(instruments, c)
+		return c
 	}
-}
-
-func (c *databaseCollector) Collect(metrics chan<- prometheus.Metric) {
-	snapshot := c.source(time.Now())
-	if pool := snapshot.Pool; pool != nil {
-		metrics <- prometheus.MustNewConstMetric(c.poolMaxConnections, prometheus.GaugeValue, float64(pool.MaxConns()))
-		metrics <- prometheus.MustNewConstMetric(c.poolAcquiredConnections, prometheus.GaugeValue, float64(pool.AcquiredConns()))
-		metrics <- prometheus.MustNewConstMetric(c.poolIdleConnections, prometheus.GaugeValue, float64(pool.IdleConns()))
-		metrics <- prometheus.MustNewConstMetric(c.poolTotalConnections, prometheus.GaugeValue, float64(pool.TotalConns()))
-		metrics <- prometheus.MustNewConstMetric(c.poolAcquires, prometheus.CounterValue, float64(pool.AcquireCount()))
-		metrics <- prometheus.MustNewConstMetric(c.poolWaitedAcquires, prometheus.CounterValue, float64(pool.EmptyAcquireCount()))
-		metrics <- prometheus.MustNewConstMetric(c.poolAcquireWaitSeconds, prometheus.CounterValue, pool.EmptyAcquireWaitTime().Seconds())
-		metrics <- prometheus.MustNewConstMetric(c.poolCanceledAcquires, prometheus.CounterValue, float64(pool.CanceledAcquireCount()))
+	poolMax := gauge("pool_max_connections", "Configured connection limit.")
+	poolAcquired := gauge("pool_acquired_connections", "Connections currently in use.")
+	poolIdle := gauge("pool_idle_connections", "Connections available for acquisition.")
+	poolTotal := gauge("pool_total_connections", "Total pool connections, including those being constructed.")
+	poolAcquires := counter("pool_acquires_total", "Successful connection acquisitions.")
+	poolWaited := counter("pool_waited_acquires_total", "Successful acquisitions that waited for an available connection.")
+	poolWaitSeconds := counter("pool_acquire_wait_seconds_total", "Time spent waiting on successful acquisitions from an empty pool.")
+	poolCanceled := counter("pool_canceled_acquires_total", "Connection acquisitions canceled before completion.")
+	connections := gauge("client_connections", "Current local database client sockets by purpose and state.")
+	connectionEvents := counter("client_connection_events_total", "Local database client connection lifecycle events.")
+	active := gauge("operations_active", "Current active request-pool operations by compiled operation name.")
+	oldest := gauge("operation_oldest_age_seconds", "Age of the oldest active request-pool operation by compiled operation name.")
+	omitted := gauge("operations_omitted", "Current active request-pool operations omitted by the bounded tracker.")
+	_, err := m.meter.RegisterCallback(func(_ context.Context, observer metric.Observer) error {
+		snapshot := source(time.Now())
+		if pool := snapshot.Pool; pool != nil {
+			observer.ObserveFloat64(poolMax, float64(pool.MaxConns()))
+			observer.ObserveFloat64(poolAcquired, float64(pool.AcquiredConns()))
+			observer.ObserveFloat64(poolIdle, float64(pool.IdleConns()))
+			observer.ObserveFloat64(poolTotal, float64(pool.TotalConns()))
+			observer.ObserveFloat64(poolAcquires, float64(pool.AcquireCount()))
+			observer.ObserveFloat64(poolWaited, float64(pool.EmptyAcquireCount()))
+			observer.ObserveFloat64(poolWaitSeconds, pool.EmptyAcquireWaitTime().Seconds())
+			observer.ObserveFloat64(poolCanceled, float64(pool.CanceledAcquireCount()))
+		}
+		for purpose, counts := range snapshot.Connections {
+			observer.ObserveFloat64(connections, float64(counts.Open), metric.WithAttributes(attribute.String("purpose", purpose), attribute.String("state", "open")))
+			observer.ObserveFloat64(connections, float64(counts.Connecting), metric.WithAttributes(attribute.String("purpose", purpose), attribute.String("state", "connecting")))
+			for event, count := range map[string]int64{"opened": counts.Opened, "closed": counts.Closed, "failed": counts.Failed} {
+				observer.ObserveFloat64(connectionEvents, float64(count), metric.WithAttributes(attribute.String("purpose", purpose), attribute.String("event", event)))
+			}
+		}
+		type operationAggregate struct {
+			count  int
+			oldest float64
+		}
+		operations := make(map[string]operationAggregate)
+		for _, operation := range snapshot.ActiveOperations {
+			aggregate := operations[operation.Operation]
+			aggregate.count++
+			aggregate.oldest = max(aggregate.oldest, operation.ElapsedSeconds)
+			operations[operation.Operation] = aggregate
+		}
+		for operation, aggregate := range operations {
+			attrs := metric.WithAttributes(attribute.String("operation", operation))
+			observer.ObserveFloat64(active, float64(aggregate.count), attrs)
+			observer.ObserveFloat64(oldest, aggregate.oldest, attrs)
+		}
+		observer.ObserveFloat64(omitted, float64(snapshot.OperationsOmitted))
+		return nil
+	}, instruments...)
+	if err != nil {
+		panic(err)
 	}
-	for purpose, counts := range snapshot.Connections {
-		metrics <- prometheus.MustNewConstMetric(c.clientConnections, prometheus.GaugeValue, float64(counts.Open), purpose, "open")
-		metrics <- prometheus.MustNewConstMetric(c.clientConnections, prometheus.GaugeValue, float64(counts.Connecting), purpose, "connecting")
-		metrics <- prometheus.MustNewConstMetric(c.clientConnectionEvents, prometheus.CounterValue, float64(counts.Opened), purpose, "opened")
-		metrics <- prometheus.MustNewConstMetric(c.clientConnectionEvents, prometheus.CounterValue, float64(counts.Closed), purpose, "closed")
-		metrics <- prometheus.MustNewConstMetric(c.clientConnectionEvents, prometheus.CounterValue, float64(counts.Failed), purpose, "failed")
-	}
-	type operationAggregate struct {
-		count  int
-		oldest float64
-	}
-	operations := make(map[string]operationAggregate)
-	for _, operation := range snapshot.ActiveOperations {
-		aggregate := operations[operation.Operation]
-		aggregate.count++
-		aggregate.oldest = max(aggregate.oldest, operation.ElapsedSeconds)
-		operations[operation.Operation] = aggregate
-	}
-	for operation, aggregate := range operations {
-		metrics <- prometheus.MustNewConstMetric(c.operationsActive, prometheus.GaugeValue, float64(aggregate.count), operation)
-		metrics <- prometheus.MustNewConstMetric(c.operationOldestAge, prometheus.GaugeValue, aggregate.oldest, operation)
-	}
-	metrics <- prometheus.MustNewConstMetric(c.operationsOmitted, prometheus.GaugeValue, float64(snapshot.OperationsOmitted))
 }

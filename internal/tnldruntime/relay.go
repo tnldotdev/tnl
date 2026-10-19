@@ -203,6 +203,7 @@ func (d *daemon) startRelayRuntime(
 	}
 	registry := relay.NewRegistry()
 	privateRegistry := relay.NewPrivateRegistry()
+	privateRegistry.Instrument(runtimeConfig.metrics)
 	registry.Instrument(runtimeConfig.metrics)
 	runtime.registry = registry
 	runtime.privateRegistry = privateRegistry
@@ -340,7 +341,7 @@ func newRelayControlClient(endpoint, clusterSecret string, base *http.Client, di
 	if err != nil {
 		return nil, err
 	}
-	generated, err := relayv1.NewClientWithResponses(endpoint, relayv1.WithHTTPClient(client))
+	generated, err := relayv1.NewClientWithResponses(endpoint, relayv1.WithHTTPClient(observability.OwnedHTTPClient(client, "private_relay")))
 	if err != nil {
 		return nil, err
 	}

@@ -88,6 +88,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		}
 		return nil
 	}
+	visitorOutcome = observability.VisitorOpenFailed
 	var usage UsageConnection
 	if s.config.OpenUsage != nil {
 		usage = s.config.OpenUsage(route.ID, route.PublishRunNumber, source.Addr(), time.Now().UTC())
@@ -126,11 +127,9 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 			auditReason = "draining"
 		}
 		s.rejectCapacity(rejected)
-		if !denied {
-			visitorOutcome = observability.VisitorCapacityDenied
-			if rejected == "draining" {
-				visitorOutcome = observability.VisitorDraining
-			}
+		visitorOutcome = observability.VisitorCapacityDenied
+		if rejected == "draining" {
+			visitorOutcome = observability.VisitorDraining
 		}
 		if usage != nil {
 			usage.CapacityDenied(time.Now().UTC())
@@ -167,6 +166,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	}
 	if admission != nil {
 		if err := admission.beforeWrite(s.openContext, true, len(hello.Prefix)); err != nil {
+			visitorOutcome = observability.VisitorCapacityDenied
 			return err
 		}
 	}
@@ -178,6 +178,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	opened, openErr := s.openVisitorStream(openCtx, backends, visitorID, kind, header, hello.Prefix, usage)
 	cancel()
 	if errors.Is(openErr, errBackendTrackingClosed) {
+		visitorOutcome = observability.VisitorDraining
 		return net.ErrClosed
 	}
 	if s.config.Metrics != nil {
@@ -185,9 +186,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	}
 	if openErr != nil {
 		auditOutcome, auditReason = "failed", "forwarding"
-		if !denied {
-			visitorOutcome = observability.VisitorOpenFailed
-		}
+		visitorOutcome = observability.VisitorOpenFailed
 		s.reportForwardingFailure(route, visitorID, ForwardingNoBackend, len(backends))
 		return openErr
 	}
@@ -207,9 +206,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	}
 	if opened.setupErr != nil {
 		auditOutcome, auditReason = "failed", "forwarding"
-		if !denied {
-			visitorOutcome = observability.VisitorCommittedFailed
-		}
+		visitorOutcome = observability.VisitorCommittedFailed
 		s.reportForwardingFailure(route, visitorID, ForwardingCommittedWrite, len(backends))
 		return fmt.Errorf("ingress: write visitor setup after %d bytes: %w", opened.bytes, opened.setupErr)
 	}
@@ -232,11 +229,9 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		}
 		serviceaudit.Emit(s.config.AuditSink, serviceaudit.Observation{ServiceID: route.ID, ServiceKind: "public_url", RunID: route.PublishRunID, RunNumber: int64(route.PublishRunNumber), VisitorConnectionID: visitorID, SourceIP: source.Addr().Unmap().String(), EventType: "connection.close", Outcome: outcome, Reason: reason})
 	}
-	if !denied {
-		visitorOutcome = observability.VisitorForwarded
-		if err != nil {
-			visitorOutcome = observability.VisitorCommittedFailed
-		}
+	visitorOutcome = observability.VisitorForwarded
+	if err != nil {
+		visitorOutcome = observability.VisitorCommittedFailed
 	}
 	return err
 }
@@ -291,7 +286,10 @@ func (s *Server) selectPoolRun(candidates []PublicURL) (PublicURL, func(), Looku
 
 // openVisitorStream retries only before a visitor byte reaches a relay. the
 // returned connection is owned by the caller even when its setup write failed.
-func (s *Server) openVisitorStream(ctx context.Context, backends []routebackend.Backend, visitorID string, kind connectionKind, header, prefix []byte, usage UsageConnection) (committedVisitorStream, error) {
+func (s *Server) openVisitorStream(ctx context.Context, backends []routebackend.Backend, visitorID string, kind connectionKind, header, prefix []byte, usage UsageConnection) (result committedVisitorStream, retErr error) {
+	ctx, finish := observability.Start(ctx, "ingress.open_visitor_stream")
+	observability.Visitor(ctx, visitorID)
+	defer func() { finish(errors.Join(retErr, result.setupErr)) }()
 	opened := false
 	// rotate visitors across connected relays before committing bytes.
 	firstBackend := 0

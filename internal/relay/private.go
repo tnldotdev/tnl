@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/relayv1"
@@ -23,6 +24,7 @@ type privateConnection struct {
 // PrivateRegistry contains only exact locally claimed private assignments.
 // public URL references cannot select entries from this registry.
 type PrivateRegistry struct {
+	observer    OperationObserver
 	mu          sync.Mutex
 	connections map[string]*privateConnection
 	closed      bool
@@ -31,6 +33,9 @@ type PrivateRegistry struct {
 func NewPrivateRegistry() *PrivateRegistry {
 	return &PrivateRegistry{connections: make(map[string]*privateConnection)}
 }
+
+// Instrument configures observation before the registry begins serving work.
+func (r *PrivateRegistry) Instrument(observer OperationObserver) { r.observer = observer }
 
 func (r *PrivateRegistry) insert(c *privateConnection) error {
 	r.mu.Lock()
@@ -57,6 +62,11 @@ func (r *PrivateRegistry) insert(c *privateConnection) error {
 		delete(r.connections, replaced.ref.PublisherConnectionID)
 	}
 	r.connections[c.ref.PublisherConnectionID] = c
+	if replaced == nil {
+		if observer, ok := r.observer.(interface{ AddRegisteredPublisherConnections(int) }); ok {
+			observer.AddRegisteredPublisherConnections(1)
+		}
+	}
 	r.mu.Unlock()
 	if replaced != nil {
 		_ = replaced.paths.Close()
@@ -68,6 +78,9 @@ func (r *PrivateRegistry) remove(c *privateConnection) {
 	r.mu.Lock()
 	if r.connections[c.ref.PublisherConnectionID] == c {
 		delete(r.connections, c.ref.PublisherConnectionID)
+		if observer, ok := r.observer.(interface{ AddRegisteredPublisherConnections(int) }); ok {
+			observer.AddRegisteredPublisherConnections(-1)
+		}
 	}
 	r.mu.Unlock()
 	_ = c.paths.Close()
@@ -169,11 +182,25 @@ func (a *PrivatePublisherAcceptor) claim(ctx context.Context, message tunnelv1.M
 	return &privateClaim{target: target, ref: ref, lease: lease}, nil
 }
 
-func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session) (result error) {
+func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, acceptor *PublisherAcceptor, finishAdmission func(error)) (result error) {
+	ready := false
+	unexpected := false
 	defer func() {
-		finish, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if !ready {
+			finishAdmission(result)
+		}
+		if ready {
+			acceptor.readyDelta(-1)
+			acceptor.connectionExited(unexpected)
+		}
+	}()
+	defer func() {
+		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		result = errors.Join(result, c.target.Control.privateTransition(finish, c.ref, c.lease, true))
+		observe := startOperation(finish, acceptor.observer, "RelayDisconnectPublisherConnection")
+		err := c.target.Control.privateTransition(finish, c.ref, c.lease, true)
+		observe(err)
+		result = errors.Join(result, err)
 	}()
 	if session == nil {
 		return errors.New("relay: private handshake failed after claim")
@@ -181,6 +208,10 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session) (resu
 	paths := &PublisherConnection{session: session, streams: make(map[*trackedConn]struct{}), changed: make(chan struct{})}
 	connection := &privateConnection{ref: c.ref, lease: c.lease, paths: paths}
 	if err := c.target.Registry.insert(connection); err != nil {
+		var protocol *tunnel.ProtocolError
+		if errors.As(err, &protocol) && protocol.Code == tunnelv1.CapacityExceeded {
+			acceptor.capacity()
+		}
 		_ = session.Close()
 		return err
 	}
@@ -188,9 +219,13 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session) (resu
 	if err := c.target.Control.privateTransition(ctx, c.ref, c.lease, false); err != nil {
 		return err
 	}
+	ready = true
+	acceptor.readyDelta(1)
+	finishAdmission(nil)
 	stop := context.AfterFunc(ctx, func() { _ = session.Close() })
 	defer stop()
 	err := session.HandlePublisherDrain(ctx, paths.Drain)
+	unexpected = err != nil && ctx.Err() == nil && !errors.Is(err, net.ErrClosed)
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, muxsession.ErrClosed) || errors.Is(err, net.ErrClosed) {
 			return nil
@@ -205,35 +240,59 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session) (resu
 	}
 }
 
-func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream) error {
+func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream) (retErr error) {
+	ctx, endSpan := observability.Start(ctx, "relay.open_private_visitor_stream")
+	observability.Visitor(ctx, incoming.PrivateHeader.VisitorConnectionID)
+	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
+	opened := false
+	var rejected error
+	defer func() {
+		if !opened {
+			err := errors.Join(retErr, rejected)
+			finishOpen(err)
+			endSpan(err)
+		}
+	}()
 	defer incoming.Stream.Close()
 	if a.private == nil {
+		rejected = &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 		return incoming.Reject(tunnelv1.Unauthenticated)
 	}
 	if !a.acquireStream() {
+		rejected = &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
 		return incoming.Reject(tunnelv1.CapacityExceeded)
 	}
 	defer a.releaseStream()
 	header := *incoming.PrivateHeader
 	connection, ok := a.private.candidate(header, a.currentLease(), a.now())
 	if !ok {
+		a.streamRejected("stale_assignment")
+		rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)
 	}
 	if err := connection.paths.beginOpen(); err != nil {
+		a.streamRejected("publisher_unavailable")
+		rejected = err
 		return incoming.Reject(tunnelv1.DrainingPublisherConnection)
 	}
-	opened, err := connection.paths.session.OpenPrivateForwardingStream(ctx, header)
-	publisher, err := connection.paths.finishOpen(opened, err)
+	stream, err := connection.paths.session.OpenPrivateForwardingStream(ctx, header)
+	publisher, err := connection.paths.finishOpen(stream, err)
 	if err != nil {
+		a.streamRejected("publisher_unavailable")
 		return errors.Join(incoming.Reject(tunnelv1.Unavailable), err)
 	}
 	defer publisher.Close()
 	if _, ok := a.private.candidate(header, a.currentLease(), a.now()); !ok {
+		a.streamRejected("stale_assignment")
+		rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)
 	}
 	if err := incoming.Accept(); err != nil {
 		return err
 	}
+	opened = true
+	finishOpen(nil)
+	endSpan(nil)
 	stop := context.AfterFunc(ctx, func() { _ = incoming.Stream.Close(); _ = publisher.Close() })
 	defer stop()
 	copyDone, watchDone := make(chan struct{}), make(chan struct{})
@@ -253,6 +312,11 @@ func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunne
 	defer func() { close(copyDone); <-watchDone }()
 	// ingress alone creates PROXY v2. relay copies it and every following
 	// visitor byte unchanged, once, through this exact publisher stream.
-	_, err = streamcopy.Copy(incoming.Stream, publisher)
+	copied, err := streamcopy.Copy(incoming.Stream, publisher)
+	if observer, ok := a.observer.(interface {
+		ObserveRelayTransfer(string, int64, int64, error)
+	}); ok {
+		observer.ObserveRelayTransfer("managed_service", copied.LeftToRight, copied.RightToLeft, err)
+	}
 	return err
 }

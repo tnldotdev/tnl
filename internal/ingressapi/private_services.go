@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -70,6 +71,7 @@ func (h *handler) recheckPrivateServiceVisitor(w http.ResponseWriter, r *http.Re
 	if h.writeServiceError(w, r, err) {
 		return
 	}
+	observability.AuthorizationDecision(r.Context(), "private_visitor_recheck", validity.Allowed)
 	serviceapi.WriteJSON(w, http.StatusOK, privateVisitorRecheckResult(validity, now))
 }
 

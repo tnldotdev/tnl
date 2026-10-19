@@ -187,6 +187,9 @@ func New(listener net.Listener, config Config) (*Server, error) {
 		config.OpenTimeout = defaultOpenTimeout
 	}
 	openContext, cancelOpens := context.WithCancel(context.Background())
+	if metrics, ok := config.Metrics.(*observability.Metrics); ok {
+		openContext = observability.WithMetrics(openContext, metrics)
+	}
 	traffic := newTrafficAdmission(config.Traffic, config.Pending)
 	traffic.currentRuns = config.CurrentTrafficRuns
 	return &Server{

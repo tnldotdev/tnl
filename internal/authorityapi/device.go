@@ -12,6 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
@@ -106,6 +107,9 @@ func (h *handler) PollDeviceLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := authorityv1.DeviceLoginResult{Status: authorityv1.DeviceLoginResultStatus(l.Status)}
+	if l.Status == controlstate.DeviceDenied || l.Status == controlstate.DeviceApproved {
+		observability.AuthorizationDecision(r.Context(), "device_login", l.Status == controlstate.DeviceApproved)
+	}
 	if l.Session != nil {
 		session := controlSessionResponse(*l.Session)
 		result.Session = &session

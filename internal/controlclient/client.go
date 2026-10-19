@@ -24,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -73,7 +74,7 @@ func New(server string, httpClient *http.Client, access credentials.AccessToken)
 	if err != nil {
 		return nil, failure.Wrap("select control server", failure.InvalidControlURL, err)
 	}
-	httpClient = httpclient.NoRedirects(httpClient)
+	httpClient = observability.OwnedHTTPClient(httpclient.NoRedirects(httpClient), "control")
 	apiClient, err := controlv1.NewClient(
 		server,
 		controlv1.WithHTTPClient(httpClient),

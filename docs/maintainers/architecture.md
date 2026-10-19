@@ -584,17 +584,18 @@ implements handshakes, and `internal/streamcopy` copies bytes in both directions
 
 ## keep local packages focused
 
-| Package                    | Responsibility                                                              |
-| -------------------------- | --------------------------------------------------------------------------- |
-| `internal/config`          | Versioned static configuration and schema validation                        |
-| `internal/projectconfig`   | Project discovery, TypeScript evaluation, worktrees, and effective services |
-| `internal/tnldconfig`      | Server-role settings and environment resolution                             |
-| `internal/clientstate`     | Client SQLite state and local ownership locks                               |
-| `internal/clientruntime`   | App registrations, public readiness, and local lifecycle events             |
-| `internal/privateprotocol` | Bounded private SDK requests and assignments                                |
-| `internal/projectmeta`     | Generated browser-safe metadata and TypeScript augmentation                 |
-| `internal/clioutput`       | Shared ASCII rendering for the `tnl` client                                 |
-| `packages/ts`              | Browser-safe runtime and Node framework integrations                        |
+| Package                    | Responsibility                                                                                                              |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `internal/config`          | Versioned static configuration and schema validation                                                                        |
+| `internal/projectconfig`   | Project discovery, TypeScript evaluation, worktrees, and effective services                                                 |
+| `internal/tnldconfig`      | Server-role settings and environment resolution                                                                             |
+| `internal/clientstate`     | Client SQLite state and local ownership locks                                                                               |
+| `internal/clientruntime`   | App registrations, public readiness, and local lifecycle events                                                             |
+| `internal/observability`   | One process's OTel metrics/traces, bounded optional export, and compatible Prometheus exposition; never authorization state |
+| `internal/privateprotocol` | Bounded private SDK requests and assignments                                                                                |
+| `internal/projectmeta`     | Generated browser-safe metadata and TypeScript augmentation                                                                 |
+| `internal/clioutput`       | Shared ASCII rendering for the `tnl` client                                                                                 |
+| `packages/ts`              | Browser-safe runtime and Node framework integrations                                                                        |
 
 The npm public subpaths are the package root, `/config`, `/next`, and `/vite`.
 the private development HTTP endpoint is shipped implementation, not a public

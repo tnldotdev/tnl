@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"golang.org/x/term"
 )
 
@@ -163,10 +164,16 @@ func main() {
 		stop() // restore default handling so a second signal terminates immediately.
 	}()
 	var telemetry *asyncTelemetryReporter
-	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
-		telemetry = newTelemetryReporter(root)
-		return telemetry
-	})
+	processCtx, metrics, err := observability.StartProcess(ctx, "publisher")
+	if err == nil {
+		err = run(processCtx, os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
+			telemetry = newTelemetryReporter(root)
+			return telemetry
+		})
+		_ = metrics.Shutdown(context.Background())
+	} else if machineOutputRequested(os.Args[1:]) {
+		err = &machineCommandError{err}
+	}
 	if telemetry != nil {
 		waitCtx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
 		telemetry.Wait(waitCtx)
@@ -246,6 +253,9 @@ func writeCommandError(output io.Writer, err error) {
 	}
 	presented := presentFailure(err)
 	blocks := []clioutput.Block{clioutput.Text(presented.message)}
+	if typed, ok := failure.Of(err); ok && typed.Reason() == failure.ObservabilityConfigInvalid && typed.Setting() != "" {
+		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "setting", Value: string(typed.Setting())}))
+	}
 	caseID := failure.KnownCase(err)
 	if variant := failure.CaseFor(presented.reason, caseID); variant != nil {
 		blocks = append(blocks, clioutput.Text(variant.Description), clioutput.Text(variant.Action))

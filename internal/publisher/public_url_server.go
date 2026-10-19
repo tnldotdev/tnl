@@ -22,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/tunnel"
@@ -31,6 +32,7 @@ import (
 
 // PublicURLServerConfig configures publisher TLS termination and local HTTP forwarding.
 type PublicURLServerConfig struct {
+	Context               context.Context
 	AuditSink             serviceaudit.Sink
 	Hostname              string
 	PreviewID             string
@@ -177,7 +179,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	queue := newRouteListener()
 	shareSlots := make(chan struct{}, 16)
 	probeSlots := make(chan struct{}, 4)
-	life, cancelLife := context.WithCancel(context.Background())
+	base := config.Context
+	if base == nil {
+		base = context.Background()
+	}
+	life, cancelLife := context.WithCancel(context.WithoutCancel(base))
 	route := &PublicURLServer{
 		hostname:  hostname,
 		admission: admission,
@@ -193,6 +199,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 			SessionTicketsDisabled: true,
 		},
 		http: &http.Server{
+			BaseContext: func(net.Listener) context.Context { return life },
 			Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				auditOutcome, auditReason := "denied", "invalid_request"
 				auditReport := true
@@ -422,6 +429,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				if secured, ok := connection.(*tls.Conn); ok {
 					if tracked, ok := secured.NetConn().(*doneConn); ok {
 						if metadata, ok := tracked.Conn.(*metadataConn); ok {
+							ctx = observability.WithVisitor(ctx, metadata.session.visitor.Header.VisitorConnectionID)
 							ctx = context.WithValue(ctx, shareConnectionKey{}, secured)
 							ctx = context.WithValue(ctx, visitorSessionKey{}, metadata.session)
 							return context.WithValue(ctx, denialContextKey{}, metadata.denied)
@@ -821,7 +829,10 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 	tracked := newDoneConn(metadata)
 	secured := tls.Server(tracked, r.tls)
 	ctx, cancelHandshake := context.WithTimeout(life, 10*time.Second)
+	ctx = observability.WithVisitor(ctx, streamHeader.VisitorConnectionID)
+	ctx, finish := observability.PublisherOperation(ctx, "visitor_tls")
 	err = secured.HandshakeContext(ctx)
+	finish(err)
 	cancelHandshake()
 	if err != nil {
 		_ = secured.Close()

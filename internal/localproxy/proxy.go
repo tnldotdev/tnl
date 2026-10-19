@@ -25,6 +25,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
@@ -67,7 +68,9 @@ func LoadTargetRootCAs(path string) (*x509.CertPool, error) {
 }
 
 // PreflightWithOptions checks target reachability and HTTPS certificate trust.
-func PreflightWithOptions(ctx context.Context, target string, options TargetOptions) error {
+func PreflightWithOptions(ctx context.Context, target string, options TargetOptions) (result error) {
+	ctx, finish := observability.PublisherOperation(ctx, "target_preflight")
+	defer func() { finish(result) }()
 	canonicalTarget, err := NormalizeTarget(target)
 	if err != nil {
 		return err
@@ -351,13 +354,17 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 			if network != "tcp" || address != targetAddress {
 				return nil, errors.New("localproxy: refused unexpected upstream")
 			}
-			return dialer.DialContext(ctx, "tcp", targetAddress)
+			ctx, finish := observability.PublisherOperation(ctx, "target_connect")
+			connection, err := dialer.DialContext(ctx, "tcp", targetAddress)
+			finish(err)
+			return connection, err
 		},
 	}
 	proxy := &httputil.ReverseProxy{
 		Transport:     transport,
 		FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
+			request.Out = observability.TargetRequest(request.Out)
 			host := request.In.Host
 			if hooks.ModifyHTML != nil && !IsReadinessProbe(request.In) {
 				request.Out.Header.Del("Accept-Encoding")

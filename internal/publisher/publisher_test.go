@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -12,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -236,6 +238,49 @@ func TestHeartbeatFallbackSkipsPolicyDenialObservation(t *testing.T) {
 	)
 	if err != nil || observed || response.PolicyDenials != 0 {
 		t.Fatalf("fallback = %#v, observed = %t, error = %v", response, observed, err)
+	}
+}
+
+func TestHeartbeatMetricsKeepLastConfirmedLeaseOnFallback(t *testing.T) {
+	metrics := observability.New("publisher")
+	ctx := observability.WithMetrics(t.Context(), metrics)
+	confirmed := time.Now().Add(time.Minute).Truncate(time.Second)
+	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
+		return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{ExpiresAt: confirmed}}, nil
+	}}
+	if _, observed, err := heartbeatResponseOnce(ctx, control, "run-secret", 1, "token-secret", confirmed); err != nil || !observed {
+		t.Fatal(observed, err)
+	}
+	control.heartbeat = func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
+		return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{ExpiresAt: confirmed.Add(time.Hour)}}, controlclient.ErrUnavailable
+	}
+	if _, observed, err := heartbeatResponseOnce(ctx, control, "run-secret", 1, "token-secret", confirmed); err != nil || observed {
+		t.Fatal(observed, err)
+	}
+	families, err := metrics.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenLease, seenFailure := false, false
+	for _, family := range families {
+		if strings.Contains(family.String(), "secret") {
+			t.Fatal("heartbeat credentials or run ID reached metrics")
+		}
+		if family.GetName() == "tnl_publisher_lease_expiration_timestamp_seconds" {
+			seenLease = family.Metric[0].GetGauge().GetValue() == float64(confirmed.Unix())
+		}
+		if family.GetName() == "tnl_publisher_operation_duration_seconds" {
+			for _, point := range family.Metric {
+				for _, label := range point.Label {
+					if label.GetName() == "outcome" && label.GetValue() == "error" && point.GetHistogram().GetSampleCount() == 1 {
+						seenFailure = true
+					}
+				}
+			}
+		}
+	}
+	if !seenLease || !seenFailure {
+		t.Fatal("fallback hid a failed renewal or extended the confirmed lease")
 	}
 }
 

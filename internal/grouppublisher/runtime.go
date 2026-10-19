@@ -11,6 +11,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/privatepublisher"
 	"github.com/tnldotdev/tnl/internal/publisherruntime"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -102,7 +103,9 @@ func (r Runtime) Serve(ctx context.Context) error {
 	}
 	for ctx.Err() == nil {
 		if time.Until(lease.ExpiresAt) <= 2*r.PollInterval {
-			response, err := owner.Renew(ctx)
+			leaseCtx, finish := observability.PublisherOperation(ctx, "group_lease")
+			response, err := owner.Renew(leaseCtx)
+			finish(err)
 			var next controlv1.PublisherGroupLease
 			if response.GroupLease != nil {
 				next = *response.GroupLease
@@ -115,6 +118,8 @@ func (r Runtime) Serve(ctx context.Context) error {
 			}
 			if err == nil && next.AccessToken != "" && next.ExpiresAt.After(time.Now()) {
 				lease = next
+				ctx = observability.WithIdentity(ctx, observability.Identity{TeamID: r.Member.TeamId, GroupID: r.Member.GroupId, PublisherID: r.Member.PublisherIdentityId})
+				observability.PublisherLease(ctx, lease.ExpiresAt)
 				for _, w := range workers {
 					w.lease.Reset(time.Until(lease.ExpiresAt))
 				}
@@ -188,7 +193,7 @@ func (r Runtime) Serve(ctx context.Context) error {
 					if workers[service.Service] != nil {
 						continue
 					}
-					workerCtx, cancel := context.WithCancel(ctx)
+					workerCtx, cancel := context.WithCancel(observability.WithIdentity(ctx, observability.Identity{ServiceID: service.ServiceId}))
 					w := &running{definition: definitions[service.Service], cancel: cancel, done: make(chan struct{})}
 					w.lease = time.AfterFunc(time.Until(lease.ExpiresAt), cancel)
 					workers[service.Service] = w

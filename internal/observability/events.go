@@ -95,6 +95,19 @@ func (m *Metrics) ObservePublisherExit(unexpected bool) {
 	m.publisherExits.WithLabelValues(reason).Inc()
 }
 
+func (m *Metrics) ObserveRelayTransfer(kind string, toPublisher, toVisitor int64, err error) {
+	if m == nil || kind != "public_url" && kind != "managed_service" {
+		return
+	}
+	m.relayCompletions.WithLabelValues(kind, durationOutcome(err)).Inc()
+	if toPublisher >= 0 {
+		m.relayBytes.WithLabelValues(kind, "visitor_to_publisher").Add(float64(toPublisher))
+	}
+	if toVisitor >= 0 {
+		m.relayBytes.WithLabelValues(kind, "publisher_to_visitor").Add(float64(toVisitor))
+	}
+}
+
 func (m *Metrics) ObserveRelayStreamRejection(reason string) {
 	if m == nil {
 		return
@@ -165,7 +178,7 @@ func (m *Metrics) ObserveDNSWork(kind, phase string, outcome DNSWorkOutcome, ela
 		return
 	}
 	switch kind {
-	case "authority", "public_url", "public_url_challenge", "relay_challenge":
+	case "authority", "public_url", "managed_service", "public_url_challenge", "relay_challenge":
 	default:
 		return
 	}
@@ -180,10 +193,11 @@ func (m *Metrics) ObserveDNSWork(kind, phase string, outcome DNSWorkOutcome, ela
 		return
 	}
 	m.dnsWork.WithLabelValues(kind, phase, string(outcome)).Observe(elapsed.Seconds())
+	m.completedSpan("dns."+kind+"."+phase, string(outcome), elapsed)
 }
 
 func (m *Metrics) ObserveDNSTransition(kind, state string) {
-	if m == nil || kind != "authority" && kind != "public_url" {
+	if m == nil || kind != "authority" && kind != "public_url" && kind != "managed_service" {
 		return
 	}
 	switch state {
@@ -252,7 +266,7 @@ func (m *Metrics) ObserveCleanup(kind string, count int, busy bool, err error) {
 		return
 	}
 	switch kind {
-	case "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit":
+	case "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state":
 	default:
 		return
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -91,6 +92,7 @@ func (h *handler) AuthorizeHTTPVisitor(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	result := controlv1.HTTPVisitorResponse{VisitAllowed: decision.VisitAllowed, TeamMember: decision.TeamMember}
+	observability.AuthorizationDecision(r.Context(), "http_visitor", decision.VisitAllowed)
 	if decision.VisitAllowed {
 		result.ValidUntil = decision.ExpiresAt
 	}
