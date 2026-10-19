@@ -44,6 +44,7 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | Go races                         | `task go:test:race`                                          | No database                                                                                                   |
 | Database and service boundaries  | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                                                    |
 | Private services and groups      | `task go:test:integration:private-services`                  | Docker; saved services, applied groups, grants, and audit in PostgreSQL                                       |
+| Publisher egress evidence        | `task go:test:integration:publisher-egress`                  | Docker; signed runtime leases and trusted proxy metadata, without public IP lookups                           |
 | Private runtime topology         | `task go:test:integration:private-topology`                  | Docker and Pebble; separated and standalone private visitor lifecycle                                         |
 | Real database clients            | `task go:test:integration:tcp-clients`                       | Docker CLI; disposable TLS providers also run psql and mysql                                                  |
 | CLI and OpenSSH stdio            | `task go:test:integration:cli`                               | Isolated Linux, Docker, sshd/ssh/ssh-keygen, writable `/etc/hosts` or passwordless sudo for that fixture only |

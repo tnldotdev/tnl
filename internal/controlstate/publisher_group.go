@@ -38,9 +38,10 @@ type PublisherGroupMember struct {
 }
 type PublisherGroupMemberStatus struct {
 	PublisherGroupMember
-	ObservedRevision int64      `json:"observed_revision"`
-	Healthy          bool       `json:"healthy"`
-	LeaseExpiresAt   *time.Time `json:"lease_expires_at,omitempty"`
+	Runtime          *PublisherRuntimeStatus `json:"runtime,omitempty"`
+	ObservedRevision int64                   `json:"observed_revision"`
+	Healthy          bool                    `json:"healthy"`
+	LeaseExpiresAt   *time.Time              `json:"lease_expires_at,omitempty"`
 }
 type PublisherGroupLease struct {
 	AccessToken string    `json:"access_token"`
@@ -323,21 +324,28 @@ func (d *Database) AcquirePublisherGroupLease(ctx context.Context, id, group, as
 	if err != nil {
 		return result, err
 	}
+	result, err = issuePublisherGroupLease(ctx, tx, id, member.KeyID, now.Add(PublisherGroupLeaseLifetime))
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+func issuePublisherGroupLease(ctx context.Context, tx pgx.Tx, id, key string, until time.Time) (result PublisherGroupLease, err error) {
 	secret, digest, err := privateSecret()
 	if err != nil {
 		return result, err
 	}
-	until := now.Add(PublisherGroupLeaseLifetime)
 	if _, err = tx.Exec(ctx, `DELETE FROM control.publisher_group_leases WHERE publisher_identity_id=$1`, id); err != nil {
 		return result, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO control.publisher_group_leases(token_digest,publisher_identity_id,key_id,expires_at) VALUES($1,$2,$3,$4)`, digest, id, member.KeyID, until); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO control.publisher_group_leases(token_digest,publisher_identity_id,key_id,expires_at) VALUES($1,$2,$3,$4)`, digest, id, key, until); err != nil {
 		return result, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE control.publisher_group_members SET lease_expires_at=$2 WHERE publisher_identity_id=$1`, id, until); err != nil {
 		return result, err
 	}
-	return PublisherGroupLease{AccessToken: "pgl_" + secret, ExpiresAt: until}, tx.Commit(ctx)
+	return PublisherGroupLease{AccessToken: "pgl_" + secret, ExpiresAt: until}, nil
 }
 
 func lockPublisherGroupLease(ctx context.Context, tx pgx.Tx, token string, now time.Time) (result PublisherGroupMember, err error) {
@@ -449,7 +457,20 @@ func listPublisherGroupMemberStatus(ctx context.Context, tx pgx.Tx, team, projec
 		}
 		result = append(result, s)
 	}
-	return result, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	for i := range result {
+		result[i].Runtime, err = publisherRuntimeStatus(ctx, controlstatedb.New(tx), result[i].PublisherIdentityID, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		if result[i].Runtime != nil {
+			result[i].Healthy = result[i].Healthy && result[i].Runtime.Active
+		}
+	}
+	return result, nil
 }
 
 func (d *Database) removePublisherGroup(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, group string, now time.Time) error {

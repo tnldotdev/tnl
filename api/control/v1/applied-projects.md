@@ -235,9 +235,14 @@ with `placement_unavailable`; release unused reservations before retrying.
    public key and enrollment credential to `POST /v1/publisher-groups/enroll`.
    A retry with the same key returns the same identity without consuming another
    enrollment use. One key cannot enroll into another group.
-3. The replica signs a normal publisher assertion with the group ID as its grant
-   claim and `<control-url>/v1/publisher-groups/lease` as its audience. Posting it
-   to that path returns a two-minute lease. Assertions are one-use.
+3. The running replica uses the signed `inspect` and `start` actions at
+   `POST /v1/publisher-runtime`, with its immutable group ID as `scope_id` and a
+   fresh random `process_run_id`. The assertion binds the action, run and expected
+   epoch. Start returns the two-minute group lease and records control-observed
+   egress once for the replica, independently of its number of services. Its
+   existing polling loop uses `renew` to refresh that evidence and lease. See
+   [publisher egress](../../../docs/maintainers/publisher-egress.md) for the proof
+   encoding, retries and replacement fencing.
 4. `GET /v1/publisher-groups/assignments`, authorized by that lease, returns only
    the replica's group's services, targets, trust revisions, and exact native
    publisher grant IDs. The replica exchanges an assertion for each grant using
@@ -246,6 +251,13 @@ with `placement_unavailable`; release unused reservations before retrying.
 5. After reconciling workers, the replica posts `revision`, `configuration_hash`,
    and `healthy` to `/v1/publisher-groups/ack`. Control rejects acknowledgements
    for replaced revisions. Lease expiry makes member health unobserved.
+6. After joining its workers, the replica sends `stop` for its current run and
+   epoch. Control retains its last observation with offline lease status. A crash
+   becomes offline at lease expiry without a cleanup request.
+
+Provisioning and verification do not call this runtime interface. The low-level
+`/v1/publisher-groups/lease` exchange still supports assignment preflight, but
+rotating that token does not record egress or advance the runtime epoch.
 
 A team manager can revoke one replica with
 `DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id}?team_id=...`.
@@ -262,6 +274,11 @@ assertion exchanger. `Poll` returns assignments; `Service(assignment)` returns
 the existing exact-grant `*native.Native`; `Acknowledge` reports the polled
 revision/hash and health. The adapter keeps an independent assignment snapshot
 so callers cannot widen an assignment by editing returned values.
+
+`internal/grouppublisher.Runtime` owns the deployed replica lifecycle, including
+the explicit runtime start, renewal and stop. `native.NewGroup` remains a scoped
+assignment adapter; constructing it or polling during preflight does not claim
+that a remote process has started.
 
 The normalized document is bounded to 512 KiB, 128 services, 32 webhook endpoints,
 and 32 named groups.

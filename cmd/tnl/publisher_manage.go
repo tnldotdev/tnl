@@ -317,6 +317,7 @@ func runPublisherList(ctx context.Context, f publisherListCommand, output, diagn
 			state = "revoked"
 		}
 		fields := []clioutput.Field{{Label: "publisher", Value: p.Id}, {Label: "kind", Value: string(p.Kind)}, {Label: "state", Value: state}}
+		fields = append(fields, publisherRuntimeFields(p.Runtime)...)
 		for _, g := range p.Grants {
 			value := g.Id
 			if g.PublicUrlId != nil {

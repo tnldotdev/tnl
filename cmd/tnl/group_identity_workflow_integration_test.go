@@ -98,6 +98,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	if err != nil || retried != value || f.groupEnrollmentRequests.Load() != 2 {
 		t.Fatal("provision retry enrolled another member or changed the signing identity", err)
 	}
+	assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 0, false)
 	encoded, err := os.ReadFile(credential)
 	if err != nil {
 		t.Fatal(err)
@@ -161,6 +162,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			workflowWait(t, 15*time.Second, func() bool {
 				return inspect.QueryRow(t.Context(), `SELECT issuance.id FROM control.acme_orders issuance JOIN control.private_service_runs run ON run.id=issuance.private_run_id WHERE run.publisher_identity_id=$1 ORDER BY issuance.created_revision LIMIT 1`, value.Member.PublisherIdentityId).Scan(&firstIssuance) == nil
 			})
+			runtime := assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 1, true)
 			var oldRun string
 			var oldLease []byte
 			if err := inspect.QueryRow(t.Context(), `SELECT id FROM control.private_service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL`, value.Member.PublisherIdentityId).Scan(&oldRun); err != nil {
@@ -196,6 +198,9 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			if err := inspect.QueryRow(t.Context(), `SELECT token_digest FROM control.publisher_group_leases WHERE publisher_identity_id=$1`, value.Member.PublisherIdentityId).Scan(&keptLease); err != nil || !bytes.Equal(oldLease, keptLease) {
 				t.Fatal("provision rotated running task lease", err)
 			}
+			if kept := assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 1, true); kept.ProcessRunId != runtime.ProcessRunId {
+				t.Fatal("provision replaced running task observation")
+			}
 			statusOutput := cliCall(t, t.Context(), []string{"--config", configuration, "status", "--scope", "server", "--state-dir", person})
 			if !strings.Contains(string(statusOutput), "live") {
 				t.Fatal("status retained the old selector")
@@ -214,6 +219,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			if err := run(t.Context(), []string{"--no-config", "publisher", "serve", "--group", "production", "--project-key", applied.ProjectKey, "--instance", "replica-1", "--identity-file", wrongCredential, "--state-dir", task}, io.Discard, io.Discard); err == nil {
 				t.Fatal("invalid signing key fell back to the saved group identity")
 			}
+			assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 1, false)
 			if err := os.RemoveAll(task); err != nil {
 				t.Fatal(err)
 			}
@@ -232,6 +238,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		case <-time.After(25 * time.Second):
 			t.Fatal("restored identity did not run its assigned private publisher")
 		}
+		assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, int64(replacement+1), true)
 		if _, supplied := os.LookupEnv("TNL_GROUP_IDENTITY"); supplied {
 			t.Fatal("injected identity remains in the worker environment")
 		}
@@ -313,6 +320,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		case <-time.After(20 * time.Second):
 			t.Fatal("group worker did not join before task-state deletion")
 		}
+		assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, int64(replacement+1), false)
 		if err := os.RemoveAll(task); err != nil {
 			t.Fatal(err)
 		}
@@ -350,6 +358,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		jobs, err := registry.List(t.Context())
 		return err == nil && len(jobs) == 1 && jobs[0].Status.State == "ready"
 	})
+	assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 5, true)
 	var installedStatus bytes.Buffer
 	if err := writeSystemJobs(t.Context(), registry, &installedStatus, "tnl service status", job.ID); err != nil || !strings.Contains(installedStatus.String(), "live") {
 		t.Fatal("installed status retained old selector", err)
@@ -362,6 +371,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(supervisorDone)
+	assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 5, false)
 	if err := control.RevokePublisherGroupMember(t.Context(), team, applied.ProjectKey, "production", value.Member.PublisherIdentityId); err != nil {
 		t.Fatal(err)
 	}

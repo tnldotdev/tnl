@@ -22,13 +22,18 @@ type groupControl struct {
 	acks       chan controlv1.PublisherGroupAcknowledgement
 }
 
-func (c *groupControl) Lease(context.Context, controlv1.PublisherGroupMember, ed25519.PrivateKey) (controlv1.PublisherGroupLease, error) {
+func (c *groupControl) ServerURL() string { return "https://control.example" }
+func (c *groupControl) PublisherRuntime(_ context.Context, r controlv1.PublisherRuntimeRequest) (controlv1.PublisherRuntimeResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.fail {
-		return controlv1.PublisherGroupLease{}, controlclient.ErrUnavailable
+		return controlv1.PublisherRuntimeResponse{}, controlclient.ErrUnavailable
 	}
-	return controlv1.PublisherGroupLease{AccessToken: "group-lease", ExpiresAt: c.expires}, nil
+	epoch := r.ExpectedEpoch
+	if r.Action == controlv1.RuntimeStart {
+		epoch++
+	}
+	return controlv1.PublisherRuntimeResponse{Epoch: epoch, LeaseExpiresAt: &c.expires, GroupLease: &controlv1.PublisherGroupLease{AccessToken: "group-lease", ExpiresAt: c.expires}}, nil
 }
 func (c *groupControl) Assignments(context.Context, string) (controlv1.PublisherGroupAssignments, error) {
 	c.mu.Lock()

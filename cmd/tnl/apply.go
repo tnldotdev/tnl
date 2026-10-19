@@ -252,7 +252,9 @@ func appliedProjectBlocks(applied controlv1.AppliedProjectConfiguration) []cliou
 		blocks = append(blocks, clioutput.Section(service.Service, clioutput.Fields(clioutput.Field{Label: "publisher", Value: service.Publisher}, clioutput.Field{Label: "service ID", Value: id}, clioutput.Field{Label: "assignment", Value: string(service.ServiceKind)}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(service.DesiredRevision, 10)})))
 	}
 	for _, member := range applied.Members {
-		blocks = append(blocks, clioutput.Section(member.GroupName, clioutput.Fields(clioutput.Field{Label: "publisher ID", Value: member.PublisherIdentityId}, clioutput.Field{Label: "observed revision", Value: strconv.FormatInt(member.ObservedRevision, 10)}, clioutput.Field{Label: "healthy", Value: strconv.FormatBool(member.Healthy)})))
+		fields := []clioutput.Field{{Label: "publisher ID", Value: member.PublisherIdentityId}, {Label: "observed revision", Value: strconv.FormatInt(member.ObservedRevision, 10)}, {Label: "healthy", Value: strconv.FormatBool(member.Healthy)}}
+		fields = append(fields, publisherRuntimeFields(member.Runtime)...)
+		blocks = append(blocks, clioutput.Section(member.GroupName, clioutput.Fields(fields...)))
 	}
 	return blocks
 }

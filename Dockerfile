@@ -53,4 +53,4 @@ ENV TNL_STATE_DIR=/state
 WORKDIR /
 EXPOSE 8443/tcp 8443/udp 9090/tcp 9443/tcp 9444/tcp
 
-ENTRYPOINT ["/usr/local/bin/tnld"]
+ENTRYPOINT ["/usr/local/bin/tnl"]

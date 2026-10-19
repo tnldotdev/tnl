@@ -156,6 +156,7 @@ func publisherGrantResponse(g controlstatedb.ControlPublisherGrant) controlv1.Pu
 }
 
 func (h *handler) ListPublisherIdentities(w http.ResponseWriter, r *http.Request, params controlv1.ListPublisherIdentitiesParams) {
+	w.Header().Set("Cache-Control", "no-store")
 	store, _, editor, ok := h.publisherEditor(w, r, params.TeamId)
 	if !ok {
 		return
@@ -186,6 +187,7 @@ func (h *handler) ListPublisherIdentities(w http.ResponseWriter, r *http.Request
 		i := record.Identity
 		p := controlv1.PublisherIdentity{Id: i.ID, Name: i.Name, Kind: controlv1.PublisherIdentityKind(i.Kind), CreatedAt: i.CreatedAt.Time, Grants: []controlv1.PublisherGrant{}}
 		p.Ownership = controlv1.PublisherIdentityOwnership(i.Ownership)
+		p.Runtime = runtimeResponse(record.Runtime)
 		if i.OwnerMembershipID.Valid {
 			p.OwnerMembershipId = &i.OwnerMembershipID.String
 		}

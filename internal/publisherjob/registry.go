@@ -215,6 +215,11 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 			if existing.Server == job.Server && existing.Kind == job.Kind && (job.PublicURLID != "" && existing.PublicURLID == job.PublicURLID || job.PrivateServiceID != "" && existing.PrivateServiceID == job.PrivateServiceID) {
 				return ErrJobExists
 			}
+			// independently supervised jobs need independent runtime identities.
+			// one group job may publish many services with its one replica identity.
+			if existing.Server == job.Server && existing.PublisherID == job.PublisherID {
+				return ErrJobExists
+			}
 		}
 		if len(*jobs) >= 1024 {
 			return ErrScope

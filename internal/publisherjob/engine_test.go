@@ -66,10 +66,30 @@ func (a *jobAuthority) ExchangePublisherAssertion(_ context.Context, client, gra
 
 type jobControl struct {
 	nativeauth.NativeControl
-	publicURL controlv1.PublicURL
-	public    ed25519.PublicKey
-	runs      chan string
-	runError  error
+	publicURL       controlv1.PublicURL
+	public          ed25519.PublicKey
+	runs            chan string
+	runError        error
+	runtimeMu       sync.Mutex
+	runtimeRequests []controlv1.PublisherRuntimeRequest
+}
+
+func (c *jobControl) PublisherRuntime(_ context.Context, r controlv1.PublisherRuntimeRequest) (controlv1.PublisherRuntimeResponse, error) {
+	c.runtimeMu.Lock()
+	c.runtimeRequests = append(c.runtimeRequests, r)
+	c.runtimeMu.Unlock()
+	kid, err := publisheridentity.KeyID(r.Assertion)
+	if err != nil {
+		return controlv1.PublisherRuntimeResponse{}, err
+	}
+	if _, err = publisheridentity.Verify(r.Assertion, r.PublisherIdentityId, kid, publisheridentity.RuntimeScope(r.ScopeId, string(r.Action), r.ProcessRunId, r.ExpectedEpoch), "https://control.example/v1/publisher-runtime", c.public, time.Now()); err != nil {
+		return controlv1.PublisherRuntimeResponse{}, err
+	}
+	epoch := r.ExpectedEpoch
+	if r.Action == controlv1.RuntimeStart {
+		epoch++
+	}
+	return controlv1.PublisherRuntimeResponse{Epoch: epoch, LeaseExpiresAt: new(time.Now().Add(2 * time.Minute))}, nil
 }
 
 func (c *jobControl) PublisherPublicURL(context.Context, string) (controlv1.PublicURL, error) {
@@ -137,7 +157,9 @@ func TestRealNativeRunSignsWithTheSameKeyAfterBoot(t *testing.T) {
 	job.Target = target.URL
 	control, authority := jobBoundary(job, identity, private)
 	control.runError = errors.New("test ends after verified signed run creation")
+	var previousRun string
 	for boot := range 2 {
+		control.runtimeRequests = nil
 		control.runs = make(chan string, 32)
 		r, err := Open(t.Context(), options)
 		if err != nil {
@@ -160,6 +182,20 @@ func TestRealNativeRunSignsWithTheSameKeyAfterBoot(t *testing.T) {
 			t.Fatal("native publisher did not create a signed run")
 		}
 		joinEngine(t, cancel, done)
+		requests := control.runtimeRequests
+		if len(requests) < 3 || requests[0].Action != controlv1.RuntimeInspect || requests[1].Action != controlv1.RuntimeStart || requests[len(requests)-1].Action != controlv1.RuntimeStop {
+			t.Fatal("installed engine missed runtime start/stop")
+		}
+		run := requests[1].ProcessRunId
+		if run == previousRun {
+			t.Fatal("installed reboot reused runtime identity")
+		}
+		previousRun = run
+		for _, request := range requests {
+			if request.ProcessRunId != run || request.PublisherIdentityId != identity.ClientId || request.ScopeId != identity.GrantId {
+				t.Fatal("installed retry changed runtime ownership")
+			}
+		}
 		if err := r.Close(); err != nil {
 			t.Fatal(err)
 		}

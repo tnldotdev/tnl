@@ -296,6 +296,11 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 	}
 	cfg.Logf = output.logf
 	cfg.Observe = withTelemetryObserver(telemetry, telemetryPublish, server, nil, func(event publisher.Event) error { return handlePublisherEvent(ctx, tunnel, output, event) })
+	stopRuntime, err := startDeployedPublisher(ctx, native, server)
+	if err != nil {
+		return err
+	}
+	defer stopRuntime()
 	if err := publisher.Run(ctx, cfg); err != nil {
 		if cause := context.Cause(ctx); cause != nil {
 			return cause

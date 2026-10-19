@@ -849,6 +849,66 @@ func (e PublisherIdentityOwnership) Valid() bool {
 	}
 }
 
+// Defines values for PublisherRuntimeRequestAction.
+const (
+	RuntimeInspect PublisherRuntimeRequestAction = "inspect"
+	RuntimeRenew   PublisherRuntimeRequestAction = "renew"
+	RuntimeStart   PublisherRuntimeRequestAction = "start"
+	RuntimeStop    PublisherRuntimeRequestAction = "stop"
+)
+
+// Valid indicates whether the value is a known member of the PublisherRuntimeRequestAction enum.
+func (e PublisherRuntimeRequestAction) Valid() bool {
+	switch e {
+	case RuntimeInspect:
+		return true
+	case RuntimeRenew:
+		return true
+	case RuntimeStart:
+		return true
+	case RuntimeStop:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherRuntimeStatusAddressFamily.
+const (
+	Ipv4    PublisherRuntimeStatusAddressFamily = "ipv4"
+	Ipv6    PublisherRuntimeStatusAddressFamily = "ipv6"
+	Unknown PublisherRuntimeStatusAddressFamily = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the PublisherRuntimeStatusAddressFamily enum.
+func (e PublisherRuntimeStatusAddressFamily) Valid() bool {
+	switch e {
+	case Ipv4:
+		return true
+	case Ipv6:
+		return true
+	case Unknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublisherRuntimeStatusEvidence.
+const (
+	ControlObserved PublisherRuntimeStatusEvidence = "control_observed"
+)
+
+// Valid indicates whether the value is a known member of the PublisherRuntimeStatusEvidence enum.
+func (e PublisherRuntimeStatusEvidence) Valid() bool {
+	switch e {
+	case ControlObserved:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadinessResponseChecksControl.
 const (
 	ReadinessResponseChecksControlFailed ReadinessResponseChecksControl = "failed"
@@ -2709,7 +2769,10 @@ type PublisherGroupMemberStatus struct {
 	ObservedRevision    int64      `json:"observed_revision"`
 	ProjectKey          string     `json:"project_key"`
 	PublisherIdentityId string     `json:"publisher_identity_id"`
-	TeamId              string     `json:"team_id"`
+
+	// Runtime Latest explicitly started runtime for this immutable publisher identity. A single bounded record survives stop and lease expiry. Active describes the runtime lease, not target reachability or a permanent static IP. Control egress may differ from database-target routing, address family, or NAT. This evidence never grants access or configures an allowlist.
+	Runtime *PublisherRuntimeStatus `json:"runtime,omitempty"`
+	TeamId  string                  `json:"team_id"`
 }
 
 // PublisherGroupServiceAssignment defines model for PublisherGroupServiceAssignment.
@@ -2742,6 +2805,9 @@ type PublisherIdentity struct {
 	OwnerMembershipId *MembershipID              `json:"owner_membership_id,omitempty"`
 	Ownership         PublisherIdentityOwnership `json:"ownership"`
 	RevokedAt         *time.Time                 `json:"revoked_at,omitempty"`
+
+	// Runtime Latest explicitly started runtime for this immutable publisher identity. A single bounded record survives stop and lease expiry. Active describes the runtime lease, not target reachability or a permanent static IP. Control egress may differ from database-target routing, address family, or NAT. This evidence never grants access or configures an allowlist.
+	Runtime *PublisherRuntimeStatus `json:"runtime,omitempty"`
 }
 
 // PublisherIdentityKind defines model for PublisherIdentity.Kind.
@@ -2755,6 +2821,53 @@ type PublisherIdentityPage struct {
 	Identities []PublisherIdentity `json:"identities"`
 	NextCursor *ResourceID         `json:"next_cursor,omitempty"`
 }
+
+// PublisherRuntimeRequest defines model for PublisherRuntimeRequest.
+type PublisherRuntimeRequest struct {
+	Action              PublisherRuntimeRequestAction `json:"action"`
+	Assertion           string                        `json:"assertion"`
+	ExpectedEpoch       int64                         `json:"expected_epoch"`
+	ProcessRunId        string                        `json:"process_run_id"`
+	PublisherIdentityId string                        `json:"publisher_identity_id"`
+
+	// ScopeId Immutable group ID for a group replica, or an exact live grant ID for an installed publisher.
+	ScopeId string `json:"scope_id"`
+}
+
+// PublisherRuntimeRequestAction defines model for PublisherRuntimeRequest.Action.
+type PublisherRuntimeRequestAction string
+
+// PublisherRuntimeResponse defines model for PublisherRuntimeResponse.
+type PublisherRuntimeResponse struct {
+	Epoch          int64                `json:"epoch"`
+	GroupLease     *PublisherGroupLease `json:"group_lease,omitempty"`
+	LeaseExpiresAt *time.Time           `json:"lease_expires_at,omitempty"`
+}
+
+// PublisherRuntimeStatus Latest explicitly started runtime for this immutable publisher identity. A single bounded record survives stop and lease expiry. Active describes the runtime lease, not target reachability or a permanent static IP. Control egress may differ from database-target routing, address family, or NAT. This evidence never grants access or configures an allowlist.
+type PublisherRuntimeStatus struct {
+	Active bool `json:"active"`
+
+	// Address Canonical public routable IPv4 or IPv6 host, never a CIDR. Absent for private or non-routable sources.
+	Address             *string                             `json:"address,omitempty"`
+	AddressFamily       PublisherRuntimeStatusAddressFamily `json:"address_family"`
+	Epoch               int64                               `json:"epoch"`
+	Evidence            PublisherRuntimeStatusEvidence      `json:"evidence"`
+	LastSeenAt          time.Time                           `json:"last_seen_at"`
+	LeaseExpiresAt      time.Time                           `json:"lease_expires_at"`
+	ObservedAt          time.Time                           `json:"observed_at"`
+	ProcessRunId        string                              `json:"process_run_id"`
+	PublisherIdentityId string                              `json:"publisher_identity_id"`
+	StartedAt           time.Time                           `json:"started_at"`
+	StoppedAt           *time.Time                          `json:"stopped_at,omitempty"`
+	TeamId              string                              `json:"team_id"`
+}
+
+// PublisherRuntimeStatusAddressFamily defines model for PublisherRuntimeStatus.AddressFamily.
+type PublisherRuntimeStatusAddressFamily string
+
+// PublisherRuntimeStatusEvidence defines model for PublisherRuntimeStatus.Evidence.
+type PublisherRuntimeStatusEvidence string
 
 // PublisherShare defines model for PublisherShare.
 type PublisherShare struct {
@@ -3624,6 +3737,9 @@ type VerifyPublisherGroupIdentityJSONRequestBody = PublisherGroupLeaseRequest
 
 // CreatePublisherGrantJSONRequestBody defines body for CreatePublisherGrant for application/json ContentType.
 type CreatePublisherGrantJSONRequestBody = CreatePublisherGrantRequest
+
+// ObservePublisherRuntimeJSONRequestBody defines body for ObservePublisherRuntime for application/json ContentType.
+type ObservePublisherRuntimeJSONRequestBody = PublisherRuntimeRequest
 
 // AllocatePublisherPublicURLJSONRequestBody defines body for AllocatePublisherPublicURL for application/json ContentType.
 type AllocatePublisherPublicURLJSONRequestBody = AllocateEphemeralPublicURLRequest
@@ -4729,6 +4845,18 @@ type ClientInterface interface {
 
 	// RevokePublisherGrant performs a DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId) request.
 	RevokePublisherGrant(ctx context.Context, publisherIdentityId PublisherIdentityID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ObservePublisherRuntimeWithBody performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+	ObservePublisherRuntimeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ObservePublisherRuntime performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+	ObservePublisherRuntime(ctx context.Context, body ObservePublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetPublisherPrivateService performs a GET /v1/publisher/private-service (the `GetPublisherPrivateService` operationId) request.
 	//
@@ -7540,6 +7668,38 @@ func (c *Client) CreatePublisherGrant(ctx context.Context, publisherIdentityId P
 // RevokePublisherGrant performs a DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id} (the `RevokePublisherGrant` operationId) request.
 func (c *Client) RevokePublisherGrant(ctx context.Context, publisherIdentityId PublisherIdentityID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokePublisherGrantRequest(c.Server, publisherIdentityId, grantId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ObservePublisherRuntimeWithBody performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request,
+// with any type of body and a specified content type.
+//
+// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+func (c *Client) ObservePublisherRuntimeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewObservePublisherRuntimeRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ObservePublisherRuntime performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+func (c *Client) ObservePublisherRuntime(ctx context.Context, body ObservePublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewObservePublisherRuntimeRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13287,6 +13447,46 @@ func NewRevokePublisherGrantRequest(server string, publisherIdentityId Publisher
 	return req, nil
 }
 
+// NewObservePublisherRuntimeRequest calls the generic ObservePublisherRuntime builder with application/json body
+func NewObservePublisherRuntimeRequest(server string, body ObservePublisherRuntimeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewObservePublisherRuntimeRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewObservePublisherRuntimeRequestWithBody constructs an http.Request for the ObservePublisherRuntime method, with any body, and a specified content type
+func NewObservePublisherRuntimeRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher-runtime")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetPublisherPrivateServiceRequest constructs an http.Request for the GetPublisherPrivateService method
 func NewGetPublisherPrivateServiceRequest(server string) (*http.Request, error) {
 	var err error
@@ -15232,6 +15432,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RevokePublisherGrantWithResponse(ctx context.Context, publisherIdentityId PublisherIdentityID, grantId ResourceID, params *RevokePublisherGrantParams, reqEditors ...RequestEditorFn) (*RevokePublisherGrantResponse, error)
+
+	// ObservePublisherRuntimeWithBodyWithResponse performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ObservePublisherRuntimeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObservePublisherRuntimeResponse, error)
+
+	// ObservePublisherRuntimeWithResponse performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+	ObservePublisherRuntimeWithResponse(ctx context.Context, body ObservePublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*ObservePublisherRuntimeResponse, error)
 
 	// GetPublisherPrivateServiceWithResponse performs a GET /v1/publisher/private-service (the `GetPublisherPrivateService` operationId) request.
 	//
@@ -20518,6 +20732,54 @@ func (r RevokePublisherGrantResponse) ContentType() string {
 	return ""
 }
 
+type ObservePublisherRuntimeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherRuntimeResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ObservePublisherRuntimeResponse) GetJSON200() *PublisherRuntimeResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ObservePublisherRuntimeResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ObservePublisherRuntimeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ObservePublisherRuntimeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ObservePublisherRuntimeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ObservePublisherRuntimeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetPublisherPrivateServiceResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -23543,6 +23805,32 @@ func (c *ClientWithResponses) RevokePublisherGrantWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseRevokePublisherGrantResponse(rsp)
+}
+
+// ObservePublisherRuntimeWithBodyWithResponse performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request,
+// with any type of body and a specified content type.
+//
+// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ObservePublisherRuntimeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ObservePublisherRuntimeResponse, error) {
+	rsp, err := c.ObservePublisherRuntimeWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseObservePublisherRuntimeResponse(rsp)
+}
+
+// ObservePublisherRuntimeWithResponse performs a POST /v1/publisher-runtime (the `ObservePublisherRuntime` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Explicit remote runtime lifecycle, independent of enrollment, verification, and identity kind. A one-use Ed25519 assertion binds scope_id, action, process_run_id and expected_epoch through the runtime proof scope, with this path as its audience. Inspect reads the current epoch without recording an address. Start compares that epoch and installs a new process run; retries retain that run and epoch. Renew and stop require the current run and epoch. Control records only the validated request source, never a body address. Group start/renew also issue the existing group lease atomically.
+func (c *ClientWithResponses) ObservePublisherRuntimeWithResponse(ctx context.Context, body ObservePublisherRuntimeJSONRequestBody, reqEditors ...RequestEditorFn) (*ObservePublisherRuntimeResponse, error) {
+	rsp, err := c.ObservePublisherRuntime(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseObservePublisherRuntimeResponse(rsp)
 }
 
 // GetPublisherPrivateServiceWithResponse performs a GET /v1/publisher/private-service (the `GetPublisherPrivateService` operationId) request.
@@ -27371,6 +27659,39 @@ func ParseRevokePublisherGrantResponse(rsp *http.Response) (*RevokePublisherGran
 	return response, nil
 }
 
+// ParseObservePublisherRuntimeResponse parses an HTTP response from a ObservePublisherRuntimeWithResponse call
+func ParseObservePublisherRuntimeResponse(rsp *http.Response) (*ObservePublisherRuntimeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ObservePublisherRuntimeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherRuntimeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetPublisherPrivateServiceResponse parses an HTTP response from a GetPublisherPrivateServiceWithResponse call
 func ParseGetPublisherPrivateServiceResponse(rsp *http.Response) (*GetPublisherPrivateServiceResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -28315,6 +28636,9 @@ type ServerInterface interface {
 
 	// (DELETE /v1/publisher-identities/{publisher_identity_id}/grants/{grant_id})
 	RevokePublisherGrant(w http.ResponseWriter, r *http.Request, publisherIdentityId PublisherIdentityID, grantId ResourceID, params RevokePublisherGrantParams)
+
+	// (POST /v1/publisher-runtime)
+	ObservePublisherRuntime(w http.ResponseWriter, r *http.Request)
 
 	// (GET /v1/publisher/private-service)
 	GetPublisherPrivateService(w http.ResponseWriter, r *http.Request)
@@ -32176,6 +32500,20 @@ func (siw *ServerInterfaceWrapper) RevokePublisherGrant(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// ObservePublisherRuntime operation middleware
+func (siw *ServerInterfaceWrapper) ObservePublisherRuntime(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ObservePublisherRuntime(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetPublisherPrivateService operation middleware
 func (siw *ServerInterfaceWrapper) GetPublisherPrivateService(w http.ResponseWriter, r *http.Request) {
 
@@ -32853,6 +33191,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/enrollments", wrapper.CreatePublisherGroupEnrollment)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/enroll", wrapper.RedeemPublisherGroupEnrollment)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/verify", wrapper.VerifyPublisherGroupIdentity)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-runtime", wrapper.ObservePublisherRuntime)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/lease", wrapper.AcquirePublisherGroupLease)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher-groups/assignments", wrapper.GetPublisherGroupAssignments)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/ack", wrapper.AcknowledgePublisherGroupConfiguration)

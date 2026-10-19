@@ -1269,6 +1269,23 @@ type ControlPublisherNamespaceRename struct {
 	StorageKeyID       string
 }
 
+type ControlPublisherRuntime struct {
+	PublisherIdentityID string
+	TeamID              string
+	KeyID               string
+	ScopeID             string
+	ProcessRunID        string
+	Epoch               int64
+	Address             pgtype.Text
+	AddressFamily       string
+	Evidence            string
+	StartedAt           pgtype.Timestamptz
+	ObservedAt          pgtype.Timestamptz
+	LastSeenAt          pgtype.Timestamptz
+	LeaseExpiresAt      pgtype.Timestamptz
+	StoppedAt           pgtype.Timestamptz
+}
+
 type ControlPublisherServiceConnectionSlot struct {
 	ID                                     int64
 	RunID                                  string

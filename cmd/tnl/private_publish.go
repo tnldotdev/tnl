@@ -363,6 +363,13 @@ func runPrivatePublish(ctx context.Context, flags publishCommand, output, diagno
 	if err := emit("starting"); err != nil {
 		return err
 	}
+	if selected != 0 {
+		stopRuntime, err := startDeployedPublisher(ctx, native, server)
+		if err != nil {
+			return err
+		}
+		defer stopRuntime()
+	}
 	err = publisherjob.PublishPrivate(ctx, job, privatepublisher.RunConfig{Control: native, State: profile, Access: native.Access, Identity: identity, PrivateServiceID: job.PrivateServiceID, Target: target, Metadata: nativeauth.PrivateServiceMetadata(approved), StreamCapacity: int32(job.Limits.Concurrency),
 		Ready: func() error {
 			detachedPublicationReady(ctx)

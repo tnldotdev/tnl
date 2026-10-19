@@ -22,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/privatepublisher"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
+	"github.com/tnldotdev/tnl/internal/publisherruntime"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -195,6 +196,14 @@ func (e Engine) Serve(ctx context.Context) error {
 }
 
 func (e Engine) run(ctx context.Context, job Job) {
+	var runtime *publisherruntime.Owner
+	defer func() {
+		if runtime != nil {
+			finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = runtime.Stop(finish)
+		}
+	}()
 	backoff := e.RetryMin
 	var attempts uint64
 	for ctx.Err() == nil {
@@ -202,7 +211,7 @@ func (e Engine) run(ctx context.Context, job Job) {
 		if err := e.Registry.status(ctx, job.ID, job.Revision, Status{State: "starting", Attempts: attempts}); err != nil {
 			return
 		}
-		ready, err := e.attempt(ctx, job, attempts)
+		ready, err := e.attempt(ctx, job, attempts, &runtime)
 		if ctx.Err() != nil {
 			return
 		}
@@ -260,7 +269,7 @@ func safeFailure(err error) string {
 	return "publication unavailable"
 }
 
-func (e Engine) attempt(ctx context.Context, job Job, attempts uint64) (bool, error) {
+func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime **publisherruntime.Owner) (bool, error) {
 	if err := validateJob(&job); err != nil {
 		return false, err
 	}
@@ -302,6 +311,16 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64) (bool, er
 	if err != nil {
 		return false, err
 	}
+	if *runtime == nil {
+		*runtime, err = native.RemoteRuntime(job.Server)
+		if err != nil {
+			return false, err
+		}
+	}
+	if _, err := (*runtime).Renew(ctx); err != nil {
+		return false, err
+	}
+	native.WithRuntime(*runtime)
 	if job.Kind == KindPrivateService {
 		service, err := native.SavedPrivateService(ctx)
 		if err != nil {

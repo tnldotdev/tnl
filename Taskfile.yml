@@ -251,6 +251,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/controlstate/controlstatedb -run='^TestIntegration(Private|AppliedProject|PublisherGroup|ServiceAudit|Infrastructure)' -count=1 -timeout=10m -args -tnl-test-tier=integration
 
+  go:test:integration:publisher-egress:
+    desc: Check signed publisher runtime egress and trusted proxy evidence in disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/controlstate -run='^TestIntegrationPublisherRuntime' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
   go:test:integration:private-topology:
     desc: Verify private visitor lifecycle through separated and standalone roles
     cmds:
@@ -306,6 +311,14 @@ tasks:
     cmds:
       - go test -race -v ./internal/publishertarget -run='^TestComposeIntegrationHostTargets$' -count=1 -timeout=8m -args -tnl-compose-integration
 
+  deploy:publishers:check:
+    desc: Validate publisher templates, TypeScript contracts, and CloudFormation schemas without AWS
+    cmds:
+      - pnpm exec vitest run deploy/publishers/fargate.test.ts
+      - pnpm exec tsc --project deploy/publishers/tsconfig.json
+      - pnpm exec oxlint --deny-warnings --report-unused-disable-directives deploy/publishers/*.ts
+      - uvx --from cfn-lint==1.40.2 cfn-lint --regions us-east-1 --template deploy/publishers/fargate.yaml
+
   go:test:publisher-identity:
     desc: Check the portable group identity file and injected-secret contract
     cmds:
@@ -317,6 +330,11 @@ tasks:
       - go test -race ./internal/clientstate -run='^Test(Certificate|PublisherCertificate|PublisherHostname|DurablePublisher|PrivateDirectory)' -count=1
       - go test -race ./internal/publisheridentity/credentialfile -count=1
       - go test -race ./internal/publisherjob -run='^TestInstalledGroup' -count=1
+
+  go:test:integration:publisher-replacement:
+    desc: Restore one publisher identity after deleting task-local SQLite, using disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./deploy/publishers -run='^TestIntegrationPublisherIdentitySurvivesTaskStateDeletion$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   go:test:integration:dns:
     desc: Run the authoritative DNS integration test in disposable Linux containers

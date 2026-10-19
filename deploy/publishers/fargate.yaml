@@ -1,0 +1,240 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: One externally managed tnl publisher group member with durable identity files on a private EFS access point and task-local runtime SQLite.
+
+Parameters:
+  ControlURL:
+    Type: String
+    AllowedPattern: "https://[a-z0-9.-]+(:[0-9]+)?"
+    Description: HTTPS control origin, without a trailing slash.
+  ProjectKey:
+    Type: String
+    AllowedPattern: "[a-z0-9][a-z0-9-]{0,62}"
+    Description: Project key returned by tnl apply.
+  Group:
+    Type: String
+    AllowedPattern: "(?!local$)[a-z0-9]+(-[a-z0-9]+)*"
+    MaxLength: 63
+  Instance:
+    Type: String
+    Default: replica-1
+    AllowedPattern: "[a-z0-9]+(-[a-z0-9]+)*"
+    MaxLength: 63
+  PublisherImage:
+    Type: String
+    AllowedPattern: "[a-z0-9.-]+(:[0-9]+)?/[a-z0-9._/-]+@sha256:[a-f0-9]{64}"
+    Description: Publicly pullable tnl image by digest; tags are rejected. Must contain /usr/local/bin/tnl and private /state owned by 65532.
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnets with access to EFS mount targets, control, relays, targets, image registry, Secrets Manager, and CloudWatch Logs.
+  SecurityGroupIds:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: Existing egress-only security groups in the subnets' VPC; no inbound rules are needed.
+  IdentityFileSystemId:
+    Type: String
+    AllowedPattern: "fs-[0-9a-f]{8,40}"
+    Description: Existing encrypted Regional EFS filesystem. Provide reachable mount targets and permit TCP 2049 from the task security groups. This stack creates a replica-private access point.
+  IdentitySecretArn:
+    Type: String
+    AllowedPattern: "arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+"
+    Description: Replica-private JSON from tnl publisher provision --group, never an enrollment key or person session. Do not reuse across services.
+  IdentitySecretVersion:
+    Type: String
+    AllowedPattern: "[A-Za-z0-9-]{32,64}"
+    Description: Pinned identity secret version ID; every replacement reuses this same member and key.
+  IdentityKMSKeyArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "(arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key/[a-zA-Z0-9-]+)?"
+    Description: Customer-managed key ARN if the identity secret uses one; empty for the default Secrets Manager key.
+  DesiredCount:
+    Type: Number
+    Default: 1
+    AllowedValues: [0, 1]
+    Description: Zero stops this replica; one runs it with automatic replacement. Each replica needs its own stack, instance name, and identity secret.
+
+Conditions:
+  HasIdentityKMSKey:
+    Fn::Not:
+      - Fn::Equals: [{ Ref: IdentityKMSKeyArn }, ""]
+
+Resources:
+  IdentityAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      FileSystemId: { Ref: IdentityFileSystemId }
+      PosixUser: { Uid: "65532", Gid: "65532" }
+      RootDirectory:
+        Path: { Fn::Sub: "/tnl/${AWS::StackName}" }
+        CreationInfo:
+          OwnerUid: "65532"
+          OwnerGid: "65532"
+          Permissions: "0700"
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  Logs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RetentionInDays: 30
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: identity-and-logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: { Ref: IdentitySecretArn }
+                Condition:
+                  StringEquals:
+                    secretsmanager:VersionId: { Ref: IdentitySecretVersion }
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: { Fn::GetAtt: [Logs, Arn] }
+              - Fn::If:
+                  - HasIdentityKMSKey
+                  - Effect: Allow
+                    Action: kms:Decrypt
+                    Resource: { Ref: IdentityKMSKeyArn }
+                    Condition:
+                      StringEquals:
+                        kms:ViaService:
+                          Fn::Sub: secretsmanager.${AWS::Region}.${AWS::URLSuffix}
+                        kms:EncryptionContext:SecretARN: { Ref: IdentitySecretArn }
+                  - { Ref: AWS::NoValue }
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: private-identity-files
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite]
+                Resource:
+                  {
+                    Fn::Sub: "arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${IdentityFileSystemId}",
+                  }
+                Condition:
+                  StringEquals:
+                    elasticfilesystem:AccessPointArn: { Fn::GetAtt: [IdentityAccessPoint, Arn] }
+                  Bool: { "aws:SecureTransport": "true" }
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Cpu: "256"
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: { Fn::GetAtt: [ExecutionRole, Arn] }
+      TaskRoleArn: { Fn::GetAtt: [TaskRole, Arn] }
+      Volumes:
+        - Name: identity
+          EFSVolumeConfiguration:
+            FilesystemId: { Ref: IdentityFileSystemId }
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: { Ref: IdentityAccessPoint }
+              IAM: ENABLED
+      ContainerDefinitions:
+        - Name: publisher
+          Essential: true
+          Image: { Ref: PublisherImage }
+          User: "65532:65532"
+          EntryPoint: [/usr/local/bin/tnl]
+          Command:
+            - --no-config
+            - publisher
+            - serve
+            - --server
+            - { Ref: ControlURL }
+            - --project-key
+            - { Ref: ProjectKey }
+            - --group
+            - { Ref: Group }
+            - --state-dir
+            - /state
+            - --instance
+            - { Ref: Instance }
+            - --identity-dir
+            - /identity
+          MountPoints:
+            - SourceVolume: identity
+              ContainerPath: /identity
+              ReadOnly: false
+          Secrets:
+            - Name: TNL_GROUP_IDENTITY
+              ValueFrom:
+                Fn::Sub: "${IdentitySecretArn}:::${IdentitySecretVersion}"
+          LinuxParameters:
+            Capabilities:
+              Drop: [ALL]
+          StopTimeout: 120
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: { Ref: Logs }
+              awslogs-region: { Ref: AWS::Region }
+              awslogs-stream-prefix: publisher
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: { Ref: Cluster }
+      TaskDefinition: { Ref: TaskDefinition }
+      DesiredCount: { Ref: DesiredCount }
+      LaunchType: FARGATE
+      PlatformVersion: "1.4.0"
+      EnableExecuteCommand: false
+      AvailabilityZoneRebalancing: DISABLED
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: false
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: { Ref: Subnets }
+          SecurityGroups: { Ref: SecurityGroupIds }
+
+Outputs:
+  IdentityAccessPoint:
+    Value: { Fn::GetAtt: [IdentityAccessPoint, Arn] }
+  Cluster:
+    Value: { Ref: Cluster }
+  Service:
+    Value: { Fn::GetAtt: [Service, Name] }
+  LogGroup:
+    Value: { Ref: Logs }

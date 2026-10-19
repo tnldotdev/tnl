@@ -191,9 +191,9 @@ project's groups. Enrollment capacity and key expiry are distinct from runtime
 capacity and the enrolled member's lifetime.
 
 The publisher generates and retains its signing key. Control stores the public
-key and exact project/group membership. Signed assertions acquire short-lived
-group leases; those leases authorize assignment reads and acknowledgements for
-that group only. Assignment responses include exact service IDs and grants,
+key and exact project/group membership. Explicit signed runtime start and renewal
+acquire short-lived group leases; those leases authorize assignment reads and
+acknowledgements for that group only. Assignment responses include exact service IDs and grants,
 the applied revision/hash, and approved trust revisions. A member cannot use a
 group lease to read another group's targets or publish another service.
 
@@ -228,6 +228,11 @@ by name. imports update the typed member document and its sealed-key context in
 one SQLite transaction and reject replacement identities or signing keys.
 
 ## recover publisher certificates
+
+remote runtimes also maintain one [control-observed egress record](publisher-egress.md)
+per replica, refreshed by their existing lease loop. server status retains its
+last address and timestamps after stop or lease expiry. provisioning and identity
+verification do not record the operator's address.
 
 the [Fargate template](../../deploy/publishers/readme.md) mounts a replica-private
 EFS access point at `/identity` and keeps runtime SQLite and its wrapping key in

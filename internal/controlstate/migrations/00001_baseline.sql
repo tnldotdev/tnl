@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2301,6 +2301,30 @@ CREATE TABLE control.publisher_group_service_grants (
     PRIMARY KEY (publisher_identity_id, team_id, project_key, service),
     FOREIGN KEY (team_id, project_key, service) REFERENCES control.applied_project_services(team_id, project_key, service) ON DELETE RESTRICT,
     FOREIGN KEY (grant_id, publisher_identity_id) REFERENCES control.publisher_grants(id, publisher_identity_id) ON DELETE RESTRICT
+);
+
+-- one current epoch per immutable replica, not one row per service or heartbeat.
+-- retain the final observation after orderly stop, expiry, or revocation.
+CREATE TABLE control.publisher_runtimes (
+    publisher_identity_id text PRIMARY KEY,
+    team_id text NOT NULL,
+    key_id text NOT NULL,
+    scope_id text NOT NULL,
+    process_run_id text NOT NULL CHECK (process_run_id ~ '^[a-f0-9]{32}$'),
+    epoch bigint NOT NULL CHECK (epoch > 0),
+    address text,
+    address_family text NOT NULL CHECK (address_family IN ('ipv4','ipv6','unknown')),
+    evidence text NOT NULL DEFAULT 'control_observed' CHECK (evidence = 'control_observed'),
+    started_at timestamptz NOT NULL,
+    observed_at timestamptz NOT NULL,
+    last_seen_at timestamptz NOT NULL,
+    lease_expires_at timestamptz NOT NULL,
+    stopped_at timestamptz,
+    FOREIGN KEY (publisher_identity_id,team_id) REFERENCES control.publisher_identities(id,team_id) ON DELETE CASCADE,
+    FOREIGN KEY (key_id,publisher_identity_id) REFERENCES control.publisher_identity_keys(id,publisher_identity_id) ON DELETE RESTRICT,
+    CHECK ((address IS NULL) = (address_family = 'unknown')),
+    CHECK (address IS NULL OR (address = host(address::inet) AND masklen(address::inet) = CASE family(address::inet) WHEN 4 THEN 32 ELSE 128 END
+        AND address_family = CASE family(address::inet) WHEN 4 THEN 'ipv4' ELSE 'ipv6' END))
 );
 
 -- a group identity can never acquire a namespace or an unrelated exact grant,

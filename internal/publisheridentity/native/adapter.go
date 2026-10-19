@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisheridentity"
+	"github.com/tnldotdev/tnl/internal/publisherruntime"
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -48,6 +49,7 @@ type Native struct {
 	private   ed25519.PrivateKey
 	route     controlv1.PublicURL
 	traffic   *trafficlimits.Selection
+	runtime   *publisherruntime.Owner
 }
 
 func NewNative(control NativeControl, authority AssertionExchanger, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) (*Native, error) {

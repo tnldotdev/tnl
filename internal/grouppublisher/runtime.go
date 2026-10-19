@@ -12,13 +12,15 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/privatepublisher"
+	"github.com/tnldotdev/tnl/internal/publisherruntime"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 var ErrAssignment = errors.New("publisher group assignment does not match the enrolled project, group or revision")
 
 type Control interface {
-	Lease(context.Context, controlv1.PublisherGroupMember, ed25519.PrivateKey) (controlv1.PublisherGroupLease, error)
+	publisherruntime.Control
+	ServerURL() string
 	Assignments(context.Context, string) (controlv1.PublisherGroupAssignments, error)
 	Acknowledge(context.Context, string, controlv1.PublisherGroupAcknowledgement) error
 }
@@ -58,6 +60,15 @@ func (r Runtime) Serve(ctx context.Context) error {
 		return ErrAssignment
 	}
 	workers := map[string]*running{}
+	owner, err := publisherruntime.New(r.Control, r.Control.ServerURL(), r.Member.PublisherIdentityId, r.Member.KeyId, r.Member.GroupId, r.Private)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = owner.Stop(finish)
+	}()
 	var mu sync.Mutex
 	stop := func() {
 		for _, w := range workers {
@@ -90,7 +101,11 @@ func (r Runtime) Serve(ctx context.Context) error {
 	}
 	for ctx.Err() == nil {
 		if time.Until(lease.ExpiresAt) <= 2*r.PollInterval {
-			next, err := r.Control.Lease(ctx, r.Member, r.Private)
+			response, err := owner.Renew(ctx)
+			var next controlv1.PublisherGroupLease
+			if response.GroupLease != nil {
+				next = *response.GroupLease
+			}
 			if err != nil && !temporary(err) && ctx.Err() == nil {
 				return err
 			}

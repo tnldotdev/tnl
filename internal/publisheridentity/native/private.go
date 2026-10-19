@@ -116,7 +116,11 @@ func (n *Native) HeartbeatPrivateServiceRun(ctx context.Context, serviceID, runI
 	if err != nil {
 		return controlv1.PrivateServiceRunState{}, err
 	}
-	return control.HeartbeatPrivateServiceRun(ctx, serviceID, runID, token)
+	r, err := control.HeartbeatPrivateServiceRun(ctx, serviceID, runID, token)
+	if err == nil {
+		err = n.renewRuntime(ctx)
+	}
+	return r, err
 }
 
 func (n *Native) HeartbeatPrivateServiceRunHealth(ctx context.Context, serviceID, runID string, token credentials.PublishRunToken, health controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error) {
@@ -124,7 +128,11 @@ func (n *Native) HeartbeatPrivateServiceRunHealth(ctx context.Context, serviceID
 	if err != nil {
 		return controlv1.PrivateServiceRunState{}, err
 	}
-	return control.HeartbeatPrivateServiceRunHealth(ctx, serviceID, runID, token, health)
+	r, err := control.HeartbeatPrivateServiceRunHealth(ctx, serviceID, runID, token, health)
+	if err == nil {
+		err = n.renewRuntime(ctx)
+	}
+	return r, err
 }
 
 func (n *Native) ClosePrivateServiceRun(ctx context.Context, serviceID, runID string, token credentials.PublishRunToken) error {

@@ -11,6 +11,7 @@ import (
 type PublisherRecord struct {
 	Identity controlstatedb.ControlPublisherIdentity
 	Grants   []controlstatedb.ControlPublisherGrant
+	Runtime  *PublisherRuntimeStatus
 }
 type PublisherIdentityPage struct {
 	Identities []PublisherRecord
@@ -27,7 +28,11 @@ func (d *Database) PublisherIdentityRecord(ctx context.Context, team, id string)
 		return PublisherRecord{}, ErrPublisherIdentity
 	}
 	g, err := q.ListPublisherGrants(ctx, id)
-	return PublisherRecord{i, g}, err
+	if err != nil {
+		return PublisherRecord{}, err
+	}
+	runtime, err := publisherRuntimeStatus(ctx, q, id, time.Now())
+	return PublisherRecord{Identity: i, Grants: g, Runtime: runtime}, err
 }
 
 func (d *Database) ListPublisherIdentities(ctx context.Context, team, after string) (PublisherIdentityPage, error) {
@@ -42,7 +47,11 @@ func (d *Database) ListPublisherIdentities(ctx context.Context, team, after stri
 		if err != nil {
 			return PublisherIdentityPage{}, err
 		}
-		page.Identities = append(page.Identities, PublisherRecord{i, grants})
+		runtime, err := publisherRuntimeStatus(ctx, q, i.ID, time.Now())
+		if err != nil {
+			return PublisherIdentityPage{}, err
+		}
+		page.Identities = append(page.Identities, PublisherRecord{Identity: i, Grants: grants, Runtime: runtime})
 	}
 	if len(rows) > 100 {
 		page.NextCursor = rows[99].ID

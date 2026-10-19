@@ -152,6 +152,20 @@ func TestRegistryConcurrentProcessesDoNotLoseJobs(t *testing.T) {
 	}
 }
 
+func TestInstalledJobsCannotShareOneRuntimeIdentity(t *testing.T) {
+	r := testRegistry(t)
+	first, identity, private := fixture(t, "first-runtime")
+	if err := r.Install(t.Context(), first, identity, private); err != nil {
+		t.Fatal(err)
+	}
+	second, other, _ := fixture(t, "second-runtime")
+	second.PublisherID = first.PublisherID
+	other.ClientId, other.KeyId = identity.ClientId, identity.KeyId
+	if err := r.Install(t.Context(), second, other, private); !errors.Is(err, ErrJobExists) {
+		t.Fatal("two independently supervised jobs accepted the same runtime identity", err)
+	}
+}
+
 func TestInstallRetryRefreshesSettingsWithoutReplacingScopeOrKey(t *testing.T) {
 	r := testRegistry(t)
 	job, identity, private := fixture(t, "one")

@@ -604,6 +604,31 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PublisherGroupVerification" }
         default: { $ref: "#/components/responses/Problem" }
+  /v1/publisher-runtime:
+    post:
+      operationId: observePublisherRuntime
+      security: []
+      description: >-
+        Explicit remote runtime lifecycle, independent of enrollment, verification,
+        and identity kind. A one-use Ed25519 assertion binds scope_id, action,
+        process_run_id and expected_epoch through the runtime proof scope, with
+        this path as its audience. Inspect reads the current epoch without recording
+        an address. Start compares that epoch and installs a new process run;
+        retries retain that run and epoch. Renew and stop require the current run
+        and epoch. Control records only the validated request source, never a body
+        address. Group start/renew also issue the existing group lease atomically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublisherRuntimeRequest" }
+      responses:
+        "200":
+          description: Current runtime epoch and optional group lease
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublisherRuntimeResponse" }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/publisher-groups/lease:
     post:
       operationId: acquirePublisherGroupLease
@@ -3049,6 +3074,69 @@ components:
             observed_revision: { type: integer, format: int64 }
             healthy: { type: boolean }
             lease_expires_at: { type: string, format: date-time }
+            runtime: { $ref: "#/components/schemas/PublisherRuntimeStatus" }
+    PublisherRuntimeRequest:
+      type: object
+      additionalProperties: false
+      required: [publisher_identity_id, scope_id, process_run_id, expected_epoch, action, assertion]
+      properties:
+        publisher_identity_id: { type: string }
+        scope_id:
+          type: string
+          description: Immutable group ID for a group replica, or an exact live grant ID for an installed publisher.
+        process_run_id: { type: string, pattern: "^[a-f0-9]{32}$" }
+        expected_epoch: { type: integer, format: int64, minimum: 0 }
+        action:
+          type: string
+          enum: [inspect, start, renew, stop]
+          x-enum-varnames: [RuntimeInspect, RuntimeStart, RuntimeRenew, RuntimeStop]
+        assertion: { type: string, maxLength: 4096 }
+    PublisherRuntimeResponse:
+      type: object
+      required: [epoch]
+      properties:
+        epoch: { type: integer, format: int64, minimum: 0 }
+        lease_expires_at: { type: string, format: date-time }
+        group_lease: { $ref: "#/components/schemas/PublisherGroupLease" }
+    PublisherRuntimeStatus:
+      type: object
+      additionalProperties: false
+      description: >-
+        Latest explicitly started runtime for this immutable publisher identity.
+        A single bounded record survives stop and lease expiry. Active describes
+        the runtime lease, not target reachability or a permanent static IP.
+        Control egress may differ from database-target routing, address family,
+        or NAT. This evidence never grants access or configures an allowlist.
+      required:
+        [
+          publisher_identity_id,
+          team_id,
+          process_run_id,
+          epoch,
+          evidence,
+          address_family,
+          started_at,
+          observed_at,
+          last_seen_at,
+          lease_expires_at,
+          active,
+        ]
+      properties:
+        publisher_identity_id: { type: string }
+        team_id: { type: string }
+        process_run_id: { type: string }
+        epoch: { type: integer, format: int64 }
+        evidence: { type: string, enum: [control_observed] }
+        address:
+          type: string
+          description: Canonical public routable IPv4 or IPv6 host, never a CIDR. Absent for private or non-routable sources.
+        address_family: { type: string, enum: [ipv4, ipv6, unknown] }
+        started_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        lease_expires_at: { type: string, format: date-time }
+        stopped_at: { type: string, format: date-time }
+        active: { type: boolean }
     PublisherGroupLeaseRequest:
       type: object
       additionalProperties: false
@@ -4171,6 +4259,7 @@ components:
       additionalProperties: false
       required: [id, name, kind, created_at, grants, ownership]
       properties:
+        runtime: { $ref: "#/components/schemas/PublisherRuntimeStatus" }
         id: { $ref: "#/components/schemas/ResourceID" }
         name: { type: string }
         kind: { type: string, enum: [installed, automation, run, guest] }

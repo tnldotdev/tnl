@@ -218,6 +218,7 @@ type Querier interface {
 	GetPublisherGrant(ctx context.Context, arg GetPublisherGrantParams) (ControlPublisherGrant, error)
 	GetPublisherKey(ctx context.Context, arg GetPublisherKeyParams) (ControlPublisherIdentityKey, error)
 	GetPublisherRun(ctx context.Context, publishRunID string) (ControlPublishRunPublisherGrant, error)
+	GetPublisherRuntime(ctx context.Context, publisherIdentityID string) (ControlPublisherRuntime, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)
 	// claims and readiness share the relay-service guard across processes.
 	// claims take NO KEY UPDATE on the selected lease to serialize capacity with
@@ -478,6 +479,7 @@ type Querier interface {
 	PruneIngressRoutingHistoryBatch(ctx context.Context, afterRevision int64) (PruneIngressRoutingHistoryBatchRow, error)
 	PrunePublisherAccess(ctx context.Context, arg PrunePublisherAccessParams) error
 	PrunePublisherAssertions(ctx context.Context, arg PrunePublisherAssertionsParams) error
+	PublisherRuntimeActive(ctx context.Context, arg PublisherRuntimeActiveParams) (bool, error)
 	// this read does not lock resources after identities. URL and private-service
 	// run transactions lock their own saved resource first and recheck the grant.
 	PublisherScopeAvailable(ctx context.Context, arg PublisherScopeAvailableParams) (bool, error)
@@ -509,6 +511,7 @@ type Querier interface {
 	RenewEphemeralPublicURLExpiry(ctx context.Context, arg RenewEphemeralPublicURLExpiryParams) (pgtype.Timestamptz, error)
 	RenewIngress(ctx context.Context, arg RenewIngressParams) (ControlIngressLease, error)
 	RenewPrivateServiceRun(ctx context.Context, arg RenewPrivateServiceRunParams) (ControlPrivateServiceRun, error)
+	RenewPublisherRuntime(ctx context.Context, arg RenewPublisherRuntimeParams) (ControlPublisherRuntime, error)
 	RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRelayRow, error)
 	// a failed ready connection can keep its existing service reservation. this
 	// atomic ready -> assigned transition has zero counter delta and needs only the
@@ -571,6 +574,8 @@ type Querier interface {
 	SetPublicURLAccessMode(ctx context.Context, arg SetPublicURLAccessModeParams) (int64, error)
 	SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error)
 	SetVisitorFeedbackPolicy(ctx context.Context, arg SetVisitorFeedbackPolicyParams) error
+	StartPublisherRuntime(ctx context.Context, arg StartPublisherRuntimeParams) (ControlPublisherRuntime, error)
+	StopPublisherRuntime(ctx context.Context, arg StopPublisherRuntimeParams) (ControlPublisherRuntime, error)
 	StoreIngressTransportCertificate(ctx context.Context, arg StoreIngressTransportCertificateParams) (ControlIngressTransportCertificate, error)
 	StoreRelayTransportCertificate(ctx context.Context, arg StoreRelayTransportCertificateParams) (ControlRelayService, error)
 	SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error)

@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
@@ -86,14 +87,20 @@ func TestIntegrationCLINamedPublisherFileWithoutPersonSession(t *testing.T) {
 	}
 	credential := filepath.Join(root, "publisher.json")
 	cliCall(t, t.Context(), []string{"--no-config", "publisher", "provision", "--private-service", saved.Id, "--output-file", credential, "--server", f.url, "--team", team, "--state-dir", person})
+	identity, err := credentialfile.Read(credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertWorkflowPublisherRuntime(t, session.authenticated.Control, team, identity.PublisherID, 0, false)
 	publisherState := f.state(t, "file-only-publisher")
 	ctx, stop := context.WithCancel(t.Context())
-	ready, _ := f.command(t, ctx, stop, []string{"--config", configuration, "publish", "api", "--foreground", "--publisher-file", credential, "--state-dir", publisherState})
+	ready, joined := f.command(t, ctx, stop, []string{"--config", configuration, "publish", "api", "--foreground", "--publisher-file", credential, "--state-dir", publisherState})
 	select {
 	case <-ready:
 	case <-time.After(20 * time.Second):
 		t.Fatal("named scoped publisher did not become ready")
 	}
+	runtime := assertWorkflowPublisherRuntime(t, session.authenticated.Control, team, identity.PublisherID, 1, true)
 	listener := workflowListen(t)
 	address := listener.Addr().String()
 	_ = listener.Close()
@@ -123,6 +130,16 @@ func TestIntegrationCLINamedPublisherFileWithoutPersonSession(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".tnl", "local", "project.json")); !os.IsNotExist(err) {
 		t.Fatalf("credential-owned named publication entered browser preparation: %v", err)
+	}
+	stop()
+	select {
+	case <-joined:
+	case <-time.After(20 * time.Second):
+		t.Fatal("foreground publisher did not join")
+	}
+	stopped := assertWorkflowPublisherRuntime(t, session.authenticated.Control, team, identity.PublisherID, 1, false)
+	if stopped.ProcessRunId != runtime.ProcessRunId {
+		t.Fatal("foreground stop replaced runtime ownership")
 	}
 	t.Log("real CLI named private HTTP used only --publisher-file, carried visitor bytes, and created no person session or browser metadata")
 }

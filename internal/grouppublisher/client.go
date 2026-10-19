@@ -27,6 +27,12 @@ func (c *Client) Enroll(ctx context.Context, secret string, public ed25519.Publi
 	return c.control.RedeemPublisherGroupEnrollment(ctx, secret, public)
 }
 
+func (c *Client) ServerURL() string { return c.server }
+
+func (c *Client) PublisherRuntime(ctx context.Context, request controlv1.PublisherRuntimeRequest) (controlv1.PublisherRuntimeResponse, error) {
+	return c.control.PublisherRuntime(ctx, request)
+}
+
 func (c *Client) Lease(ctx context.Context, member controlv1.PublisherGroupMember, private ed25519.PrivateKey) (controlv1.PublisherGroupLease, error) {
 	assertion, err := publisheridentity.Sign(member.PublisherIdentityId, member.KeyId, member.GroupId, c.server+"/v1/publisher-groups/lease", private, time.Now())
 	if err != nil {
