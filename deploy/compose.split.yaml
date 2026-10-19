@@ -92,6 +92,31 @@ services:
     expose:
       - "9090"
 
+  ingress-b:
+    <<: *tnld
+    restart: unless-stopped
+    depends_on:
+      - control
+    environment:
+      TNLD_CONTROL_HOSTNAME: ${TNL_CONTROL_HOSTNAME:?set TNL_CONTROL_HOSTNAME}
+      TNLD_PRIVATE_CONTROL_ADDRESS: control:9443
+      TNLD_CLUSTER_SECRET: ${TNLD_CLUSTER_SECRET:?set TNLD_CLUSTER_SECRET}
+      TNLD_CLUSTER_SECRET_PREVIOUS: ${TNLD_CLUSTER_SECRET_PREVIOUS:-}
+      TNLD_INGRESS_ID: ingress-b
+      TNLD_SERVICE_PORT_RANGES: 20000-20015
+      TNLD_INGRESS_LISTEN: :443
+      TNLD_INGRESS_UDP_LISTEN: :443
+      TNLD_METRICS_LISTEN: 0.0.0.0:9090
+      TNLD_ROLE: ingress
+    ports:
+      - "${TNL_INGRESS_B_BIND:?set TNL_INGRESS_B_BIND}:443:443/tcp"
+      - "${TNL_INGRESS_B_BIND}:443:443/udp"
+      - "${TNL_INGRESS_B_BIND}:20000-20015:20000-20015/tcp"
+    volumes:
+      - ${TNL_CLUSTER_CA_FILE:?set the internal control issuer}:/etc/ssl/certs/tnl-cluster.pem:ro
+    expose:
+      - "9090"
+
   relay-a:
     <<: *tnld
     restart: unless-stopped
