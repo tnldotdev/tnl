@@ -70,12 +70,6 @@ Parameters:
     Default: ""
     AllowedPattern: (arn:[a-z0-9-]+:ecs:[a-z0-9-]+:[0-9]{12}:cluster/[A-Za-z0-9_-]+)?
     MaxLength: 512
-  ExistingFileSystemId:
-    Type: String
-    Description: Existing encrypted Regional EFS in VpcId. Customer must supply reachable mount targets in each task AZ, NFS rules and IAM filesystem policy.
-    Default: ""
-    AllowedPattern: (fs-[0-9a-f]{8,40})?
-    MaxLength: 43
   ExistingPublisherSecurityGroupId:
     Type: String
     Description: Existing task security group in VpcId; customer owns its egress and inbound rules.
@@ -84,7 +78,7 @@ Parameters:
     MaxLength: 20
   FileSystemKMSKeyArn:
     Type: String
-    Description: Key for a new filesystem only. EFS service uses this key; task roles need no KMS decrypt permission.
+    Description: Key for the stack's encrypted Regional filesystem. EFS service uses this key; task roles need no KMS decrypt permission.
     Default: ""
     AllowedPattern: (arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key/[a-zA-Z0-9-]+)?
     MaxLength: 256
@@ -128,43 +122,43 @@ Parameters:
     MaxLength: 256
   MountSubnet1:
     Type: String
-    Description: New EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
+    Description: EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
     Default: ""
     AllowedPattern: (subnet-[0-9a-f]{8,17})?
     MaxLength: 24
   MountSubnet2:
     Type: String
-    Description: New EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
+    Description: EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
     Default: ""
     AllowedPattern: (subnet-[0-9a-f]{8,17})?
     MaxLength: 24
   MountSubnet3:
     Type: String
-    Description: New EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
+    Description: EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
     Default: ""
     AllowedPattern: (subnet-[0-9a-f]{8,17})?
     MaxLength: 24
   MountSubnet4:
     Type: String
-    Description: New EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
+    Description: EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
     Default: ""
     AllowedPattern: (subnet-[0-9a-f]{8,17})?
     MaxLength: 24
   MountSubnet5:
     Type: String
-    Description: New EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
+    Description: EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
     Default: ""
     AllowedPattern: (subnet-[0-9a-f]{8,17})?
     MaxLength: 24
   MountSubnet6:
     Type: String
-    Description: New EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
+    Description: EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.
     Default: ""
     AllowedPattern: (subnet-[0-9a-f]{8,17})?
     MaxLength: 24
   MountSubnetCount:
     Type: String
-    Description: 'New EFS only: number of distinct AZ mount subnets, one per AZ. Never put two mount subnets in the same AZ.'
+    Description: Number of distinct AZ mount subnets, one per AZ. Never put two mount subnets in the same AZ.
     Default: "2"
     AllowedValues:
       - "1"
@@ -472,12 +466,8 @@ Conditions:
   CreateCluster:
     Fn::Not:
       - Condition: HasExistingClusterArn
-  CreateFileSystem:
-    Fn::Not:
-      - Condition: HasExistingFileSystemId
   CreateMountTarget1:
     Fn::And:
-      - Condition: CreateFileSystem
       - Fn::Or:
           - Fn::Equals:
               - Ref: MountSubnetCount
@@ -500,7 +490,6 @@ Conditions:
       - Condition: HasMountSubnet1
   CreateMountTarget2:
     Fn::And:
-      - Condition: CreateFileSystem
       - Fn::Or:
           - Fn::Equals:
               - Ref: MountSubnetCount
@@ -520,7 +509,6 @@ Conditions:
       - Condition: HasMountSubnet2
   CreateMountTarget3:
     Fn::And:
-      - Condition: CreateFileSystem
       - Fn::Or:
           - Fn::Equals:
               - Ref: MountSubnetCount
@@ -537,7 +525,6 @@ Conditions:
       - Condition: HasMountSubnet3
   CreateMountTarget4:
     Fn::And:
-      - Condition: CreateFileSystem
       - Fn::Or:
           - Fn::Equals:
               - Ref: MountSubnetCount
@@ -551,7 +538,6 @@ Conditions:
       - Condition: HasMountSubnet4
   CreateMountTarget5:
     Fn::And:
-      - Condition: CreateFileSystem
       - Fn::Or:
           - Fn::Equals:
               - Ref: MountSubnetCount
@@ -562,7 +548,6 @@ Conditions:
       - Condition: HasMountSubnet5
   CreateMountTarget6:
     Fn::And:
-      - Condition: CreateFileSystem
       - Fn::Equals:
           - Ref: MountSubnetCount
           - "6"
@@ -622,11 +607,6 @@ Conditions:
     Fn::Not:
       - Fn::Equals:
           - Ref: ExistingClusterArn
-          - ""
-  HasExistingFileSystemId:
-    Fn::Not:
-      - Fn::Equals:
-          - Ref: ExistingFileSystemId
           - ""
   HasExistingPublisherSecurityGroupId:
     Fn::Not:
@@ -908,29 +888,25 @@ Rules:
                 - ""
         AssertDescription: supply every selected mount subnet; each must be in a different AZ
     RuleCondition:
-      Fn::And:
+      Fn::Or:
         - Fn::Equals:
-            - Ref: ExistingFileSystemId
-            - ""
-        - Fn::Or:
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "1"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "2"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "3"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "4"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "5"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "6"
+            - Ref: MountSubnetCount
+            - "1"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "2"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "3"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "4"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "5"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "6"
   MountSubnet2Required:
     Assertions:
       - Assert:
@@ -940,26 +916,22 @@ Rules:
                 - ""
         AssertDescription: supply every selected mount subnet; each must be in a different AZ
     RuleCondition:
-      Fn::And:
+      Fn::Or:
         - Fn::Equals:
-            - Ref: ExistingFileSystemId
-            - ""
-        - Fn::Or:
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "2"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "3"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "4"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "5"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "6"
+            - Ref: MountSubnetCount
+            - "2"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "3"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "4"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "5"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "6"
   MountSubnet3Required:
     Assertions:
       - Assert:
@@ -969,23 +941,19 @@ Rules:
                 - ""
         AssertDescription: supply every selected mount subnet; each must be in a different AZ
     RuleCondition:
-      Fn::And:
+      Fn::Or:
         - Fn::Equals:
-            - Ref: ExistingFileSystemId
-            - ""
-        - Fn::Or:
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "3"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "4"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "5"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "6"
+            - Ref: MountSubnetCount
+            - "3"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "4"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "5"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "6"
   MountSubnet4Required:
     Assertions:
       - Assert:
@@ -995,20 +963,16 @@ Rules:
                 - ""
         AssertDescription: supply every selected mount subnet; each must be in a different AZ
     RuleCondition:
-      Fn::And:
+      Fn::Or:
         - Fn::Equals:
-            - Ref: ExistingFileSystemId
-            - ""
-        - Fn::Or:
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "4"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "5"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "6"
+            - Ref: MountSubnetCount
+            - "4"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "5"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "6"
   MountSubnet5Required:
     Assertions:
       - Assert:
@@ -1018,17 +982,13 @@ Rules:
                 - ""
         AssertDescription: supply every selected mount subnet; each must be in a different AZ
     RuleCondition:
-      Fn::And:
+      Fn::Or:
         - Fn::Equals:
-            - Ref: ExistingFileSystemId
-            - ""
-        - Fn::Or:
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "5"
-            - Fn::Equals:
-                - Ref: MountSubnetCount
-                - "6"
+            - Ref: MountSubnetCount
+            - "5"
+        - Fn::Equals:
+            - Ref: MountSubnetCount
+            - "6"
   MountSubnet6Required:
     Assertions:
       - Assert:
@@ -1038,13 +998,9 @@ Rules:
                 - ""
         AssertDescription: supply every selected mount subnet; each must be in a different AZ
     RuleCondition:
-      Fn::And:
-        - Fn::Equals:
-            - Ref: ExistingFileSystemId
-            - ""
-        - Fn::Equals:
-            - Ref: MountSubnetCount
-            - "6"
+      Fn::Equals:
+        - Ref: MountSubnetCount
+        - "6"
 Resources:
   Cluster:
     Condition: CreateCluster
@@ -1072,7 +1028,7 @@ Resources:
             Ref: TeamID
     Type: AWS::ECS::Cluster
   EFSSecurityGroup:
-    Condition: CreateFileSystem
+    DeletionPolicy: Retain
     Properties:
       GroupDescription: 'tnl identity EFS: NFS only from publisher tasks'
       GroupName:
@@ -1108,8 +1064,8 @@ Resources:
       VpcId:
         Ref: VpcId
     Type: AWS::EC2::SecurityGroup
+    UpdateReplacePolicy: Retain
   IdentityFileSystem:
-    Condition: CreateFileSystem
     DeletionPolicy: Retain
     Properties:
       BackupPolicy:
@@ -1156,6 +1112,7 @@ Resources:
     UpdateReplacePolicy: Retain
   MountTarget1:
     Condition: CreateMountTarget1
+    DeletionPolicy: Retain
     Properties:
       FileSystemId:
         Ref: IdentityFileSystem
@@ -1164,8 +1121,10 @@ Resources:
       SubnetId:
         Ref: MountSubnet1
     Type: AWS::EFS::MountTarget
+    UpdateReplacePolicy: Retain
   MountTarget2:
     Condition: CreateMountTarget2
+    DeletionPolicy: Retain
     Properties:
       FileSystemId:
         Ref: IdentityFileSystem
@@ -1174,8 +1133,10 @@ Resources:
       SubnetId:
         Ref: MountSubnet2
     Type: AWS::EFS::MountTarget
+    UpdateReplacePolicy: Retain
   MountTarget3:
     Condition: CreateMountTarget3
+    DeletionPolicy: Retain
     Properties:
       FileSystemId:
         Ref: IdentityFileSystem
@@ -1184,8 +1145,10 @@ Resources:
       SubnetId:
         Ref: MountSubnet3
     Type: AWS::EFS::MountTarget
+    UpdateReplacePolicy: Retain
   MountTarget4:
     Condition: CreateMountTarget4
+    DeletionPolicy: Retain
     Properties:
       FileSystemId:
         Ref: IdentityFileSystem
@@ -1194,8 +1157,10 @@ Resources:
       SubnetId:
         Ref: MountSubnet4
     Type: AWS::EFS::MountTarget
+    UpdateReplacePolicy: Retain
   MountTarget5:
     Condition: CreateMountTarget5
+    DeletionPolicy: Retain
     Properties:
       FileSystemId:
         Ref: IdentityFileSystem
@@ -1204,8 +1169,10 @@ Resources:
       SubnetId:
         Ref: MountSubnet5
     Type: AWS::EFS::MountTarget
+    UpdateReplacePolicy: Retain
   MountTarget6:
     Condition: CreateMountTarget6
+    DeletionPolicy: Retain
     Properties:
       FileSystemId:
         Ref: IdentityFileSystem
@@ -1214,8 +1181,10 @@ Resources:
       SubnetId:
         Ref: MountSubnet6
     Type: AWS::EFS::MountTarget
+    UpdateReplacePolicy: Retain
   PublisherSecurityGroup:
     Condition: CreatePublisherSecurityGroup
+    DeletionPolicy: Retain
     Properties:
       GroupDescription: 'tnl publisher tasks: no inbound, standard outbound'
       GroupName:
@@ -1247,6 +1216,7 @@ Resources:
       VpcId:
         Ref: VpcId
     Type: AWS::EC2::SecurityGroup
+    UpdateReplacePolicy: Retain
   Replica1ExecutionRole:
     Condition: CreateReplica1ExecutionRole
     Properties:
@@ -1346,10 +1316,7 @@ Resources:
           Value:
             Ref: TeamID
       FileSystemId:
-        Fn::If:
-          - HasExistingFileSystemId
-          - Ref: ExistingFileSystemId
-          - Ref: IdentityFileSystem
+        Ref: IdentityFileSystem
       PosixUser:
         Gid: "65532"
         Uid: "65532"
@@ -1610,10 +1577,7 @@ Resources:
                 Ref: Replica1IdentityAccessPoint
               IAM: ENABLED
             FilesystemId:
-              Fn::If:
-                - HasExistingFileSystemId
-                - Ref: ExistingFileSystemId
-                - Ref: IdentityFileSystem
+              Ref: IdentityFileSystem
             TransitEncryption: ENABLED
           Name: identity
     Type: AWS::ECS::TaskDefinition
@@ -1659,10 +1623,7 @@ Resources:
                   Fn::Sub:
                     - arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${FileSystem}
                     - FileSystem:
-                        Fn::If:
-                          - HasExistingFileSystemId
-                          - Ref: ExistingFileSystemId
-                          - Ref: IdentityFileSystem
+                        Ref: IdentityFileSystem
             Version: "2012-10-17"
           PolicyName: private-identity-files
       RoleName:
@@ -1786,10 +1747,7 @@ Resources:
           Value:
             Ref: TeamID
       FileSystemId:
-        Fn::If:
-          - HasExistingFileSystemId
-          - Ref: ExistingFileSystemId
-          - Ref: IdentityFileSystem
+        Ref: IdentityFileSystem
       PosixUser:
         Gid: "65532"
         Uid: "65532"
@@ -2050,10 +2008,7 @@ Resources:
                 Ref: Replica2IdentityAccessPoint
               IAM: ENABLED
             FilesystemId:
-              Fn::If:
-                - HasExistingFileSystemId
-                - Ref: ExistingFileSystemId
-                - Ref: IdentityFileSystem
+              Ref: IdentityFileSystem
             TransitEncryption: ENABLED
           Name: identity
     Type: AWS::ECS::TaskDefinition
@@ -2099,10 +2054,7 @@ Resources:
                   Fn::Sub:
                     - arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${FileSystem}
                     - FileSystem:
-                        Fn::If:
-                          - HasExistingFileSystemId
-                          - Ref: ExistingFileSystemId
-                          - Ref: IdentityFileSystem
+                        Ref: IdentityFileSystem
             Version: "2012-10-17"
           PolicyName: private-identity-files
       RoleName:
@@ -2144,10 +2096,7 @@ Outputs:
       Ref: Group
   IdentityFileSystemId:
     Value:
-      Fn::If:
-        - HasExistingFileSystemId
-        - Ref: ExistingFileSystemId
-        - Ref: IdentityFileSystem
+      Ref: IdentityFileSystem
   OutputSchemaVersion:
     Value: "1"
   ProjectKey:

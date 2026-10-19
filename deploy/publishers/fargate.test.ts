@@ -159,5 +159,20 @@ describe("generated Fargate group boundary", () => {
       UpdateReplacePolicy: "Retain",
       Properties: { Encrypted: true },
     });
+    expect(template.Resources.IdentityFileSystem).not.toHaveProperty("Condition");
+    expect(template.Parameters).not.toHaveProperty("ExistingFileSystemId");
+    expect(properties("IdentityFileSystem", "AWS::EFS::FileSystem")).not.toHaveProperty(
+      "AvailabilityZoneName",
+    );
+    for (const name of [
+      "PublisherSecurityGroup",
+      "EFSSecurityGroup",
+      ...Array.from({ length: 6 }, (_, i) => `MountTarget${i + 1}`),
+    ]) {
+      expect(template.Resources[name]).toMatchObject({
+        DeletionPolicy: "Retain",
+        UpdateReplacePolicy: "Retain",
+      });
+    }
   });
 });

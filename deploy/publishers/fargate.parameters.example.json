@@ -44,10 +44,6 @@
     "ParameterValue": ""
   },
   {
-    "ParameterKey": "ExistingFileSystemId",
-    "ParameterValue": ""
-  },
-  {
     "ParameterKey": "ExistingPublisherSecurityGroupId",
     "ParameterValue": ""
   },
@@ -253,7 +249,7 @@
   },
   {
     "ParameterKey": "TemplateSHA256",
-    "ParameterValue": "b32ca8c0bf316f0535b7d7feb4bd4c77b0c299b77a7359bfd4a0be5e7f00901e"
+    "ParameterValue": "c879127df84bd844bb5fc4a5a283856002ea55ea059a4c303d4494fa3bb6c3a8"
   },
   {
     "ParameterKey": "VpcId",

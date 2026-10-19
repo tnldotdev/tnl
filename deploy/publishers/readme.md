@@ -73,7 +73,7 @@ retains their access points and managed log groups.
 | `/identity` | signing identity, pending keys/CSRs, staged/current certificates and renewal metadata | private EFS access point   |
 | `/state`    | runtime SQLite, wrapping key, local events and caches                                 | disposable task filesystem |
 
-The stack creates encrypted **Regional** EFS by default, with backups enabled,
+The stack always creates encrypted **Regional** EFS, with backups enabled,
 retention on removal/replacement, and a private root at
 `/tnl/DEPLOYMENT_ID/replica-N`. Access points enforce UID/GID 65532 and mode 0700.
 The task role permits only IAM-authorized, encrypted mounts and writes through
@@ -143,22 +143,15 @@ for exported Go types and stale-artifact validation.
 | `ExistingPublisherSecurityGroupId` | optional existing primary task group; otherwise create no-inbound, standard IPv4/IPv6-outbound group |
 | `AdditionalSecurityGroup1` … `4`   | optional additional task groups; maximum five including primary                                      |
 | `AssignPublicIp`                   | `DISABLED` by default; `ENABLED` requires appropriate public routing                                 |
-| `ExistingFileSystemId`             | optional encrypted Regional EFS; otherwise create retained EFS                                       |
-| `MountSubnetCount`                 | for new EFS: 1–6 mount targets, default 2                                                            |
+| `MountSubnetCount`                 | 1–6 retained mount targets, default 2                                                                |
 | `MountSubnet1` … `6`               | fill exactly the selected count with **one subnet per distinct AZ**, covering all task AZs           |
-| `FileSystemKMSKeyArn`              | optional customer key for new EFS; empty uses the EFS default key                                    |
+| `FileSystemKMSKeyArn`              | optional customer key for EFS; empty uses the EFS default key                                        |
 
 There are no subnet lookups or custom Lambda resources. CloudFormation requires
 every selected mount subnet; operators must select one per AZ, even when task
 subnets include several in one AZ. The new EFS group permits TCP 2049 only from
 the primary task group. Services depend on their created mount targets through
-conditional resource tags, including the existing-resource branch.
-
-For existing EFS, mount-subnet inputs are unused; clear their example placeholders
-to empty strings. The customer supplies mount
-targets reachable in every task AZ, NFS ingress from the selected task group,
-encrypted transport, and a filesystem policy allowing the selected task roles
-and access points. Existing security groups keep their current rules. Targets
+conditional resource tags. Existing security groups keep their current rules. Targets
 separately permit publisher traffic. Tasks need DNS, control HTTPS, advertised
 relay TCP/UDP ports, targets, EFS, the image registry, Secrets Manager and logs
 through NAT or appropriate endpoints. The template does not claim to establish
@@ -229,8 +222,11 @@ revoke identity. Keep retained EFS data and access points until no publisher
 uses them. Recover the same replica with its original signing identity and
 DeploymentID; deliberately replacing an identity requires a separately reviewed
 state transition rather than copying another replica's JSON into its secret.
-New filesystem mount targets are stack-owned and removed on stack deletion;
-the retained filesystem and data remain. Customer-owned resources remain
+The filesystem, access points, mount targets and stack-created security groups
+are retained on removal and replacement. The security groups remain because the
+retained mount targets and their NFS rule depend on them. Remove retained resources
+explicitly only after retiring their identities and recovering any needed data.
+Customer-owned resources remain
 customer-owned. ECS `RUNNING` alone does not prove successful visitor traffic.
 
 [`fargate.yaml`](fargate.yaml) is a generated, reviewed two-replica fixture, not a

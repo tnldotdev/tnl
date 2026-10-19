@@ -119,8 +119,7 @@ func RenderAWS(p Publisher, projectKey string) ([]byte, []byte, error) {
 	for i := 1; i <= 4; i++ {
 		t.optional(fmt.Sprintf("AdditionalSecurityGroup%d", i), "Additional task security group in VpcId. At most five groups including the primary.", sgPattern, 20)
 	}
-	t.optional("ExistingFileSystemId", "Existing encrypted Regional EFS in VpcId. Customer must supply reachable mount targets in each task AZ, NFS rules and IAM filesystem policy.", "fs-[0-9a-f]{8,40}", 43)
-	t.optional("FileSystemKMSKeyArn", "Key for a new filesystem only. EFS service uses this key; task roles need no KMS decrypt permission.", kmsARNPattern, 256)
+	t.optional("FileSystemKMSKeyArn", "Key for the stack's encrypted Regional filesystem. EFS service uses this key; task roles need no KMS decrypt permission.", kmsARNPattern, 256)
 	t.optional("LogsKMSKeyArn", "Key for new log groups only. Key policy must allow logs.REGION.URLSuffix with kms:EncryptionContext:aws:logs:arn scoped to the log group ARN.", kmsARNPattern, 256)
 	t.optional("PermissionsBoundaryArn", "Boundary for new IAM roles only; existing role policies and boundaries remain customer-owned.", "arn:[a-z0-9-]+:iam::[0-9]{12}:policy/[A-Za-z0-9+=,.@_/-]+", 512)
 	t.parameter("LogRetentionDays", "Retention for new log groups; existing groups retain their settings.", "", 0, text("30"), "1", "3", "5", "7", "14", "30", "60", "90", "120", "150", "180", "365", "400", "545", "731", "1096", "1827", "2192", "2557", "2922", "3288", "3653")
@@ -129,28 +128,29 @@ func RenderAWS(p Publisher, projectKey string) ([]byte, []byte, error) {
 	t.parameter("CPUArchitecture", "Image architecture; the pinned digest must support this architecture.", "", 0, text("X86_64"), "X86_64", "ARM64")
 	t.parameter("PlatformVersion", "Linux Fargate platform with EFS and pinned secret-version injection.", "", 0, text("1.4.0"), "1.4.0", "LATEST")
 	t.parameter("AssignPublicIp", "Keep disabled for private subnets with NAT/endpoints; enable only with appropriate public routing.", "", 0, text("DISABLED"), "DISABLED", "ENABLED")
-	t.parameter("MountSubnetCount", "New EFS only: number of distinct AZ mount subnets, one per AZ. Never put two mount subnets in the same AZ.", "", 0, text("2"), "1", "2", "3", "4", "5", "6")
+	t.parameter("MountSubnetCount", "Number of distinct AZ mount subnets, one per AZ. Never put two mount subnets in the same AZ.", "", 0, text("2"), "1", "2", "3", "4", "5", "6")
 	t.Conditions["CreateCluster"] = not(condition("HasExistingClusterArn"))
 	t.Conditions["CreatePublisherSecurityGroup"] = not(condition("HasExistingPublisherSecurityGroupId"))
-	t.Conditions["CreateFileSystem"] = not(condition("HasExistingFileSystemId"))
 	cluster := choose("HasExistingClusterArn", ref("ExistingClusterArn"), att("Cluster", "Arn"))
 	taskSG := choose("HasExistingPublisherSecurityGroupId", ref("ExistingPublisherSecurityGroupId"), ref("PublisherSecurityGroup"))
-	filesystem := choose("HasExistingFileSystemId", ref("ExistingFileSystemId"), ref("IdentityFileSystem"))
+	filesystem := ref("IdentityFileSystem")
 	filesystemARN := object{"Fn::Sub": []any{"arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${FileSystem}", object{"FileSystem": filesystem}}}
 	t.Resources["Cluster"] = object{"Type": "AWS::ECS::Cluster", "Condition": "CreateCluster", "Properties": object{"ClusterName": t.named("ClusterName", "-cluster"), "Tags": tags()}}
 	t.Resources["PublisherSecurityGroup"] = object{"Type": "AWS::EC2::SecurityGroup", "Condition": "CreatePublisherSecurityGroup", "Properties": object{"VpcId": ref("VpcId"), "GroupDescription": "tnl publisher tasks: no inbound, standard outbound", "SecurityGroupEgress": []any{object{"IpProtocol": "-1", "CidrIp": "0.0.0.0/0"}, object{"IpProtocol": "-1", "CidrIpv6": "::/0"}}, "Tags": tags()}}
-	t.Resources["EFSSecurityGroup"] = object{"Type": "AWS::EC2::SecurityGroup", "Condition": "CreateFileSystem", "Properties": object{"VpcId": ref("VpcId"), "GroupDescription": "tnl identity EFS: NFS only from publisher tasks", "SecurityGroupIngress": []any{object{"IpProtocol": "tcp", "FromPort": 2049, "ToPort": 2049, "SourceSecurityGroupId": taskSG}}, "Tags": tags()}}
+	t.Resources["EFSSecurityGroup"] = retained("AWS::EC2::SecurityGroup", object{"VpcId": ref("VpcId"), "GroupDescription": "tnl identity EFS: NFS only from publisher tasks", "SecurityGroupIngress": []any{object{"IpProtocol": "tcp", "FromPort": 2049, "ToPort": 2049, "SourceSecurityGroupId": taskSG}}, "Tags": tags()})
+	// retained mount targets keep both security-group dependencies available.
+	t.Resources["PublisherSecurityGroup"].(object)["DeletionPolicy"] = "Retain"
+	t.Resources["PublisherSecurityGroup"].(object)["UpdateReplacePolicy"] = "Retain"
 	t.Resources["PublisherSecurityGroup"].(object)["Properties"].(object)["GroupName"] = t.named("PublisherSecurityGroupName", "-publisher")
 	t.Resources["EFSSecurityGroup"].(object)["Properties"].(object)["GroupName"] = t.named("EFSSecurityGroupName", "-efs")
 	fs := retained("AWS::EFS::FileSystem", object{"Encrypted": true, "KmsKeyId": choose("HasFileSystemKMSKeyArn", ref("FileSystemKMSKeyArn"), noValue()), "PerformanceMode": "generalPurpose", "ThroughputMode": "elastic", "BackupPolicy": object{"Status": "ENABLED"}, "FileSystemTags": tags(), "FileSystemPolicy": object{"Version": "2012-10-17", "Statement": []any{
 		object{"Effect": "Deny", "Principal": "*", "Action": "elasticfilesystem:Client*", "Resource": "*", "Condition": object{"Bool": object{"aws:SecureTransport": "false"}}},
 		object{"Effect": "Deny", "Principal": "*", "Action": "elasticfilesystem:Client*", "Resource": "*", "Condition": object{"StringEquals": object{"aws:PrincipalType": "Anonymous"}}},
 	}}})
-	fs["Condition"] = "CreateFileSystem"
 	t.Resources["IdentityFileSystem"] = fs
 	for i := 1; i <= 6; i++ {
 		name := fmt.Sprintf("MountSubnet%d", i)
-		t.optional(name, "New EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.", "subnet-[0-9a-f]{8,17}", 24)
+		t.optional(name, "EFS mount subnet. Select exactly one subnet per AZ used by tasks; unused entries stay empty.", "subnet-[0-9a-f]{8,17}", 24)
 		selected := eq(ref("MountSubnetCount"), fmt.Sprint(i))
 		if i < 6 {
 			values := []any{}
@@ -160,9 +160,11 @@ func RenderAWS(p Publisher, projectKey string) ([]byte, []byte, error) {
 			selected = object{"Fn::Or": values}
 		}
 		create := fmt.Sprintf("CreateMountTarget%d", i)
-		t.Conditions[create] = and(condition("CreateFileSystem"), selected, condition("Has"+name))
-		t.Rules[name+"Required"] = object{"RuleCondition": and(eq(ref("ExistingFileSystemId"), ""), selected), "Assertions": []any{object{"Assert": not(eq(ref(name), "")), "AssertDescription": "supply every selected mount subnet; each must be in a different AZ"}}}
-		t.Resources[fmt.Sprintf("MountTarget%d", i)] = object{"Type": "AWS::EFS::MountTarget", "Condition": create, "Properties": object{"FileSystemId": ref("IdentityFileSystem"), "SubnetId": ref(name), "SecurityGroups": []any{ref("EFSSecurityGroup")}}}
+		t.Conditions[create] = and(selected, condition("Has"+name))
+		t.Rules[name+"Required"] = object{"RuleCondition": selected, "Assertions": []any{object{"Assert": not(eq(ref(name), "")), "AssertDescription": "supply every selected mount subnet; each must be in a different AZ"}}}
+		mount := retained("AWS::EFS::MountTarget", object{"FileSystemId": ref("IdentityFileSystem"), "SubnetId": ref(name), "SecurityGroups": []any{ref("EFSSecurityGroup")}})
+		mount["Condition"] = create
+		t.Resources[fmt.Sprintf("MountTarget%d", i)] = mount
 	}
 	for _, pair := range []struct {
 		cpu    string
@@ -214,7 +216,7 @@ func RenderAWS(p Publisher, projectKey string) ([]byte, []byte, error) {
 		}
 	}
 	example[ProjectKeyParameter], example[GroupParameter], example[TemplateSHA256Parameter] = projectKey, p.Name, digest(data)
-	// the default new-filesystem branch requires two operator-selected AZs.
+	// the default topology requires two operator-selected AZs.
 	example["MountSubnet1"], example["MountSubnet2"] = "REQUIRED", "REQUIRED"
 	for _, r := range p.Replicas {
 		example[r.InstanceParameter] = r.Key
@@ -283,8 +285,8 @@ func (t *awsTemplate) addReplica(index int, r Replica, cluster, taskSG, filesyst
 		securityGroups = append(securityGroups, choose("Has"+name, ref(name), noValue()))
 	}
 	service := resource("AWS::ECS::Service", object{"ServiceName": t.named(prefix+"ServiceName", suffix), "Cluster": cluster, "TaskDefinition": ref(prefix + "TaskDefinition"), "DesiredCount": ref(prefix + "DesiredCount"), "LaunchType": "FARGATE", "PlatformVersion": ref("PlatformVersion"), "EnableExecuteCommand": false, "AvailabilityZoneRebalancing": "DISABLED", "DeploymentConfiguration": object{"MinimumHealthyPercent": 0, "MaximumPercent": 100, "DeploymentCircuitBreaker": object{"Enable": true, "Rollback": false}}, "NetworkConfiguration": object{"AwsvpcConfiguration": object{"AssignPublicIp": ref("AssignPublicIp"), "Subnets": ref("Subnets"), "SecurityGroups": securityGroups}}, "Tags": tags(), "PropagateTags": "SERVICE", "EnableECSManagedTags": true})
-	// conditional references create deployment dependencies without DependsOn
-	// references to resources absent on the existing-filesystem branch.
+	// conditional references wait for every selected mount target without a
+	// DependsOn reference to an unselected AZ.
 	serviceTags := tags()
 	for i := 1; i <= 6; i++ {
 		name := fmt.Sprintf("MountTarget%d", i)

@@ -18,11 +18,12 @@ updates; their EFS paths are `/tnl/DEPLOYMENT_ID/replica-N`.
 
 Customer deployment settings include an existing VPC and task subnets, a
 digest-pinned publicly pullable image, names, CPU/memory, architecture, logging,
-KMS keys, permissions boundaries and optional existing resources. For new EFS,
+KMS keys, permissions boundaries and optional existing compute resources. For EFS,
 provide MountSubnetCount and MountSubnet1 through that count: exactly one subnet
-per distinct AZ covering the task AZs. For existing encrypted Regional EFS,
-provide reachable mount targets, NFS security rules and IAM filesystem policy.
-Clear unused MountSubnet entries to empty strings when using existing EFS.
+per distinct AZ covering the task AZs.
+The stack always creates encrypted retained Regional EFS, private access points,
+and retained mount targets. Select one mount subnet per task AZ; clear only unused
+MountSubnet entries.
 The template does not discover subnets or change customer-owned resource policy.
 
 Deploy with your reviewed CloudFormation workflow. Named IAM roles, including
@@ -35,7 +36,7 @@ account vCPU and other service quotas still apply.
 Each service runs one independent publisher without rolling surge. `/state`
 remains task-local; `/identity` is retained private EFS state. Set a replica's
 DesiredCount to zero before revoking or replacing its identity. Stack removal
-retains managed EFS, access points and log groups. ECS RUNNING alone does not
+retains EFS, access points, mount targets, their security groups and managed log groups. ECS RUNNING alone does not
 prove successful target or visitor traffic.
 
 `tnl generate` makes no control or AWS calls and never applies infrastructure.

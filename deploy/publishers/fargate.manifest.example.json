@@ -3,16 +3,16 @@
   "project_key": "project-example",
   "source_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "documentation_path": "readme.md",
-  "documentation_sha256": "6392496adc11d063d97c62a83df0ca7dbdd205b3a65794486c85b4d9106ec768",
+  "documentation_sha256": "3d5b5a2cf4b876f09c0112b79b98d9b2e61a717cd03c60a0f8a9e4912fb617e9",
   "publishers": [
     {
       "name": "production",
       "provider": "aws",
       "configuration_fingerprint": "73493ae667fcea6cecdf581aa3a848302a449b9950cc9a99570bbbfe08cb2d01",
       "template_path": "aws/production.yaml",
-      "template_sha256": "b32ca8c0bf316f0535b7d7feb4bd4c77b0c299b77a7359bfd4a0be5e7f00901e",
+      "template_sha256": "c879127df84bd844bb5fc4a5a283856002ea55ea059a4c303d4494fa3bb6c3a8",
       "parameters_example_path": "aws/production.parameters.example.json",
-      "parameters_example_sha256": "850bca9170effd33aae7b99d79212c96f04aab9677e633dca8801e3dbfd7e6f1",
+      "parameters_example_sha256": "cbe05a8088c81362693c3d0b2a8b11c0caa6fd9eddd41db7e713aee460f97c12",
       "replicas": [
         {
           "key": "replica-1",
