@@ -646,6 +646,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runPublisherSetup(ctx, flags.Publisher.Setup, stdout, stderr)
 	case "publisher serve":
 		return runPublisherServe(ctx, flags.Publisher.Serve, project, stdout, stderr)
+	case "publisher rename <group> <name>":
+		return runPublisherGroupRename(ctx, flags.Publisher.Rename, project, stdout, stderr)
+	case "publisher namespace rename <group> <label>":
+		return runPublisherNamespaceRename(ctx, flags.Publisher.Namespace.Rename, project, stdout, stderr)
 	case "publisher provision":
 		return runPublisherProvision(ctx, flags.Publisher.Provision, project, stdout, stderr)
 	case "publisher list":

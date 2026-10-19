@@ -22,6 +22,58 @@ type PublisherGroupStore interface {
 	AcknowledgePublisherGroupConfiguration(context.Context, string, int64, string, bool, time.Time) error
 }
 
+func (h *handler) RenamePublisherNamespace(w http.ResponseWriter, r *http.Request, project, group string) {
+	w.Header().Set("Cache-Control", "no-store")
+	var body controlv1.RenamePublisherNamespaceRequest
+	if decodeJSON(w, r, &body) != nil {
+		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publisher DNS namespace rename")
+		return
+	}
+	actor, ok := h.projectManager(w, r, body.TeamId)
+	if !ok {
+		return
+	}
+	store, ok := h.store.(interface {
+		RenamePublisherNamespace(context.Context, controlstate.RenamePublisherNamespaceRequest) (controlstate.AppliedProjectConfiguration, error)
+	})
+	if !ok {
+		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher DNS namespace rename is unavailable")
+		return
+	}
+	result, err := store.RenamePublisherNamespace(r.Context(), controlstate.RenamePublisherNamespaceRequest{TeamID: body.TeamId, ProjectKey: project, Group: group, NamespaceLabel: body.NamespaceLabel, ExpectedRevision: body.ExpectedRevision, IdempotencyKey: body.IdempotencyKey, ActorID: actor, DNSAutomation: h.config.DNSAutomation, Now: time.Now()})
+	if err != nil {
+		projectConfigurationProblem(w, "rename publisher DNS namespace", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *handler) RenamePublisherGroup(w http.ResponseWriter, r *http.Request, project, group string) {
+	w.Header().Set("Cache-Control", "no-store")
+	var body controlv1.RenamePublisherGroupRequest
+	if decodeJSON(w, r, &body) != nil {
+		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publisher group rename")
+		return
+	}
+	actor, ok := h.projectManager(w, r, body.TeamId)
+	if !ok {
+		return
+	}
+	store, ok := h.store.(interface {
+		RenamePublisherGroup(context.Context, string, string, string, string, string, int64, time.Time) (controlstate.AppliedProjectConfiguration, error)
+	})
+	if !ok {
+		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher group rename is unavailable")
+		return
+	}
+	result, err := store.RenamePublisherGroup(r.Context(), body.TeamId, project, group, body.Name, actor, body.ExpectedRevision, time.Now())
+	if err != nil {
+		projectConfigurationProblem(w, "rename publisher group", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h *handler) RevokePublisherGroupMember(w http.ResponseWriter, r *http.Request, project, group, publisher string, params controlv1.RevokePublisherGroupMemberParams) {
 	store, ok := h.publisherGroupStore(w)
 	if !ok {

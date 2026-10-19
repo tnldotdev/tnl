@@ -21,6 +21,18 @@ func (c *Client) ApplyProjectConfiguration(ctx context.Context, project string, 
 	})
 }
 
+func (c *Client) RenamePublisherNamespace(ctx context.Context, project, group string, body controlv1.RenamePublisherNamespaceRequest) (controlv1.AppliedProjectConfiguration, error) {
+	return requestWithAccess[controlv1.AppliedProjectConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RenamePublisherNamespace(ctx, project, group, body, editors...)
+	})
+}
+
+func (c *Client) RenamePublisherGroup(ctx context.Context, project, group string, body controlv1.RenamePublisherGroupRequest) (controlv1.AppliedProjectConfiguration, error) {
+	return requestWithAccess[controlv1.AppliedProjectConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RenamePublisherGroup(ctx, project, group, body, editors...)
+	})
+}
+
 func (c *Client) GetProjectConfiguration(ctx context.Context, team, project string) (controlv1.AppliedProjectConfiguration, error) {
 	return requestWithAccess[controlv1.AppliedProjectConfiguration](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.GetProjectConfiguration(ctx, project, &controlv1.GetProjectConfigurationParams{TeamId: team}, editors...)

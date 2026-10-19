@@ -2835,6 +2835,21 @@ type RelayID = ResourceID
 // RelayServiceID defines model for RelayServiceID.
 type RelayServiceID = ResourceID
 
+// RenamePublisherGroupRequest defines model for RenamePublisherGroupRequest.
+type RenamePublisherGroupRequest struct {
+	ExpectedRevision int64  `json:"expected_revision"`
+	Name             string `json:"name"`
+	TeamId           string `json:"team_id"`
+}
+
+// RenamePublisherNamespaceRequest defines model for RenamePublisherNamespaceRequest.
+type RenamePublisherNamespaceRequest struct {
+	ExpectedRevision int64  `json:"expected_revision"`
+	IdempotencyKey   string `json:"idempotency_key"`
+	NamespaceLabel   string `json:"namespace_label"`
+	TeamId           string `json:"team_id"`
+}
+
 // ReplaceVisitorAccessRequest defines model for ReplaceVisitorAccessRequest.
 type ReplaceVisitorAccessRequest struct {
 	ExpectedRevision int64             `json:"expected_revision"`
@@ -3510,6 +3525,12 @@ type RealizeLocalProjectServiceJSONRequestBody = RealizeLocalProjectServiceReque
 
 // CreatePublisherGroupEnrollmentJSONRequestBody defines body for CreatePublisherGroupEnrollment for application/json ContentType.
 type CreatePublisherGroupEnrollmentJSONRequestBody = CreatePublisherGroupEnrollmentRequest
+
+// RenamePublisherNamespaceJSONRequestBody defines body for RenamePublisherNamespace for application/json ContentType.
+type RenamePublisherNamespaceJSONRequestBody = RenamePublisherNamespaceRequest
+
+// RenamePublisherGroupJSONRequestBody defines body for RenamePublisherGroup for application/json ContentType.
+type RenamePublisherGroupJSONRequestBody = RenamePublisherGroupRequest
 
 // CreatePublicURLJSONRequestBody defines body for CreatePublicURL for application/json ContentType.
 type CreatePublicURLJSONRequestBody = CreatePublicURLRequest
@@ -4244,6 +4265,30 @@ type ClientInterface interface {
 
 	// RevokePublisherGroupMember performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
 	RevokePublisherGroupMember(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenamePublisherNamespaceWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old managed service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+	RenamePublisherNamespaceWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenamePublisherNamespace performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old managed service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+	RenamePublisherNamespace(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenamePublisherGroupWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+	RenamePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenamePublisherGroup performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+	RenamePublisherGroup(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPublicURLs List public URLs for one team
 	//
@@ -6251,6 +6296,70 @@ func (c *Client) CreatePublisherGroupEnrollment(ctx context.Context, projectKey 
 // RevokePublisherGroupMember performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id} (the `RevokePublisherGroupMember` operationId) request.
 func (c *Client) RevokePublisherGroupMember(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokePublisherGroupMemberRequest(c.Server, projectKey, groupName, publisherIdentityId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenamePublisherNamespaceWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request,
+// with any type of body and a specified content type.
+//
+// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old managed service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+func (c *Client) RenamePublisherNamespaceWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenamePublisherNamespaceRequestWithBody(c.Server, projectKey, groupName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenamePublisherNamespace performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old managed service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+func (c *Client) RenamePublisherNamespace(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenamePublisherNamespaceRequest(c.Server, projectKey, groupName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenamePublisherGroupWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request,
+// with any type of body and a specified content type.
+//
+// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+func (c *Client) RenamePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenamePublisherGroupRequestWithBody(c.Server, projectKey, groupName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenamePublisherGroup performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+func (c *Client) RenamePublisherGroup(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenamePublisherGroupRequest(c.Server, projectKey, groupName, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10985,6 +11094,114 @@ func NewRevokePublisherGroupMemberRequest(server string, projectKey string, grou
 	return req, nil
 }
 
+// NewRenamePublisherNamespaceRequest calls the generic RenamePublisherNamespace builder with application/json body
+func NewRenamePublisherNamespaceRequest(server string, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenamePublisherNamespaceRequestWithBody(server, projectKey, groupName, "application/json", bodyReader)
+}
+
+// NewRenamePublisherNamespaceRequestWithBody constructs an http.Request for the RenamePublisherNamespace method, with any body, and a specified content type
+func NewRenamePublisherNamespaceRequestWithBody(server string, projectKey string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/namespace/rename", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRenamePublisherGroupRequest calls the generic RenamePublisherGroup builder with application/json body
+func NewRenamePublisherGroupRequest(server string, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenamePublisherGroupRequestWithBody(server, projectKey, groupName, "application/json", bodyReader)
+}
+
+// NewRenamePublisherGroupRequestWithBody constructs an http.Request for the RenamePublisherGroup method, with any body, and a specified content type
+func NewRenamePublisherGroupRequestWithBody(server string, projectKey string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/rename", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListPublicURLsRequest constructs an http.Request for the ListPublicURLs method
 func NewListPublicURLsRequest(server string, params *ListPublicURLsParams) (*http.Request, error) {
 	var err error
@@ -14505,6 +14722,34 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RevokePublisherGroupMemberWithResponse(ctx context.Context, projectKey string, groupName string, publisherIdentityId string, params *RevokePublisherGroupMemberParams, reqEditors ...RequestEditorFn) (*RevokePublisherGroupMemberResponse, error)
+
+	// RenamePublisherNamespaceWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old managed service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RenamePublisherNamespaceWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error)
+
+	// RenamePublisherNamespaceWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old managed service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+	RenamePublisherNamespaceWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error)
+
+	// RenamePublisherGroupWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RenamePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error)
+
+	// RenamePublisherGroupWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+	RenamePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error)
 
 	// ListPublicURLsWithResponse List public URLs for one team
 	//
@@ -18170,6 +18415,102 @@ func (r RevokePublisherGroupMemberResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokePublisherGroupMemberResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenamePublisherNamespaceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AppliedProjectConfiguration
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenamePublisherNamespaceResponse) GetJSON200() *AppliedProjectConfiguration {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenamePublisherNamespaceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenamePublisherNamespaceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenamePublisherNamespaceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenamePublisherNamespaceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenamePublisherNamespaceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenamePublisherGroupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AppliedProjectConfiguration
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenamePublisherGroupResponse) GetJSON200() *AppliedProjectConfiguration {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenamePublisherGroupResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenamePublisherGroupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenamePublisherGroupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenamePublisherGroupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenamePublisherGroupResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -22226,6 +22567,58 @@ func (c *ClientWithResponses) RevokePublisherGroupMemberWithResponse(ctx context
 	return ParseRevokePublisherGroupMemberResponse(rsp)
 }
 
+// RenamePublisherNamespaceWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request,
+// with any type of body and a specified content type.
+//
+// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old managed service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RenamePublisherNamespaceWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error) {
+	rsp, err := c.RenamePublisherNamespaceWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenamePublisherNamespaceResponse(rsp)
+}
+
+// RenamePublisherNamespaceWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename (the `RenamePublisherNamespace` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old managed service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+func (c *ClientWithResponses) RenamePublisherNamespaceWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherNamespaceResponse, error) {
+	rsp, err := c.RenamePublisherNamespace(ctx, projectKey, groupName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenamePublisherNamespaceResponse(rsp)
+}
+
+// RenamePublisherGroupWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request,
+// with any type of body and a specified content type.
+//
+// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RenamePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error) {
+	rsp, err := c.RenamePublisherGroupWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenamePublisherGroupResponse(rsp)
+}
+
+// RenamePublisherGroupWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename (the `RenamePublisherGroup` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+func (c *ClientWithResponses) RenamePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body RenamePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*RenamePublisherGroupResponse, error) {
+	rsp, err := c.RenamePublisherGroup(ctx, projectKey, groupName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenamePublisherGroupResponse(rsp)
+}
+
 // ListPublicURLsWithResponse List public URLs for one team
 //
 // Returns a wrapper object for the known response body format(s).
@@ -25529,6 +25922,72 @@ func ParseRevokePublisherGroupMemberResponse(rsp *http.Response) (*RevokePublish
 	return response, nil
 }
 
+// ParseRenamePublisherNamespaceResponse parses an HTTP response from a RenamePublisherNamespaceWithResponse call
+func ParseRenamePublisherNamespaceResponse(rsp *http.Response) (*RenamePublisherNamespaceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenamePublisherNamespaceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AppliedProjectConfiguration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenamePublisherGroupResponse parses an HTTP response from a RenamePublisherGroupWithResponse call
+func ParseRenamePublisherGroupResponse(rsp *http.Response) (*RenamePublisherGroupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenamePublisherGroupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AppliedProjectConfiguration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListPublicURLsResponse parses an HTTP response from a ListPublicURLsWithResponse call
 func ParseListPublicURLsResponse(rsp *http.Response) (*ListPublicURLsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -27721,6 +28180,12 @@ type ServerInterface interface {
 
 	// (DELETE /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id})
 	RevokePublisherGroupMember(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, publisherIdentityId string, params RevokePublisherGroupMemberParams)
+
+	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename)
+	RenamePublisherNamespace(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
+
+	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/rename)
+	RenamePublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
 	// ListPublicURLs List public URLs for one team
 	// (GET /v1/public-urls)
 	ListPublicURLs(w http.ResponseWriter, r *http.Request, params ListPublicURLsParams)
@@ -30218,6 +30683,76 @@ func (siw *ServerInterfaceWrapper) RevokePublisherGroupMember(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
+// RenamePublisherNamespace operation middleware
+func (siw *ServerInterfaceWrapper) RenamePublisherNamespace(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "group_name" -------------
+	var groupName string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenamePublisherNamespace(w, r, projectKey, groupName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenamePublisherGroup operation middleware
+func (siw *ServerInterfaceWrapper) RenamePublisherGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "group_name" -------------
+	var groupName string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenamePublisherGroup(w, r, projectKey, groupName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListPublicURLs operation middleware
 func (siw *ServerInterfaceWrapper) ListPublicURLs(w http.ResponseWriter, r *http.Request) {
 
@@ -32306,6 +32841,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services/{private_service_id}/runs/{private_run_id}/certificate-issuances", wrapper.CreatePrivateCertificateIssuance)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/private-services/{private_service_id}/runs/{private_run_id}/certificate-issuances/{issuance_id}", wrapper.GetPrivateCertificateIssuance)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services/{private_service_id}/runs/{private_run_id}/certificate-installed", wrapper.MarkPrivateCertificateInstalled)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename", wrapper.RenamePublisherNamespace)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/rename", wrapper.RenamePublisherGroup)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/visitor-ingress-assignments/{connector_session_id}", wrapper.ReleaseVisitorIngressAssignment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/public-metadata", wrapper.GetProjectPublicMetadata)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/local-services/{service}", wrapper.GetLocalProjectService)

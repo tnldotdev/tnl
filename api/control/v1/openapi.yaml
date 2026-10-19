@@ -349,6 +349,46 @@ paths:
       responses:
         "204": { description: Current run acknowledged the exact publisher-owned certificate }
         default: { $ref: "#/components/responses/Problem" }
+  /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename:
+    post:
+      operationId: renamePublisherNamespace
+      security: [{ bearerAuth: [] }]
+      description: Change the group's DNS namespace label beneath its existing project and domain. Preserves group, service, replica and visitor-grant IDs and ports. Closes old managed service runs, revokes their publication authority and assigns new grants and certificate plans. Retires old DNS and certificate scope until actual certificate expiry, outstanding issuance, DNS cleanup and quarantine permit reuse. Does not change the configuration selector or separately configured public URLs. The same idempotency key and exact request return the original response; changed input with that key conflicts. The expected revision fences concurrent configuration and namespace mutations.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: group_name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RenamePublisherNamespaceRequest" }
+      responses:
+        "200":
+          description: Applied descriptors with the new managed service hostnames
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppliedProjectConfiguration" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/projects/{project_key}/publisher-groups/{group_name}/rename:
+    post:
+      operationId: renamePublisherGroup
+      security: [{ bearerAuth: [] }]
+      description: Rename the configuration key while preserving the group ID, namespace, service IDs, ports, enrolled identities and grants. Update Git configuration references before the next apply. Retrying the completed rename is idempotent.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: group_name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RenamePublisherGroupRequest" }
+      responses:
+        "200":
+          description: Renamed desired configuration and unchanged endpoint identities
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppliedProjectConfiguration" }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/visitor-ingress-assignments/{connector_session_id}:
     delete:
       operationId: releaseVisitorIngressAssignment

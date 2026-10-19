@@ -215,6 +215,25 @@ func TestGroupIdentityDefaultInstanceStillRequiresAnExactMatch(t *testing.T) {
 	}
 }
 
+func TestGroupIdentityProvisionRejectsMixedAndIncompleteScopes(t *testing.T) {
+	for _, flags := range []publisherProvisionCommand{
+		{Group: "production", Instance: "replica-1", Namespace: true},
+		{Group: "production", Instance: "replica-1", URL: "url_selected"},
+		{Group: "production", Instance: "replica-1", PrivateServiceID: "psvc_selected"},
+		{Group: "production", Instance: "replica-1", Domain: "example.test"},
+		{Group: "production"},
+		{Group: "local", Instance: "replica-1"},
+		{ProjectKey: "shop", Namespace: true},
+		{Instance: "replica-1", Namespace: true},
+	} {
+		flags.OutputFile = filepath.Join(t.TempDir(), "identity.json")
+		err := runPublisherProvision(t.Context(), flags, projectConfiguration{}, io.Discard, io.Discard)
+		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.InvalidTunnelFlags {
+			t.Fatalf("invalid provision scope reached local or remote enrollment: %v", err)
+		}
+	}
+}
+
 func TestGroupIdentityInstallPreflightBeforeProjectOrIdentityState(t *testing.T) {
 	state, service := filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "supervisor")
 	t.Setenv("TNL_GROUP_IDENTITY", "not-valid-json")
@@ -226,5 +245,35 @@ func TestGroupIdentityInstallPreflightBeforeProjectOrIdentityState(t *testing.T)
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			t.Fatal("install preflight created local state")
 		}
+	}
+}
+
+func TestGroupIdentityFlagsAppearInGeneratedHelp(t *testing.T) {
+	for command, wanted := range map[string][]string{
+		"provision": {"--group", "--project-key", "--instance", "--output-file"},
+		"serve":     {"--identity-file", "TNL_GROUP_IDENTITY", "--instance", "--enroll-key"},
+	} {
+		t.Run(command, func(t *testing.T) {
+			var flags cli
+			var output bytes.Buffer
+			parser, err := kong.New(&flags, kong.Name("tnl"), kong.Writers(&output, io.Discard), kong.Exit(func(int) {}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"publisher", command, "--help"}
+			if command == "provision" {
+				args = append(args, "--output-file", filepath.Join(t.TempDir(), "identity.json"))
+			} else {
+				args = append(args, "--group", "production")
+			}
+			if _, err := parser.Parse(args); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range wanted {
+				if !strings.Contains(output.String(), want) {
+					t.Fatalf("generated help is missing %s", want)
+				}
+			}
+		})
 	}
 }
