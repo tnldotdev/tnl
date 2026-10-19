@@ -114,6 +114,69 @@
       "action": "resume with tnl auth login wait \u003coperation-id\u003e"
     },
     {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_AUTHENTICATION",
+      "slug": "aws-bootstrap-authentication",
+      "class": "unauthenticated",
+      "message": "AWS credentials are missing, expired, or rejected",
+      "action": "renew the selected AWS credentials and retry bootstrap"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_DENIED",
+      "slug": "aws-bootstrap-denied",
+      "class": "forbidden",
+      "message": "AWS denied the publisher bootstrap operation",
+      "action": "check Secrets Manager and KMS permissions for the selected credentials"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_INVALID",
+      "slug": "aws-bootstrap-invalid",
+      "class": "invalid",
+      "message": "publisher deployment input is invalid or stale",
+      "action": "check the customer deployment file and run tnl generate for the current project"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_SCOPE",
+      "slug": "aws-bootstrap-scope",
+      "class": "conflict",
+      "message": "publisher deployment scope does not match the current project, team, or AWS account",
+      "action": "check the applied project, selected company, AWS profile, account and region"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_SECRET_CONFLICT",
+      "slug": "aws-bootstrap-secret-conflict",
+      "class": "conflict",
+      "message": "the identity secret name or container belongs to another operation",
+      "action": "check the exact secret ARN and deployment binding; select a new deployment only for a new replica identity"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_STATE_LOST",
+      "slug": "aws-bootstrap-state-lost",
+      "class": "conflict",
+      "message": "publisher bootstrap state or its protected key is missing",
+      "action": "restore the original client state before retrying this deployment; do not enroll replacement keys"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_THROTTLED",
+      "slug": "aws-bootstrap-throttled",
+      "class": "unavailable",
+      "message": "AWS throttled publisher bootstrap",
+      "action": "wait before retrying the same deployment"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_UNAVAILABLE",
+      "slug": "aws-bootstrap-unavailable",
+      "class": "unavailable",
+      "message": "AWS publisher bootstrap could not complete its request",
+      "action": "check network access and AWS service availability, then retry the same deployment"
+    },
+    {
+      "code": "TNL_CLIENT_AWS_BOOTSTRAP_VERSION_CONFLICT",
+      "slug": "aws-bootstrap-version-conflict",
+      "class": "conflict",
+      "message": "the pinned secret version does not match this publisher identity",
+      "action": "restore the original secret version and protected client state; do not overwrite another identity"
+    },
+    {
       "code": "TNL_CLIENT_BROWSER_OPEN_FAILED",
       "slug": "browser-open-failed",
       "class": "unavailable",

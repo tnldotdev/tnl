@@ -3,20 +3,17 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"slices"
-	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/grouppublisher"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
+	"github.com/tnldotdev/tnl/internal/publisherprovision"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -76,104 +73,13 @@ func runPublisherGroupProvision(ctx context.Context, options groupIdentityProvis
 	if groupID == "" {
 		return publisherCLIError("publisher group is not in this applied project's selector history")
 	}
-	scope := credentialfile.GroupSelection(options.ProjectKey, groupID, options.Instance)
-	lock, err := session.store.LockPublisherSigningIdentity(ctx, scope)
+	value, err := publisherprovision.Ensure(ctx, session.store, session.authenticated.Control, client, publisherprovision.Scope{
+		Server: server, Team: current.team.Id, Project: options.ProjectKey, GroupID: groupID, Group: options.Group, Instance: options.Instance,
+	})
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
-	var member controlv1.PublisherGroupMember
-	var private ed25519.PrivateKey
-	retained, retainedFound, err := credentialfile.SavedGroup(session.store, server, options.ProjectKey, groupID, options.Instance)
-	if err != nil {
-		return err
-	}
-	if retainedFound {
-		if retained.Member.TeamId != current.team.Id {
-			return credentialfile.ErrInvalid
-		}
-		if _, _, err := importPublisherGroupIdentity(ctx, session.store, client, retained, server, options.ProjectKey, options.Group, options.Instance); err != nil {
-			return err
-		}
-		scope = credentialfile.GroupSelection(options.ProjectKey, retained.Member.GroupId, options.Instance)
-	}
-	saved, found, err := session.store.SelectedPublisherIdentity(ctx, "project", scope)
-	if err != nil {
-		return err
-	}
-	if found {
-		if json.Unmarshal(saved.PublicDocument, &member) != nil || member.TeamId != current.team.Id {
-			return credentialfile.ErrInvalid
-		}
-		private = ed25519.PrivateKey(saved.SigningKey)
-	} else {
-		pending, found, err := session.store.PendingPublisherEnrollmentForSelection(ctx, "project", scope)
-		if err != nil {
-			return err
-		}
-		if !found {
-			public, key, err := ed25519.GenerateKey(rand.Reader)
-			if err != nil {
-				return err
-			}
-			id, err := opaqueid.New(opaqueid.PublisherEnrollmentPrefix)
-			if err != nil {
-				return err
-			}
-			pending = clientstate.PendingPublisherEnrollment{EnrollmentID: id, SelectionKind: "project", SelectionKey: scope, PublicKey: public, SigningKey: key, ExpiresAt: time.Now().Add(24 * time.Hour)}
-			if err := session.store.SavePendingPublisherEnrollment(ctx, pending); err != nil {
-				return err
-			}
-		}
-		if len(pending.SigningKey) != ed25519.PrivateKeySize {
-			return credentialfile.ErrInvalid
-		}
-		private = ed25519.PrivateKey(pending.SigningKey)
-		if len(pending.ResultJSON) != 0 {
-			if json.Unmarshal(pending.ResultJSON, &member) != nil {
-				return credentialfile.ErrInvalid
-			}
-		} else {
-			// a new bootstrap may recover an expired or lost response, but it
-			// always redeems the already-protected key, never a new member key.
-			enrollment, err := session.authenticated.Control.CreatePublisherGroupEnrollment(ctx, options.ProjectKey, options.Group, controlv1.CreatePublisherGroupEnrollmentRequest{TeamId: current.team.Id, MaxMembers: 1, ExpiresIn: 600})
-			if err != nil {
-				return err
-			}
-			member, err = client.Enroll(ctx, enrollment.EnrollmentKey, private.Public().(ed25519.PublicKey))
-			if err != nil {
-				return err
-			}
-		}
-		if member.TeamId != current.team.Id || member.ProjectKey != options.ProjectKey || member.GroupId != groupID {
-			return credentialfile.ErrInvalid
-		}
-		data, err := json.Marshal(member)
-		if err != nil {
-			return err
-		}
-		if err := session.store.RecordPublisherEnrollmentResult(ctx, pending.EnrollmentID, data); err != nil {
-			return err
-		}
-		if err := session.store.PromotePublisherEnrollment(ctx, pending.EnrollmentID, clientstate.PublisherIdentity{ID: member.PublisherIdentityId, PublicDocument: data, SigningKey: private}); err != nil {
-			return err
-		}
-	}
-	value, err := credentialfile.NewGroup(server, options.Instance, member, private)
-	if err != nil {
-		return err
-	}
-	value, err = credentialfile.ResolveGroup(ctx, client, value, server, options.ProjectKey, options.Group, options.Instance)
-	if err != nil {
-		return err
-	}
-	if err := credentialfile.RetainGroup(ctx, session.store, value); err != nil {
-		return err
-	}
-	if _, err := credentialfile.ImportGroup(ctx, session.store, value, server, options.ProjectKey, options.Group, options.Instance); err != nil {
-		return err
-	}
-	member = value.Member
+	member := value.Member
 	if err := credentialfile.WriteGroup(options.OutputFile, value); err != nil {
 		return err
 	}

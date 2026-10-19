@@ -277,6 +277,15 @@ type PublisherJobRegistry struct {
 	UpdatedAt      int64
 }
 
+type PublisherProvisionJournal struct {
+	ServerOrigin       string
+	Kind               string
+	BindingKey         string
+	Revision           int64
+	DocumentCiphertext []byte
+	CreatedAt          int64
+}
+
 type PublisherSelection struct {
 	ServerOrigin  string
 	SelectionKind string
