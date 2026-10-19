@@ -1,6 +1,7 @@
 package native
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -35,8 +36,6 @@ type NativeControl interface {
 	HeartbeatPublishRun(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error)
 	CreateCertificateIssuance(context.Context, string, uint64, credentials.PublishRunToken, []byte, string) (controlv1.CertificateIssuance, error)
 	GetCertificateIssuance(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error)
-	MarkCertificateChallengeReady(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error)
-	MarkCertificateChallengeRemoved(context.Context, string, credentials.PublishRunToken) error
 	MarkPublishRunCertificateInstalled(context.Context, string, uint64, string, time.Time, credentials.PublishRunToken) error
 }
 
@@ -52,8 +51,10 @@ type Native struct {
 }
 
 func NewNative(control NativeControl, authority AssertionExchanger, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) (*Native, error) {
-	if control == nil || authority == nil || len(private) != ed25519.PrivateKeySize || !opaqueid.Valid(identity.ClientId, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(identity.KeyId, opaqueid.PublisherIdentityKeyPrefix) || !opaqueid.Valid(identity.GrantId, opaqueid.PublisherGrantPrefix) || identity.TeamId == "" ||
-		identity.Kind == "saved_url" && (identity.PublicUrlId == nil || !opaqueid.Valid(*identity.PublicUrlId, opaqueid.PublicURLPrefix)) || identity.Kind == "namespace" && (identity.Namespace == nil || identity.DomainId == nil) || !identity.Kind.Valid() {
+	if control == nil || authority == nil || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private.Seed()), private) || !opaqueid.Valid(identity.ClientId, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(identity.KeyId, opaqueid.PublisherIdentityKeyPrefix) || !opaqueid.Valid(identity.GrantId, opaqueid.PublisherGrantPrefix) || identity.TeamId == "" ||
+		identity.Kind == "saved_url" && (identity.PublicUrlId == nil || !opaqueid.Valid(*identity.PublicUrlId, opaqueid.PublicURLPrefix) || identity.PrivateServiceId != nil || identity.Namespace != nil || identity.DomainId != nil) ||
+		identity.Kind == "namespace" && (identity.Namespace == nil || identity.DomainId == nil || identity.PublicUrlId != nil || identity.PrivateServiceId != nil) ||
+		identity.Kind == "private_service" && (identity.PrivateServiceId == nil || !opaqueid.Valid(*identity.PrivateServiceId, opaqueid.PrivateServicePrefix) || identity.PublicUrlId != nil || identity.Namespace != nil || identity.DomainId != nil) || !identity.Kind.Valid() {
 		return nil, ErrScope
 	}
 	if identity.Kind == "namespace" {
@@ -84,6 +85,7 @@ func (n *Native) ForGrant(g controlv1.PublisherGrant) (*Native, error) {
 	}
 	i := n.identity
 	i.GrantId, i.Kind, i.PublicUrlId, i.DomainId, i.Namespace = g.Id, authorityv1.PublisherEnrollmentResultKind(g.Kind), g.PublicUrlId, g.DomainId, g.Namespace
+	i.PrivateServiceId = g.PrivateServiceId
 	copy, err := NewNative(n.NativeControl, n.authority, i, n.private)
 	if err != nil {
 		return nil, err
@@ -92,6 +94,9 @@ func (n *Native) ForGrant(g controlv1.PublisherGrant) (*Native, error) {
 }
 
 func (n *Native) SelectRoute(route controlv1.PublicURL) error {
+	if n.identity.Kind != authorityv1.SavedUrl && n.identity.Kind != authorityv1.Namespace {
+		return ErrScope
+	}
 	if route.TeamId != n.identity.TeamId || route.LifecycleState != controlv1.Enabled || !opaqueid.Valid(route.Id, opaqueid.PublicURLPrefix) || n.route.Id != "" && n.route.Id != route.Id {
 		return ErrScope
 	}

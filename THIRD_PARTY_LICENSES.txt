@@ -411,33 +411,25 @@ limitations under the License.
 
 --------------------------------------------------------------------------------
 Packages:
-  github.com/aws/aws-sdk-go-v2 v1.42.1
-  github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.14
-  github.com/aws/aws-sdk-go-v2/config v1.32.30
-  github.com/aws/aws-sdk-go-v2/credentials v1.19.29
-  github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.30
-  github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.20.18
-  github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.30
-  github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.30
-  github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.31
-  github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.13
-  github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.23
-  github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.30
-  github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.31
-  github.com/aws/aws-sdk-go-v2/service/s3 v1.105.1
-  github.com/aws/aws-sdk-go-v2/service/signin v1.4.1
-  github.com/aws/aws-sdk-go-v2/service/sso v1.32.1
-  github.com/aws/aws-sdk-go-v2/service/ssooidc v1.37.1
-  github.com/aws/aws-sdk-go-v2/service/sts v1.44.1
-  github.com/aws/smithy-go v1.27.3
-  github.com/benbjohnson/litestream v0.5.17
-  github.com/superfly/ltx v0.5.2
+  github.com/aws/aws-sdk-go-v2 v1.47.1
+  github.com/aws/aws-sdk-go-v2/config v1.33.6
+  github.com/aws/aws-sdk-go-v2/credentials v1.20.6
+  github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.1
+  github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.4
+  github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.4
+  github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.4
+  github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.19
+  github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.4
+  github.com/aws/aws-sdk-go-v2/service/route53 v1.70.1
+  github.com/aws/aws-sdk-go-v2/service/signin v1.10.1
+  github.com/aws/aws-sdk-go-v2/service/sso v1.38.1
+  github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.1
+  github.com/aws/aws-sdk-go-v2/service/sts v1.51.1
+  github.com/aws/smithy-go v1.28.2
 License: Apache-2.0
 License sources:
-  https://github.com/aws/aws-sdk-go-v2/blob/v1.42.1/LICENSE.txt
-  https://github.com/aws/smithy-go/blob/v1.27.3/LICENSE
-  https://github.com/benbjohnson/litestream/blob/v0.5.17/LICENSE
-  https://github.com/superfly/ltx/blob/v0.5.2/LICENSE
+  https://github.com/aws/aws-sdk-go-v2/blob/v1.47.1/LICENSE.txt
+  https://github.com/aws/smithy-go/blob/v1.28.2/LICENSE
 
                                  Apache License
                            Version 2.0, January 2004
@@ -717,34 +709,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 --------------------------------------------------------------------------------
-Package: github.com/anmitsu/go-shlex
-Version: v0.0.0-20200514113438-38f4b401e2be
-License: MIT
-License source: https://github.com/anmitsu/go-shlex/blob/38f4b401e2be/LICENSE
-
-Copyright (c) anmitsu <anmitsu.s@gmail.com>
-
-Permission is hereby granted, free of charge, to any person obtaining
-a copy of this software and associated documentation files (the
-"Software"), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
-
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-
---------------------------------------------------------------------------------
 Package: github.com/beorn7/perks/quantile
 Version: v1.0.1
 License: MIT
@@ -883,37 +847,6 @@ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
 CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
 IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
 OF SUCH DAMAGE.
-
-
---------------------------------------------------------------------------------
-Package: github.com/creack/pty
-Version: v1.1.24
-License: MIT
-License source: https://github.com/creack/pty/blob/v1.1.24/LICENSE
-
-Copyright (c) 2011 Keith Rarick
-
-Permission is hereby granted, free of charge, to any person
-obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without limitation
-the rights to use, copy, modify, merge, publish, distribute,
-sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall
-be included in all copies or substantial portions of the
-Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
-KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
-WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
-PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS
-OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 --------------------------------------------------------------------------------

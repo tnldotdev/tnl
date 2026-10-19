@@ -99,7 +99,7 @@ func TestStatusKeepsLocalFactsWhenControlIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestStatusDefaultsToLocalEvenWithAnUnreachableSelectedServer(t *testing.T) {
+func TestStatusDefaultsToBothAndKeepsLocalFactsWithAnUnreachableServer(t *testing.T) {
 	project := t.TempDir()
 	var output bytes.Buffer
 	if err := runStatus(t.Context(), statusCommand{Output: statusOutputJSON, StateDir: filepath.Join(t.TempDir(), "state"), Project: project, Configuration: projectConfiguration{Project: projectconfig.Project{Root: project}}, ServerURL: "https://127.0.0.1:1"}, &output); err != nil {
@@ -109,7 +109,7 @@ func TestStatusDefaultsToLocalEvenWithAnUnreachableSelectedServer(t *testing.T) 
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Scope != "local" || len(result.Projects) != 1 || result.Projects[0].Local == nil || result.Projects[0].Server != nil {
+	if result.Scope != "both" || len(result.Projects) != 1 || result.Projects[0].Local == nil || result.Projects[0].Server == nil || result.Projects[0].Server.Available {
 		t.Fatalf("offline default status = %s", output.String())
 	}
 }

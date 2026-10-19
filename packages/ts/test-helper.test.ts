@@ -144,7 +144,6 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
   expect(sanitized.NODE_ENV).toBe("development");
   for (const name of [
     "TNL_ACCESS_TOKEN",
-    "TNL_LOGIN_TOKEN",
     "TNL_TUNNEL_ID",
     "TNL_PUBLIC_HOSTNAME",
     "TNL_PUBLIC_URL",

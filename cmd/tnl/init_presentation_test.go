@@ -44,7 +44,7 @@ func TestInitReportsManualActionForExistingFrameworkConfig(t *testing.T) {
 					t.Fatalf("config = %q, %v", config, err)
 				}
 				gitignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
-				if err != nil || string(gitignore) != "# tnl\n.tnl/\n" {
+				if err != nil || string(gitignore) != "# tnl\n/.tnl/local/\n" {
 					t.Fatalf("gitignore = %q, %v", gitignore, err)
 				}
 				if test.framework == "next" && !strings.Contains(stdout.String(), "pnpm add --save-dev") {
@@ -69,7 +69,7 @@ func TestInitRepeatsManualProjectTypeAction(t *testing.T) {
 				if err := runInit(t.Context(), initCommand{NoInstall: true}, &stdout, &bytes.Buffer{}); err != nil {
 					t.Fatal(err)
 				}
-				if !strings.Contains(stdout.String(), "needs action") || !strings.Contains(stdout.String(), `.tnl/project.d.ts`) {
+				if !strings.Contains(stdout.String(), "needs action") || !strings.Contains(stdout.String(), `.tnl/local/project.d.ts`) {
 					t.Fatalf("run %d stdout = %q", run, stdout.String())
 				}
 				after, err := os.ReadFile(path)

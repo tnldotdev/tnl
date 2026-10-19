@@ -99,6 +99,4 @@ type IngressRoutingTableEventKind string
 const (
 	IngressPublicURLUpsert    IngressRoutingTableEventKind = "public_url_upsert"
 	IngressPublicURLTombstone IngressRoutingTableEventKind = "public_url_tombstone"
-	IngressChallengeUpsert    IngressRoutingTableEventKind = "challenge_upsert"
-	IngressChallengeTombstone IngressRoutingTableEventKind = "challenge_tombstone"
 )

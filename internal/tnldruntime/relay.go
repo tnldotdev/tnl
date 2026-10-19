@@ -28,6 +28,7 @@ const relaySessionSetupTimeout = 10 * time.Second
 type relayRuntime struct {
 	controller       *relay.Controller
 	registry         *relay.Registry
+	privateRegistry  *relay.PrivateRegistry
 	publisher        *relay.PublisherAcceptor
 	transportTLS     *tls.Config
 	tcpListener      net.Listener
@@ -201,8 +202,10 @@ func (d *daemon) startRelayRuntime(
 		return nil, fmt.Errorf("create relay process run ID: %w", err)
 	}
 	registry := relay.NewRegistry()
+	privateRegistry := relay.NewPrivateRegistry()
 	registry.Instrument(runtimeConfig.metrics)
 	runtime.registry = registry
+	runtime.privateRegistry = privateRegistry
 	controller, err := relay.NewController(relay.ControllerConfig{
 		Observer: runtimeConfig.metrics,
 		Client:   runtimeConfig.client,
@@ -215,7 +218,11 @@ func (d *daemon) startRelayRuntime(
 		},
 		RenewalInterval: settings.leaseRenewalInterval, RetryInterval: settings.controlRetryInterval,
 		CertificateChanged: runtimeConfig.certificateChanged,
-		Load:               registry.Load, LeaseChanged: func(previous, current relayv1.RelayLease) {
+		Load: func() (int64, int64) {
+			publicConnections, publicStreams := registry.Load()
+			privateConnections, privateStreams := privateRegistry.Load()
+			return publicConnections + privateConnections, publicStreams + privateStreams
+		}, LeaseChanged: func(previous, current relayv1.RelayLease) {
 			if runtimeConfig.metrics != nil {
 				runtimeConfig.metrics.SetRelayLeaseExpiry(runtimeConfig.relayID, current.LeaseExpiresAt)
 			}
@@ -229,6 +236,8 @@ func (d *daemon) startRelayRuntime(
 						defer cancel()
 						_ = runtime.registry.Drain(ctx)
 						_ = runtime.registry.Close()
+						_ = runtime.privateRegistry.Drain(ctx)
+						_ = runtime.privateRegistry.Close()
 					})
 				})
 			}
@@ -251,6 +260,9 @@ func (d *daemon) startRelayRuntime(
 	publisherAcceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
 		Observer: runtimeConfig.metrics,
 		Control:  controller, Registry: registry,
+		Private: &relay.PrivatePublisherAcceptor{Select: func(id string) (relay.PrivatePublisherTarget, bool) {
+			return relay.PrivatePublisherTarget{Control: controller, Registry: privateRegistry}, id == runtimeConfig.relayServiceID
+		}},
 		ReadyConnectionsDelta: func(delta int) {
 			if runtimeConfig.metrics != nil {
 				runtimeConfig.metrics.AddReadyPublisherConnections(delta)
@@ -279,7 +291,8 @@ func (d *daemon) startRelayRuntime(
 	forwardingAcceptor, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{
 		Observer: runtimeConfig.metrics,
 		Registry: registry, CurrentLease: controller.Lease,
-		ClusterSecrets: runtimeConfig.clusterSecrets, StreamCapacity: streamCapacity,
+		PrivateRegistry: privateRegistry,
+		ClusterSecrets:  runtimeConfig.clusterSecrets, StreamCapacity: streamCapacity,
 		StreamsDelta: func(delta int) {
 			if runtimeConfig.metrics != nil {
 				runtimeConfig.metrics.AddRelayStreams(delta)

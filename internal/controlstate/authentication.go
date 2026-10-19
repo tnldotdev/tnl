@@ -13,12 +13,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
-
-const loginAuthenticationMethod = "login_token"
-
-const oidcAuthenticationMethod = "oidc"
 
 var (
 	ErrControlAuthentication = errors.New("controlstate: invalid control credential")
@@ -30,6 +27,7 @@ var (
 type IdentityContext struct {
 	Identity       Identity
 	PersonalTeamID string
+	DefaultTeamID  string
 	Memberships    []Membership
 }
 
@@ -43,103 +41,66 @@ type Identity struct {
 }
 
 type Membership struct {
-	ID              string
-	TeamID          string
-	IdentityID      string
-	TeamDisplayName string
-	TeamKind        TeamKind
-	Role            TeamRole
-	MemberSlug      string
-	ManagedLabel    string
-	PolicyRevision  int64
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	TeamManagedLabel         string
+	IdentityConnectionID     string
+	ManualSuspendedAt        time.Time
+	PersonalAccountException bool
+	CompanySignInRequired    bool
+	Active                   bool
+	ID                       string
+	TeamID                   string
+	IdentityID               string
+	TeamDisplayName          string
+	TeamKind                 TeamKind
+	Role                     TeamRole
+	MemberSlug               string
+	ManagedLabel             string
+	PolicyRevision           int64
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
 }
 
 type ControlPrincipal struct {
-	SessionID        string
-	IdentityID       string
-	Administrator    bool
-	RetrySecret      [32]byte
-	RefreshExpiresAt time.Time
+	SessionID               string
+	IdentityID              string
+	Administrator           bool
+	RetrySecret             [32]byte
+	RefreshExpiresAt        time.Time
+	OIDCIssuer, OIDCSubject string
 }
 
 type ControlSession struct {
-	SessionID        string
-	AccessToken      credentials.AccessToken
-	AccessExpiresAt  time.Time
-	RefreshToken     credentials.RefreshToken
-	RefreshExpiresAt time.Time
-	Identity         IdentityContext
+	CompanyAuthenticationExpiresAt *time.Time
+	SessionID                      string
+	AccessToken                    credentials.AccessToken
+	AccessExpiresAt                time.Time
+	RefreshToken                   credentials.RefreshToken
+	RefreshExpiresAt               time.Time
+	Identity                       IdentityContext
 }
 
 // OIDCIdentity contains the limited identity and assertion fields verified from
 // an ID token.
 type OIDCIdentity struct {
-	Issuer          string
-	Subject         string
-	DisplayName     string
-	NormalizedEmail string
-	EmailVerified   bool
-	AssertionDigest [32]byte
-	AssertionExpiry time.Time
-}
-
-func (d *Database) CreateBuiltinControlSession(
-	ctx context.Context,
-	managedDomain string,
-	authenticationSourceRevision int64,
-	accessLifetime time.Duration,
-	refreshLifetime time.Duration,
-	now time.Time,
-) (result ControlSession, retErr error) {
-	if managedDomain == "" || authenticationSourceRevision < 1 || accessLifetime <= 0 || refreshLifetime < accessLifetime {
-		return ControlSession{}, ErrControlAuthentication
-	}
-	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-	if err != nil {
-		return ControlSession{}, fmt.Errorf("controlstate: begin builtin authentication: %w", err)
-	}
-	defer rollback(ctx, tx, "builtin authentication", &retErr)()
-	queries := controlstatedb.New(tx)
-	if err := queries.LockIdentityBootstrap(ctx); err != nil {
-		return ControlSession{}, fmt.Errorf("controlstate: lock identity bootstrap: %w", err)
-	}
-
-	identity, err := queries.FindBuiltinIdentity(ctx)
-	if errors.Is(err, pgx.ErrNoRows) {
-		identity, err = bootstrapBuiltinIdentity(ctx, queries, managedDomain, d.managedURLMode, now)
-	}
-	if err != nil {
-		return ControlSession{}, err
-	}
-	domain, err := queries.FindManagedDomain(ctx)
-	if err != nil {
-		return ControlSession{}, fmt.Errorf("controlstate: read managed domain: %w", err)
-	}
-	if domain.CanonicalDomain != managedDomain {
-		return ControlSession{}, ErrManagedDomainMismatch
-	}
-
-	result, err = d.createControlSession(
-		ctx, queries, identity.ID, identity.Administrator, loginAuthenticationMethod,
-		authenticationSourceRevision, accessLifetime, refreshLifetime, now,
-	)
-	if err != nil {
-		return ControlSession{}, err
-	}
-	result.Identity, err = loadIdentityContext(ctx, queries, identity.ID)
-	if err != nil {
-		return ControlSession{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return ControlSession{}, fmt.Errorf("controlstate: commit builtin authentication: %w", err)
-	}
-	return result, nil
+	Issuer                 string
+	Subject                string
+	DisplayName            string
+	NormalizedEmail        string
+	EmailVerified          bool
+	AssertionDigest        [32]byte
+	AssertionExpiry        time.Time
+	TeamContexts           []oidcauth.TeamContext
+	Nonce                  string
+	ClientID               string
+	IssuedAt               time.Time
+	CompanyIntent          *CompanyIntentBinding
+	AuthenticatedAt        time.Time
+	TenantID, HostedDomain string
+	Groups                 []string
 }
 
 // CreateOIDCControlSession consumes one verified assertion and creates or updates
-// its non-administrator local identity before issuing a local control session.
+// its named local identity before issuing a local control session.
 func (d *Database) CreateOIDCControlSession(
 	ctx context.Context,
 	managedDomain string,
@@ -164,6 +125,17 @@ func (d *Database) CreateOIDCControlSession(
 	}
 	defer rollback(ctx, tx, "OIDC authentication", &retErr)()
 	queries := controlstatedb.New(tx)
+	result, err = d.createOIDCControlSession(ctx, queries, managedDomain, identity, accessLifetime, refreshLifetime, now)
+	if err != nil {
+		return result, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ControlSession{}, fmt.Errorf("controlstate: commit OIDC authentication: %w", err)
+	}
+	return result, nil
+}
+
+func (d *Database) createOIDCControlSession(ctx context.Context, queries *controlstatedb.Queries, managedDomain string, identity OIDCIdentity, accessLifetime, refreshLifetime time.Duration, now time.Time) (result ControlSession, err error) {
 	if err := queries.LockIdentityBootstrap(ctx); err != nil {
 		return ControlSession{}, fmt.Errorf("controlstate: lock OIDC identity provisioning: %w", err)
 	}
@@ -187,8 +159,11 @@ func (d *Database) CreateOIDCControlSession(
 	if err != nil {
 		return ControlSession{}, fmt.Errorf("controlstate: ensure OIDC identity: %w", err)
 	}
+	if err := d.mapDirectOIDCAdmission(ctx, queries, stored.ID, &identity, now); err != nil {
+		return ControlSession{}, err
+	}
 	result, err = d.createControlSession(
-		ctx, queries, stored.ID, stored.Administrator, oidcAuthenticationMethod, 1,
+		ctx, queries, stored.ID,
 		accessLifetime, refreshLifetime, now,
 	)
 	if err != nil {
@@ -198,82 +173,15 @@ func (d *Database) CreateOIDCControlSession(
 	if err != nil {
 		return ControlSession{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return ControlSession{}, fmt.Errorf("controlstate: commit OIDC authentication: %w", err)
+	if err := storeVerifiedCompanyContexts(ctx, queries, result.SessionID, stored.ID, identity, result.RefreshExpiresAt, now); err != nil {
+		return ControlSession{}, err
 	}
+	deadline, err := queries.GetCompanyAuthenticationDeadline(ctx, result.SessionID)
+	if err != nil {
+		return ControlSession{}, err
+	}
+	result.CompanyAuthenticationExpiresAt = optionalTime(deadline)
 	return result, nil
-}
-
-func bootstrapBuiltinIdentity(
-	ctx context.Context,
-	queries *controlstatedb.Queries,
-	managedDomain string,
-	mode naming.ManagedURLMode,
-	now time.Time,
-) (controlstatedb.ControlIdentity, error) {
-	identityID, err := opaqueid.New(opaqueid.IdentityPrefix)
-	if err != nil {
-		return controlstatedb.ControlIdentity{}, err
-	}
-	teamID, err := opaqueid.New(opaqueid.TeamPrefix)
-	if err != nil {
-		return controlstatedb.ControlIdentity{}, err
-	}
-	membershipID, err := opaqueid.New(opaqueid.MembershipPrefix)
-	if err != nil {
-		return controlstatedb.ControlIdentity{}, err
-	}
-	reservationID, err := opaqueid.New(opaqueid.SlugReservationPrefix)
-	if err != nil {
-		return controlstatedb.ControlIdentity{}, err
-	}
-	domain, err := ensureManagedDomain(ctx, queries, managedDomain, now)
-	if err != nil {
-		return controlstatedb.ControlIdentity{}, err
-	}
-
-	name, err := availablePersonalTeamName(ctx, queries, "local-administrator", now)
-	if err != nil {
-		return controlstatedb.ControlIdentity{}, err
-	}
-	label := name
-	if mode == naming.ManagedURLModeGenerated {
-		label, err = availableManagedLabel(ctx, queries, now)
-		if err != nil {
-			return controlstatedb.ControlIdentity{}, err
-		}
-	}
-	createdAt := timestamp(now)
-	if err := queries.CreateIdentity(ctx, controlstatedb.CreateIdentityParams{
-		ID: identityID, Kind: "builtin", DisplayName: "Local administrator",
-		Administrator: true, CreatedAt: createdAt, UpdatedAt: createdAt,
-	}); err != nil {
-		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create builtin identity: %w", err)
-	}
-	if err := queries.CreatePersonalTeam(ctx, controlstatedb.CreatePersonalTeamParams{
-		ID: teamID, DisplayName: name, ManagedLabel: label,
-		CreatedByIdentityID: identityID, CreatedAt: createdAt,
-	}); err != nil {
-		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create builtin personal team: %w", err)
-	}
-	if err := queries.CreateActiveSlugReservation(ctx, controlstatedb.CreateActiveSlugReservationParams{
-		ID: reservationID, TeamID: teamID, MemberSlug: naming.MemberSlugFromDisplayName("Local administrator"),
-		IdentityID: text(identityID), CreatedAt: createdAt,
-	}); err != nil {
-		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: reserve builtin member slug: %w", err)
-	}
-	if err := queries.CreateOwnerMembership(ctx, controlstatedb.CreateOwnerMembershipParams{
-		ID: membershipID, TeamID: teamID, IdentityID: identityID,
-		SlugReservationID: reservationID, ManagedLabel: label, CreatedAt: createdAt,
-	}); err != nil {
-		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: create builtin membership: %w", err)
-	}
-	if err := queries.SetPersonalTeamDefaultDomain(ctx, controlstatedb.SetPersonalTeamDefaultDomainParams{
-		DomainID: text(domain.ID), UpdatedAt: createdAt, TeamID: teamID,
-	}); err != nil {
-		return controlstatedb.ControlIdentity{}, fmt.Errorf("controlstate: set builtin default domain: %w", err)
-	}
-	return queries.FindBuiltinIdentity(ctx)
 }
 
 func createOIDCIdentity(
@@ -418,13 +326,13 @@ func (d *Database) createControlSession(
 	ctx context.Context,
 	queries *controlstatedb.Queries,
 	identityID string,
-	administrator bool,
-	authenticationMethod string,
-	authenticationSourceRevision int64,
 	accessLifetime time.Duration,
 	refreshLifetime time.Duration,
 	now time.Time,
 ) (ControlSession, error) {
+	if now.IsZero() || accessLifetime <= 0 || refreshLifetime < accessLifetime || accessLifetime > 30*24*time.Hour || refreshLifetime > 365*24*time.Hour {
+		return ControlSession{}, ErrControlAuthentication
+	}
 	sessionID, err := opaqueid.New(opaqueid.ControlSessionPrefix)
 	if err != nil {
 		return ControlSession{}, err
@@ -448,8 +356,7 @@ func (d *Database) createControlSession(
 	accessExpiresAt := now.Add(accessLifetime).UTC().Truncate(time.Microsecond)
 	refreshExpiresAt := now.Add(refreshLifetime).UTC().Truncate(time.Microsecond)
 	if err := queries.CreateControlSession(ctx, controlstatedb.CreateControlSessionParams{
-		ID: sessionID, IdentityID: identityID, AuthenticationMethod: authenticationMethod,
-		AuthenticationSourceRevision: authenticationSourceRevision, Administrator: administrator,
+		ID: sessionID, IdentityID: identityID,
 		AccessTokenID: accessTokenID.String(), AccessTokenDigest: accessTokenDigest[:],
 		AccessExpiresAt: timestamp(accessExpiresAt), RefreshTokenID: refreshTokenID.String(),
 		RefreshTokenDigest: refreshTokenDigest[:], RetrySecretCiphertext: retrySecretCiphertext,
@@ -467,7 +374,6 @@ func (d *Database) createControlSession(
 func (d *Database) AuthenticateAccessToken(
 	ctx context.Context,
 	token credentials.AccessToken,
-	loginSourceRevision int64,
 	now time.Time,
 ) (ControlPrincipal, error) {
 	tokenID, digest, err := credentials.ParseAccessToken(token)
@@ -481,8 +387,7 @@ func (d *Database) AuthenticateAccessToken(
 	if err != nil {
 		return ControlPrincipal{}, fmt.Errorf("controlstate: authenticate access token: %w", err)
 	}
-	if !credentials.SecretHashMatches(row.AccessTokenDigest, digest) || !row.AccessExpiresAt.Time.After(now) ||
-		row.AuthenticationMethod == loginAuthenticationMethod && row.AuthenticationSourceRevision != loginSourceRevision {
+	if !credentials.SecretHashMatches(row.AccessTokenDigest, digest) || !row.AccessExpiresAt.Time.After(now) {
 		return ControlPrincipal{}, ErrControlAuthentication
 	}
 	retrySecret, previous, err := d.openSecret(row.RetrySecretStorageKeyID, controlSessionRetrySecretContext(row.ID), row.RetrySecretCiphertext)
@@ -504,6 +409,7 @@ func (d *Database) AuthenticateAccessToken(
 	principal := ControlPrincipal{
 		SessionID: row.ID, IdentityID: row.IdentityID, Administrator: row.Administrator,
 		RefreshExpiresAt: row.RefreshExpiresAt.Time,
+		OIDCIssuer:       row.Issuer.String, OIDCSubject: row.Subject.String,
 	}
 	copy(principal.RetrySecret[:], retrySecret)
 	return principal, nil
@@ -512,7 +418,6 @@ func (d *Database) AuthenticateAccessToken(
 func (d *Database) RefreshControlSession(
 	ctx context.Context,
 	token credentials.RefreshToken,
-	loginSourceRevision int64,
 	accessLifetime time.Duration,
 	now time.Time,
 ) (result ControlSession, retErr error) {
@@ -533,8 +438,14 @@ func (d *Database) RefreshControlSession(
 	if err != nil {
 		return ControlSession{}, fmt.Errorf("controlstate: lock control session: %w", err)
 	}
-	if !credentials.SecretHashMatches(row.RefreshTokenDigest, digest) || !row.RefreshExpiresAt.Time.After(now) ||
-		row.AuthenticationMethod == loginAuthenticationMethod && row.AuthenticationSourceRevision != loginSourceRevision {
+	if !credentials.SecretHashMatches(row.RefreshTokenDigest, digest) || !row.RefreshExpiresAt.Time.After(now) {
+		return ControlSession{}, ErrControlAuthentication
+	}
+	companyValid, err := queries.CompanySessionRefreshValid(ctx, controlstatedb.CompanySessionRefreshValidParams{SessionID: row.ID, IdentityID: row.IdentityID, Now: timestamptz(now)})
+	if err != nil {
+		return ControlSession{}, err
+	}
+	if !companyValid.Valid || !companyValid.Bool {
 		return ControlSession{}, ErrControlAuthentication
 	}
 	accessToken, accessTokenID, accessTokenDigest, err := credentials.NewAccessToken()
@@ -564,11 +475,16 @@ func (d *Database) RefreshControlSession(
 	if err != nil {
 		return ControlSession{}, err
 	}
+	deadline, err := queries.GetCompanyAuthenticationDeadline(ctx, row.ID)
+	if err != nil {
+		return ControlSession{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return ControlSession{}, fmt.Errorf("controlstate: commit control-session refresh: %w", err)
 	}
 	return ControlSession{
-		SessionID: row.ID, AccessToken: accessToken, AccessExpiresAt: accessExpiresAt,
+		CompanyAuthenticationExpiresAt: optionalTime(deadline),
+		SessionID:                      row.ID, AccessToken: accessToken, AccessExpiresAt: accessExpiresAt,
 		RefreshToken: refreshToken, RefreshExpiresAt: row.RefreshExpiresAt.Time, Identity: identity,
 	}, nil
 }
@@ -605,9 +521,11 @@ func loadIdentityContext(ctx context.Context, queries *controlstatedb.Queries, i
 	memberships := make([]Membership, len(rows))
 	for index, row := range rows {
 		memberships[index] = Membership{
+			IdentityConnectionID: row.IdentityConnectionID.String, ManualSuspendedAt: row.ManualSuspendedAt.Time, PersonalAccountException: row.PersonalAccountException, CompanySignInRequired: row.CompanySignInRequired, Active: row.Active,
 			ID: row.ID, TeamID: row.TeamID, IdentityID: row.IdentityID,
-			TeamDisplayName: row.TeamDisplayName,
-			TeamKind:        TeamKind(row.TeamKind), Role: TeamRole(row.Role),
+			TeamDisplayName:  row.TeamDisplayName,
+			TeamManagedLabel: row.TeamManagedLabel,
+			TeamKind:         TeamKind(row.TeamKind), Role: TeamRole(row.Role),
 			MemberSlug: row.MemberSlug, ManagedLabel: row.ManagedLabel, PolicyRevision: row.PolicyRevision,
 			CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
 		}
@@ -618,6 +536,7 @@ func loadIdentityContext(ctx context.Context, queries *controlstatedb.Queries, i
 			EmailVerified: identity.EmailVerified, Administrator: identity.Administrator, CreatedAt: identity.CreatedAt.Time,
 		},
 		PersonalTeamID: identity.PersonalTeamID,
+		DefaultTeamID:  identity.DefaultTeamID,
 		Memberships:    memberships,
 	}, nil
 }

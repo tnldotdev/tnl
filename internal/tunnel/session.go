@@ -43,6 +43,7 @@ type Session struct {
 	control             muxsession.Stream
 	role                tunnelv1.PeerRole
 	publisherConnection *tunnelv1.PublisherConnectionRef
+	privateConnection   *tunnelv1.PrivatePublisherConnectionRef
 
 	closeOnce sync.Once
 	closeErr  error
@@ -148,6 +149,10 @@ func authenticatedSession(transport muxsession.Session, control muxsession.Strea
 		ref := *hello.PublisherConnection
 		s.publisherConnection = &ref
 	}
+	if hello.PrivateConnection != nil {
+		ref := *hello.PrivateConnection
+		s.privateConnection = &ref
+	}
 	return s
 }
 
@@ -167,6 +172,12 @@ func (s *Session) OpenInternalForwardingStream(
 ) (muxsession.Stream, error) {
 	return s.openAcknowledgedStream(ctx, "internal forwarding", func(stream muxsession.Stream) error {
 		return tunnelv1.WriteInternalForwardingHeader(stream, header)
+	})
+}
+
+func (s *Session) OpenPrivateForwardingStream(ctx context.Context, header tunnelv1.PrivateForwardingHeader) (muxsession.Stream, error) {
+	return s.openAcknowledgedStream(ctx, "private forwarding", func(stream muxsession.Stream) error {
+		return tunnelv1.WritePrivateForwardingHeader(stream, header)
 	})
 }
 
@@ -312,8 +323,9 @@ func (r *IncomingVisitorStream) Reject(code tunnelv1.ErrorCode) error {
 
 // IncomingInternalForwardingStream is an ingress stream awaiting acceptance by a relay.
 type IncomingInternalForwardingStream struct {
-	Stream muxsession.Stream
-	Header tunnelv1.InternalForwardingHeader
+	Stream        muxsession.Stream
+	Header        tunnelv1.InternalForwardingHeader
+	PrivateHeader *tunnelv1.PrivateForwardingHeader
 
 	response incomingStreamResponse
 }
@@ -323,7 +335,7 @@ func (s *Session) AcceptInternalForwardingStream(ctx context.Context) (*Incoming
 	if err != nil {
 		return nil, err
 	}
-	header, err := tunnelv1.ReadInternalForwardingHeader(stream)
+	header, private, err := tunnelv1.ReadForwardingHeader(stream)
 	if err != nil {
 		_ = tunnelv1.WriteStreamResponse(stream, tunnelv1.StreamResponse{
 			Type: tunnelv1.StreamRejected, Code: tunnelv1.InvalidMessage,
@@ -332,7 +344,7 @@ func (s *Session) AcceptInternalForwardingStream(ctx context.Context) (*Incoming
 		return nil, &StreamHeaderError{Kind: "internal forwarding", Err: err}
 	}
 	return &IncomingInternalForwardingStream{
-		Stream: stream, Header: header, response: incomingStreamResponse{stream: stream},
+		Stream: stream, Header: header, PrivateHeader: private, response: incomingStreamResponse{stream: stream},
 	}, nil
 }
 
@@ -341,6 +353,49 @@ func (r *IncomingInternalForwardingStream) Accept() error {
 }
 
 func (r *IncomingInternalForwardingStream) Reject(code tunnelv1.ErrorCode) error {
+	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
+}
+
+// IncomingPrivateForwardingStream belongs to one authenticated private
+// publisher connection. the caller checks the relay lease and PROXY source
+// before permitting application bytes onto the stream.
+type IncomingPrivateForwardingStream struct {
+	Stream   muxsession.Stream
+	Header   tunnelv1.PrivateForwardingHeader
+	response incomingStreamResponse
+}
+
+func (s *Session) AcceptPrivateForwardingStream(ctx context.Context) (*IncomingPrivateForwardingStream, error) {
+	if s == nil || s.role != tunnelv1.Publisher || s.privateConnection == nil {
+		return nil, errors.New("tunnel: claimed private publisher connection is required")
+	}
+	stream, err := s.acceptStream(ctx, "private forwarding")
+	if err != nil {
+		return nil, err
+	}
+	header, err := tunnelv1.ReadPrivateForwardingHeader(stream)
+	if err != nil {
+		_ = tunnelv1.WriteStreamResponse(stream, tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: tunnelv1.InvalidMessage})
+		_ = stream.Close()
+		return nil, &StreamHeaderError{Kind: "private forwarding", Err: err}
+	}
+	ref := s.privateConnection
+	if header.PrivateServiceID != ref.PrivateServiceID || header.PrivateRunID != ref.PrivateRunID ||
+		header.RunNumber != ref.RunNumber || header.PublisherConnectionID != ref.PublisherConnectionID ||
+		header.ConnectionSlot != ref.ConnectionSlot || header.ConnectionAssignmentRevision != ref.ConnectionAssignmentRevision ||
+		header.RelayServiceID != ref.RelayServiceID {
+		_ = tunnelv1.WriteStreamResponse(stream, tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: tunnelv1.StaleConnectionAssignment})
+		_ = stream.Close()
+		return nil, &StreamHeaderError{Kind: "private forwarding", Err: errors.New("claimed assignment changed")}
+	}
+	return &IncomingPrivateForwardingStream{Stream: stream, Header: header, response: incomingStreamResponse{stream: stream}}, nil
+}
+
+func (r *IncomingPrivateForwardingStream) Accept() error {
+	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted})
+}
+
+func (r *IncomingPrivateForwardingStream) Reject(code tunnelv1.ErrorCode) error {
 	return r.response.respond(tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
 }
 

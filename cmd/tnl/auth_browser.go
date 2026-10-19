@@ -14,7 +14,7 @@ import (
 
 type authBrowserCommand struct {
 	remoteFlags `embed:""`
-	URL         string `arg:"" name:"url" required:"" help:"HTTP public URL ID or hostname to open with your built-in administrator session."`
+	URL         string `arg:"" name:"url" required:"" help:"HTTP public URL ID or hostname to open with your current control session."`
 }
 
 func runAuthBrowser(ctx context.Context, flags authBrowserCommand, output, diagnostics io.Writer) error {
@@ -41,7 +41,7 @@ func runAuthBrowser(ctx context.Context, flags authBrowserCommand, output, diagn
 	if err != nil {
 		return err
 	}
-	handoff, err := authority.IssueAdminBrowserHandoff(ctx, item.Id, credentials.RefreshToken(saved.RefreshToken))
+	handoff, err := authority.IssueControlBrowserHandoff(ctx, item.Id, credentials.RefreshToken(saved.RefreshToken))
 	if err != nil {
 		return err
 	}

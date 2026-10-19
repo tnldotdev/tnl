@@ -44,7 +44,9 @@ WITH candidates AS MATERIALIZED (
     WHERE events.id = candidates.id
       AND EXISTS (
           SELECT 1 FROM control.ingress_routing_table_events AS newer
-          WHERE newer.canonical_hostname = candidates.canonical_hostname
+           WHERE newer.canonical_hostname = candidates.canonical_hostname
+             AND (candidates.event_kind NOT IN ('public_url_upsert','public_url_tombstone')
+                 OR (newer.public_url_id=candidates.public_url_id AND newer.publish_run_number=candidates.publish_run_number))
             AND (newer.event_kind IN ('public_url_upsert', 'public_url_tombstone')) =
                 (candidates.event_kind IN ('public_url_upsert', 'public_url_tombstone'))
             AND newer.id > candidates.id

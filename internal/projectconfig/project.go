@@ -136,25 +136,50 @@ func (p Project) AppService(cwd, selected string) (string, error) {
 
 // EffectiveService merges one named service over the root defaults.
 func (p Project) EffectiveService(name string) (config.TNL, error) {
+	if err := config.ValidateTNL(p.Config); err != nil {
+		return config.TNL{}, err
+	}
 	base := p.Config
 	result := config.TNL{
-		Server: base.Server, Team: base.Team, Feedback: base.Feedback, OAuth: base.OAuth,
+		Name: base.Name, Server: base.Server, Team: base.Team, Feedback: base.Feedback, OAuth: base.OAuth,
 		Inspection: config.MergeInspection(base.Inspection, nil),
 		Webhooks:   base.Webhooks, Tunnel: cloneTunnel(base.Tunnel), Publish: config.ServicePublish(config.Service{}),
 	}
 	if name == "" {
+		if result.Name != nil {
+			if result.Tunnel == nil {
+				result.Tunnel = &config.Tunnel{}
+			}
+			result.Tunnel.Name = result.Name
+		}
 		return result, nil
 	}
 	service, found := base.Services[name]
 	if !found {
 		return config.TNL{}, fmt.Errorf("service %q is not configured", name)
 	}
+	savedName := config.ServiceName(name, service)
+	result.Name = &savedName
 	result.Inspection = config.MergeInspection(result.Inspection, service.Inspection)
-	result.Tunnel = mergeTunnel(result.Tunnel, service.Tunnel)
+	if !config.IsPublicService(service) {
+		// private services never inherit public URL policy, even when the
+		// project also publishes HTTP services.
+		result.Tunnel = nil
+		result.Feedback, result.OAuth, result.Webhooks = nil, false, nil
+		result.Inspection = config.MergeInspection(nil, service.Inspection)
+	} else {
+		result.Tunnel = mergeTunnel(result.Tunnel, service.Tunnel)
+		if result.Tunnel == nil {
+			result.Tunnel = &config.Tunnel{}
+		}
+		if result.Tunnel.PublicURL == nil && service.Name != nil {
+			result.Tunnel.Name = &savedName
+		}
+	}
 	result.Publish = config.ServicePublish(service)
 	if service.HTTP != nil {
 		result.Readiness = service.HTTP.Readiness
-		if service.HTTP.Open != nil {
+		if service.HTTP.Open != nil && config.IsPublicService(service) {
 			if result.Tunnel == nil {
 				result.Tunnel = &config.Tunnel{}
 			}

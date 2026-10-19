@@ -1,6 +1,47 @@
 name: tnl-local-dev
 
 services:
+  control-proxy:
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    ports: ["127.0.0.1:8445:8445/tcp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../../.local/certs/local.crt:/etc/tnl/local.crt:ro
+      - ../../.local/certs/local.key:/etc/tnl/local.key:ro
+    networks:
+      control:
+        ipv4_address: 172.31.254.2
+
+  dns:
+    build:
+      context: ../..
+      dockerfile: deploy/local/dns.Dockerfile
+    environment:
+      DNS_DOMAIN: 127.0.0.1.nip.io
+      DNS_ADDRESS: 172.31.254.4
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    read_only: true
+    networks:
+      default:
+      control:
+        ipv4_address: 172.31.254.4
+  oidc:
+    build:
+      context: ../..
+      dockerfile: deploy/local/oidc.Dockerfile
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:8444:8444"
+    networks:
+      default:
+        aliases: [identity.127.0.0.1.nip.io]
+    volumes:
+      - ../../.local/certs/local.crt:/etc/tnl/local.crt:ro
+      - ../../.local/certs/local.key:/etc/tnl/local.key:ro
+
   postgres:
     image: mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
     environment:
@@ -19,10 +60,9 @@ services:
 
   pebble:
     image: ghcr.io/letsencrypt/pebble:2.10.1@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
-    command: -config /test/config/tnl-pebble-config.json -strict=false
+    command: -config /test/config/tnl-pebble-config.json -strict=false -dnsserver 172.31.254.4:53
     environment:
       PEBBLE_AUTHZREUSE: "0"
-      PEBBLE_VA_ALWAYS_VALID: "1"
       PEBBLE_VA_NOSLEEP: "1"
       PEBBLE_WFE_NONCEREJECT: "0"
     ports:
@@ -30,12 +70,14 @@ services:
       - "127.0.0.1:15000:15000"
     volumes:
       - ./pebble-config.json:/test/config/tnl-pebble-config.json:ro
+    networks: [default, control]
 
   migrate:
     build:
       context: ../..
       args:
         VERSION: dev
+    entrypoint: [/usr/local/bin/tnld]
     command: migrate
     depends_on:
       postgres:
@@ -48,10 +90,13 @@ services:
       context: ../..
       args:
         VERSION: dev
+    entrypoint: [/usr/local/bin/tnld]
     depends_on:
       migrate:
         condition: service_completed_successfully
       pebble:
+        condition: service_started
+      oidc:
         condition: service_started
       postgres:
         condition: service_healthy
@@ -69,24 +114,42 @@ services:
       TNLD_ACME_DIRECTORY_URL: https://pebble:14000/dir
       TNLD_ACME_EMAIL: developer@localhost
       TNLD_ACME_PROFILE: tlsserver
-      TNLD_CONTROL_LISTEN: :8443
-      TNLD_CONTROL_TLS_CERTIFICATE_FILE: /etc/tnl/local.crt
-      TNLD_CONTROL_TLS_PRIVATE_KEY_FILE: /etc/tnl/local.key
+      TNLD_CONTROL_LISTEN: 172.31.254.3:8080
+      TNLD_CONTROL_URL: https://control.127.0.0.1.nip.io:8445
+      TNLD_CONTROL_TRUSTED_PROXIES: 172.31.254.2/32
+      TNLD_CONTROL_CLIENT_IP_HEADER: X-Forwarded-For
+      TNLD_SERVICE_PORT_RANGES: 20000-20015
+      TNLD_ROUTE53_MANAGED_ZONE_ID: local
+      TNLD_INGRESS_IPV4_ADDRESSES: 127.0.0.1
+      TNLD_DNS_SERVER: 172.31.254.4:53
+      AWS_ENDPOINT_URL_ROUTE_53: http://dns:8080
+      AWS_ACCESS_KEY_ID: tnl-local-only
+      AWS_SECRET_ACCESS_KEY: tnl-local-only
+      AWS_EC2_METADATA_DISABLED: "true"
       TNLD_RELAY_TLS_CERTIFICATE_FILE: /etc/tnl/local.crt
       TNLD_RELAY_TLS_PRIVATE_KEY_FILE: /etc/tnl/local.key
       TNLD_DATABASE_URL: postgresql://tnl:tnl@postgres/${TNL_LOCAL_DATABASE:-tnl}?sslmode=disable
-      TNLD_INGRESS_LISTEN: :8443
-      TNLD_LOGIN_TOKEN: ${TNLD_LOGIN_TOKEN:-tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8}
+      TNLD_INGRESS_LISTEN: :443
+      TNLD_OIDC_ISSUER: https://identity.127.0.0.1.nip.io:8444
+      TNLD_OIDC_CLIENT_ID: tnl-local
+      TNLD_OIDC_CLIENT_SECRET: local-development-secret
+      TNLD_OIDC_SCOPES: openid,profile,email
+      TNLD_OIDC_ADMISSION_FILE: /etc/tnl/oidc-admission.json
+      TNLD_INITIAL_ADMINISTRATORS: developer
+      TNLD_INITIAL_TEAM_OWNERS: local=developer
+      TNLD_DEFAULT_TEAM: local
+      TNLD_DEFAULT_TEAM_MEMBERS: developer
       TNLD_MANAGED_DOMAIN: 127.0.0.1.nip.io
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
       TNLD_ROLE: standalone
-      TNLD_RELAY_UDP_LISTEN: :8443
+      TNLD_RELAY_UDP_LISTEN: :443
       TNLD_REFRESH_TOKEN_LIFETIME: 720h
       TNLD_SERVER_DOMAIN: 127.0.0.1.nip.io
       TNLD_STORAGE_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
     ports:
-      - "127.0.0.1:443:8443/tcp"
-      - "127.0.0.1:443:8443/udp"
+      - "127.0.0.1:443:443/tcp"
+      - "127.0.0.1:443:443/udp"
+      - "127.0.0.1:20000-20015:20000-20015/tcp"
       - "127.0.0.1:9090:9090"
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -95,6 +158,17 @@ services:
       - ../../.local/certs/local.key:/etc/tnl/local.key:ro
       - ../../.local/certs/local-root.pem:/etc/ssl/certs/tnl-local-root.pem:ro
       - ./pebble.minica.crt:/etc/ssl/certs/pebble.minica.crt:ro
+      - ./oidc-admission.json:/etc/tnl/oidc-admission.json:ro
+    networks:
+      default:
+      control:
+        ipv4_address: 172.31.254.3
+
+networks:
+  control:
+    internal: true
+    ipam:
+      config: [{ subnet: 172.31.254.0/24 }]
 
 volumes:
   postgres-state:

@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/acmeclient"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 )
 
 func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
@@ -62,12 +63,12 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			session, err := database.CreateBuiltinControlSession(t.Context(), "routes.example.test", 1, time.Hour, 24*time.Hour, now)
+			session, err := controltest.Session(t.Context(), database, "routes.example.test", time.Hour, 24*time.Hour, now)
 			if err != nil {
 				t.Fatal(err)
 			}
 			membership := session.Identity.Memberships[0]
-			principal, err := database.AuthenticateAccessToken(t.Context(), session.AccessToken, 1, now)
+			principal, err := database.AuthenticateAccessToken(t.Context(), session.AccessToken, now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -136,7 +137,7 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 					return acmeclient.Authorization{
 						URL: requestURL, Status: "valid", Expires: &expires,
 						Identifier: acmeclient.Identifier{Type: "dns", Value: identifiers[1]},
-						Challenges: []acmeclient.Challenge{{Type: "tls-alpn-01", URL: "https://acme.example.test/challenge/old", Status: "valid", Token: "old-token"}},
+						Challenges: []acmeclient.Challenge{{Type: "http-01", URL: "https://acme.example.test/challenge/old", Status: "valid", Token: "old-token"}},
 					}, nil
 				case wildAuthorization:
 					wildcardFetches++
@@ -249,8 +250,8 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				t.Fatalf("unchanged reused authorization save: %v", err)
 			}
 			public, err := database.GetCertificateIssuance(t.Context(), work.ID, setup.PublishRunToken, restartNow)
-			if err != nil || len(public.Challenges) != 0 {
-				t.Fatalf("public challenge collection = %#v, %v", public.Challenges, err)
+			if err != nil || public.CertificatePlan.ChallengeMethod != "dns-01" {
+				t.Fatalf("public certificate plan = %#v, %v", public.CertificatePlan, err)
 			}
 
 			// an ACME authorization URL may also be reused by a later order for this account.

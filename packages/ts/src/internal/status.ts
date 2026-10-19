@@ -203,7 +203,7 @@ export function parseStatus(
         throw new TnlError("sdk.response_invalid");
     } else if (item.ready) throw new TnlError("sdk.response_invalid");
     if (item.registration_id !== registrationID || item.target !== target) return undefined;
-    if (item.routable && (!item.registered || publicURL === undefined || run === undefined))
+    if (item.routable && (!item.registered || run === undefined))
       throw new TnlError("sdk.response_invalid");
     return {
       registered: item.registered as boolean,

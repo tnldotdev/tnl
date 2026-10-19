@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/buildinfo"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
@@ -54,17 +53,10 @@ func TestRunMigrateRequiresDirectURL(t *testing.T) {
 	}
 }
 
-func TestRunLoginToken(t *testing.T) {
+func TestLoginTokenCommandIsRetired(t *testing.T) {
 	var output bytes.Buffer
-	if err := run(t.Context(), []string{"login-token"}, &output); err != nil {
-		t.Fatal(err)
-	}
-	raw := output.String()
-	if !strings.HasSuffix(raw, "\n") || strings.Count(raw, "\n") != 1 || strings.TrimSpace(raw) != strings.TrimSuffix(raw, "\n") {
-		t.Fatalf("credential output is not one raw value: %q", raw)
-	}
-	if _, err := credentials.ParseLoginToken(credentials.LoginToken(strings.TrimSuffix(raw, "\n"))); err != nil {
-		t.Fatalf("generated login token: %v", err)
+	if err := run(t.Context(), []string{"login-token"}, &output); err == nil {
+		t.Fatal("retired login token command accepted")
 	}
 }
 
@@ -105,7 +97,7 @@ func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 		RelayServiceID: "relay-test", RelayID: "relay-test", RelayAddress: "relay.example.com:443",
 		InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
 		VisitorConnectionLimit: 1, PublisherConnectionLimit: 1, QUICMaxIncomingStreams: 1,
-		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
+		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		QUICIdleTimeout: time.Second, IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration: 3 * time.Second, LeaseRenewalInterval: time.Second, ControlRetryInterval: time.Second,

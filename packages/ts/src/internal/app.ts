@@ -27,8 +27,8 @@ export interface PrepareOptions {
 
 export interface PreparedService extends ProjectRuntime {
   readonly service: string;
-  readonly hostname: string;
-  readonly publicURL: `https://${string}`;
+  readonly hostname: string | undefined;
+  readonly publicURL: `https://${string}` | undefined;
   /** acknowledges a bound listener; use tnl wait for public readiness. */
   register(server: LocalHTTPServer): Promise<void>;
   /** unregisters publication without stopping the application listener. */
@@ -38,8 +38,8 @@ export interface PreparedService extends ProjectRuntime {
 interface Assignment {
   readonly registrationID: string;
   readonly service: string;
-  readonly hostname: string;
-  readonly publicURL: `https://${string}`;
+  readonly hostname: string | undefined;
+  readonly publicURL: `https://${string}` | undefined;
   readonly project: ProjectRuntime;
 }
 interface Dependencies {
@@ -306,14 +306,17 @@ function parseAssignment(value: unknown): Assignment {
       !validServiceName(object.service)
     )
       throw new TnlError("sdk.response_invalid");
-    const hostname = requiredHostname(object.hostname, "app hostname");
-    const publicURL: `https://${string}` = `https://${hostname}`;
     const project = parseProjectRuntime(object.project, "app project");
+    const privateService = object.hostname === "" && object.public_url === "";
+    const hostname = privateService ? undefined : requiredHostname(object.hostname, "app hostname");
+    const publicURL = hostname === undefined ? undefined : (`https://${hostname}` as const);
     if (
-      object.public_url !== publicURL ||
       !project.dev ||
-      project.services[object.service]?.hostname !== hostname ||
-      project.services[object.service]?.protocol !== "http"
+      (privateService
+        ? project.services[object.service] !== undefined
+        : object.public_url !== publicURL ||
+          project.services[object.service]?.hostname !== hostname ||
+          project.services[object.service]?.protocol !== "http")
     )
       throw new TnlError("sdk.response_invalid");
     return {

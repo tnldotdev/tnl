@@ -3,11 +3,8 @@ package publisher
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
-	"crypto/tls"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -16,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -41,67 +37,6 @@ type PromoteVisitor func(context.Context, Visitor) error
 // AdmitVisitor checks current application ownership on every use, including
 // proven readiness GETs. unlike promotion, a successful check is not cached.
 type AdmitVisitor func(context.Context, Visitor) error
-
-// AuthorizeVisitorCertificate runs after visitor TLS and before database auth.
-// the caller owns certificate issuance, trust, and current control authorization.
-type AuthorizeVisitorCertificate func(context.Context, Visitor, tls.ConnectionState) error
-
-type VisitorCertificateAuthorizer interface {
-	AuthorizeVisitorCertificate(context.Context, controlclient.VisitorCertificateScope, tls.ConnectionState) error
-}
-
-// VisitorCertificateAuthorization binds live control authorization to one run.
-// source IP is always taken from trusted visitor metadata, never TLS input.
-func VisitorCertificateAuthorization(client VisitorCertificateAuthorizer, scope controlclient.VisitorCertificateScope) AuthorizeVisitorCertificate {
-	cache := &visitorDecisionCache[struct{}]{}
-	return func(ctx context.Context, visitor Visitor, state tls.ConnectionState) error {
-		if client == nil || scope.PublicURLID == "" || scope.PublishRunID == "" || scope.PublishRunNumber == 0 || scope.PublishRunToken == "" || !visitor.Source.IsValid() || visitor.Source.Addr().Zone() != "" ||
-			visitor.Run.PublicURLID != scope.PublicURLID || visitor.Run.Number != scope.PublishRunNumber ||
-			visitor.Run.PublishRunID != "" && visitor.Run.PublishRunID != scope.PublishRunID ||
-			visitor.Header.PublishRunID != "" && visitor.Header.PublishRunID != scope.PublishRunID ||
-			visitor.Header.PublicURLID != "" && visitor.Header.PublicURLID != scope.PublicURLID ||
-			visitor.Header.PublishRunNumber != 0 && visitor.Header.PublishRunNumber != scope.PublishRunNumber {
-			return errors.New("publisher: visitor certificate authorization has a different run")
-		}
-		bound := scope
-		bound.SourceIP = visitor.Source.Addr().Unmap()
-		cached, ok := client.(interface {
-			AuthorizeVisitorCertificateDecision(context.Context, controlclient.VisitorCertificateScope, tls.ConnectionState) (time.Time, error)
-		})
-		if !ok {
-			return client.AuthorizeVisitorCertificate(ctx, bound, state)
-		}
-		if !state.HandshakeComplete || len(state.PeerCertificates) > 4 {
-			return errors.New("publisher: visitor certificate proof is invalid")
-		}
-		var fingerprint [sha256.Size]byte
-		var certificateExpires time.Time
-		if len(state.PeerCertificates) != 0 {
-			leaf := state.PeerCertificates[0]
-			certificateExpires = leaf.NotAfter
-			if !time.Now().Before(certificateExpires) || time.Now().Before(leaf.NotBefore) {
-				return errors.New("publisher: visitor certificate is outside its validity period")
-			}
-			fingerprint = sha256.Sum256(leaf.Raw)
-		}
-		proof, err := json.Marshal(struct {
-			RunID, URLID, Source string
-			Number               uint64
-			Certificate          [sha256.Size]byte
-		}{scope.PublishRunID, scope.PublicURLID, bound.SourceIP.String(), scope.PublishRunNumber, fingerprint})
-		if err != nil {
-			return err
-		}
-		_, err = cache.check(ctx, sha256.Sum256(proof), func(ctx context.Context) (struct{}, time.Time, bool, error) {
-			expires, err := cached.AuthorizeVisitorCertificateDecision(ctx, bound, state)
-			if !certificateExpires.IsZero() && certificateExpires.Before(expires) {
-				expires = certificateExpires
-			}
-			return struct{}{}, expires, err == nil, err
-		})
-		return err
-	}
-}
 
 const visitorPromotionTimeout = 10 * time.Second
 

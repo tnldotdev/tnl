@@ -63,7 +63,7 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 	}
 	project := projectConfiguration{Project: projectconfig.Project{
 		Root: projectRoot, Selection: projectconfig.Selection{Path: filepath.Join(projectRoot, "tnl.json")},
-		Config: config.TNL{Services: config.Services{"api": {}}, Webhooks: map[string]config.Webhook{"stripe": definition}},
+		Config: config.TNL{Services: config.Services{"api": {Tunnel: &config.Tunnel{}}}, Webhooks: map[string]config.Webhook{"stripe": definition}},
 	}}
 	command := webhookChoiceCommand{remoteFlags: remoteFlags{ServerURL: server, StateDir: stateRoot}, Endpoint: "stripe"}
 	var output bytes.Buffer

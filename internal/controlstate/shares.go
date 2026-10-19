@@ -206,6 +206,9 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 		} else if err != nil {
 			return Share{}, fmt.Errorf("controlstate: create share: save public URL snapshot: %w", err)
 		}
+		if err = auditPublicMutation(ctx, tx, publicURLID, request.ActingIdentityID, "grant.create", stored.ID, stored.CreatedAt.Time); err != nil {
+			return Share{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Share{}, fmt.Errorf("controlstate: create share: commit: %w", err)
@@ -267,6 +270,9 @@ func (d *Database) CreateGuestShare(ctx context.Context, guestID, publicURLID, k
 		return Share{}, ErrShareStale
 	} else if err != nil {
 		return Share{}, fmt.Errorf("controlstate: create guest share: save public URL snapshot: %w", err)
+	}
+	if err = auditPublicMutation(ctx, tx, publicURLID, "", "grant.create", stored.ID, stored.CreatedAt.Time); err != nil {
+		return Share{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Share{}, fmt.Errorf("controlstate: create guest share: commit: %w", err)
@@ -384,6 +390,11 @@ func (d *Database) RevokeShare(ctx context.Context, id, identityID string, now t
 	result, err = shareWithURLs(ctx, queries, row)
 	if err != nil {
 		return Share{}, err
+	}
+	for _, service := range result.PublicURLIDs {
+		if err = auditPublicMutation(ctx, tx, service, identityID, "grant.revoke", id, now); err != nil {
+			return Share{}, err
+		}
 	}
 	return result, tx.Commit(ctx)
 }

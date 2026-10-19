@@ -325,6 +325,12 @@ func buildIntegrationBinary(t *testing.T, directory, output, commandPackage stri
 	runBoundedIntegrationCommand(t, 2*time.Minute, directory, os.Environ(), "go", "build", "-p=2", "-o", output, commandPackage)
 }
 
+func initializeIntegrationBinaryProject(t *testing.T, directory, name string) {
+	t.Helper()
+	runIntegrationBinaryCommand(t, directory, os.Environ(), "git", "init", "--quiet")
+	runIntegrationBinaryCommand(t, directory, os.Environ(), "git", "remote", "add", "origin", "https://example.test/binary/"+name+".git")
+}
+
 func runIntegrationBinaryCommand(
 	t *testing.T,
 	directory string,
@@ -334,6 +340,18 @@ func runIntegrationBinaryCommand(
 ) {
 	t.Helper()
 	runBoundedIntegrationCommand(t, time.Minute, directory, environment, name, arguments...)
+}
+
+// keep Unix socket paths short even when TMPDIR is a shared Docker bind mount.
+// binaries and Compose inputs still use the caller's shared temporary directory.
+func binaryStateDirectory(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp("/tmp", "tnl-binary-state-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	return root
 }
 
 func runBoundedIntegrationCommand(t *testing.T, timeout time.Duration, directory string, environment []string, name string, arguments ...string) {

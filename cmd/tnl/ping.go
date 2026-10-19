@@ -13,8 +13,8 @@ import (
 )
 
 type pingCommand struct {
-	URL      string           `arg:"" name:"url" help:"Public URL or host:port to check from this machine."`
-	Protocol string           `name:"protocol" help:"Protocol for a bare host:port: postgres, mysql, redis, or ssh."`
+	URL      string           `arg:"" name:"url" help:"Public HTTPS URL to check from this machine."`
+	Protocol string           `name:"protocol" enum:"http" default:"http" help:"Public URL protocol: http."`
 	Output   statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 

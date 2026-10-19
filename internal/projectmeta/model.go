@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,7 +15,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
-	"github.com/tnldotdev/tnl/internal/tcpport"
 )
 
 const Version = 2
@@ -55,8 +55,6 @@ type Service struct {
 	Namespace string          `json:"namespace"`
 	Hostname  string          `json:"hostname"`
 	URL       string          `json:"url,omitempty"`
-	Port      *int            `json:"port,omitempty"`
-	Address   string          `json:"address,omitempty"`
 	Paths     map[string]Path `json:"paths,omitempty"`
 }
 
@@ -78,39 +76,22 @@ func (service *Service) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("service %s is required", key)
 		}
 	}
-	if value.Protocol == "http" {
-		if _, found := fields["url"]; !found {
-			return errors.New("HTTP service url is required")
-		}
-		for _, key := range []string{"port", "address"} {
-			if _, found := fields[key]; found {
-				return fmt.Errorf("HTTP service cannot contain %s", key)
-			}
-		}
-	} else {
-		for _, key := range []string{"port", "address"} {
-			if _, found := fields[key]; !found {
-				return fmt.Errorf("TCP service %s is required", key)
-			}
-		}
-		for _, key := range []string{"url", "paths"} {
-			if _, found := fields[key]; found {
-				return fmt.Errorf("TCP service cannot contain %s", key)
-			}
-		}
+	if _, found := fields["url"]; !found {
+		return errors.New("HTTP service url is required")
 	}
 	*service = Service(value)
 	return nil
 }
 
-// NewService builds public metadata from a saved address. callers reserve TCP
-// addresses before generating metadata; private discovery never enters this type.
+// NewService builds HTTP-only browser metadata. private targets and trust never
+// enter this type. managed HTTP endpoints retain their allocated port.
 func NewService(namespace, hostname, protocol string, port *int) (Service, error) {
-	service := Service{Namespace: namespace, Hostname: hostname, Protocol: protocol, Port: port}
-	if protocol == "http" {
-		service.URL = "https://" + hostname
-	} else if port != nil {
-		service.Address = net.JoinHostPort(hostname, strconv.Itoa(*port))
+	service := Service{Namespace: namespace, Hostname: hostname, Protocol: protocol, URL: "https://" + hostname}
+	if port != nil && *port != 443 {
+		if *port < 1024 || *port > 65535 {
+			return Service{}, errors.New("managed HTTP port is invalid")
+		}
+		service.URL = "https://" + net.JoinHostPort(hostname, strconv.Itoa(*port))
 	}
 	if err := validateServiceAddress(service); err != nil {
 		return Service{}, err
@@ -125,17 +106,20 @@ func validateServiceAddress(service Service) error {
 	if err := canonicalHostname("service hostname", service.Hostname); err != nil {
 		return err
 	}
-	if !config.ValidProtocol(service.Protocol) {
-		return errors.New("service protocol must be http, postgres, mysql, redis, or ssh")
+	if service.Protocol != "http" {
+		return errors.New("browser metadata contains HTTP public URLs only")
 	}
-	if service.Protocol == "http" {
-		if service.URL != "https://"+service.Hostname || service.Port != nil || service.Address != "" {
-			return errors.New("HTTP service needs its exact HTTPS URL and no TCP address or port")
+	u, err := url.Parse(service.URL)
+	if err != nil || u.Scheme != "https" || u.Hostname() != service.Hostname || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("HTTP service needs its exact HTTPS URL")
+	}
+	if u.Port() != "" {
+		port, err := strconv.Atoi(u.Port())
+		if err != nil || port < 1024 || port > 65535 || service.URL != "https://"+net.JoinHostPort(service.Hostname, strconv.Itoa(port)) {
+			return errors.New("managed HTTP port is invalid")
 		}
-	} else {
-		if service.URL != "" || service.Port == nil || !tcpport.Valid(*service.Port) || service.Address != net.JoinHostPort(service.Hostname, strconv.Itoa(*service.Port)) || service.Paths != nil {
-			return errors.New("TCP service needs its saved public port and hostname:port address, without HTTP URL or paths")
-		}
+	} else if service.URL != "https://"+service.Hostname {
+		return errors.New("HTTP service needs its exact HTTPS URL")
 	}
 	return nil
 }
@@ -165,7 +149,7 @@ type Alias struct {
 	Service  string `json:"service"`
 }
 
-// Metadata is the generated .tnl/project.json contract.
+// Metadata is the generated .tnl/local/project.json contract.
 type Metadata struct {
 	Worktree  *Worktree          `json:"worktree,omitempty"`
 	Namespace string             `json:"namespace"`
@@ -230,7 +214,7 @@ func (m Metadata) Validate() error {
 			}
 		}
 	}
-	if err := canonicalHostname("namespace", m.Namespace); err != nil {
+	if err := canonicalHostname("namespace", m.Namespace); err != nil && (m.Namespace != "" || len(m.Services) != 0 || m.OAuth != nil || len(m.Webhooks) != 0 || len(m.Aliases) != 0) {
 		return err
 	}
 	if m.OAuth != nil {
@@ -309,8 +293,8 @@ func (m Metadata) Validate() error {
 			if !localproxy.ValidMountPrefix(prefix) || mount.Service == name {
 				return fmt.Errorf("service %q path mount %q is invalid", name, prefix)
 			}
-			if destination, found := m.Services[mount.Service]; !found || destination.Protocol != "http" {
-				return fmt.Errorf("service %q path mount %q names an unknown service", name, prefix)
+			if !naming.ValidServiceName(mount.Service) {
+				return fmt.Errorf("service %q path mount %q has an invalid service name", name, prefix)
 			}
 			if mount.URL != service.URL+prefix {
 				return fmt.Errorf("service %q path mount %q URL must be %s", name, prefix, service.URL+prefix)

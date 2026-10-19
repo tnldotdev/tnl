@@ -89,17 +89,17 @@ func inspectionFromRecord(item clientstate.InspectionRecord) (inspectionRecord, 
 		record.HTTP = &inspectionHTTP{
 			Method: item.Method, Path: item.Path, Status: item.Status, Origin: item.Origin,
 		}
-	case controlv1.Postgres, controlv1.Mysql:
+	case "postgres", "mysql":
 		if !item.Operation.Valid() || !item.Result.Valid() {
 			return record, errors.New("inspection has an invalid database outcome")
 		}
 		sql := inspectionSQL{Operation: item.Operation, SQLState: item.SQLState, Rows: item.Rows}
-		if item.Protocol == controlv1.Postgres {
+		if item.Protocol == "postgres" {
 			record.Postgres = &sql
 		} else {
 			record.MySQL = &inspectionMySQL{inspectionSQL: sql, ErrorCode: item.MySQLErrorCode, ResultSets: item.ResultSets}
 		}
-	case controlv1.Redis:
+	case "redis":
 		if item.RedisCommand == "" || !item.Result.Valid() {
 			return record, errors.New("inspection has an invalid Redis outcome")
 		}
@@ -117,7 +117,7 @@ func runInspectList(ctx context.Context, flags inspectListCommand, project strin
 	}
 	flags.Method = strings.ToUpper(flags.Method)
 	protocol := controlv1.PublicURLServiceProtocol(flags.Protocol)
-	if flags.Protocol != "" && protocol != controlv1.Http && protocol != controlv1.Postgres && protocol != controlv1.Mysql && protocol != controlv1.Redis {
+	if flags.Protocol != "" && protocol != controlv1.Http && protocol != "postgres" && protocol != "mysql" && protocol != "redis" {
 		return errors.New("protocol must be http, postgres, mysql, or redis")
 	}
 	if protocol != "" && protocol != controlv1.Http && (flags.Method != "" || flags.Status != 0) {

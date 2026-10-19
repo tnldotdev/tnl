@@ -24,6 +24,10 @@ func initProjectRoot(ctx context.Context, cwd string) (string, error) {
 	}
 	boundary := absolute
 	if worktree.IsGit {
+		// compare the starting directory with Git's canonical worktree root.
+		if canonical, err := filepath.EvalSymlinks(absolute); err == nil {
+			absolute = canonical
+		}
 		boundary = worktree.Root
 	}
 	for directory := absolute; ; directory = filepath.Dir(directory) {

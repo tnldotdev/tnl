@@ -5,7 +5,8 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	json "encoding/json/v2"
 	"errors"
 	"io"
 	"os"
@@ -22,21 +23,22 @@ var ErrExists = errors.New("publisher file already exists; choose a new --output
 // File contains only a redeemed grant, never an enrollment key or session.
 // private_key is unpadded base64url of the 64-byte Ed25519 private key.
 type File struct {
-	Version     int     `json:"version"`
-	ControlURL  string  `json:"control_url"`
-	PublisherID string  `json:"publisher_id"`
-	KeyID       string  `json:"key_id"`
-	GrantID     string  `json:"grant_id"`
-	TeamID      string  `json:"team_id"`
-	Kind        string  `json:"kind"`
-	PublicURLID *string `json:"public_url_id,omitempty"`
-	DomainID    *string `json:"domain_id,omitempty"`
-	Namespace   *string `json:"namespace,omitempty"`
-	PrivateKey  string  `json:"private_key"`
+	Version          int     `json:"version"`
+	ControlURL       string  `json:"control_url"`
+	PublisherID      string  `json:"publisher_id"`
+	KeyID            string  `json:"key_id"`
+	GrantID          string  `json:"grant_id"`
+	TeamID           string  `json:"team_id"`
+	Kind             string  `json:"kind"`
+	PublicURLID      *string `json:"public_url_id,omitempty"`
+	PrivateServiceID *string `json:"private_service_id,omitempty"`
+	DomainID         *string `json:"domain_id,omitempty"`
+	Namespace        *string `json:"namespace,omitempty"`
+	PrivateKey       string  `json:"private_key"`
 }
 
 func New(server string, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) (File, error) {
-	f := File{Version: 1, ControlURL: server, PublisherID: identity.ClientId, KeyID: identity.KeyId, GrantID: identity.GrantId, TeamID: identity.TeamId, Kind: string(identity.Kind), PublicURLID: identity.PublicUrlId, DomainID: identity.DomainId, Namespace: identity.Namespace, PrivateKey: base64.RawURLEncoding.EncodeToString(private)}
+	f := File{Version: 1, ControlURL: server, PublisherID: identity.ClientId, KeyID: identity.KeyId, GrantID: identity.GrantId, TeamID: identity.TeamId, Kind: string(identity.Kind), PublicURLID: identity.PublicUrlId, PrivateServiceID: identity.PrivateServiceId, DomainID: identity.DomainId, Namespace: identity.Namespace, PrivateKey: base64.RawURLEncoding.EncodeToString(private)}
 	if _, _, err := f.Validate(); err != nil {
 		return File{}, err
 	}
@@ -54,20 +56,24 @@ func (f File) Validate() (authorityv1.PublisherEnrollmentResult, ed25519.Private
 	if err != nil || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private[:ed25519.SeedSize]), private) || base64.RawURLEncoding.EncodeToString(private) != f.PrivateKey {
 		return authorityv1.PublisherEnrollmentResult{}, nil, ErrInvalid
 	}
-	i := authorityv1.PublisherEnrollmentResult{ClientId: f.PublisherID, KeyId: f.KeyID, GrantId: f.GrantID, TeamId: f.TeamID, Kind: authorityv1.PublisherEnrollmentResultKind(f.Kind), PublicUrlId: f.PublicURLID, DomainId: f.DomainID, Namespace: f.Namespace}
+	i := authorityv1.PublisherEnrollmentResult{ClientId: f.PublisherID, KeyId: f.KeyID, GrantId: f.GrantID, TeamId: f.TeamID, Kind: authorityv1.PublisherEnrollmentResultKind(f.Kind), PublicUrlId: f.PublicURLID, PrivateServiceId: f.PrivateServiceID, DomainId: f.DomainID, Namespace: f.Namespace}
 	if !opaqueid.Valid(i.ClientId, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(i.KeyId, opaqueid.PublisherIdentityKeyPrefix) || !opaqueid.Valid(i.GrantId, opaqueid.PublisherGrantPrefix) || i.TeamId == "" {
 		return i, nil, ErrInvalid
 	}
 	if i.Kind == "saved_url" {
-		if i.PublicUrlId == nil || !opaqueid.Valid(*i.PublicUrlId, opaqueid.PublicURLPrefix) || i.DomainId != nil || i.Namespace != nil {
+		if i.PublicUrlId == nil || !opaqueid.Valid(*i.PublicUrlId, opaqueid.PublicURLPrefix) || i.DomainId != nil || i.Namespace != nil || i.PrivateServiceId != nil {
 			return i, nil, ErrInvalid
 		}
 	} else if i.Kind == "namespace" {
-		if i.PublicUrlId != nil || i.DomainId == nil || !opaqueid.Valid(*i.DomainId, opaqueid.DomainPrefix) || i.Namespace == nil {
+		if i.PublicUrlId != nil || i.DomainId == nil || !opaqueid.Valid(*i.DomainId, opaqueid.DomainPrefix) || i.Namespace == nil || i.PrivateServiceId != nil {
 			return i, nil, ErrInvalid
 		}
 		canonical, err := naming.CanonicalizeHostname(*i.Namespace)
 		if err != nil || canonical != *i.Namespace {
+			return i, nil, ErrInvalid
+		}
+	} else if i.Kind == "private_service" {
+		if i.PrivateServiceId == nil || !opaqueid.Valid(*i.PrivateServiceId, opaqueid.PrivateServicePrefix) || i.PublicUrlId != nil || i.DomainId != nil || i.Namespace != nil {
 			return i, nil, ErrInvalid
 		}
 	} else {
@@ -113,10 +119,17 @@ func Read(path string) (File, error) {
 	if err != nil || len(data) > 8192 || statErr != nil || dirErr != nil || !os.SameFile(before, after) || !os.SameFile(beforeDir, afterDir) || !safeFile(after) {
 		return result, ErrInvalid
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if dec.Decode(&result) != nil || dec.Decode(new(any)) != io.EOF {
+	if json.Unmarshal(data, &result, json.RejectUnknownMembers(true)) != nil {
 		return File{}, ErrInvalid
+	}
+	var fields map[string]jsontext.Value
+	if json.Unmarshal(data, &fields) != nil {
+		return File{}, ErrInvalid
+	}
+	for _, value := range fields {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return File{}, ErrInvalid
+		}
 	}
 	if _, _, err := result.Validate(); err != nil {
 		return File{}, ErrInvalid
@@ -146,7 +159,7 @@ func Write(path string, value File) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return ErrInvalid
 	}
-	data, err := json.MarshalIndent(value, "", "  ")
+	data, err := json.Marshal(value, jsontext.WithIndent("  "))
 	if err != nil {
 		return ErrInvalid
 	}

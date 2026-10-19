@@ -69,25 +69,23 @@ func New(endpoint string, httpClient *http.Client, access credentials.AccessToke
 	return &Client{api: apiClient, access: access, timeout: defaultRequestTimeout}, nil
 }
 
-func (c *Client) Exchange(ctx context.Context, token credentials.LoginToken) (authorityv1.ControlSessionResponse, error) {
-	body := authorityv1.LoginTokenExchangeRequest{LoginToken: token.String()}
-	return request[authorityv1.ControlSessionResponse](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ExchangeLoginToken(ctx, body, editors...)
+func (c *Client) StartDeviceLogin(ctx context.Context, body authorityv1.StartDeviceLoginRequest) (authorityv1.DeviceLoginChallenge, error) {
+	return request[authorityv1.DeviceLoginChallenge](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.StartDeviceLogin(ctx, body, editors...)
 	})
 }
 
-func (c *Client) ExchangeOIDC(ctx context.Context, token string) (authorityv1.ControlSessionResponse, error) {
-	body := authorityv1.OIDCTokenExchangeRequest{IdToken: token}
-	return request[authorityv1.ControlSessionResponse](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ExchangeOIDCToken(ctx, body, editors...)
+func (c *Client) PollDeviceLogin(ctx context.Context, credential string) (authorityv1.DeviceLoginResult, error) {
+	return request[authorityv1.DeviceLoginResult](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.PollDeviceLogin(ctx, authorityv1.DeviceLoginCredential{PollingCredential: credential}, editors...)
 	})
 }
 
-func (c *Client) ExchangeBrowserOIDC(ctx context.Context, token string) (authorityv1.ControlSessionResponse, error) {
-	body := authorityv1.OIDCTokenExchangeRequest{IdToken: token}
-	return request[authorityv1.ControlSessionResponse](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ExchangeBrowserOIDCToken(ctx, body, editors...)
+func (c *Client) CancelDeviceLogin(ctx context.Context, credential string) error {
+	_, err := request[struct{}](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CancelDeviceLogin(ctx, authorityv1.DeviceLoginCredential{PollingCredential: credential}, editors...)
 	})
+	return err
 }
 
 func (c *Client) Refresh(ctx context.Context, token credentials.RefreshToken) (authorityv1.ControlSessionResponse, error) {

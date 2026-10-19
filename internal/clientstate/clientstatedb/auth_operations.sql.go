@@ -11,8 +11,8 @@ import (
 
 const cancelAuthOperations = `-- name: CancelAuthOperations :exec
 UPDATE login_operations SET phase = 'cancelled', revision = revision + 1,
-    stored_private = CASE WHEN phase = 'issued' THEN stored_private ELSE X'' END, updated_at = ?
-WHERE server_origin = ? AND phase NOT IN ('cancelled', 'denied', 'expired', 'recovery_required')
+    updated_at = ?
+WHERE server_origin = ? AND phase NOT IN ('cancelled', 'denied', 'expired')
 `
 
 type CancelAuthOperationsParams struct {

@@ -168,7 +168,7 @@ func mergeTrafficLimits(base, override *TrafficLimits) *TrafficLimits {
 func validateLimits(value, base *Limits, protocol string) error {
 	if value != nil && protocol != "" {
 		if protocol == "http" && value.TCP != nil || protocol != "http" && value.HTTP != nil {
-			return errors.New("tunnel.limits protocol block does not match service protocol")
+			return errors.New("public_url.limits protocol block does not match service protocol")
 		}
 	}
 	merged := MergeLimits(base, value)
@@ -185,34 +185,34 @@ func validateLimits(value, base *Limits, protocol string) error {
 		}
 		for _, n := range []*int{limits.Total, limits.Concurrency} {
 			if n != nil && (*n < 1 || *n > MaxConfigInteger) {
-				return fmt.Errorf("tunnel.limits.%s values must be positive safe integers", name)
+				return fmt.Errorf("public_url.limits.%s values must be positive safe integers", name)
 			}
 		}
 		if rate := limits.Rate; rate != nil {
 			if rate.Count == nil || rate.Per == nil {
-				return fmt.Errorf("tunnel.limits.%s.rate requires count and per", name)
+				return fmt.Errorf("public_url.limits.%s.rate requires count and per", name)
 			}
 			if *rate.Count < 1 || *rate.Count > MaxConfigInteger || rate.Per.Value() <= 0 || rate.Burst != nil && (*rate.Burst < 1 || *rate.Burst > MaxConfigInteger) {
-				return fmt.Errorf("tunnel.limits.%s.rate values must be positive and within bounds", name)
+				return fmt.Errorf("public_url.limits.%s.rate values must be positive and within bounds", name)
 			}
 		}
 	}
 	if traffic := merged.Traffic; traffic != nil {
 		for _, n := range []*int{traffic.Connections, traffic.Rate, traffic.Burst} {
 			if n != nil && (*n < 1 || *n > MaxConfigInteger) {
-				return errors.New("tunnel.limits.traffic connection and rate values must be positive safe integers")
+				return errors.New("public_url.limits.traffic connection and rate values must be positive safe integers")
 			}
 		}
 		for _, n := range []*int64{traffic.UploadBytes, traffic.DownloadBytes, traffic.TotalConnections, traffic.TotalUploadBytes, traffic.TotalDownloadBytes} {
 			if n != nil && (*n < 1 || *n > MaxConfigInteger) {
-				return errors.New("tunnel.limits.traffic byte and total values must be positive safe integers")
+				return errors.New("public_url.limits.traffic byte and total values must be positive safe integers")
 			}
 		}
 		if traffic.RatePer != nil && (traffic.RatePer.Value() < 1e6 || traffic.RatePer.Value() > 24*60*60*1e9) {
-			return errors.New("tunnel.limits.traffic.rate_per must be between 1ms and 24h")
+			return errors.New("public_url.limits.traffic.rate_per must be between 1ms and 24h")
 		}
 		if err := trafficSelection(traffic).Validate(); err != nil {
-			return fmt.Errorf("tunnel.limits.traffic: %w", err)
+			return fmt.Errorf("public_url.limits.traffic: %w", err)
 		}
 	}
 	return nil

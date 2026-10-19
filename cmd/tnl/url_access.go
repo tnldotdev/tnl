@@ -105,9 +105,6 @@ func runURLAccessSet(ctx context.Context, flags urlAccessSetCommand, out, diagno
 	if err != nil {
 		return err
 	}
-	if item.ServiceProtocol == controlv1.Ssh && flags.Mode != controlv1.Anonymous {
-		return failure.Wrap("validate SSH visitor access", failure.InvalidCommand, errors.New("SSH uses the target's authentication; choose anonymous tnl access"))
-	}
 	ips, err := accessIPPrefixes(ctx, session.authenticated.Control, flags.IP)
 	if err != nil {
 		return err

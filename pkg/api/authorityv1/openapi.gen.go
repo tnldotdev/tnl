@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,8 +23,7 @@ import (
 
 // Defines values for CertificateChallengeMethod.
 const (
-	Dns01     CertificateChallengeMethod = "dns-01"
-	TlsAlpn01 CertificateChallengeMethod = "tls-alpn-01"
+	Dns01 CertificateChallengeMethod = "dns-01"
 )
 
 // Valid indicates whether the value is a known member of the CertificateChallengeMethod enum.
@@ -31,7 +31,23 @@ func (e CertificateChallengeMethod) Valid() bool {
 	switch e {
 	case Dns01:
 		return true
-	case TlsAlpn01:
+	default:
+		return false
+	}
+}
+
+// Defines values for CreateIdentityConnectionRequestAdmission.
+const (
+	CreateConnectionApproval CreateIdentityConnectionRequestAdmission = "approval"
+	CreateConnectionManaged  CreateIdentityConnectionRequestAdmission = "managed"
+)
+
+// Valid indicates whether the value is a known member of the CreateIdentityConnectionRequestAdmission enum.
+func (e CreateIdentityConnectionRequestAdmission) Valid() bool {
+	switch e {
+	case CreateConnectionApproval:
+		return true
+	case CreateConnectionManaged:
 		return true
 	default:
 		return false
@@ -59,6 +75,30 @@ func (e DNSRecordType) Valid() bool {
 	case NS:
 		return true
 	case TXT:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DeviceLoginResultStatus.
+const (
+	DeviceLoginResultStatusApproved  DeviceLoginResultStatus = "approved"
+	DeviceLoginResultStatusCancelled DeviceLoginResultStatus = "cancelled"
+	DeviceLoginResultStatusDenied    DeviceLoginResultStatus = "denied"
+	DeviceLoginResultStatusPending   DeviceLoginResultStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the DeviceLoginResultStatus enum.
+func (e DeviceLoginResultStatus) Valid() bool {
+	switch e {
+	case DeviceLoginResultStatusApproved:
+		return true
+	case DeviceLoginResultStatusCancelled:
+		return true
+	case DeviceLoginResultStatusDenied:
+		return true
+	case DeviceLoginResultStatusPending:
 		return true
 	default:
 		return false
@@ -116,6 +156,78 @@ const (
 func (e EmailDeliveryRequestType) Valid() bool {
 	switch e {
 	case TeamInvitation:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IdentityConnectionAdmission.
+const (
+	ConnectionViewApproval IdentityConnectionAdmission = "approval"
+	ConnectionViewManaged  IdentityConnectionAdmission = "managed"
+)
+
+// Valid indicates whether the value is a known member of the IdentityConnectionAdmission enum.
+func (e IdentityConnectionAdmission) Valid() bool {
+	switch e {
+	case ConnectionViewApproval:
+		return true
+	case ConnectionViewManaged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IdentityConnectionState.
+const (
+	ConnectionViewActive  IdentityConnectionState = "active"
+	ConnectionViewPending IdentityConnectionState = "pending"
+	ConnectionViewRetired IdentityConnectionState = "retired"
+)
+
+// Valid indicates whether the value is a known member of the IdentityConnectionState enum.
+func (e IdentityConnectionState) Valid() bool {
+	switch e {
+	case ConnectionViewActive:
+		return true
+	case ConnectionViewPending:
+		return true
+	case ConnectionViewRetired:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IdentityConnectionSecretAdmission.
+const (
+	ConnectionAdmissionApproval IdentityConnectionSecretAdmission = "approval"
+	ConnectionAdmissionManaged  IdentityConnectionSecretAdmission = "managed"
+)
+
+// Valid indicates whether the value is a known member of the IdentityConnectionSecretAdmission enum.
+func (e IdentityConnectionSecretAdmission) Valid() bool {
+	switch e {
+	case ConnectionAdmissionApproval:
+		return true
+	case ConnectionAdmissionManaged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IdentityConnectionSecretState.
+const (
+	ConnectionActive IdentityConnectionSecretState = "active"
+)
+
+// Valid indicates whether the value is a known member of the IdentityConnectionSecretState enum.
+func (e IdentityConnectionSecretState) Valid() bool {
+	switch e {
+	case ConnectionActive:
 		return true
 	default:
 		return false
@@ -214,14 +326,17 @@ func (e PublicURLScope) Valid() bool {
 
 // Defines values for PublisherEnrollmentResultKind.
 const (
-	Namespace PublisherEnrollmentResultKind = "namespace"
-	SavedUrl  PublisherEnrollmentResultKind = "saved_url"
+	Namespace      PublisherEnrollmentResultKind = "namespace"
+	PrivateService PublisherEnrollmentResultKind = "private_service"
+	SavedUrl       PublisherEnrollmentResultKind = "saved_url"
 )
 
 // Valid indicates whether the value is a known member of the PublisherEnrollmentResultKind enum.
 func (e PublisherEnrollmentResultKind) Valid() bool {
 	switch e {
 	case Namespace:
+		return true
+	case PrivateService:
 		return true
 	case SavedUrl:
 		return true
@@ -335,6 +450,24 @@ func (e TeamRole) Valid() bool {
 	}
 }
 
+// Defines values for DecideCompanyAdmissionJSONBodyDecision.
+const (
+	AdmissionApproved DecideCompanyAdmissionJSONBodyDecision = "approved"
+	AdmissionDenied   DecideCompanyAdmissionJSONBodyDecision = "denied"
+)
+
+// Valid indicates whether the value is a known member of the DecideCompanyAdmissionJSONBodyDecision enum.
+func (e DecideCompanyAdmissionJSONBodyDecision) Valid() bool {
+	switch e {
+	case AdmissionApproved:
+		return true
+	case AdmissionDenied:
+		return true
+	default:
+		return false
+	}
+}
+
 // AcceptInvitationRequest defines model for AcceptInvitationRequest.
 type AcceptInvitationRequest struct {
 	Secret string `json:"secret"`
@@ -363,15 +496,84 @@ type ClaimDomainRequest struct {
 	MakeDefault *bool             `json:"make_default,omitempty"`
 }
 
+// CompanyAdmissionRequest defines model for CompanyAdmissionRequest.
+type CompanyAdmissionRequest struct {
+	ConnectionRevision   int64     `json:"connection_revision"`
+	CreatedAt            time.Time `json:"created_at"`
+	IdentityConnectionId string    `json:"identity_connection_id"`
+	IdentityId           string    `json:"identity_id"`
+	MemberSlug           string    `json:"member_slug"`
+	RequestId            string    `json:"request_id"`
+	State                string    `json:"state"`
+	Subject              string    `json:"subject"`
+	TeamId               string    `json:"team_id"`
+}
+
+// CompanyConnections defines model for CompanyConnections.
+type CompanyConnections struct {
+	Active *IdentityConnection `json:"active,omitempty"`
+	Setup  *IdentityConnection `json:"setup,omitempty"`
+}
+
+// CompanyEligibilityRequest defines model for CompanyEligibilityRequest.
+type CompanyEligibilityRequest struct {
+	// AccountSubject Website OIDC sub under the configured issuer; never a directory subject or email
+	AccountSubject       string    `json:"account_subject"`
+	ConnectionRevision   int64     `json:"connection_revision"`
+	Eligible             bool      `json:"eligible"`
+	IdentityConnectionId string    `json:"identity_connection_id"`
+	MemberSlug           string    `json:"member_slug"`
+	Revision             int64     `json:"revision"`
+	Subject              string    `json:"subject"`
+	TeamId               string    `json:"team_id"`
+	ValidUntil           time.Time `json:"valid_until"`
+}
+
+// CompanyIntentCredential defines model for CompanyIntentCredential.
+type CompanyIntentCredential struct {
+	BindingToken string `json:"binding_token"`
+}
+
+// CompanyLoginIntent defines model for CompanyLoginIntent.
+type CompanyLoginIntent struct {
+	BindingToken         *string   `json:"binding_token,omitempty"`
+	ClientId             string    `json:"client_id"`
+	ConnectionRevision   int64     `json:"connection_revision"`
+	ExpiresAt            time.Time `json:"expires_at"`
+	IdentityConnectionId string    `json:"identity_connection_id"`
+	IntentId             string    `json:"intent_id"`
+	Issuer               string    `json:"issuer"`
+	Nonce                string    `json:"nonce"`
+	RedirectUri          string    `json:"redirect_uri"`
+	SourceId             string    `json:"source_id"`
+	TeamId               string    `json:"team_id"`
+}
+
 // ControlSessionResponse defines model for ControlSessionResponse.
 type ControlSessionResponse struct {
-	AccessExpiresAt  time.Time       `json:"access_expires_at"`
-	AccessToken      string          `json:"access_token"`
-	Identity         IdentityContext `json:"identity"`
-	RefreshExpiresAt time.Time       `json:"refresh_expires_at"`
-	RefreshToken     string          `json:"refresh_token"`
-	SessionId        ResourceID      `json:"session_id"`
+	AccessExpiresAt time.Time `json:"access_expires_at"`
+	AccessToken     string    `json:"access_token"`
+
+	// CompanyAuthenticationExpiresAt Fixed company authentication deadline, bounded by original authentication age and control refresh expiry; refreshing never advances it. Expired or revoked company context rejects refresh and requires a new company login intent.
+	CompanyAuthenticationExpiresAt *time.Time      `json:"company_authentication_expires_at,omitempty"`
+	Identity                       IdentityContext `json:"identity"`
+	RefreshExpiresAt               time.Time       `json:"refresh_expires_at"`
+	RefreshToken                   string          `json:"refresh_token"`
+	SessionId                      ResourceID      `json:"session_id"`
 }
+
+// CreateIdentityConnectionRequest defines model for CreateIdentityConnectionRequest.
+type CreateIdentityConnectionRequest struct {
+	Admission        CreateIdentityConnectionRequestAdmission `json:"admission"`
+	ExpectedRevision *int64                                   `json:"expected_revision,omitempty"`
+	ReplaceId        *string                                  `json:"replace_id,omitempty"`
+
+	// SourceId Opaque immutable source fingerprint; provider configuration stays at the issuer
+	SourceId string `json:"source_id"`
+}
+
+// CreateIdentityConnectionRequestAdmission defines model for CreateIdentityConnectionRequest.Admission.
+type CreateIdentityConnectionRequestAdmission string
 
 // CreateInvitationRequest defines model for CreateInvitationRequest.
 type CreateInvitationRequest struct {
@@ -379,6 +581,9 @@ type CreateInvitationRequest struct {
 	ExpiresAt        time.Time            `json:"expires_at"`
 	InitialRole      TeamRole             `json:"initial_role"`
 	MemberSlug       CanonicalLabel       `json:"member_slug"`
+
+	// PersonalAccountException Only a current team owner may explicitly allow personal-account sign-in
+	PersonalAccountException *bool `json:"personal_account_exception,omitempty"`
 }
 
 // CreateTeamRequest defines model for CreateTeamRequest.
@@ -396,6 +601,29 @@ type DNSRecord struct {
 
 // DNSRecordType defines model for DNSRecord.Type.
 type DNSRecordType string
+
+// DeviceLoginChallenge defines model for DeviceLoginChallenge.
+type DeviceLoginChallenge struct {
+	ApprovalUrl       string    `json:"approval_url"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	IntervalSeconds   int       `json:"interval_seconds"`
+	PollingCredential string    `json:"polling_credential"`
+	UserCode          string    `json:"user_code"`
+}
+
+// DeviceLoginCredential defines model for DeviceLoginCredential.
+type DeviceLoginCredential struct {
+	PollingCredential string `json:"polling_credential"`
+}
+
+// DeviceLoginResult defines model for DeviceLoginResult.
+type DeviceLoginResult struct {
+	Session *ControlSessionResponse `json:"session,omitempty"`
+	Status  DeviceLoginResultStatus `json:"status"`
+}
+
+// DeviceLoginResultStatus defines model for DeviceLoginResult.Status.
+type DeviceLoginResultStatus string
 
 // Domain defines model for Domain.
 type Domain struct {
@@ -447,8 +675,59 @@ type Identity struct {
 	NormalizedEmail *openapi_types.Email `json:"normalized_email,omitempty"`
 }
 
+// IdentityConnection defines model for IdentityConnection.
+type IdentityConnection struct {
+	Admission            IdentityConnectionAdmission `json:"admission"`
+	IdentityConnectionId string                      `json:"identity_connection_id"`
+	Issuer               string                      `json:"issuer"`
+	Revision             int64                       `json:"revision"`
+	SourceId             string                      `json:"source_id"`
+	State                IdentityConnectionState     `json:"state"`
+	TeamId               string                      `json:"team_id"`
+}
+
+// IdentityConnectionAdmission defines model for IdentityConnection.Admission.
+type IdentityConnectionAdmission string
+
+// IdentityConnectionState defines model for IdentityConnection.State.
+type IdentityConnectionState string
+
+// IdentityConnectionSecret defines model for IdentityConnectionSecret.
+type IdentityConnectionSecret struct {
+	Admission            IdentityConnectionSecretAdmission `json:"admission"`
+	IdentityConnectionId string                            `json:"identity_connection_id"`
+	Issuer               string                            `json:"issuer"`
+
+	// ProvisioningToken One-time scoped provisioning credential; control stores only its digest
+	ProvisioningToken string                        `json:"provisioning_token"`
+	Revision          int64                         `json:"revision"`
+	SourceId          string                        `json:"source_id"`
+	State             IdentityConnectionSecretState `json:"state"`
+	TeamId            string                        `json:"team_id"`
+}
+
+// IdentityConnectionSecretAdmission defines model for IdentityConnectionSecret.Admission.
+type IdentityConnectionSecretAdmission string
+
+// IdentityConnectionSecretState defines model for IdentityConnectionSecret.State.
+type IdentityConnectionSecretState string
+
+// IdentityConnectionSetup defines model for IdentityConnectionSetup.
+type IdentityConnectionSetup struct {
+	Admission            string    `json:"admission"`
+	ExpiresAt            time.Time `json:"expires_at"`
+	IdentityConnectionId string    `json:"identity_connection_id"`
+	Issuer               string    `json:"issuer"`
+	Revision             int64     `json:"revision"`
+	SetupToken           string    `json:"setup_token"`
+	SourceId             string    `json:"source_id"`
+	State                string    `json:"state"`
+	TeamId               string    `json:"team_id"`
+}
+
 // IdentityContext defines model for IdentityContext.
 type IdentityContext struct {
+	DefaultTeamId  *TeamID      `json:"default_team_id,omitempty"`
 	Identity       Identity     `json:"identity"`
 	Memberships    []Membership `json:"memberships"`
 	PersonalTeamId TeamID       `json:"personal_team_id"`
@@ -465,8 +744,11 @@ type Invitation struct {
 	InitialRole                TeamRole             `json:"initial_role"`
 	MemberSlug                 CanonicalLabel       `json:"member_slug"`
 	NormalizedEmailRestriction *openapi_types.Email `json:"normalized_email_restriction,omitempty"`
-	State                      InvitationState      `json:"state"`
-	TeamId                     TeamID               `json:"team_id"`
+
+	// PersonalAccountException Explicit owner-approved personal-account sign-in exception
+	PersonalAccountException *bool           `json:"personal_account_exception,omitempty"`
+	State                    InvitationState `json:"state"`
+	TeamId                   TeamID          `json:"team_id"`
 }
 
 // InvitationID defines model for InvitationID.
@@ -494,24 +776,26 @@ type InvitationSecret struct {
 // InvitationState defines model for InvitationState.
 type InvitationState string
 
-// LoginTokenExchangeRequest defines model for LoginTokenExchangeRequest.
-type LoginTokenExchangeRequest struct {
-	LoginToken string `json:"login_token"`
-}
-
 // Membership defines model for Membership.
 type Membership struct {
-	CreatedAt       time.Time      `json:"created_at"`
-	Id              MembershipID   `json:"id"`
-	IdentityId      IdentityID     `json:"identity_id"`
-	ManagedLabel    CanonicalLabel `json:"managed_label"`
-	MemberSlug      CanonicalLabel `json:"member_slug"`
-	PolicyRevision  int64          `json:"policy_revision"`
-	Role            TeamRole       `json:"role"`
-	TeamDisplayName CanonicalLabel `json:"team_display_name"`
-	TeamId          TeamID         `json:"team_id"`
-	TeamKind        TeamKind       `json:"team_kind"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	Active                *bool        `json:"active,omitempty"`
+	CompanySignInRequired *bool        `json:"company_sign_in_required,omitempty"`
+	CreatedAt             time.Time    `json:"created_at"`
+	Id                    MembershipID `json:"id"`
+
+	// IdentityConnectionId Immutable managed admission source; absent for manually admitted members
+	IdentityConnectionId     *string        `json:"identity_connection_id,omitempty"`
+	IdentityId               IdentityID     `json:"identity_id"`
+	ManagedLabel             CanonicalLabel `json:"managed_label"`
+	ManualSuspendedAt        *time.Time     `json:"manual_suspended_at,omitempty"`
+	MemberSlug               CanonicalLabel `json:"member_slug"`
+	PersonalAccountException *bool          `json:"personal_account_exception,omitempty"`
+	PolicyRevision           int64          `json:"policy_revision"`
+	Role                     TeamRole       `json:"role"`
+	TeamDisplayName          CanonicalLabel `json:"team_display_name"`
+	TeamId                   TeamID         `json:"team_id"`
+	TeamKind                 TeamKind       `json:"team_kind"`
+	UpdatedAt                time.Time      `json:"updated_at"`
 }
 
 // MembershipID defines model for MembershipID.
@@ -523,10 +807,8 @@ type MembershipPage struct {
 	NextCursor  *MembershipID `json:"next_cursor,omitempty"`
 }
 
-// OIDCTokenExchangeRequest defines model for OIDCTokenExchangeRequest.
-type OIDCTokenExchangeRequest struct {
-	IdToken string `json:"id_token"`
-}
+// PrivateServiceID defines model for PrivateServiceID.
+type PrivateServiceID = string
 
 // Problem defines model for Problem.
 type Problem struct {
@@ -551,14 +833,15 @@ type PublicURLScope string
 
 // PublisherEnrollmentResult defines model for PublisherEnrollmentResult.
 type PublisherEnrollmentResult struct {
-	ClientId    string                        `json:"client_id"`
-	DomainId    *string                       `json:"domain_id,omitempty"`
-	GrantId     string                        `json:"grant_id"`
-	KeyId       string                        `json:"key_id"`
-	Kind        PublisherEnrollmentResultKind `json:"kind"`
-	Namespace   *string                       `json:"namespace,omitempty"`
-	PublicUrlId *string                       `json:"public_url_id,omitempty"`
-	TeamId      string                        `json:"team_id"`
+	ClientId         string                        `json:"client_id"`
+	DomainId         *string                       `json:"domain_id,omitempty"`
+	GrantId          string                        `json:"grant_id"`
+	KeyId            string                        `json:"key_id"`
+	Kind             PublisherEnrollmentResultKind `json:"kind"`
+	Namespace        *string                       `json:"namespace,omitempty"`
+	PrivateServiceId *PrivateServiceID             `json:"private_service_id,omitempty"`
+	PublicUrlId      *string                       `json:"public_url_id,omitempty"`
+	TeamId           string                        `json:"team_id"`
 }
 
 // PublisherEnrollmentResultKind defines model for PublisherEnrollmentResult.Kind.
@@ -633,6 +916,12 @@ type SetMembershipRoleRequest struct {
 	Role TeamRole `json:"role"`
 }
 
+// StartDeviceLoginRequest defines model for StartDeviceLoginRequest.
+type StartDeviceLoginRequest struct {
+	RefreshToken *string `json:"refresh_token,omitempty"`
+	Team         *string `json:"team,omitempty"`
+}
+
 // Team defines model for Team.
 type Team struct {
 	CreatedAt       time.Time      `json:"created_at"`
@@ -675,16 +964,162 @@ type TeamPage struct {
 // TeamRole defines model for TeamRole.
 type TeamRole string
 
+// VerifiedOIDCTeamContext The configured issuer signs this value in the tnl_team_contexts ID-token claim. Control binds it to the identity and newly created session after verifying the token and consuming its assertion. This schema is documentation, never a client authentication input.
+type VerifiedOIDCTeamContext struct {
+	// AuthenticatedAt Unix seconds of actual company authentication; not token refresh time
+	AuthenticatedAt      int64  `json:"authenticated_at"`
+	ConnectionRevision   int64  `json:"connection_revision"`
+	IdentityConnectionId string `json:"identity_connection_id"`
+	SourceId             string `json:"source_id"`
+	Subject              string `json:"subject"`
+	TeamId               string `json:"team_id"`
+}
+
+// CompanyActorToken defines model for CompanyActorToken.
+type CompanyActorToken = string
+
 // IdempotencyKey defines model for IdempotencyKey.
 type IdempotencyKey = string
 
 // BearerProblem defines model for BearerProblem.
 type BearerProblem = Problem
 
-// IssueAdminBrowserHandoffJSONBody defines parameters for IssueAdminBrowserHandoff.
-type IssueAdminBrowserHandoffJSONBody struct {
+// IssueControlBrowserHandoffJSONBody defines parameters for IssueControlBrowserHandoff.
+type IssueControlBrowserHandoffJSONBody struct {
 	PublicUrlId  string `json:"public_url_id"`
 	RefreshToken string `json:"refresh_token"`
+}
+
+// RequestCompanyAdmissionJSONBody defines parameters for RequestCompanyAdmission.
+type RequestCompanyAdmissionJSONBody struct {
+	ConnectionRevision   int64  `json:"connection_revision"`
+	IdentityConnectionId string `json:"identity_connection_id"`
+	MemberSlug           string `json:"member_slug"`
+	TeamId               string `json:"team_id"`
+}
+
+// CreateCompanyLoginIntentJSONBody defines parameters for CreateCompanyLoginIntent.
+type CreateCompanyLoginIntentJSONBody struct {
+	TeamId string `json:"team_id"`
+}
+
+// BeginDeviceBrowserParams defines parameters for BeginDeviceBrowser.
+type BeginDeviceBrowserParams struct {
+	Code string `form:"code" json:"code"`
+}
+
+// ApproveDeviceBrowserFormdataBody defines parameters for ApproveDeviceBrowser.
+type ApproveDeviceBrowserFormdataBody struct {
+	Binding string `form:"binding" json:"binding"`
+	Code    string `form:"code" json:"code"`
+}
+
+// CompleteDeviceBrowserParams defines parameters for CompleteDeviceBrowser.
+type CompleteDeviceBrowserParams struct {
+	State string  `form:"state" json:"state"`
+	Code  *string `form:"code,omitempty" json:"code,omitempty"`
+	Error *string `form:"error,omitempty" json:"error,omitempty"`
+}
+
+// RecoverCompanyOwnerJSONBody defines parameters for RecoverCompanyOwner.
+type RecoverCompanyOwnerJSONBody struct {
+	MembershipId string `json:"membership_id"`
+	TeamId       string `json:"team_id"`
+}
+
+// ProvisionCompanyEligibilityParams defines parameters for ProvisionCompanyEligibility.
+type ProvisionCompanyEligibilityParams struct {
+	XTnlProvisioningToken string `json:"X-Tnl-Provisioning-Token"`
+}
+
+// ListCompanyAdmissionsParams defines parameters for ListCompanyAdmissions.
+type ListCompanyAdmissionsParams struct {
+	// XTnlActorToken Fresh configured-issuer ID token; nonce is the operation-bound digest specified by company access. Its OIDC sub resolves the actor. The website credential alone grants no owner authority.
+	XTnlActorToken CompanyActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// DecideCompanyAdmissionJSONBody defines parameters for DecideCompanyAdmission.
+type DecideCompanyAdmissionJSONBody struct {
+	ConnectionRevision int64                                  `json:"connection_revision"`
+	Decision           DecideCompanyAdmissionJSONBodyDecision `json:"decision"`
+}
+
+// DecideCompanyAdmissionParams defines parameters for DecideCompanyAdmission.
+type DecideCompanyAdmissionParams struct {
+	// XTnlActorToken Fresh configured-issuer ID token; nonce is the operation-bound digest specified by company access. Its OIDC sub resolves the actor. The website credential alone grants no owner authority.
+	XTnlActorToken CompanyActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// DecideCompanyAdmissionJSONBodyDecision defines parameters for DecideCompanyAdmission.
+type DecideCompanyAdmissionJSONBodyDecision string
+
+// ReadCompanyConnectionsParams defines parameters for ReadCompanyConnections.
+type ReadCompanyConnectionsParams struct {
+	// XTnlActorToken Fresh configured-issuer ID token; nonce is the operation-bound digest specified by company access. Its OIDC sub resolves the actor. The website credential alone grants no owner authority.
+	XTnlActorToken CompanyActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// BeginIdentityConnectionSetupParams defines parameters for BeginIdentityConnectionSetup.
+type BeginIdentityConnectionSetupParams struct {
+	// XTnlActorToken Fresh configured-issuer ID token; nonce is the operation-bound digest specified by company access. Its OIDC sub resolves the actor. The website credential alone grants no owner authority.
+	XTnlActorToken CompanyActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// DisconnectIdentityConnectionJSONBody defines parameters for DisconnectIdentityConnection.
+type DisconnectIdentityConnectionJSONBody struct {
+	ExpectedRevision int64 `json:"expected_revision"`
+}
+
+// DisconnectIdentityConnectionParams defines parameters for DisconnectIdentityConnection.
+type DisconnectIdentityConnectionParams struct {
+	// XTnlActorToken Fresh configured-issuer ID token; nonce is the operation-bound digest specified by company access. Its OIDC sub resolves the actor. The website credential alone grants no owner authority.
+	XTnlActorToken CompanyActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// ActivateIdentityConnectionJSONBody defines parameters for ActivateIdentityConnection.
+type ActivateIdentityConnectionJSONBody struct {
+	ExpectedRevision int64  `json:"expected_revision"`
+	SetupToken       string `json:"setup_token"`
+}
+
+// ActivateIdentityConnectionParams defines parameters for ActivateIdentityConnection.
+type ActivateIdentityConnectionParams struct {
+	// XTnlActorToken Fresh configured-issuer ID token; nonce is the operation-bound digest specified by company access. Its OIDC sub resolves the actor. The website credential alone grants no owner authority.
+	XTnlActorToken CompanyActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// RotateCompanyProvisioningTokenJSONBody defines parameters for RotateCompanyProvisioningToken.
+type RotateCompanyProvisioningTokenJSONBody struct {
+	ExpectedRevision int64 `json:"expected_revision"`
+}
+
+// RotateCompanyProvisioningTokenParams defines parameters for RotateCompanyProvisioningToken.
+type RotateCompanyProvisioningTokenParams struct {
+	// XTnlActorToken Fresh configured-issuer ID token; nonce is the operation-bound digest specified by company access. Its OIDC sub resolves the actor. The website credential alone grants no owner authority.
+	XTnlActorToken CompanyActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// SetCompanyInvitationExceptionJSONBody defines parameters for SetCompanyInvitationException.
+type SetCompanyInvitationExceptionJSONBody struct {
+	PersonalAccountException bool `json:"personal_account_exception"`
+}
+
+// SetCompanyInvitationExceptionParams defines parameters for SetCompanyInvitationException.
+type SetCompanyInvitationExceptionParams struct {
+	// XTnlActorToken Fresh configured-issuer ID token; nonce is the operation-bound digest specified by company access. Its OIDC sub resolves the actor. The website credential alone grants no owner authority.
+	XTnlActorToken CompanyActorToken `json:"X-Tnl-Actor-Token"`
+}
+
+// SetCompanyMembershipDecisionJSONBody defines parameters for SetCompanyMembershipDecision.
+type SetCompanyMembershipDecisionJSONBody struct {
+	PersonalAccountException bool `json:"personal_account_exception"`
+	Suspended                bool `json:"suspended"`
+}
+
+// SetCompanyMembershipDecisionParams defines parameters for SetCompanyMembershipDecision.
+type SetCompanyMembershipDecisionParams struct {
+	// XTnlActorToken Fresh configured-issuer ID token; nonce is the operation-bound digest specified by company access. Its OIDC sub resolves the actor. The website credential alone grants no owner authority.
+	XTnlActorToken CompanyActorToken `json:"X-Tnl-Actor-Token"`
 }
 
 // CreateTeamParams defines parameters for CreateTeam.
@@ -702,20 +1137,35 @@ type CreateTeamInvitationParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
-// ExchangeBrowserOIDCTokenJSONRequestBody defines body for ExchangeBrowserOIDCToken for application/json ContentType.
-type ExchangeBrowserOIDCTokenJSONRequestBody = OIDCTokenExchangeRequest
+// IssueControlBrowserHandoffJSONRequestBody defines body for IssueControlBrowserHandoff for application/json ContentType.
+type IssueControlBrowserHandoffJSONRequestBody IssueControlBrowserHandoffJSONBody
 
-// IssueAdminBrowserHandoffJSONRequestBody defines body for IssueAdminBrowserHandoff for application/json ContentType.
-type IssueAdminBrowserHandoffJSONRequestBody IssueAdminBrowserHandoffJSONBody
+// RequestCompanyAdmissionJSONRequestBody defines body for RequestCompanyAdmission for application/json ContentType.
+type RequestCompanyAdmissionJSONRequestBody RequestCompanyAdmissionJSONBody
 
-// ExchangeOIDCTokenJSONRequestBody defines body for ExchangeOIDCToken for application/json ContentType.
-type ExchangeOIDCTokenJSONRequestBody = OIDCTokenExchangeRequest
+// CreateCompanyLoginIntentJSONRequestBody defines body for CreateCompanyLoginIntent for application/json ContentType.
+type CreateCompanyLoginIntentJSONRequestBody CreateCompanyLoginIntentJSONBody
+
+// ResolveCompanyLoginIntentJSONRequestBody defines body for ResolveCompanyLoginIntent for application/json ContentType.
+type ResolveCompanyLoginIntentJSONRequestBody = CompanyIntentCredential
+
+// StartDeviceLoginJSONRequestBody defines body for StartDeviceLogin for application/json ContentType.
+type StartDeviceLoginJSONRequestBody = StartDeviceLoginRequest
+
+// ApproveDeviceBrowserFormdataRequestBody defines body for ApproveDeviceBrowser for application/x-www-form-urlencoded ContentType.
+type ApproveDeviceBrowserFormdataRequestBody ApproveDeviceBrowserFormdataBody
+
+// CancelDeviceLoginJSONRequestBody defines body for CancelDeviceLogin for application/json ContentType.
+type CancelDeviceLoginJSONRequestBody = DeviceLoginCredential
+
+// PollDeviceLoginJSONRequestBody defines body for PollDeviceLogin for application/json ContentType.
+type PollDeviceLoginJSONRequestBody = DeviceLoginCredential
 
 // RefreshControlSessionJSONRequestBody defines body for RefreshControlSession for application/json ContentType.
 type RefreshControlSessionJSONRequestBody = RefreshControlSessionRequest
 
-// ExchangeLoginTokenJSONRequestBody defines body for ExchangeLoginToken for application/json ContentType.
-type ExchangeLoginTokenJSONRequestBody = LoginTokenExchangeRequest
+// RecoverCompanyOwnerJSONRequestBody defines body for RecoverCompanyOwner for application/json ContentType.
+type RecoverCompanyOwnerJSONRequestBody RecoverCompanyOwnerJSONBody
 
 // AcceptInvitationJSONRequestBody defines body for AcceptInvitation for application/json ContentType.
 type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
@@ -729,6 +1179,9 @@ type RotatePublisherKeyJSONRequestBody = RotatePublisherKeyRequest
 // ExchangePublisherAssertionJSONRequestBody defines body for ExchangePublisherAssertion for application/json ContentType.
 type ExchangePublisherAssertionJSONRequestBody = PublisherTokenRequest
 
+// ProvisionCompanyEligibilityJSONRequestBody defines body for ProvisionCompanyEligibility for application/json ContentType.
+type ProvisionCompanyEligibilityJSONRequestBody = CompanyEligibilityRequest
+
 // ResolveServiceIdentityJSONRequestBody defines body for ResolveServiceIdentity for application/json ContentType.
 type ResolveServiceIdentityJSONRequestBody = ServiceIdentity
 
@@ -737,6 +1190,27 @@ type AcceptServiceInvitationJSONRequestBody = ServiceInvitationRequest
 
 // PreviewServiceInvitationJSONRequestBody defines body for PreviewServiceInvitation for application/json ContentType.
 type PreviewServiceInvitationJSONRequestBody = ServiceInvitationRequest
+
+// DecideCompanyAdmissionJSONRequestBody defines body for DecideCompanyAdmission for application/json ContentType.
+type DecideCompanyAdmissionJSONRequestBody DecideCompanyAdmissionJSONBody
+
+// BeginIdentityConnectionSetupJSONRequestBody defines body for BeginIdentityConnectionSetup for application/json ContentType.
+type BeginIdentityConnectionSetupJSONRequestBody = CreateIdentityConnectionRequest
+
+// DisconnectIdentityConnectionJSONRequestBody defines body for DisconnectIdentityConnection for application/json ContentType.
+type DisconnectIdentityConnectionJSONRequestBody DisconnectIdentityConnectionJSONBody
+
+// ActivateIdentityConnectionJSONRequestBody defines body for ActivateIdentityConnection for application/json ContentType.
+type ActivateIdentityConnectionJSONRequestBody ActivateIdentityConnectionJSONBody
+
+// RotateCompanyProvisioningTokenJSONRequestBody defines body for RotateCompanyProvisioningToken for application/json ContentType.
+type RotateCompanyProvisioningTokenJSONRequestBody RotateCompanyProvisioningTokenJSONBody
+
+// SetCompanyInvitationExceptionJSONRequestBody defines body for SetCompanyInvitationException for application/json ContentType.
+type SetCompanyInvitationExceptionJSONRequestBody SetCompanyInvitationExceptionJSONBody
+
+// SetCompanyMembershipDecisionJSONRequestBody defines body for SetCompanyMembershipDecision for application/json ContentType.
+type SetCompanyMembershipDecisionJSONRequestBody SetCompanyMembershipDecisionJSONBody
 
 // CreateTeamJSONRequestBody defines body for CreateTeam for application/json ContentType.
 type CreateTeamJSONRequestBody = CreateTeamRequest
@@ -827,46 +1301,108 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
-	// ExchangeBrowserOIDCTokenWithBody Exchange a browser OIDC ID token for a control session
+	// IssueControlBrowserHandoffWithBody performs a POST /v1/auth/browser-handoff (the `IssueControlBrowserHandoff` operationId) request,
+	// with any type of body and a specified content type.
+	IssueControlBrowserHandoffWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IssueControlBrowserHandoff performs a POST /v1/auth/browser-handoff (the `IssueControlBrowserHandoff` operationId) request.
+	// Takes a body of the `application/json` content type.
+	IssueControlBrowserHandoff(ctx context.Context, body IssueControlBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RequestCompanyAdmissionWithBody performs a POST /v1/auth/company-admissions (the `RequestCompanyAdmission` operationId) request,
+	// with any type of body and a specified content type.
+	RequestCompanyAdmissionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RequestCompanyAdmission performs a POST /v1/auth/company-admissions (the `RequestCompanyAdmission` operationId) request.
+	// Takes a body of the `application/json` content type.
+	RequestCompanyAdmission(ctx context.Context, body RequestCompanyAdmissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCompanyLoginIntentWithBody performs a POST /v1/auth/company-intents (the `CreateCompanyLoginIntent` operationId) request,
+	// with any type of body and a specified content type.
+	CreateCompanyLoginIntentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCompanyLoginIntent performs a POST /v1/auth/company-intents (the `CreateCompanyLoginIntent` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CreateCompanyLoginIntent(ctx context.Context, body CreateCompanyLoginIntentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResolveCompanyLoginIntentWithBody performs a POST /v1/auth/company-intents/{intent_id}/resolve (the `ResolveCompanyLoginIntent` operationId) request,
+	// with any type of body and a specified content type.
+	ResolveCompanyLoginIntentWithBody(ctx context.Context, intentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResolveCompanyLoginIntent performs a POST /v1/auth/company-intents/{intent_id}/resolve (the `ResolveCompanyLoginIntent` operationId) request.
+	// Takes a body of the `application/json` content type.
+	ResolveCompanyLoginIntent(ctx context.Context, intentId string, body ResolveCompanyLoginIntentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartDeviceLoginWithBody Start a control-owned device login
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
-	ExchangeBrowserOIDCTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/auth/device (the `StartDeviceLogin` operationId).
+	StartDeviceLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeBrowserOIDCToken Exchange a browser OIDC ID token for a control session
+	// StartDeviceLogin Start a control-owned device login
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
-	ExchangeBrowserOIDCToken(ctx context.Context, body ExchangeBrowserOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/auth/device (the `StartDeviceLogin` operationId).
+	StartDeviceLogin(ctx context.Context, body StartDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// IssueAdminBrowserHandoffWithBody performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request,
-	// with any type of body and a specified content type.
-	IssueAdminBrowserHandoffWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// BeginDeviceBrowser Begin browser authentication for a control-issued device code
+	//
+	// Corresponds with GET /v1/auth/device/approve (the `BeginDeviceBrowser` operationId).
+	BeginDeviceBrowser(ctx context.Context, params *BeginDeviceBrowserParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// IssueAdminBrowserHandoff performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request.
+	// ApproveDeviceBrowserWithBody Confirm the displayed device code after browser OIDC authentication
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/auth/device/approve (the `ApproveDeviceBrowser` operationId).
+	ApproveDeviceBrowserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApproveDeviceBrowserWithFormdataBody Confirm the displayed device code after browser OIDC authentication
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /v1/auth/device/approve (the `ApproveDeviceBrowser` operationId).
+	ApproveDeviceBrowserWithFormdataBody(ctx context.Context, body ApproveDeviceBrowserFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CompleteDeviceBrowser Redeem one state-bound authorization code and show explicit device confirmation
+	//
+	// Corresponds with GET /v1/auth/device/callback (the `CompleteDeviceBrowser` operationId).
+	CompleteDeviceBrowser(ctx context.Context, params *CompleteDeviceBrowserParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CancelDeviceLoginWithBody Cancel an attempt and revoke any session it issued
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/auth/device/cancel (the `CancelDeviceLogin` operationId).
+	CancelDeviceLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CancelDeviceLogin Cancel an attempt and revoke any session it issued
+	//
 	// Takes a body of the `application/json` content type.
-	IssueAdminBrowserHandoff(ctx context.Context, body IssueAdminBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	//
+	// Corresponds with POST /v1/auth/device/cancel (the `CancelDeviceLogin` operationId).
+	CancelDeviceLogin(ctx context.Context, body CancelDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PollDeviceLoginWithBody Read a device login result; safe to retry until expiration
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/auth/device/poll (the `PollDeviceLogin` operationId).
+	PollDeviceLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PollDeviceLogin Read a device login result; safe to retry until expiration
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/auth/device/poll (the `PollDeviceLogin` operationId).
+	PollDeviceLogin(ctx context.Context, body PollDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// LogoutControlSession Revoke the authenticated control session
 	//
 	// Corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
 	LogoutControlSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ExchangeOIDCTokenWithBody Exchange an OIDC ID token for a control session
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
-	ExchangeOIDCTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ExchangeOIDCToken Exchange an OIDC ID token for a control session
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
-	ExchangeOIDCToken(ctx context.Context, body ExchangeOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RefreshControlSessionWithBody Rotate a control session's access and refresh tokens
 	//
@@ -882,19 +1418,19 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
 	RefreshControlSession(ctx context.Context, body RefreshControlSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeLoginTokenWithBody Exchange a login token for a control session
+	// RecoverCompanyOwnerWithBody Explicit audited recovery grants a personal-account exception to a nonremoved owner
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
-	ExchangeLoginTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
+	RecoverCompanyOwnerWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ExchangeLoginToken Exchange a login token for a control session
+	// RecoverCompanyOwner Explicit audited recovery grants a personal-account exception to a nonremoved owner
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
-	ExchangeLoginToken(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
+	RecoverCompanyOwner(ctx context.Context, body RecoverCompanyOwnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetIdentityContext Read the authenticated identity and memberships
 	//
@@ -939,6 +1475,24 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	ExchangePublisherAssertion(ctx context.Context, body ExchangePublisherAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ProvisionCompanyEligibilityWithBody Apply one revision-fenced eligibility delta without granting roles
+	//
+	// Requires both website authentication and the exact connection provisioning credential. Missing entries never remove members. A revision retry must have identical content.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/service/company-eligibility (the `ProvisionCompanyEligibility` operationId).
+	ProvisionCompanyEligibilityWithBody(ctx context.Context, params *ProvisionCompanyEligibilityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ProvisionCompanyEligibility Apply one revision-fenced eligibility delta without granting roles
+	//
+	// Requires both website authentication and the exact connection provisioning credential. Missing entries never remove members. A revision retry must have identical content.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/service/company-eligibility (the `ProvisionCompanyEligibility` operationId).
+	ProvisionCompanyEligibility(ctx context.Context, params *ProvisionCompanyEligibilityParams, body ProvisionCompanyEligibilityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ResolveServiceIdentityWithBody Read current memberships for the signed-in website identity
 	//
 	// Takes any type of body and a specified content type.
@@ -980,6 +1534,82 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
 	PreviewServiceInvitation(ctx context.Context, body PreviewServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListCompanyAdmissions performs a GET /v1/service/teams/{team_id}/company-admissions (the `ListCompanyAdmissions` operationId) request.
+	ListCompanyAdmissions(ctx context.Context, teamId string, params *ListCompanyAdmissionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideCompanyAdmissionWithBody performs a POST /v1/service/teams/{team_id}/company-admissions/{request_id} (the `DecideCompanyAdmission` operationId) request,
+	// with any type of body and a specified content type.
+	DecideCompanyAdmissionWithBody(ctx context.Context, teamId string, requestId string, params *DecideCompanyAdmissionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideCompanyAdmission performs a POST /v1/service/teams/{team_id}/company-admissions/{request_id} (the `DecideCompanyAdmission` operationId) request.
+	// Takes a body of the `application/json` content type.
+	DecideCompanyAdmission(ctx context.Context, teamId string, requestId string, params *DecideCompanyAdmissionParams, body DecideCompanyAdmissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadCompanyConnections Read active and pending connections with current owner proof
+	//
+	// Corresponds with GET /v1/service/teams/{team_id}/identity-connections (the `ReadCompanyConnections` operationId).
+	ReadCompanyConnections(ctx context.Context, teamId string, params *ReadCompanyConnectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BeginIdentityConnectionSetupWithBody Begin consent setup without changing current enforcement
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/service/teams/{team_id}/identity-connections (the `BeginIdentityConnectionSetup` operationId).
+	BeginIdentityConnectionSetupWithBody(ctx context.Context, teamId string, params *BeginIdentityConnectionSetupParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BeginIdentityConnectionSetup Begin consent setup without changing current enforcement
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/service/teams/{team_id}/identity-connections (the `BeginIdentityConnectionSetup` operationId).
+	BeginIdentityConnectionSetup(ctx context.Context, teamId string, params *BeginIdentityConnectionSetupParams, body BeginIdentityConnectionSetupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DisconnectIdentityConnectionWithBody Abort pending consent or retire an active connection
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with DELETE /v1/service/teams/{team_id}/identity-connections/{identity_connection_id} (the `DisconnectIdentityConnection` operationId).
+	DisconnectIdentityConnectionWithBody(ctx context.Context, teamId string, identityConnectionId string, params *DisconnectIdentityConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DisconnectIdentityConnection Abort pending consent or retire an active connection
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with DELETE /v1/service/teams/{team_id}/identity-connections/{identity_connection_id} (the `DisconnectIdentityConnection` operationId).
+	DisconnectIdentityConnection(ctx context.Context, teamId string, identityConnectionId string, params *DisconnectIdentityConnectionParams, body DisconnectIdentityConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ActivateIdentityConnectionWithBody performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate (the `ActivateIdentityConnection` operationId) request,
+	// with any type of body and a specified content type.
+	ActivateIdentityConnectionWithBody(ctx context.Context, teamId string, identityConnectionId string, params *ActivateIdentityConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ActivateIdentityConnection performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate (the `ActivateIdentityConnection` operationId) request.
+	// Takes a body of the `application/json` content type.
+	ActivateIdentityConnection(ctx context.Context, teamId string, identityConnectionId string, params *ActivateIdentityConnectionParams, body ActivateIdentityConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotateCompanyProvisioningTokenWithBody performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token (the `RotateCompanyProvisioningToken` operationId) request,
+	// with any type of body and a specified content type.
+	RotateCompanyProvisioningTokenWithBody(ctx context.Context, teamId string, identityConnectionId string, params *RotateCompanyProvisioningTokenParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotateCompanyProvisioningToken performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token (the `RotateCompanyProvisioningToken` operationId) request.
+	// Takes a body of the `application/json` content type.
+	RotateCompanyProvisioningToken(ctx context.Context, teamId string, identityConnectionId string, params *RotateCompanyProvisioningTokenParams, body RotateCompanyProvisioningTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetCompanyInvitationExceptionWithBody performs a PUT /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision (the `SetCompanyInvitationException` operationId) request,
+	// with any type of body and a specified content type.
+	SetCompanyInvitationExceptionWithBody(ctx context.Context, teamId string, invitationId string, params *SetCompanyInvitationExceptionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetCompanyInvitationException performs a PUT /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision (the `SetCompanyInvitationException` operationId) request.
+	// Takes a body of the `application/json` content type.
+	SetCompanyInvitationException(ctx context.Context, teamId string, invitationId string, params *SetCompanyInvitationExceptionParams, body SetCompanyInvitationExceptionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetCompanyMembershipDecisionWithBody performs a PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision (the `SetCompanyMembershipDecision` operationId) request,
+	// with any type of body and a specified content type.
+	SetCompanyMembershipDecisionWithBody(ctx context.Context, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetCompanyMembershipDecision performs a PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision (the `SetCompanyMembershipDecision` operationId) request.
+	// Takes a body of the `application/json` content type.
+	SetCompanyMembershipDecision(ctx context.Context, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, body SetCompanyMembershipDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeams List teams for the authenticated identity
 	//
@@ -1094,13 +1724,125 @@ type ClientInterface interface {
 	SetMembershipRole(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-// ExchangeBrowserOIDCTokenWithBody Exchange a browser OIDC ID token for a control session
+// IssueControlBrowserHandoffWithBody performs a POST /v1/auth/browser-handoff (the `IssueControlBrowserHandoff` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) IssueControlBrowserHandoffWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueControlBrowserHandoffRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IssueControlBrowserHandoff performs a POST /v1/auth/browser-handoff (the `IssueControlBrowserHandoff` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) IssueControlBrowserHandoff(ctx context.Context, body IssueControlBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueControlBrowserHandoffRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RequestCompanyAdmissionWithBody performs a POST /v1/auth/company-admissions (the `RequestCompanyAdmission` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) RequestCompanyAdmissionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRequestCompanyAdmissionRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RequestCompanyAdmission performs a POST /v1/auth/company-admissions (the `RequestCompanyAdmission` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) RequestCompanyAdmission(ctx context.Context, body RequestCompanyAdmissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRequestCompanyAdmissionRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCompanyLoginIntentWithBody performs a POST /v1/auth/company-intents (the `CreateCompanyLoginIntent` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CreateCompanyLoginIntentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCompanyLoginIntentRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCompanyLoginIntent performs a POST /v1/auth/company-intents (the `CreateCompanyLoginIntent` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CreateCompanyLoginIntent(ctx context.Context, body CreateCompanyLoginIntentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCompanyLoginIntentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResolveCompanyLoginIntentWithBody performs a POST /v1/auth/company-intents/{intent_id}/resolve (the `ResolveCompanyLoginIntent` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) ResolveCompanyLoginIntentWithBody(ctx context.Context, intentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResolveCompanyLoginIntentRequestWithBody(c.Server, intentId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResolveCompanyLoginIntent performs a POST /v1/auth/company-intents/{intent_id}/resolve (the `ResolveCompanyLoginIntent` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) ResolveCompanyLoginIntent(ctx context.Context, intentId string, body ResolveCompanyLoginIntentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResolveCompanyLoginIntentRequest(c.Server, intentId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartDeviceLoginWithBody Start a control-owned device login
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
-func (c *Client) ExchangeBrowserOIDCTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeBrowserOIDCTokenRequestWithBody(c.Server, contentType, body)
+// Corresponds with POST /v1/auth/device (the `StartDeviceLogin` operationId).
+func (c *Client) StartDeviceLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartDeviceLoginRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1111,13 +1853,13 @@ func (c *Client) ExchangeBrowserOIDCTokenWithBody(ctx context.Context, contentTy
 	return c.Client.Do(req)
 }
 
-// ExchangeBrowserOIDCToken Exchange a browser OIDC ID token for a control session
+// StartDeviceLogin Start a control-owned device login
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
-func (c *Client) ExchangeBrowserOIDCToken(ctx context.Context, body ExchangeBrowserOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeBrowserOIDCTokenRequest(c.Server, body)
+// Corresponds with POST /v1/auth/device (the `StartDeviceLogin` operationId).
+func (c *Client) StartDeviceLogin(ctx context.Context, body StartDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartDeviceLoginRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1128,10 +1870,11 @@ func (c *Client) ExchangeBrowserOIDCToken(ctx context.Context, body ExchangeBrow
 	return c.Client.Do(req)
 }
 
-// IssueAdminBrowserHandoffWithBody performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) IssueAdminBrowserHandoffWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIssueAdminBrowserHandoffRequestWithBody(c.Server, contentType, body)
+// BeginDeviceBrowser Begin browser authentication for a control-issued device code
+//
+// Corresponds with GET /v1/auth/device/approve (the `BeginDeviceBrowser` operationId).
+func (c *Client) BeginDeviceBrowser(ctx context.Context, params *BeginDeviceBrowserParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBeginDeviceBrowserRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1142,10 +1885,113 @@ func (c *Client) IssueAdminBrowserHandoffWithBody(ctx context.Context, contentTy
 	return c.Client.Do(req)
 }
 
-// IssueAdminBrowserHandoff performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request.
+// ApproveDeviceBrowserWithBody Confirm the displayed device code after browser OIDC authentication
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/auth/device/approve (the `ApproveDeviceBrowser` operationId).
+func (c *Client) ApproveDeviceBrowserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveDeviceBrowserRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApproveDeviceBrowserWithFormdataBody Confirm the displayed device code after browser OIDC authentication
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /v1/auth/device/approve (the `ApproveDeviceBrowser` operationId).
+func (c *Client) ApproveDeviceBrowserWithFormdataBody(ctx context.Context, body ApproveDeviceBrowserFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveDeviceBrowserRequestWithFormdataBody(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CompleteDeviceBrowser Redeem one state-bound authorization code and show explicit device confirmation
+//
+// Corresponds with GET /v1/auth/device/callback (the `CompleteDeviceBrowser` operationId).
+func (c *Client) CompleteDeviceBrowser(ctx context.Context, params *CompleteDeviceBrowserParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCompleteDeviceBrowserRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CancelDeviceLoginWithBody Cancel an attempt and revoke any session it issued
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/auth/device/cancel (the `CancelDeviceLogin` operationId).
+func (c *Client) CancelDeviceLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCancelDeviceLoginRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CancelDeviceLogin Cancel an attempt and revoke any session it issued
+//
 // Takes a body of the `application/json` content type.
-func (c *Client) IssueAdminBrowserHandoff(ctx context.Context, body IssueAdminBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIssueAdminBrowserHandoffRequest(c.Server, body)
+//
+// Corresponds with POST /v1/auth/device/cancel (the `CancelDeviceLogin` operationId).
+func (c *Client) CancelDeviceLogin(ctx context.Context, body CancelDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCancelDeviceLoginRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PollDeviceLoginWithBody Read a device login result; safe to retry until expiration
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/auth/device/poll (the `PollDeviceLogin` operationId).
+func (c *Client) PollDeviceLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPollDeviceLoginRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PollDeviceLogin Read a device login result; safe to retry until expiration
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/auth/device/poll (the `PollDeviceLogin` operationId).
+func (c *Client) PollDeviceLogin(ctx context.Context, body PollDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPollDeviceLoginRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1161,40 +2007,6 @@ func (c *Client) IssueAdminBrowserHandoff(ctx context.Context, body IssueAdminBr
 // Corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
 func (c *Client) LogoutControlSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewLogoutControlSessionRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ExchangeOIDCTokenWithBody Exchange an OIDC ID token for a control session
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
-func (c *Client) ExchangeOIDCTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeOIDCTokenRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ExchangeOIDCToken Exchange an OIDC ID token for a control session
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
-func (c *Client) ExchangeOIDCToken(ctx context.Context, body ExchangeOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeOIDCTokenRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1239,13 +2051,13 @@ func (c *Client) RefreshControlSession(ctx context.Context, body RefreshControlS
 	return c.Client.Do(req)
 }
 
-// ExchangeLoginTokenWithBody Exchange a login token for a control session
+// RecoverCompanyOwnerWithBody Explicit audited recovery grants a personal-account exception to a nonremoved owner
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
-func (c *Client) ExchangeLoginTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeLoginTokenRequestWithBody(c.Server, contentType, body)
+// Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
+func (c *Client) RecoverCompanyOwnerWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRecoverCompanyOwnerRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1256,13 +2068,13 @@ func (c *Client) ExchangeLoginTokenWithBody(ctx context.Context, contentType str
 	return c.Client.Do(req)
 }
 
-// ExchangeLoginToken Exchange a login token for a control session
+// RecoverCompanyOwner Explicit audited recovery grants a personal-account exception to a nonremoved owner
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
-func (c *Client) ExchangeLoginToken(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeLoginTokenRequest(c.Server, body)
+// Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
+func (c *Client) RecoverCompanyOwner(ctx context.Context, body RecoverCompanyOwnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRecoverCompanyOwnerRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1406,6 +2218,44 @@ func (c *Client) ExchangePublisherAssertion(ctx context.Context, body ExchangePu
 	return c.Client.Do(req)
 }
 
+// ProvisionCompanyEligibilityWithBody Apply one revision-fenced eligibility delta without granting roles
+//
+// Requires both website authentication and the exact connection provisioning credential. Missing entries never remove members. A revision retry must have identical content.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/service/company-eligibility (the `ProvisionCompanyEligibility` operationId).
+func (c *Client) ProvisionCompanyEligibilityWithBody(ctx context.Context, params *ProvisionCompanyEligibilityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewProvisionCompanyEligibilityRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ProvisionCompanyEligibility Apply one revision-fenced eligibility delta without granting roles
+//
+// Requires both website authentication and the exact connection provisioning credential. Missing entries never remove members. A revision retry must have identical content.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/service/company-eligibility (the `ProvisionCompanyEligibility` operationId).
+func (c *Client) ProvisionCompanyEligibility(ctx context.Context, params *ProvisionCompanyEligibilityParams, body ProvisionCompanyEligibilityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewProvisionCompanyEligibilityRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ResolveServiceIdentityWithBody Read current memberships for the signed-in website identity
 //
 // Takes any type of body and a specified content type.
@@ -1498,6 +2348,242 @@ func (c *Client) PreviewServiceInvitationWithBody(ctx context.Context, contentTy
 // Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
 func (c *Client) PreviewServiceInvitation(ctx context.Context, body PreviewServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPreviewServiceInvitationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListCompanyAdmissions performs a GET /v1/service/teams/{team_id}/company-admissions (the `ListCompanyAdmissions` operationId) request.
+func (c *Client) ListCompanyAdmissions(ctx context.Context, teamId string, params *ListCompanyAdmissionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCompanyAdmissionsRequest(c.Server, teamId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideCompanyAdmissionWithBody performs a POST /v1/service/teams/{team_id}/company-admissions/{request_id} (the `DecideCompanyAdmission` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) DecideCompanyAdmissionWithBody(ctx context.Context, teamId string, requestId string, params *DecideCompanyAdmissionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideCompanyAdmissionRequestWithBody(c.Server, teamId, requestId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideCompanyAdmission performs a POST /v1/service/teams/{team_id}/company-admissions/{request_id} (the `DecideCompanyAdmission` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) DecideCompanyAdmission(ctx context.Context, teamId string, requestId string, params *DecideCompanyAdmissionParams, body DecideCompanyAdmissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideCompanyAdmissionRequest(c.Server, teamId, requestId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadCompanyConnections Read active and pending connections with current owner proof
+//
+// Corresponds with GET /v1/service/teams/{team_id}/identity-connections (the `ReadCompanyConnections` operationId).
+func (c *Client) ReadCompanyConnections(ctx context.Context, teamId string, params *ReadCompanyConnectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadCompanyConnectionsRequest(c.Server, teamId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BeginIdentityConnectionSetupWithBody Begin consent setup without changing current enforcement
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/service/teams/{team_id}/identity-connections (the `BeginIdentityConnectionSetup` operationId).
+func (c *Client) BeginIdentityConnectionSetupWithBody(ctx context.Context, teamId string, params *BeginIdentityConnectionSetupParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBeginIdentityConnectionSetupRequestWithBody(c.Server, teamId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BeginIdentityConnectionSetup Begin consent setup without changing current enforcement
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/service/teams/{team_id}/identity-connections (the `BeginIdentityConnectionSetup` operationId).
+func (c *Client) BeginIdentityConnectionSetup(ctx context.Context, teamId string, params *BeginIdentityConnectionSetupParams, body BeginIdentityConnectionSetupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBeginIdentityConnectionSetupRequest(c.Server, teamId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DisconnectIdentityConnectionWithBody Abort pending consent or retire an active connection
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with DELETE /v1/service/teams/{team_id}/identity-connections/{identity_connection_id} (the `DisconnectIdentityConnection` operationId).
+func (c *Client) DisconnectIdentityConnectionWithBody(ctx context.Context, teamId string, identityConnectionId string, params *DisconnectIdentityConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDisconnectIdentityConnectionRequestWithBody(c.Server, teamId, identityConnectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DisconnectIdentityConnection Abort pending consent or retire an active connection
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with DELETE /v1/service/teams/{team_id}/identity-connections/{identity_connection_id} (the `DisconnectIdentityConnection` operationId).
+func (c *Client) DisconnectIdentityConnection(ctx context.Context, teamId string, identityConnectionId string, params *DisconnectIdentityConnectionParams, body DisconnectIdentityConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDisconnectIdentityConnectionRequest(c.Server, teamId, identityConnectionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ActivateIdentityConnectionWithBody performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate (the `ActivateIdentityConnection` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) ActivateIdentityConnectionWithBody(ctx context.Context, teamId string, identityConnectionId string, params *ActivateIdentityConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateIdentityConnectionRequestWithBody(c.Server, teamId, identityConnectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ActivateIdentityConnection performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate (the `ActivateIdentityConnection` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) ActivateIdentityConnection(ctx context.Context, teamId string, identityConnectionId string, params *ActivateIdentityConnectionParams, body ActivateIdentityConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateIdentityConnectionRequest(c.Server, teamId, identityConnectionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotateCompanyProvisioningTokenWithBody performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token (the `RotateCompanyProvisioningToken` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) RotateCompanyProvisioningTokenWithBody(ctx context.Context, teamId string, identityConnectionId string, params *RotateCompanyProvisioningTokenParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateCompanyProvisioningTokenRequestWithBody(c.Server, teamId, identityConnectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotateCompanyProvisioningToken performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token (the `RotateCompanyProvisioningToken` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) RotateCompanyProvisioningToken(ctx context.Context, teamId string, identityConnectionId string, params *RotateCompanyProvisioningTokenParams, body RotateCompanyProvisioningTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateCompanyProvisioningTokenRequest(c.Server, teamId, identityConnectionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetCompanyInvitationExceptionWithBody performs a PUT /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision (the `SetCompanyInvitationException` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) SetCompanyInvitationExceptionWithBody(ctx context.Context, teamId string, invitationId string, params *SetCompanyInvitationExceptionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetCompanyInvitationExceptionRequestWithBody(c.Server, teamId, invitationId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetCompanyInvitationException performs a PUT /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision (the `SetCompanyInvitationException` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) SetCompanyInvitationException(ctx context.Context, teamId string, invitationId string, params *SetCompanyInvitationExceptionParams, body SetCompanyInvitationExceptionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetCompanyInvitationExceptionRequest(c.Server, teamId, invitationId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetCompanyMembershipDecisionWithBody performs a PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision (the `SetCompanyMembershipDecision` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) SetCompanyMembershipDecisionWithBody(ctx context.Context, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetCompanyMembershipDecisionRequestWithBody(c.Server, teamId, membershipId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetCompanyMembershipDecision performs a PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision (the `SetCompanyMembershipDecision` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) SetCompanyMembershipDecision(ctx context.Context, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, body SetCompanyMembershipDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetCompanyMembershipDecisionRequest(c.Server, teamId, membershipId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1820,19 +2906,19 @@ func (c *Client) SetMembershipRole(ctx context.Context, teamId TeamID, membershi
 	return c.Client.Do(req)
 }
 
-// NewExchangeBrowserOIDCTokenRequest calls the generic ExchangeBrowserOIDCToken builder with application/json body
-func NewExchangeBrowserOIDCTokenRequest(server string, body ExchangeBrowserOIDCTokenJSONRequestBody) (*http.Request, error) {
+// NewIssueControlBrowserHandoffRequest calls the generic IssueControlBrowserHandoff builder with application/json body
+func NewIssueControlBrowserHandoffRequest(server string, body IssueControlBrowserHandoffJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewExchangeBrowserOIDCTokenRequestWithBody(server, "application/json", bodyReader)
+	return NewIssueControlBrowserHandoffRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewExchangeBrowserOIDCTokenRequestWithBody constructs an http.Request for the ExchangeBrowserOIDCToken method, with any body, and a specified content type
-func NewExchangeBrowserOIDCTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewIssueControlBrowserHandoffRequestWithBody constructs an http.Request for the IssueControlBrowserHandoff method, with any body, and a specified content type
+func NewIssueControlBrowserHandoffRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -1840,7 +2926,7 @@ func NewExchangeBrowserOIDCTokenRequestWithBody(server string, contentType strin
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/auth/browser")
+	operationPath := fmt.Sprintf("/v1/auth/browser-handoff")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1860,19 +2946,19 @@ func NewExchangeBrowserOIDCTokenRequestWithBody(server string, contentType strin
 	return req, nil
 }
 
-// NewIssueAdminBrowserHandoffRequest calls the generic IssueAdminBrowserHandoff builder with application/json body
-func NewIssueAdminBrowserHandoffRequest(server string, body IssueAdminBrowserHandoffJSONRequestBody) (*http.Request, error) {
+// NewRequestCompanyAdmissionRequest calls the generic RequestCompanyAdmission builder with application/json body
+func NewRequestCompanyAdmissionRequest(server string, body RequestCompanyAdmissionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewIssueAdminBrowserHandoffRequestWithBody(server, "application/json", bodyReader)
+	return NewRequestCompanyAdmissionRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewIssueAdminBrowserHandoffRequestWithBody constructs an http.Request for the IssueAdminBrowserHandoff method, with any body, and a specified content type
-func NewIssueAdminBrowserHandoffRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewRequestCompanyAdmissionRequestWithBody constructs an http.Request for the RequestCompanyAdmission method, with any body, and a specified content type
+func NewRequestCompanyAdmissionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -1880,7 +2966,378 @@ func NewIssueAdminBrowserHandoffRequestWithBody(server string, contentType strin
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/auth/browser-handoff")
+	operationPath := fmt.Sprintf("/v1/auth/company-admissions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCreateCompanyLoginIntentRequest calls the generic CreateCompanyLoginIntent builder with application/json body
+func NewCreateCompanyLoginIntentRequest(server string, body CreateCompanyLoginIntentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateCompanyLoginIntentRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateCompanyLoginIntentRequestWithBody constructs an http.Request for the CreateCompanyLoginIntent method, with any body, and a specified content type
+func NewCreateCompanyLoginIntentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/company-intents")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewResolveCompanyLoginIntentRequest calls the generic ResolveCompanyLoginIntent builder with application/json body
+func NewResolveCompanyLoginIntentRequest(server string, intentId string, body ResolveCompanyLoginIntentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResolveCompanyLoginIntentRequestWithBody(server, intentId, "application/json", bodyReader)
+}
+
+// NewResolveCompanyLoginIntentRequestWithBody constructs an http.Request for the ResolveCompanyLoginIntent method, with any body, and a specified content type
+func NewResolveCompanyLoginIntentRequestWithBody(server string, intentId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "intent_id", intentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/company-intents/%s/resolve", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewStartDeviceLoginRequest calls the generic StartDeviceLogin builder with application/json body
+func NewStartDeviceLoginRequest(server string, body StartDeviceLoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewStartDeviceLoginRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewStartDeviceLoginRequestWithBody constructs an http.Request for the StartDeviceLogin method, with any body, and a specified content type
+func NewStartDeviceLoginRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/device")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewBeginDeviceBrowserRequest constructs an http.Request for the BeginDeviceBrowser method
+func NewBeginDeviceBrowserRequest(server string, params *BeginDeviceBrowserParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/device/approve")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code", params.Code, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewApproveDeviceBrowserRequestWithFormdataBody calls the generic ApproveDeviceBrowser builder with application/x-www-form-urlencoded body
+func NewApproveDeviceBrowserRequestWithFormdataBody(server string, body ApproveDeviceBrowserFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewApproveDeviceBrowserRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
+}
+
+// NewApproveDeviceBrowserRequestWithBody constructs an http.Request for the ApproveDeviceBrowser method, with any body, and a specified content type
+func NewApproveDeviceBrowserRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/device/approve")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCompleteDeviceBrowserRequest constructs an http.Request for the CompleteDeviceBrowser method
+func NewCompleteDeviceBrowserRequest(server string, params *CompleteDeviceBrowserParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/device/callback")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Code != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code", *params.Code, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Error != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "error", *params.Error, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCancelDeviceLoginRequest calls the generic CancelDeviceLogin builder with application/json body
+func NewCancelDeviceLoginRequest(server string, body CancelDeviceLoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCancelDeviceLoginRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCancelDeviceLoginRequestWithBody constructs an http.Request for the CancelDeviceLogin method, with any body, and a specified content type
+func NewCancelDeviceLoginRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/device/cancel")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPollDeviceLoginRequest calls the generic PollDeviceLogin builder with application/json body
+func NewPollDeviceLoginRequest(server string, body PollDeviceLoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPollDeviceLoginRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPollDeviceLoginRequestWithBody constructs an http.Request for the PollDeviceLogin method, with any body, and a specified content type
+func NewPollDeviceLoginRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/device/poll")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1927,46 +3384,6 @@ func NewLogoutControlSessionRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewExchangeOIDCTokenRequest calls the generic ExchangeOIDCToken builder with application/json body
-func NewExchangeOIDCTokenRequest(server string, body ExchangeOIDCTokenJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewExchangeOIDCTokenRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewExchangeOIDCTokenRequestWithBody constructs an http.Request for the ExchangeOIDCToken method, with any body, and a specified content type
-func NewExchangeOIDCTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/auth/oidc")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewRefreshControlSessionRequest calls the generic RefreshControlSession builder with application/json body
 func NewRefreshControlSessionRequest(server string, body RefreshControlSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -2007,19 +3424,19 @@ func NewRefreshControlSessionRequestWithBody(server string, contentType string, 
 	return req, nil
 }
 
-// NewExchangeLoginTokenRequest calls the generic ExchangeLoginToken builder with application/json body
-func NewExchangeLoginTokenRequest(server string, body ExchangeLoginTokenJSONRequestBody) (*http.Request, error) {
+// NewRecoverCompanyOwnerRequest calls the generic RecoverCompanyOwner builder with application/json body
+func NewRecoverCompanyOwnerRequest(server string, body RecoverCompanyOwnerJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewExchangeLoginTokenRequestWithBody(server, "application/json", bodyReader)
+	return NewRecoverCompanyOwnerRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewExchangeLoginTokenRequestWithBody constructs an http.Request for the ExchangeLoginToken method, with any body, and a specified content type
-func NewExchangeLoginTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewRecoverCompanyOwnerRequestWithBody constructs an http.Request for the RecoverCompanyOwner method, with any body, and a specified content type
+func NewRecoverCompanyOwnerRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -2027,7 +3444,7 @@ func NewExchangeLoginTokenRequestWithBody(server string, contentType string, bod
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/auth/token")
+	operationPath := fmt.Sprintf("/v1/company-access/recovery")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2234,6 +3651,59 @@ func NewExchangePublisherAssertionRequestWithBody(server string, contentType str
 	return req, nil
 }
 
+// NewProvisionCompanyEligibilityRequest calls the generic ProvisionCompanyEligibility builder with application/json body
+func NewProvisionCompanyEligibilityRequest(server string, params *ProvisionCompanyEligibilityParams, body ProvisionCompanyEligibilityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewProvisionCompanyEligibilityRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewProvisionCompanyEligibilityRequestWithBody constructs an http.Request for the ProvisionCompanyEligibility method, with any body, and a specified content type
+func NewProvisionCompanyEligibilityRequestWithBody(server string, params *ProvisionCompanyEligibilityParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/company-eligibility")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Provisioning-Token", params.XTnlProvisioningToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Provisioning-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewResolveServiceIdentityRequest calls the generic ResolveServiceIdentity builder with application/json body
 func NewResolveServiceIdentityRequest(server string, body ResolveServiceIdentityJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -2350,6 +3820,562 @@ func NewPreviewServiceInvitationRequestWithBody(server string, contentType strin
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListCompanyAdmissionsRequest constructs an http.Request for the ListCompanyAdmissions method
+func NewListCompanyAdmissionsRequest(server string, teamId string, params *ListCompanyAdmissionsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/teams/%s/company-admissions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewDecideCompanyAdmissionRequest calls the generic DecideCompanyAdmission builder with application/json body
+func NewDecideCompanyAdmissionRequest(server string, teamId string, requestId string, params *DecideCompanyAdmissionParams, body DecideCompanyAdmissionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDecideCompanyAdmissionRequestWithBody(server, teamId, requestId, params, "application/json", bodyReader)
+}
+
+// NewDecideCompanyAdmissionRequestWithBody constructs an http.Request for the DecideCompanyAdmission method, with any body, and a specified content type
+func NewDecideCompanyAdmissionRequestWithBody(server string, teamId string, requestId string, params *DecideCompanyAdmissionParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/teams/%s/company-admissions/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewReadCompanyConnectionsRequest constructs an http.Request for the ReadCompanyConnections method
+func NewReadCompanyConnectionsRequest(server string, teamId string, params *ReadCompanyConnectionsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/teams/%s/identity-connections", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewBeginIdentityConnectionSetupRequest calls the generic BeginIdentityConnectionSetup builder with application/json body
+func NewBeginIdentityConnectionSetupRequest(server string, teamId string, params *BeginIdentityConnectionSetupParams, body BeginIdentityConnectionSetupJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBeginIdentityConnectionSetupRequestWithBody(server, teamId, params, "application/json", bodyReader)
+}
+
+// NewBeginIdentityConnectionSetupRequestWithBody constructs an http.Request for the BeginIdentityConnectionSetup method, with any body, and a specified content type
+func NewBeginIdentityConnectionSetupRequestWithBody(server string, teamId string, params *BeginIdentityConnectionSetupParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/teams/%s/identity-connections", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewDisconnectIdentityConnectionRequest calls the generic DisconnectIdentityConnection builder with application/json body
+func NewDisconnectIdentityConnectionRequest(server string, teamId string, identityConnectionId string, params *DisconnectIdentityConnectionParams, body DisconnectIdentityConnectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDisconnectIdentityConnectionRequestWithBody(server, teamId, identityConnectionId, params, "application/json", bodyReader)
+}
+
+// NewDisconnectIdentityConnectionRequestWithBody constructs an http.Request for the DisconnectIdentityConnection method, with any body, and a specified content type
+func NewDisconnectIdentityConnectionRequestWithBody(server string, teamId string, identityConnectionId string, params *DisconnectIdentityConnectionParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "identity_connection_id", identityConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/teams/%s/identity-connections/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewActivateIdentityConnectionRequest calls the generic ActivateIdentityConnection builder with application/json body
+func NewActivateIdentityConnectionRequest(server string, teamId string, identityConnectionId string, params *ActivateIdentityConnectionParams, body ActivateIdentityConnectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewActivateIdentityConnectionRequestWithBody(server, teamId, identityConnectionId, params, "application/json", bodyReader)
+}
+
+// NewActivateIdentityConnectionRequestWithBody constructs an http.Request for the ActivateIdentityConnection method, with any body, and a specified content type
+func NewActivateIdentityConnectionRequestWithBody(server string, teamId string, identityConnectionId string, params *ActivateIdentityConnectionParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "identity_connection_id", identityConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/teams/%s/identity-connections/%s/activate", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewRotateCompanyProvisioningTokenRequest calls the generic RotateCompanyProvisioningToken builder with application/json body
+func NewRotateCompanyProvisioningTokenRequest(server string, teamId string, identityConnectionId string, params *RotateCompanyProvisioningTokenParams, body RotateCompanyProvisioningTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRotateCompanyProvisioningTokenRequestWithBody(server, teamId, identityConnectionId, params, "application/json", bodyReader)
+}
+
+// NewRotateCompanyProvisioningTokenRequestWithBody constructs an http.Request for the RotateCompanyProvisioningToken method, with any body, and a specified content type
+func NewRotateCompanyProvisioningTokenRequestWithBody(server string, teamId string, identityConnectionId string, params *RotateCompanyProvisioningTokenParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "identity_connection_id", identityConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/teams/%s/identity-connections/%s/provisioning-token", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewSetCompanyInvitationExceptionRequest calls the generic SetCompanyInvitationException builder with application/json body
+func NewSetCompanyInvitationExceptionRequest(server string, teamId string, invitationId string, params *SetCompanyInvitationExceptionParams, body SetCompanyInvitationExceptionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetCompanyInvitationExceptionRequestWithBody(server, teamId, invitationId, params, "application/json", bodyReader)
+}
+
+// NewSetCompanyInvitationExceptionRequestWithBody constructs an http.Request for the SetCompanyInvitationException method, with any body, and a specified content type
+func NewSetCompanyInvitationExceptionRequestWithBody(server string, teamId string, invitationId string, params *SetCompanyInvitationExceptionParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "invitation_id", invitationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/teams/%s/invitations/%s/company-decision", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewSetCompanyMembershipDecisionRequest calls the generic SetCompanyMembershipDecision builder with application/json body
+func NewSetCompanyMembershipDecisionRequest(server string, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, body SetCompanyMembershipDecisionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetCompanyMembershipDecisionRequestWithBody(server, teamId, membershipId, params, "application/json", bodyReader)
+}
+
+// NewSetCompanyMembershipDecisionRequestWithBody constructs an http.Request for the SetCompanyMembershipDecision method, with any body, and a specified content type
+func NewSetCompanyMembershipDecisionRequestWithBody(server string, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "membership_id", membershipId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service/teams/%s/memberships/%s/company-decision", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tnl-Actor-Token", params.XTnlActorToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Tnl-Actor-Token", headerParam0)
+
+	}
 
 	return req, nil
 }
@@ -3033,29 +5059,115 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
-	// ExchangeBrowserOIDCTokenWithBodyWithResponse Exchange a browser OIDC ID token for a control session
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
-	ExchangeBrowserOIDCTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeBrowserOIDCTokenResponse, error)
-
-	// ExchangeBrowserOIDCTokenWithResponse Exchange a browser OIDC ID token for a control session
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
-	ExchangeBrowserOIDCTokenWithResponse(ctx context.Context, body ExchangeBrowserOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeBrowserOIDCTokenResponse, error)
-
-	// IssueAdminBrowserHandoffWithBodyWithResponse performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request,
+	// IssueControlBrowserHandoffWithBodyWithResponse performs a POST /v1/auth/browser-handoff (the `IssueControlBrowserHandoff` operationId) request,
 	// with any type of body and a specified content type.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	IssueAdminBrowserHandoffWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueAdminBrowserHandoffResponse, error)
+	IssueControlBrowserHandoffWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueControlBrowserHandoffResponse, error)
 
-	// IssueAdminBrowserHandoffWithResponse performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request.
+	// IssueControlBrowserHandoffWithResponse performs a POST /v1/auth/browser-handoff (the `IssueControlBrowserHandoff` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	IssueAdminBrowserHandoffWithResponse(ctx context.Context, body IssueAdminBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueAdminBrowserHandoffResponse, error)
+	IssueControlBrowserHandoffWithResponse(ctx context.Context, body IssueControlBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueControlBrowserHandoffResponse, error)
+
+	// RequestCompanyAdmissionWithBodyWithResponse performs a POST /v1/auth/company-admissions (the `RequestCompanyAdmission` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RequestCompanyAdmissionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RequestCompanyAdmissionResponse, error)
+
+	// RequestCompanyAdmissionWithResponse performs a POST /v1/auth/company-admissions (the `RequestCompanyAdmission` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	RequestCompanyAdmissionWithResponse(ctx context.Context, body RequestCompanyAdmissionJSONRequestBody, reqEditors ...RequestEditorFn) (*RequestCompanyAdmissionResponse, error)
+
+	// CreateCompanyLoginIntentWithBodyWithResponse performs a POST /v1/auth/company-intents (the `CreateCompanyLoginIntent` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateCompanyLoginIntentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCompanyLoginIntentResponse, error)
+
+	// CreateCompanyLoginIntentWithResponse performs a POST /v1/auth/company-intents (the `CreateCompanyLoginIntent` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CreateCompanyLoginIntentWithResponse(ctx context.Context, body CreateCompanyLoginIntentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCompanyLoginIntentResponse, error)
+
+	// ResolveCompanyLoginIntentWithBodyWithResponse performs a POST /v1/auth/company-intents/{intent_id}/resolve (the `ResolveCompanyLoginIntent` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ResolveCompanyLoginIntentWithBodyWithResponse(ctx context.Context, intentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResolveCompanyLoginIntentResponse, error)
+
+	// ResolveCompanyLoginIntentWithResponse performs a POST /v1/auth/company-intents/{intent_id}/resolve (the `ResolveCompanyLoginIntent` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	ResolveCompanyLoginIntentWithResponse(ctx context.Context, intentId string, body ResolveCompanyLoginIntentJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolveCompanyLoginIntentResponse, error)
+
+	// StartDeviceLoginWithBodyWithResponse Start a control-owned device login
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/device (the `StartDeviceLogin` operationId).
+	StartDeviceLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartDeviceLoginResponse, error)
+
+	// StartDeviceLoginWithResponse Start a control-owned device login
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/device (the `StartDeviceLogin` operationId).
+	StartDeviceLoginWithResponse(ctx context.Context, body StartDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*StartDeviceLoginResponse, error)
+
+	// BeginDeviceBrowserWithResponse Begin browser authentication for a control-issued device code
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/auth/device/approve (the `BeginDeviceBrowser` operationId).
+	BeginDeviceBrowserWithResponse(ctx context.Context, params *BeginDeviceBrowserParams, reqEditors ...RequestEditorFn) (*BeginDeviceBrowserResponse, error)
+
+	// ApproveDeviceBrowserWithBodyWithResponse Confirm the displayed device code after browser OIDC authentication
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/device/approve (the `ApproveDeviceBrowser` operationId).
+	ApproveDeviceBrowserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveDeviceBrowserResponse, error)
+
+	// ApproveDeviceBrowserWithFormdataBodyWithResponse Confirm the displayed device code after browser OIDC authentication
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/device/approve (the `ApproveDeviceBrowser` operationId).
+	ApproveDeviceBrowserWithFormdataBodyWithResponse(ctx context.Context, body ApproveDeviceBrowserFormdataRequestBody, reqEditors ...RequestEditorFn) (*ApproveDeviceBrowserResponse, error)
+
+	// CompleteDeviceBrowserWithResponse Redeem one state-bound authorization code and show explicit device confirmation
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/auth/device/callback (the `CompleteDeviceBrowser` operationId).
+	CompleteDeviceBrowserWithResponse(ctx context.Context, params *CompleteDeviceBrowserParams, reqEditors ...RequestEditorFn) (*CompleteDeviceBrowserResponse, error)
+
+	// CancelDeviceLoginWithBodyWithResponse Cancel an attempt and revoke any session it issued
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/device/cancel (the `CancelDeviceLogin` operationId).
+	CancelDeviceLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CancelDeviceLoginResponse, error)
+
+	// CancelDeviceLoginWithResponse Cancel an attempt and revoke any session it issued
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/device/cancel (the `CancelDeviceLogin` operationId).
+	CancelDeviceLoginWithResponse(ctx context.Context, body CancelDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*CancelDeviceLoginResponse, error)
+
+	// PollDeviceLoginWithBodyWithResponse Read a device login result; safe to retry until expiration
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/device/poll (the `PollDeviceLogin` operationId).
+	PollDeviceLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PollDeviceLoginResponse, error)
+
+	// PollDeviceLoginWithResponse Read a device login result; safe to retry until expiration
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/device/poll (the `PollDeviceLogin` operationId).
+	PollDeviceLoginWithResponse(ctx context.Context, body PollDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*PollDeviceLoginResponse, error)
 
 	// LogoutControlSessionWithResponse Revoke the authenticated control session
 	//
@@ -3063,20 +5175,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/auth/logout (the `LogoutControlSession` operationId).
 	LogoutControlSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LogoutControlSessionResponse, error)
-
-	// ExchangeOIDCTokenWithBodyWithResponse Exchange an OIDC ID token for a control session
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
-	ExchangeOIDCTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeOIDCTokenResponse, error)
-
-	// ExchangeOIDCTokenWithResponse Exchange an OIDC ID token for a control session
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
-	ExchangeOIDCTokenWithResponse(ctx context.Context, body ExchangeOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeOIDCTokenResponse, error)
 
 	// RefreshControlSessionWithBodyWithResponse Rotate a control session's access and refresh tokens
 	//
@@ -3092,19 +5190,19 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/auth/refresh (the `RefreshControlSession` operationId).
 	RefreshControlSessionWithResponse(ctx context.Context, body RefreshControlSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RefreshControlSessionResponse, error)
 
-	// ExchangeLoginTokenWithBodyWithResponse Exchange a login token for a control session
+	// RecoverCompanyOwnerWithBodyWithResponse Explicit audited recovery grants a personal-account exception to a nonremoved owner
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
-	ExchangeLoginTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error)
+	// Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
+	RecoverCompanyOwnerWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecoverCompanyOwnerResponse, error)
 
-	// ExchangeLoginTokenWithResponse Exchange a login token for a control session
+	// RecoverCompanyOwnerWithResponse Explicit audited recovery grants a personal-account exception to a nonremoved owner
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
-	ExchangeLoginTokenWithResponse(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error)
+	// Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
+	RecoverCompanyOwnerWithResponse(ctx context.Context, body RecoverCompanyOwnerJSONRequestBody, reqEditors ...RequestEditorFn) (*RecoverCompanyOwnerResponse, error)
 
 	// GetIdentityContextWithResponse Read the authenticated identity and memberships
 	//
@@ -3157,6 +5255,24 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	ExchangePublisherAssertionWithResponse(ctx context.Context, body ExchangePublisherAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangePublisherAssertionResponse, error)
 
+	// ProvisionCompanyEligibilityWithBodyWithResponse Apply one revision-fenced eligibility delta without granting roles
+	//
+	// Requires both website authentication and the exact connection provisioning credential. Missing entries never remove members. A revision retry must have identical content.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/company-eligibility (the `ProvisionCompanyEligibility` operationId).
+	ProvisionCompanyEligibilityWithBodyWithResponse(ctx context.Context, params *ProvisionCompanyEligibilityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ProvisionCompanyEligibilityResponse, error)
+
+	// ProvisionCompanyEligibilityWithResponse Apply one revision-fenced eligibility delta without granting roles
+	//
+	// Requires both website authentication and the exact connection provisioning credential. Missing entries never remove members. A revision retry must have identical content.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/company-eligibility (the `ProvisionCompanyEligibility` operationId).
+	ProvisionCompanyEligibilityWithResponse(ctx context.Context, params *ProvisionCompanyEligibilityParams, body ProvisionCompanyEligibilityJSONRequestBody, reqEditors ...RequestEditorFn) (*ProvisionCompanyEligibilityResponse, error)
+
 	// ResolveServiceIdentityWithBodyWithResponse Read current memberships for the signed-in website identity
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -3198,6 +5314,96 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/service/invitations/preview (the `PreviewServiceInvitation` operationId).
 	PreviewServiceInvitationWithResponse(ctx context.Context, body PreviewServiceInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewServiceInvitationResponse, error)
+
+	// ListCompanyAdmissionsWithResponse performs a GET /v1/service/teams/{team_id}/company-admissions (the `ListCompanyAdmissions` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListCompanyAdmissionsWithResponse(ctx context.Context, teamId string, params *ListCompanyAdmissionsParams, reqEditors ...RequestEditorFn) (*ListCompanyAdmissionsResponse, error)
+
+	// DecideCompanyAdmissionWithBodyWithResponse performs a POST /v1/service/teams/{team_id}/company-admissions/{request_id} (the `DecideCompanyAdmission` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	DecideCompanyAdmissionWithBodyWithResponse(ctx context.Context, teamId string, requestId string, params *DecideCompanyAdmissionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideCompanyAdmissionResponse, error)
+
+	// DecideCompanyAdmissionWithResponse performs a POST /v1/service/teams/{team_id}/company-admissions/{request_id} (the `DecideCompanyAdmission` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	DecideCompanyAdmissionWithResponse(ctx context.Context, teamId string, requestId string, params *DecideCompanyAdmissionParams, body DecideCompanyAdmissionJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideCompanyAdmissionResponse, error)
+
+	// ReadCompanyConnectionsWithResponse Read active and pending connections with current owner proof
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/service/teams/{team_id}/identity-connections (the `ReadCompanyConnections` operationId).
+	ReadCompanyConnectionsWithResponse(ctx context.Context, teamId string, params *ReadCompanyConnectionsParams, reqEditors ...RequestEditorFn) (*ReadCompanyConnectionsResponse, error)
+
+	// BeginIdentityConnectionSetupWithBodyWithResponse Begin consent setup without changing current enforcement
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/teams/{team_id}/identity-connections (the `BeginIdentityConnectionSetup` operationId).
+	BeginIdentityConnectionSetupWithBodyWithResponse(ctx context.Context, teamId string, params *BeginIdentityConnectionSetupParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BeginIdentityConnectionSetupResponse, error)
+
+	// BeginIdentityConnectionSetupWithResponse Begin consent setup without changing current enforcement
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/service/teams/{team_id}/identity-connections (the `BeginIdentityConnectionSetup` operationId).
+	BeginIdentityConnectionSetupWithResponse(ctx context.Context, teamId string, params *BeginIdentityConnectionSetupParams, body BeginIdentityConnectionSetupJSONRequestBody, reqEditors ...RequestEditorFn) (*BeginIdentityConnectionSetupResponse, error)
+
+	// DisconnectIdentityConnectionWithBodyWithResponse Abort pending consent or retire an active connection
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/service/teams/{team_id}/identity-connections/{identity_connection_id} (the `DisconnectIdentityConnection` operationId).
+	DisconnectIdentityConnectionWithBodyWithResponse(ctx context.Context, teamId string, identityConnectionId string, params *DisconnectIdentityConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DisconnectIdentityConnectionResponse, error)
+
+	// DisconnectIdentityConnectionWithResponse Abort pending consent or retire an active connection
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/service/teams/{team_id}/identity-connections/{identity_connection_id} (the `DisconnectIdentityConnection` operationId).
+	DisconnectIdentityConnectionWithResponse(ctx context.Context, teamId string, identityConnectionId string, params *DisconnectIdentityConnectionParams, body DisconnectIdentityConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*DisconnectIdentityConnectionResponse, error)
+
+	// ActivateIdentityConnectionWithBodyWithResponse performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate (the `ActivateIdentityConnection` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ActivateIdentityConnectionWithBodyWithResponse(ctx context.Context, teamId string, identityConnectionId string, params *ActivateIdentityConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ActivateIdentityConnectionResponse, error)
+
+	// ActivateIdentityConnectionWithResponse performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate (the `ActivateIdentityConnection` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	ActivateIdentityConnectionWithResponse(ctx context.Context, teamId string, identityConnectionId string, params *ActivateIdentityConnectionParams, body ActivateIdentityConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ActivateIdentityConnectionResponse, error)
+
+	// RotateCompanyProvisioningTokenWithBodyWithResponse performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token (the `RotateCompanyProvisioningToken` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RotateCompanyProvisioningTokenWithBodyWithResponse(ctx context.Context, teamId string, identityConnectionId string, params *RotateCompanyProvisioningTokenParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotateCompanyProvisioningTokenResponse, error)
+
+	// RotateCompanyProvisioningTokenWithResponse performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token (the `RotateCompanyProvisioningToken` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	RotateCompanyProvisioningTokenWithResponse(ctx context.Context, teamId string, identityConnectionId string, params *RotateCompanyProvisioningTokenParams, body RotateCompanyProvisioningTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*RotateCompanyProvisioningTokenResponse, error)
+
+	// SetCompanyInvitationExceptionWithBodyWithResponse performs a PUT /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision (the `SetCompanyInvitationException` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	SetCompanyInvitationExceptionWithBodyWithResponse(ctx context.Context, teamId string, invitationId string, params *SetCompanyInvitationExceptionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetCompanyInvitationExceptionResponse, error)
+
+	// SetCompanyInvitationExceptionWithResponse performs a PUT /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision (the `SetCompanyInvitationException` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	SetCompanyInvitationExceptionWithResponse(ctx context.Context, teamId string, invitationId string, params *SetCompanyInvitationExceptionParams, body SetCompanyInvitationExceptionJSONRequestBody, reqEditors ...RequestEditorFn) (*SetCompanyInvitationExceptionResponse, error)
+
+	// SetCompanyMembershipDecisionWithBodyWithResponse performs a PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision (the `SetCompanyMembershipDecision` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	SetCompanyMembershipDecisionWithBodyWithResponse(ctx context.Context, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetCompanyMembershipDecisionResponse, error)
+
+	// SetCompanyMembershipDecisionWithResponse performs a PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision (the `SetCompanyMembershipDecision` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	SetCompanyMembershipDecisionWithResponse(ctx context.Context, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, body SetCompanyMembershipDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*SetCompanyMembershipDecisionResponse, error)
 
 	// ListTeamsWithResponse List teams for the authenticated identity
 	//
@@ -3334,55 +5540,7 @@ type ClientWithResponsesInterface interface {
 	SetMembershipRoleWithResponse(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*SetMembershipRoleResponse, error)
 }
 
-type ExchangeBrowserOIDCTokenResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ControlSessionResponse
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ExchangeBrowserOIDCTokenResponse) GetJSON200() *ControlSessionResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ExchangeBrowserOIDCTokenResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ExchangeBrowserOIDCTokenResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ExchangeBrowserOIDCTokenResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ExchangeBrowserOIDCTokenResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ExchangeBrowserOIDCTokenResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type IssueAdminBrowserHandoffResponse struct {
+type IssueControlBrowserHandoffResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
@@ -3394,24 +5552,24 @@ type IssueAdminBrowserHandoffResponse struct {
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r IssueAdminBrowserHandoffResponse) GetJSON201() *struct {
+func (r IssueControlBrowserHandoffResponse) GetJSON201() *struct {
 	Url string `json:"url"`
 } {
 	return r.JSON201
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r IssueAdminBrowserHandoffResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r IssueControlBrowserHandoffResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r IssueAdminBrowserHandoffResponse) GetBody() []byte {
+func (r IssueControlBrowserHandoffResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r IssueAdminBrowserHandoffResponse) Status() string {
+func (r IssueControlBrowserHandoffResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -3419,7 +5577,7 @@ func (r IssueAdminBrowserHandoffResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r IssueAdminBrowserHandoffResponse) StatusCode() int {
+func (r IssueControlBrowserHandoffResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3427,7 +5585,411 @@ func (r IssueAdminBrowserHandoffResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r IssueAdminBrowserHandoffResponse) ContentType() string {
+func (r IssueControlBrowserHandoffResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RequestCompanyAdmissionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CompanyAdmissionRequest
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RequestCompanyAdmissionResponse) GetJSON200() *CompanyAdmissionRequest {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RequestCompanyAdmissionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RequestCompanyAdmissionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RequestCompanyAdmissionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RequestCompanyAdmissionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RequestCompanyAdmissionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateCompanyLoginIntentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *CompanyLoginIntent
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateCompanyLoginIntentResponse) GetJSON201() *CompanyLoginIntent {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateCompanyLoginIntentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateCompanyLoginIntentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateCompanyLoginIntentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateCompanyLoginIntentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateCompanyLoginIntentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResolveCompanyLoginIntentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CompanyLoginIntent
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResolveCompanyLoginIntentResponse) GetJSON200() *CompanyLoginIntent {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ResolveCompanyLoginIntentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ResolveCompanyLoginIntentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResolveCompanyLoginIntentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResolveCompanyLoginIntentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResolveCompanyLoginIntentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StartDeviceLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *DeviceLoginChallenge
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r StartDeviceLoginResponse) GetJSON201() *DeviceLoginChallenge {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r StartDeviceLoginResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r StartDeviceLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartDeviceLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartDeviceLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartDeviceLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type BeginDeviceBrowserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r BeginDeviceBrowserResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r BeginDeviceBrowserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BeginDeviceBrowserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BeginDeviceBrowserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BeginDeviceBrowserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ApproveDeviceBrowserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ApproveDeviceBrowserResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ApproveDeviceBrowserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApproveDeviceBrowserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApproveDeviceBrowserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApproveDeviceBrowserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CompleteDeviceBrowserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CompleteDeviceBrowserResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CompleteDeviceBrowserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CompleteDeviceBrowserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CompleteDeviceBrowserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CompleteDeviceBrowserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CancelDeviceLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CancelDeviceLoginResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CancelDeviceLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CancelDeviceLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CancelDeviceLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CancelDeviceLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PollDeviceLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DeviceLoginResult
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PollDeviceLoginResponse) GetJSON200() *DeviceLoginResult {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PollDeviceLoginResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PollDeviceLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PollDeviceLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PollDeviceLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PollDeviceLoginResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3482,54 +6044,6 @@ func (r LogoutControlSessionResponse) ContentType() string {
 	return ""
 }
 
-type ExchangeOIDCTokenResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ControlSessionResponse
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ExchangeOIDCTokenResponse) GetJSON200() *ControlSessionResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ExchangeOIDCTokenResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ExchangeOIDCTokenResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ExchangeOIDCTokenResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ExchangeOIDCTokenResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ExchangeOIDCTokenResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type RefreshControlSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3578,32 +6092,25 @@ func (r RefreshControlSessionResponse) ContentType() string {
 	return ""
 }
 
-type ExchangeLoginTokenResponse struct {
+type RecoverCompanyOwnerResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ControlSessionResponse
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ExchangeLoginTokenResponse) GetJSON200() *ControlSessionResponse {
-	return r.JSON200
-}
-
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ExchangeLoginTokenResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r RecoverCompanyOwnerResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r ExchangeLoginTokenResponse) GetBody() []byte {
+func (r RecoverCompanyOwnerResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ExchangeLoginTokenResponse) Status() string {
+func (r RecoverCompanyOwnerResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -3611,7 +6118,7 @@ func (r ExchangeLoginTokenResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ExchangeLoginTokenResponse) StatusCode() int {
+func (r RecoverCompanyOwnerResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3619,7 +6126,7 @@ func (r ExchangeLoginTokenResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ExchangeLoginTokenResponse) ContentType() string {
+func (r RecoverCompanyOwnerResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3866,6 +6373,47 @@ func (r ExchangePublisherAssertionResponse) ContentType() string {
 	return ""
 }
 
+type ProvisionCompanyEligibilityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ProvisionCompanyEligibilityResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ProvisionCompanyEligibilityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ProvisionCompanyEligibilityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ProvisionCompanyEligibilityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ProvisionCompanyEligibilityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ResolveServiceIdentityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4004,6 +6552,410 @@ func (r PreviewServiceInvitationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PreviewServiceInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListCompanyAdmissionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]CompanyAdmissionRequest
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCompanyAdmissionsResponse) GetJSON200() *[]CompanyAdmissionRequest {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListCompanyAdmissionsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCompanyAdmissionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCompanyAdmissionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCompanyAdmissionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCompanyAdmissionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DecideCompanyAdmissionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DecideCompanyAdmissionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DecideCompanyAdmissionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DecideCompanyAdmissionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DecideCompanyAdmissionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DecideCompanyAdmissionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReadCompanyConnectionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CompanyConnections
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReadCompanyConnectionsResponse) GetJSON200() *CompanyConnections {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReadCompanyConnectionsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReadCompanyConnectionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadCompanyConnectionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadCompanyConnectionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReadCompanyConnectionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type BeginIdentityConnectionSetupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *IdentityConnectionSetup
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r BeginIdentityConnectionSetupResponse) GetJSON201() *IdentityConnectionSetup {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r BeginIdentityConnectionSetupResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r BeginIdentityConnectionSetupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BeginIdentityConnectionSetupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BeginIdentityConnectionSetupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BeginIdentityConnectionSetupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DisconnectIdentityConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DisconnectIdentityConnectionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DisconnectIdentityConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DisconnectIdentityConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DisconnectIdentityConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DisconnectIdentityConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ActivateIdentityConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *IdentityConnectionSecret
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ActivateIdentityConnectionResponse) GetJSON200() *IdentityConnectionSecret {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ActivateIdentityConnectionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ActivateIdentityConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ActivateIdentityConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ActivateIdentityConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ActivateIdentityConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RotateCompanyProvisioningTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *IdentityConnectionSecret
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RotateCompanyProvisioningTokenResponse) GetJSON200() *IdentityConnectionSecret {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RotateCompanyProvisioningTokenResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RotateCompanyProvisioningTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RotateCompanyProvisioningTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RotateCompanyProvisioningTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RotateCompanyProvisioningTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetCompanyInvitationExceptionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetCompanyInvitationExceptionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetCompanyInvitationExceptionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetCompanyInvitationExceptionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetCompanyInvitationExceptionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetCompanyInvitationExceptionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetCompanyMembershipDecisionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetCompanyMembershipDecisionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetCompanyMembershipDecisionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetCompanyMembershipDecisionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetCompanyMembershipDecisionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetCompanyMembershipDecisionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4716,52 +7668,222 @@ func (r SetMembershipRoleResponse) ContentType() string {
 	return ""
 }
 
-// ExchangeBrowserOIDCTokenWithBodyWithResponse Exchange a browser OIDC ID token for a control session
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
-func (c *ClientWithResponses) ExchangeBrowserOIDCTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeBrowserOIDCTokenResponse, error) {
-	rsp, err := c.ExchangeBrowserOIDCTokenWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseExchangeBrowserOIDCTokenResponse(rsp)
-}
-
-// ExchangeBrowserOIDCTokenWithResponse Exchange a browser OIDC ID token for a control session
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/auth/browser (the `ExchangeBrowserOIDCToken` operationId).
-func (c *ClientWithResponses) ExchangeBrowserOIDCTokenWithResponse(ctx context.Context, body ExchangeBrowserOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeBrowserOIDCTokenResponse, error) {
-	rsp, err := c.ExchangeBrowserOIDCToken(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseExchangeBrowserOIDCTokenResponse(rsp)
-}
-
-// IssueAdminBrowserHandoffWithBodyWithResponse performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request,
+// IssueControlBrowserHandoffWithBodyWithResponse performs a POST /v1/auth/browser-handoff (the `IssueControlBrowserHandoff` operationId) request,
 // with any type of body and a specified content type.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) IssueAdminBrowserHandoffWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueAdminBrowserHandoffResponse, error) {
-	rsp, err := c.IssueAdminBrowserHandoffWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) IssueControlBrowserHandoffWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueControlBrowserHandoffResponse, error) {
+	rsp, err := c.IssueControlBrowserHandoffWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseIssueAdminBrowserHandoffResponse(rsp)
+	return ParseIssueControlBrowserHandoffResponse(rsp)
 }
 
-// IssueAdminBrowserHandoffWithResponse performs a POST /v1/auth/browser-handoff (the `IssueAdminBrowserHandoff` operationId) request.
+// IssueControlBrowserHandoffWithResponse performs a POST /v1/auth/browser-handoff (the `IssueControlBrowserHandoff` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) IssueAdminBrowserHandoffWithResponse(ctx context.Context, body IssueAdminBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueAdminBrowserHandoffResponse, error) {
-	rsp, err := c.IssueAdminBrowserHandoff(ctx, body, reqEditors...)
+func (c *ClientWithResponses) IssueControlBrowserHandoffWithResponse(ctx context.Context, body IssueControlBrowserHandoffJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueControlBrowserHandoffResponse, error) {
+	rsp, err := c.IssueControlBrowserHandoff(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseIssueAdminBrowserHandoffResponse(rsp)
+	return ParseIssueControlBrowserHandoffResponse(rsp)
+}
+
+// RequestCompanyAdmissionWithBodyWithResponse performs a POST /v1/auth/company-admissions (the `RequestCompanyAdmission` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RequestCompanyAdmissionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RequestCompanyAdmissionResponse, error) {
+	rsp, err := c.RequestCompanyAdmissionWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRequestCompanyAdmissionResponse(rsp)
+}
+
+// RequestCompanyAdmissionWithResponse performs a POST /v1/auth/company-admissions (the `RequestCompanyAdmission` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RequestCompanyAdmissionWithResponse(ctx context.Context, body RequestCompanyAdmissionJSONRequestBody, reqEditors ...RequestEditorFn) (*RequestCompanyAdmissionResponse, error) {
+	rsp, err := c.RequestCompanyAdmission(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRequestCompanyAdmissionResponse(rsp)
+}
+
+// CreateCompanyLoginIntentWithBodyWithResponse performs a POST /v1/auth/company-intents (the `CreateCompanyLoginIntent` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateCompanyLoginIntentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCompanyLoginIntentResponse, error) {
+	rsp, err := c.CreateCompanyLoginIntentWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCompanyLoginIntentResponse(rsp)
+}
+
+// CreateCompanyLoginIntentWithResponse performs a POST /v1/auth/company-intents (the `CreateCompanyLoginIntent` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateCompanyLoginIntentWithResponse(ctx context.Context, body CreateCompanyLoginIntentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCompanyLoginIntentResponse, error) {
+	rsp, err := c.CreateCompanyLoginIntent(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCompanyLoginIntentResponse(rsp)
+}
+
+// ResolveCompanyLoginIntentWithBodyWithResponse performs a POST /v1/auth/company-intents/{intent_id}/resolve (the `ResolveCompanyLoginIntent` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ResolveCompanyLoginIntentWithBodyWithResponse(ctx context.Context, intentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResolveCompanyLoginIntentResponse, error) {
+	rsp, err := c.ResolveCompanyLoginIntentWithBody(ctx, intentId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResolveCompanyLoginIntentResponse(rsp)
+}
+
+// ResolveCompanyLoginIntentWithResponse performs a POST /v1/auth/company-intents/{intent_id}/resolve (the `ResolveCompanyLoginIntent` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ResolveCompanyLoginIntentWithResponse(ctx context.Context, intentId string, body ResolveCompanyLoginIntentJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolveCompanyLoginIntentResponse, error) {
+	rsp, err := c.ResolveCompanyLoginIntent(ctx, intentId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResolveCompanyLoginIntentResponse(rsp)
+}
+
+// StartDeviceLoginWithBodyWithResponse Start a control-owned device login
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/device (the `StartDeviceLogin` operationId).
+func (c *ClientWithResponses) StartDeviceLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartDeviceLoginResponse, error) {
+	rsp, err := c.StartDeviceLoginWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartDeviceLoginResponse(rsp)
+}
+
+// StartDeviceLoginWithResponse Start a control-owned device login
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/device (the `StartDeviceLogin` operationId).
+func (c *ClientWithResponses) StartDeviceLoginWithResponse(ctx context.Context, body StartDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*StartDeviceLoginResponse, error) {
+	rsp, err := c.StartDeviceLogin(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartDeviceLoginResponse(rsp)
+}
+
+// BeginDeviceBrowserWithResponse Begin browser authentication for a control-issued device code
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/auth/device/approve (the `BeginDeviceBrowser` operationId).
+func (c *ClientWithResponses) BeginDeviceBrowserWithResponse(ctx context.Context, params *BeginDeviceBrowserParams, reqEditors ...RequestEditorFn) (*BeginDeviceBrowserResponse, error) {
+	rsp, err := c.BeginDeviceBrowser(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBeginDeviceBrowserResponse(rsp)
+}
+
+// ApproveDeviceBrowserWithBodyWithResponse Confirm the displayed device code after browser OIDC authentication
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/device/approve (the `ApproveDeviceBrowser` operationId).
+func (c *ClientWithResponses) ApproveDeviceBrowserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveDeviceBrowserResponse, error) {
+	rsp, err := c.ApproveDeviceBrowserWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApproveDeviceBrowserResponse(rsp)
+}
+
+// ApproveDeviceBrowserWithFormdataBodyWithResponse Confirm the displayed device code after browser OIDC authentication
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/device/approve (the `ApproveDeviceBrowser` operationId).
+func (c *ClientWithResponses) ApproveDeviceBrowserWithFormdataBodyWithResponse(ctx context.Context, body ApproveDeviceBrowserFormdataRequestBody, reqEditors ...RequestEditorFn) (*ApproveDeviceBrowserResponse, error) {
+	rsp, err := c.ApproveDeviceBrowserWithFormdataBody(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApproveDeviceBrowserResponse(rsp)
+}
+
+// CompleteDeviceBrowserWithResponse Redeem one state-bound authorization code and show explicit device confirmation
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/auth/device/callback (the `CompleteDeviceBrowser` operationId).
+func (c *ClientWithResponses) CompleteDeviceBrowserWithResponse(ctx context.Context, params *CompleteDeviceBrowserParams, reqEditors ...RequestEditorFn) (*CompleteDeviceBrowserResponse, error) {
+	rsp, err := c.CompleteDeviceBrowser(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCompleteDeviceBrowserResponse(rsp)
+}
+
+// CancelDeviceLoginWithBodyWithResponse Cancel an attempt and revoke any session it issued
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/device/cancel (the `CancelDeviceLogin` operationId).
+func (c *ClientWithResponses) CancelDeviceLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CancelDeviceLoginResponse, error) {
+	rsp, err := c.CancelDeviceLoginWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCancelDeviceLoginResponse(rsp)
+}
+
+// CancelDeviceLoginWithResponse Cancel an attempt and revoke any session it issued
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/device/cancel (the `CancelDeviceLogin` operationId).
+func (c *ClientWithResponses) CancelDeviceLoginWithResponse(ctx context.Context, body CancelDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*CancelDeviceLoginResponse, error) {
+	rsp, err := c.CancelDeviceLogin(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCancelDeviceLoginResponse(rsp)
+}
+
+// PollDeviceLoginWithBodyWithResponse Read a device login result; safe to retry until expiration
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/device/poll (the `PollDeviceLogin` operationId).
+func (c *ClientWithResponses) PollDeviceLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PollDeviceLoginResponse, error) {
+	rsp, err := c.PollDeviceLoginWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePollDeviceLoginResponse(rsp)
+}
+
+// PollDeviceLoginWithResponse Read a device login result; safe to retry until expiration
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/device/poll (the `PollDeviceLogin` operationId).
+func (c *ClientWithResponses) PollDeviceLoginWithResponse(ctx context.Context, body PollDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*PollDeviceLoginResponse, error) {
+	rsp, err := c.PollDeviceLogin(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePollDeviceLoginResponse(rsp)
 }
 
 // LogoutControlSessionWithResponse Revoke the authenticated control session
@@ -4775,32 +7897,6 @@ func (c *ClientWithResponses) LogoutControlSessionWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseLogoutControlSessionResponse(rsp)
-}
-
-// ExchangeOIDCTokenWithBodyWithResponse Exchange an OIDC ID token for a control session
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
-func (c *ClientWithResponses) ExchangeOIDCTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeOIDCTokenResponse, error) {
-	rsp, err := c.ExchangeOIDCTokenWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseExchangeOIDCTokenResponse(rsp)
-}
-
-// ExchangeOIDCTokenWithResponse Exchange an OIDC ID token for a control session
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/auth/oidc (the `ExchangeOIDCToken` operationId).
-func (c *ClientWithResponses) ExchangeOIDCTokenWithResponse(ctx context.Context, body ExchangeOIDCTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeOIDCTokenResponse, error) {
-	rsp, err := c.ExchangeOIDCToken(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseExchangeOIDCTokenResponse(rsp)
 }
 
 // RefreshControlSessionWithBodyWithResponse Rotate a control session's access and refresh tokens
@@ -4829,30 +7925,30 @@ func (c *ClientWithResponses) RefreshControlSessionWithResponse(ctx context.Cont
 	return ParseRefreshControlSessionResponse(rsp)
 }
 
-// ExchangeLoginTokenWithBodyWithResponse Exchange a login token for a control session
+// RecoverCompanyOwnerWithBodyWithResponse Explicit audited recovery grants a personal-account exception to a nonremoved owner
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
-func (c *ClientWithResponses) ExchangeLoginTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error) {
-	rsp, err := c.ExchangeLoginTokenWithBody(ctx, contentType, body, reqEditors...)
+// Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
+func (c *ClientWithResponses) RecoverCompanyOwnerWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecoverCompanyOwnerResponse, error) {
+	rsp, err := c.RecoverCompanyOwnerWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseExchangeLoginTokenResponse(rsp)
+	return ParseRecoverCompanyOwnerResponse(rsp)
 }
 
-// ExchangeLoginTokenWithResponse Exchange a login token for a control session
+// RecoverCompanyOwnerWithResponse Explicit audited recovery grants a personal-account exception to a nonremoved owner
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/auth/token (the `ExchangeLoginToken` operationId).
-func (c *ClientWithResponses) ExchangeLoginTokenWithResponse(ctx context.Context, body ExchangeLoginTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeLoginTokenResponse, error) {
-	rsp, err := c.ExchangeLoginToken(ctx, body, reqEditors...)
+// Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
+func (c *ClientWithResponses) RecoverCompanyOwnerWithResponse(ctx context.Context, body RecoverCompanyOwnerJSONRequestBody, reqEditors ...RequestEditorFn) (*RecoverCompanyOwnerResponse, error) {
+	rsp, err := c.RecoverCompanyOwner(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseExchangeLoginTokenResponse(rsp)
+	return ParseRecoverCompanyOwnerResponse(rsp)
 }
 
 // GetIdentityContextWithResponse Read the authenticated identity and memberships
@@ -4960,6 +8056,36 @@ func (c *ClientWithResponses) ExchangePublisherAssertionWithResponse(ctx context
 	return ParseExchangePublisherAssertionResponse(rsp)
 }
 
+// ProvisionCompanyEligibilityWithBodyWithResponse Apply one revision-fenced eligibility delta without granting roles
+//
+// Requires both website authentication and the exact connection provisioning credential. Missing entries never remove members. A revision retry must have identical content.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/company-eligibility (the `ProvisionCompanyEligibility` operationId).
+func (c *ClientWithResponses) ProvisionCompanyEligibilityWithBodyWithResponse(ctx context.Context, params *ProvisionCompanyEligibilityParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ProvisionCompanyEligibilityResponse, error) {
+	rsp, err := c.ProvisionCompanyEligibilityWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseProvisionCompanyEligibilityResponse(rsp)
+}
+
+// ProvisionCompanyEligibilityWithResponse Apply one revision-fenced eligibility delta without granting roles
+//
+// Requires both website authentication and the exact connection provisioning credential. Missing entries never remove members. A revision retry must have identical content.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/company-eligibility (the `ProvisionCompanyEligibility` operationId).
+func (c *ClientWithResponses) ProvisionCompanyEligibilityWithResponse(ctx context.Context, params *ProvisionCompanyEligibilityParams, body ProvisionCompanyEligibilityJSONRequestBody, reqEditors ...RequestEditorFn) (*ProvisionCompanyEligibilityResponse, error) {
+	rsp, err := c.ProvisionCompanyEligibility(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseProvisionCompanyEligibilityResponse(rsp)
+}
+
 // ResolveServiceIdentityWithBodyWithResponse Read current memberships for the signed-in website identity
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -5036,6 +8162,192 @@ func (c *ClientWithResponses) PreviewServiceInvitationWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParsePreviewServiceInvitationResponse(rsp)
+}
+
+// ListCompanyAdmissionsWithResponse performs a GET /v1/service/teams/{team_id}/company-admissions (the `ListCompanyAdmissions` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListCompanyAdmissionsWithResponse(ctx context.Context, teamId string, params *ListCompanyAdmissionsParams, reqEditors ...RequestEditorFn) (*ListCompanyAdmissionsResponse, error) {
+	rsp, err := c.ListCompanyAdmissions(ctx, teamId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCompanyAdmissionsResponse(rsp)
+}
+
+// DecideCompanyAdmissionWithBodyWithResponse performs a POST /v1/service/teams/{team_id}/company-admissions/{request_id} (the `DecideCompanyAdmission` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) DecideCompanyAdmissionWithBodyWithResponse(ctx context.Context, teamId string, requestId string, params *DecideCompanyAdmissionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideCompanyAdmissionResponse, error) {
+	rsp, err := c.DecideCompanyAdmissionWithBody(ctx, teamId, requestId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDecideCompanyAdmissionResponse(rsp)
+}
+
+// DecideCompanyAdmissionWithResponse performs a POST /v1/service/teams/{team_id}/company-admissions/{request_id} (the `DecideCompanyAdmission` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) DecideCompanyAdmissionWithResponse(ctx context.Context, teamId string, requestId string, params *DecideCompanyAdmissionParams, body DecideCompanyAdmissionJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideCompanyAdmissionResponse, error) {
+	rsp, err := c.DecideCompanyAdmission(ctx, teamId, requestId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDecideCompanyAdmissionResponse(rsp)
+}
+
+// ReadCompanyConnectionsWithResponse Read active and pending connections with current owner proof
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/service/teams/{team_id}/identity-connections (the `ReadCompanyConnections` operationId).
+func (c *ClientWithResponses) ReadCompanyConnectionsWithResponse(ctx context.Context, teamId string, params *ReadCompanyConnectionsParams, reqEditors ...RequestEditorFn) (*ReadCompanyConnectionsResponse, error) {
+	rsp, err := c.ReadCompanyConnections(ctx, teamId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadCompanyConnectionsResponse(rsp)
+}
+
+// BeginIdentityConnectionSetupWithBodyWithResponse Begin consent setup without changing current enforcement
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/teams/{team_id}/identity-connections (the `BeginIdentityConnectionSetup` operationId).
+func (c *ClientWithResponses) BeginIdentityConnectionSetupWithBodyWithResponse(ctx context.Context, teamId string, params *BeginIdentityConnectionSetupParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BeginIdentityConnectionSetupResponse, error) {
+	rsp, err := c.BeginIdentityConnectionSetupWithBody(ctx, teamId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBeginIdentityConnectionSetupResponse(rsp)
+}
+
+// BeginIdentityConnectionSetupWithResponse Begin consent setup without changing current enforcement
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/service/teams/{team_id}/identity-connections (the `BeginIdentityConnectionSetup` operationId).
+func (c *ClientWithResponses) BeginIdentityConnectionSetupWithResponse(ctx context.Context, teamId string, params *BeginIdentityConnectionSetupParams, body BeginIdentityConnectionSetupJSONRequestBody, reqEditors ...RequestEditorFn) (*BeginIdentityConnectionSetupResponse, error) {
+	rsp, err := c.BeginIdentityConnectionSetup(ctx, teamId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBeginIdentityConnectionSetupResponse(rsp)
+}
+
+// DisconnectIdentityConnectionWithBodyWithResponse Abort pending consent or retire an active connection
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/service/teams/{team_id}/identity-connections/{identity_connection_id} (the `DisconnectIdentityConnection` operationId).
+func (c *ClientWithResponses) DisconnectIdentityConnectionWithBodyWithResponse(ctx context.Context, teamId string, identityConnectionId string, params *DisconnectIdentityConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DisconnectIdentityConnectionResponse, error) {
+	rsp, err := c.DisconnectIdentityConnectionWithBody(ctx, teamId, identityConnectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDisconnectIdentityConnectionResponse(rsp)
+}
+
+// DisconnectIdentityConnectionWithResponse Abort pending consent or retire an active connection
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/service/teams/{team_id}/identity-connections/{identity_connection_id} (the `DisconnectIdentityConnection` operationId).
+func (c *ClientWithResponses) DisconnectIdentityConnectionWithResponse(ctx context.Context, teamId string, identityConnectionId string, params *DisconnectIdentityConnectionParams, body DisconnectIdentityConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*DisconnectIdentityConnectionResponse, error) {
+	rsp, err := c.DisconnectIdentityConnection(ctx, teamId, identityConnectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDisconnectIdentityConnectionResponse(rsp)
+}
+
+// ActivateIdentityConnectionWithBodyWithResponse performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate (the `ActivateIdentityConnection` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ActivateIdentityConnectionWithBodyWithResponse(ctx context.Context, teamId string, identityConnectionId string, params *ActivateIdentityConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ActivateIdentityConnectionResponse, error) {
+	rsp, err := c.ActivateIdentityConnectionWithBody(ctx, teamId, identityConnectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateIdentityConnectionResponse(rsp)
+}
+
+// ActivateIdentityConnectionWithResponse performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate (the `ActivateIdentityConnection` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ActivateIdentityConnectionWithResponse(ctx context.Context, teamId string, identityConnectionId string, params *ActivateIdentityConnectionParams, body ActivateIdentityConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ActivateIdentityConnectionResponse, error) {
+	rsp, err := c.ActivateIdentityConnection(ctx, teamId, identityConnectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateIdentityConnectionResponse(rsp)
+}
+
+// RotateCompanyProvisioningTokenWithBodyWithResponse performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token (the `RotateCompanyProvisioningToken` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RotateCompanyProvisioningTokenWithBodyWithResponse(ctx context.Context, teamId string, identityConnectionId string, params *RotateCompanyProvisioningTokenParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotateCompanyProvisioningTokenResponse, error) {
+	rsp, err := c.RotateCompanyProvisioningTokenWithBody(ctx, teamId, identityConnectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateCompanyProvisioningTokenResponse(rsp)
+}
+
+// RotateCompanyProvisioningTokenWithResponse performs a POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token (the `RotateCompanyProvisioningToken` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RotateCompanyProvisioningTokenWithResponse(ctx context.Context, teamId string, identityConnectionId string, params *RotateCompanyProvisioningTokenParams, body RotateCompanyProvisioningTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*RotateCompanyProvisioningTokenResponse, error) {
+	rsp, err := c.RotateCompanyProvisioningToken(ctx, teamId, identityConnectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateCompanyProvisioningTokenResponse(rsp)
+}
+
+// SetCompanyInvitationExceptionWithBodyWithResponse performs a PUT /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision (the `SetCompanyInvitationException` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SetCompanyInvitationExceptionWithBodyWithResponse(ctx context.Context, teamId string, invitationId string, params *SetCompanyInvitationExceptionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetCompanyInvitationExceptionResponse, error) {
+	rsp, err := c.SetCompanyInvitationExceptionWithBody(ctx, teamId, invitationId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetCompanyInvitationExceptionResponse(rsp)
+}
+
+// SetCompanyInvitationExceptionWithResponse performs a PUT /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision (the `SetCompanyInvitationException` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SetCompanyInvitationExceptionWithResponse(ctx context.Context, teamId string, invitationId string, params *SetCompanyInvitationExceptionParams, body SetCompanyInvitationExceptionJSONRequestBody, reqEditors ...RequestEditorFn) (*SetCompanyInvitationExceptionResponse, error) {
+	rsp, err := c.SetCompanyInvitationException(ctx, teamId, invitationId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetCompanyInvitationExceptionResponse(rsp)
+}
+
+// SetCompanyMembershipDecisionWithBodyWithResponse performs a PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision (the `SetCompanyMembershipDecision` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SetCompanyMembershipDecisionWithBodyWithResponse(ctx context.Context, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetCompanyMembershipDecisionResponse, error) {
+	rsp, err := c.SetCompanyMembershipDecisionWithBody(ctx, teamId, membershipId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetCompanyMembershipDecisionResponse(rsp)
+}
+
+// SetCompanyMembershipDecisionWithResponse performs a PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision (the `SetCompanyMembershipDecision` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SetCompanyMembershipDecisionWithResponse(ctx context.Context, teamId string, membershipId string, params *SetCompanyMembershipDecisionParams, body SetCompanyMembershipDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*SetCompanyMembershipDecisionResponse, error) {
+	rsp, err := c.SetCompanyMembershipDecision(ctx, teamId, membershipId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetCompanyMembershipDecisionResponse(rsp)
 }
 
 // ListTeamsWithResponse List teams for the authenticated identity
@@ -5292,22 +8604,57 @@ func (c *ClientWithResponses) SetMembershipRoleWithResponse(ctx context.Context,
 	return ParseSetMembershipRoleResponse(rsp)
 }
 
-// ParseExchangeBrowserOIDCTokenResponse parses an HTTP response from a ExchangeBrowserOIDCTokenWithResponse call
-func ParseExchangeBrowserOIDCTokenResponse(rsp *http.Response) (*ExchangeBrowserOIDCTokenResponse, error) {
+// ParseIssueControlBrowserHandoffResponse parses an HTTP response from a IssueControlBrowserHandoffWithResponse call
+func ParseIssueControlBrowserHandoffResponse(rsp *http.Response) (*IssueControlBrowserHandoffResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ExchangeBrowserOIDCTokenResponse{
+	response := &IssueControlBrowserHandoffResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest struct {
+			Url string `json:"url"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRequestCompanyAdmissionResponse parses an HTTP response from a RequestCompanyAdmissionWithResponse call
+func ParseRequestCompanyAdmissionResponse(rsp *http.Response) (*RequestCompanyAdmissionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RequestCompanyAdmissionResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ControlSessionResponse
+		var dest CompanyAdmissionRequest
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -5325,28 +8672,238 @@ func ParseExchangeBrowserOIDCTokenResponse(rsp *http.Response) (*ExchangeBrowser
 	return response, nil
 }
 
-// ParseIssueAdminBrowserHandoffResponse parses an HTTP response from a IssueAdminBrowserHandoffWithResponse call
-func ParseIssueAdminBrowserHandoffResponse(rsp *http.Response) (*IssueAdminBrowserHandoffResponse, error) {
+// ParseCreateCompanyLoginIntentResponse parses an HTTP response from a CreateCompanyLoginIntentWithResponse call
+func ParseCreateCompanyLoginIntentResponse(rsp *http.Response) (*CreateCompanyLoginIntentResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &IssueAdminBrowserHandoffResponse{
+	response := &CreateCompanyLoginIntentResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest struct {
-			Url string `json:"url"`
-		}
+		var dest CompanyLoginIntent
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResolveCompanyLoginIntentResponse parses an HTTP response from a ResolveCompanyLoginIntentWithResponse call
+func ParseResolveCompanyLoginIntentResponse(rsp *http.Response) (*ResolveCompanyLoginIntentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResolveCompanyLoginIntentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CompanyLoginIntent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStartDeviceLoginResponse parses an HTTP response from a StartDeviceLoginWithResponse call
+func ParseStartDeviceLoginResponse(rsp *http.Response) (*StartDeviceLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartDeviceLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest DeviceLoginChallenge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBeginDeviceBrowserResponse parses an HTTP response from a BeginDeviceBrowserWithResponse call
+func ParseBeginDeviceBrowserResponse(rsp *http.Response) (*BeginDeviceBrowserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BeginDeviceBrowserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 302:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApproveDeviceBrowserResponse parses an HTTP response from a ApproveDeviceBrowserWithResponse call
+func ParseApproveDeviceBrowserResponse(rsp *http.Response) (*ApproveDeviceBrowserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApproveDeviceBrowserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCompleteDeviceBrowserResponse parses an HTTP response from a CompleteDeviceBrowserWithResponse call
+func ParseCompleteDeviceBrowserResponse(rsp *http.Response) (*CompleteDeviceBrowserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CompleteDeviceBrowserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCancelDeviceLoginResponse parses an HTTP response from a CancelDeviceLoginWithResponse call
+func ParseCancelDeviceLoginResponse(rsp *http.Response) (*CancelDeviceLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CancelDeviceLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePollDeviceLoginResponse parses an HTTP response from a PollDeviceLoginWithResponse call
+func ParsePollDeviceLoginResponse(rsp *http.Response) (*PollDeviceLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PollDeviceLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeviceLoginResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -5402,39 +8959,6 @@ func ParseLogoutControlSessionResponse(rsp *http.Response) (*LogoutControlSessio
 	return response, nil
 }
 
-// ParseExchangeOIDCTokenResponse parses an HTTP response from a ExchangeOIDCTokenWithResponse call
-func ParseExchangeOIDCTokenResponse(rsp *http.Response) (*ExchangeOIDCTokenResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ExchangeOIDCTokenResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ControlSessionResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseRefreshControlSessionResponse parses an HTTP response from a RefreshControlSessionWithResponse call
 func ParseRefreshControlSessionResponse(rsp *http.Response) (*RefreshControlSessionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5468,26 +8992,22 @@ func ParseRefreshControlSessionResponse(rsp *http.Response) (*RefreshControlSess
 	return response, nil
 }
 
-// ParseExchangeLoginTokenResponse parses an HTTP response from a ExchangeLoginTokenWithResponse call
-func ParseExchangeLoginTokenResponse(rsp *http.Response) (*ExchangeLoginTokenResponse, error) {
+// ParseRecoverCompanyOwnerResponse parses an HTTP response from a RecoverCompanyOwnerWithResponse call
+func ParseRecoverCompanyOwnerResponse(rsp *http.Response) (*RecoverCompanyOwnerResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ExchangeLoginTokenResponse{
+	response := &RecoverCompanyOwnerResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ControlSessionResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -5675,6 +9195,35 @@ func ParseExchangePublisherAssertionResponse(rsp *http.Response) (*ExchangePubli
 	return response, nil
 }
 
+// ParseProvisionCompanyEligibilityResponse parses an HTTP response from a ProvisionCompanyEligibilityWithResponse call
+func ParseProvisionCompanyEligibilityResponse(rsp *http.Response) (*ProvisionCompanyEligibilityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ProvisionCompanyEligibilityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseResolveServiceIdentityResponse parses an HTTP response from a ResolveServiceIdentityWithResponse call
 func ParseResolveServiceIdentityResponse(rsp *http.Response) (*ResolveServiceIdentityResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5761,6 +9310,287 @@ func ParsePreviewServiceInvitationResponse(rsp *http.Response) (*PreviewServiceI
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListCompanyAdmissionsResponse parses an HTTP response from a ListCompanyAdmissionsWithResponse call
+func ParseListCompanyAdmissionsResponse(rsp *http.Response) (*ListCompanyAdmissionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCompanyAdmissionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []CompanyAdmissionRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDecideCompanyAdmissionResponse parses an HTTP response from a DecideCompanyAdmissionWithResponse call
+func ParseDecideCompanyAdmissionResponse(rsp *http.Response) (*DecideCompanyAdmissionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DecideCompanyAdmissionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReadCompanyConnectionsResponse parses an HTTP response from a ReadCompanyConnectionsWithResponse call
+func ParseReadCompanyConnectionsResponse(rsp *http.Response) (*ReadCompanyConnectionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadCompanyConnectionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CompanyConnections
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBeginIdentityConnectionSetupResponse parses an HTTP response from a BeginIdentityConnectionSetupWithResponse call
+func ParseBeginIdentityConnectionSetupResponse(rsp *http.Response) (*BeginIdentityConnectionSetupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BeginIdentityConnectionSetupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest IdentityConnectionSetup
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDisconnectIdentityConnectionResponse parses an HTTP response from a DisconnectIdentityConnectionWithResponse call
+func ParseDisconnectIdentityConnectionResponse(rsp *http.Response) (*DisconnectIdentityConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DisconnectIdentityConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseActivateIdentityConnectionResponse parses an HTTP response from a ActivateIdentityConnectionWithResponse call
+func ParseActivateIdentityConnectionResponse(rsp *http.Response) (*ActivateIdentityConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ActivateIdentityConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IdentityConnectionSecret
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRotateCompanyProvisioningTokenResponse parses an HTTP response from a RotateCompanyProvisioningTokenWithResponse call
+func ParseRotateCompanyProvisioningTokenResponse(rsp *http.Response) (*RotateCompanyProvisioningTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RotateCompanyProvisioningTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IdentityConnectionSecret
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetCompanyInvitationExceptionResponse parses an HTTP response from a SetCompanyInvitationExceptionWithResponse call
+func ParseSetCompanyInvitationExceptionResponse(rsp *http.Response) (*SetCompanyInvitationExceptionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetCompanyInvitationExceptionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetCompanyMembershipDecisionResponse parses an HTTP response from a SetCompanyMembershipDecisionWithResponse call
+func ParseSetCompanyMembershipDecisionResponse(rsp *http.Response) (*SetCompanyMembershipDecisionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetCompanyMembershipDecisionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -6272,24 +10102,45 @@ func ParseSetMembershipRoleResponse(rsp *http.Response) (*SetMembershipRoleRespo
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// ExchangeBrowserOIDCToken Exchange a browser OIDC ID token for a control session
-	// (POST /v1/auth/browser)
-	ExchangeBrowserOIDCToken(w http.ResponseWriter, r *http.Request)
 
 	// (POST /v1/auth/browser-handoff)
-	IssueAdminBrowserHandoff(w http.ResponseWriter, r *http.Request)
+	IssueControlBrowserHandoff(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/auth/company-admissions)
+	RequestCompanyAdmission(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/auth/company-intents)
+	CreateCompanyLoginIntent(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/auth/company-intents/{intent_id}/resolve)
+	ResolveCompanyLoginIntent(w http.ResponseWriter, r *http.Request, intentId string)
+	// StartDeviceLogin Start a control-owned device login
+	// (POST /v1/auth/device)
+	StartDeviceLogin(w http.ResponseWriter, r *http.Request)
+	// BeginDeviceBrowser Begin browser authentication for a control-issued device code
+	// (GET /v1/auth/device/approve)
+	BeginDeviceBrowser(w http.ResponseWriter, r *http.Request, params BeginDeviceBrowserParams)
+	// ApproveDeviceBrowser Confirm the displayed device code after browser OIDC authentication
+	// (POST /v1/auth/device/approve)
+	ApproveDeviceBrowser(w http.ResponseWriter, r *http.Request)
+	// CompleteDeviceBrowser Redeem one state-bound authorization code and show explicit device confirmation
+	// (GET /v1/auth/device/callback)
+	CompleteDeviceBrowser(w http.ResponseWriter, r *http.Request, params CompleteDeviceBrowserParams)
+	// CancelDeviceLogin Cancel an attempt and revoke any session it issued
+	// (POST /v1/auth/device/cancel)
+	CancelDeviceLogin(w http.ResponseWriter, r *http.Request)
+	// PollDeviceLogin Read a device login result; safe to retry until expiration
+	// (POST /v1/auth/device/poll)
+	PollDeviceLogin(w http.ResponseWriter, r *http.Request)
 	// LogoutControlSession Revoke the authenticated control session
 	// (POST /v1/auth/logout)
 	LogoutControlSession(w http.ResponseWriter, r *http.Request)
-	// ExchangeOIDCToken Exchange an OIDC ID token for a control session
-	// (POST /v1/auth/oidc)
-	ExchangeOIDCToken(w http.ResponseWriter, r *http.Request)
 	// RefreshControlSession Rotate a control session's access and refresh tokens
 	// (POST /v1/auth/refresh)
 	RefreshControlSession(w http.ResponseWriter, r *http.Request)
-	// ExchangeLoginToken Exchange a login token for a control session
-	// (POST /v1/auth/token)
-	ExchangeLoginToken(w http.ResponseWriter, r *http.Request)
+	// RecoverCompanyOwner Explicit audited recovery grants a personal-account exception to a nonremoved owner
+	// (POST /v1/company-access/recovery)
+	RecoverCompanyOwner(w http.ResponseWriter, r *http.Request)
 	// GetIdentityContext Read the authenticated identity and memberships
 	// (GET /v1/identity)
 	GetIdentityContext(w http.ResponseWriter, r *http.Request)
@@ -6305,6 +10156,9 @@ type ServerInterface interface {
 
 	// (POST /v1/publisher-token)
 	ExchangePublisherAssertion(w http.ResponseWriter, r *http.Request)
+	// ProvisionCompanyEligibility Apply one revision-fenced eligibility delta without granting roles
+	// (POST /v1/service/company-eligibility)
+	ProvisionCompanyEligibility(w http.ResponseWriter, r *http.Request, params ProvisionCompanyEligibilityParams)
 	// ResolveServiceIdentity Read current memberships for the signed-in website identity
 	// (POST /v1/service/identity-context)
 	ResolveServiceIdentity(w http.ResponseWriter, r *http.Request)
@@ -6314,6 +10168,33 @@ type ServerInterface interface {
 	// PreviewServiceInvitation Preview an invitation for the signed-in website identity
 	// (POST /v1/service/invitations/preview)
 	PreviewServiceInvitation(w http.ResponseWriter, r *http.Request)
+
+	// (GET /v1/service/teams/{team_id}/company-admissions)
+	ListCompanyAdmissions(w http.ResponseWriter, r *http.Request, teamId string, params ListCompanyAdmissionsParams)
+
+	// (POST /v1/service/teams/{team_id}/company-admissions/{request_id})
+	DecideCompanyAdmission(w http.ResponseWriter, r *http.Request, teamId string, requestId string, params DecideCompanyAdmissionParams)
+	// ReadCompanyConnections Read active and pending connections with current owner proof
+	// (GET /v1/service/teams/{team_id}/identity-connections)
+	ReadCompanyConnections(w http.ResponseWriter, r *http.Request, teamId string, params ReadCompanyConnectionsParams)
+	// BeginIdentityConnectionSetup Begin consent setup without changing current enforcement
+	// (POST /v1/service/teams/{team_id}/identity-connections)
+	BeginIdentityConnectionSetup(w http.ResponseWriter, r *http.Request, teamId string, params BeginIdentityConnectionSetupParams)
+	// DisconnectIdentityConnection Abort pending consent or retire an active connection
+	// (DELETE /v1/service/teams/{team_id}/identity-connections/{identity_connection_id})
+	DisconnectIdentityConnection(w http.ResponseWriter, r *http.Request, teamId string, identityConnectionId string, params DisconnectIdentityConnectionParams)
+
+	// (POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate)
+	ActivateIdentityConnection(w http.ResponseWriter, r *http.Request, teamId string, identityConnectionId string, params ActivateIdentityConnectionParams)
+
+	// (POST /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token)
+	RotateCompanyProvisioningToken(w http.ResponseWriter, r *http.Request, teamId string, identityConnectionId string, params RotateCompanyProvisioningTokenParams)
+
+	// (PUT /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision)
+	SetCompanyInvitationException(w http.ResponseWriter, r *http.Request, teamId string, invitationId string, params SetCompanyInvitationExceptionParams)
+
+	// (PUT /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision)
+	SetCompanyMembershipDecision(w http.ResponseWriter, r *http.Request, teamId string, membershipId string, params SetCompanyMembershipDecisionParams)
 	// ListTeams List teams for the authenticated identity
 	// (GET /v1/teams)
 	ListTeams(w http.ResponseWriter, r *http.Request)
@@ -6370,11 +10251,11 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
-// ExchangeBrowserOIDCToken operation middleware
-func (siw *ServerInterfaceWrapper) ExchangeBrowserOIDCToken(w http.ResponseWriter, r *http.Request) {
+// IssueControlBrowserHandoff operation middleware
+func (siw *ServerInterfaceWrapper) IssueControlBrowserHandoff(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ExchangeBrowserOIDCToken(w, r)
+		siw.Handler.IssueControlBrowserHandoff(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6384,11 +10265,199 @@ func (siw *ServerInterfaceWrapper) ExchangeBrowserOIDCToken(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
-// IssueAdminBrowserHandoff operation middleware
-func (siw *ServerInterfaceWrapper) IssueAdminBrowserHandoff(w http.ResponseWriter, r *http.Request) {
+// RequestCompanyAdmission operation middleware
+func (siw *ServerInterfaceWrapper) RequestCompanyAdmission(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.IssueAdminBrowserHandoff(w, r)
+		siw.Handler.RequestCompanyAdmission(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateCompanyLoginIntent operation middleware
+func (siw *ServerInterfaceWrapper) CreateCompanyLoginIntent(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateCompanyLoginIntent(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResolveCompanyLoginIntent operation middleware
+func (siw *ServerInterfaceWrapper) ResolveCompanyLoginIntent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "intent_id" -------------
+	var intentId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "intent_id", r.PathValue("intent_id"), &intentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "intent_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolveCompanyLoginIntent(w, r, intentId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartDeviceLogin operation middleware
+func (siw *ServerInterfaceWrapper) StartDeviceLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartDeviceLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BeginDeviceBrowser operation middleware
+func (siw *ServerInterfaceWrapper) BeginDeviceBrowser(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params BeginDeviceBrowserParams
+
+	// ------------- Required query parameter "code" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "code", r.URL.Query(), &params.Code, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "code"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeginDeviceBrowser(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApproveDeviceBrowser operation middleware
+func (siw *ServerInterfaceWrapper) ApproveDeviceBrowser(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApproveDeviceBrowser(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CompleteDeviceBrowser operation middleware
+func (siw *ServerInterfaceWrapper) CompleteDeviceBrowser(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CompleteDeviceBrowserParams
+
+	// ------------- Required query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "code" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "code", r.URL.Query(), &params.Code, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "code"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "error" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "error", r.URL.Query(), &params.Error, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "error"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "error", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteDeviceBrowser(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelDeviceLogin operation middleware
+func (siw *ServerInterfaceWrapper) CancelDeviceLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelDeviceLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PollDeviceLogin operation middleware
+func (siw *ServerInterfaceWrapper) PollDeviceLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PollDeviceLogin(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6412,20 +10481,6 @@ func (siw *ServerInterfaceWrapper) LogoutControlSession(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
-// ExchangeOIDCToken operation middleware
-func (siw *ServerInterfaceWrapper) ExchangeOIDCToken(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ExchangeOIDCToken(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // RefreshControlSession operation middleware
 func (siw *ServerInterfaceWrapper) RefreshControlSession(w http.ResponseWriter, r *http.Request) {
 
@@ -6440,11 +10495,11 @@ func (siw *ServerInterfaceWrapper) RefreshControlSession(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
-// ExchangeLoginToken operation middleware
-func (siw *ServerInterfaceWrapper) ExchangeLoginToken(w http.ResponseWriter, r *http.Request) {
+// RecoverCompanyOwner operation middleware
+func (siw *ServerInterfaceWrapper) RecoverCompanyOwner(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ExchangeLoginToken(w, r)
+		siw.Handler.RecoverCompanyOwner(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6524,6 +10579,51 @@ func (siw *ServerInterfaceWrapper) ExchangePublisherAssertion(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
+// ProvisionCompanyEligibility operation middleware
+func (siw *ServerInterfaceWrapper) ProvisionCompanyEligibility(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ProvisionCompanyEligibilityParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Provisioning-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Provisioning-Token")]; found {
+		var XTnlProvisioningToken string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Provisioning-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Provisioning-Token", valueList[0], &XTnlProvisioningToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Provisioning-Token", Err: err})
+			return
+		}
+
+		params.XTnlProvisioningToken = XTnlProvisioningToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Provisioning-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Provisioning-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ProvisionCompanyEligibility(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ResolveServiceIdentity operation middleware
 func (siw *ServerInterfaceWrapper) ResolveServiceIdentity(w http.ResponseWriter, r *http.Request) {
 
@@ -6557,6 +10657,546 @@ func (siw *ServerInterfaceWrapper) PreviewServiceInvitation(w http.ResponseWrite
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PreviewServiceInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCompanyAdmissions operation middleware
+func (siw *ServerInterfaceWrapper) ListCompanyAdmissions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListCompanyAdmissionsParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken CompanyActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCompanyAdmissions(w, r, teamId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DecideCompanyAdmission operation middleware
+func (siw *ServerInterfaceWrapper) DecideCompanyAdmission(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "request_id" -------------
+	var requestId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "request_id", r.PathValue("request_id"), &requestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "request_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DecideCompanyAdmissionParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken CompanyActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DecideCompanyAdmission(w, r, teamId, requestId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReadCompanyConnections operation middleware
+func (siw *ServerInterfaceWrapper) ReadCompanyConnections(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReadCompanyConnectionsParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken CompanyActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadCompanyConnections(w, r, teamId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BeginIdentityConnectionSetup operation middleware
+func (siw *ServerInterfaceWrapper) BeginIdentityConnectionSetup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params BeginIdentityConnectionSetupParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken CompanyActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeginIdentityConnectionSetup(w, r, teamId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DisconnectIdentityConnection operation middleware
+func (siw *ServerInterfaceWrapper) DisconnectIdentityConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "identity_connection_id" -------------
+	var identityConnectionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "identity_connection_id", r.PathValue("identity_connection_id"), &identityConnectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "identity_connection_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DisconnectIdentityConnectionParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken CompanyActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DisconnectIdentityConnection(w, r, teamId, identityConnectionId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ActivateIdentityConnection operation middleware
+func (siw *ServerInterfaceWrapper) ActivateIdentityConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "identity_connection_id" -------------
+	var identityConnectionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "identity_connection_id", r.PathValue("identity_connection_id"), &identityConnectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "identity_connection_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ActivateIdentityConnectionParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken CompanyActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ActivateIdentityConnection(w, r, teamId, identityConnectionId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RotateCompanyProvisioningToken operation middleware
+func (siw *ServerInterfaceWrapper) RotateCompanyProvisioningToken(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "identity_connection_id" -------------
+	var identityConnectionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "identity_connection_id", r.PathValue("identity_connection_id"), &identityConnectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "identity_connection_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RotateCompanyProvisioningTokenParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken CompanyActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RotateCompanyProvisioningToken(w, r, teamId, identityConnectionId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetCompanyInvitationException operation middleware
+func (siw *ServerInterfaceWrapper) SetCompanyInvitationException(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "invitation_id" -------------
+	var invitationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "invitation_id", r.PathValue("invitation_id"), &invitationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "invitation_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SetCompanyInvitationExceptionParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken CompanyActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetCompanyInvitationException(w, r, teamId, invitationId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetCompanyMembershipDecision operation middleware
+func (siw *ServerInterfaceWrapper) SetCompanyMembershipDecision(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "membership_id" -------------
+	var membershipId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "membership_id", r.PathValue("membership_id"), &membershipId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "membership_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SetCompanyMembershipDecisionParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Tnl-Actor-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Tnl-Actor-Token")]; found {
+		var XTnlActorToken CompanyActorToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Tnl-Actor-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Tnl-Actor-Token", valueList[0], &XTnlActorToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Tnl-Actor-Token", Err: err})
+			return
+		}
+
+		params.XTnlActorToken = XTnlActorToken
+
+	} else {
+		err := fmt.Errorf("header parameter X-Tnl-Actor-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Tnl-Actor-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetCompanyMembershipDecision(w, r, teamId, membershipId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7184,19 +11824,36 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/teams/{team_id}/identity-connections", wrapper.ReadCompanyConnections)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/teams/{team_id}/identity-connections", wrapper.BeginIdentityConnectionSetup)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/service/teams/{team_id}/identity-connections/{identity_connection_id}", wrapper.DisconnectIdentityConnection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate", wrapper.ActivateIdentityConnection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token", wrapper.RotateCompanyProvisioningToken)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/company-eligibility", wrapper.ProvisionCompanyEligibility)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/service/teams/{team_id}/memberships/{membership_id}/company-decision", wrapper.SetCompanyMembershipDecision)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision", wrapper.SetCompanyInvitationException)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/teams/{team_id}/company-admissions", wrapper.ListCompanyAdmissions)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/teams/{team_id}/company-admissions/{request_id}", wrapper.DecideCompanyAdmission)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/company-admissions", wrapper.RequestCompanyAdmission)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/company-intents", wrapper.CreateCompanyLoginIntent)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/company-intents/{intent_id}/resolve", wrapper.ResolveCompanyLoginIntent)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/company-access/recovery", wrapper.RecoverCompanyOwner)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/feedback-policy", wrapper.GetTeamFeedbackPolicy)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/teams/{team_id}/feedback-policy", wrapper.SetTeamFeedbackPolicy)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/browser-handoff", wrapper.IssueAdminBrowserHandoff)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/browser-handoff", wrapper.IssueControlBrowserHandoff)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-enrollments/redeem", wrapper.RedeemPublisherEnrollment)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-token", wrapper.ExchangePublisherAssertion)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-keys/rotate", wrapper.RotatePublisherKey)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/identity-context", wrapper.ResolveServiceIdentity)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/invitations/preview", wrapper.PreviewServiceInvitation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/invitations/accept", wrapper.AcceptServiceInvitation)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/token", wrapper.ExchangeLoginToken)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/oidc", wrapper.ExchangeOIDCToken)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/device", wrapper.StartDeviceLogin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/device/poll", wrapper.PollDeviceLogin)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/auth/device/approve", wrapper.BeginDeviceBrowser)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/device/approve", wrapper.ApproveDeviceBrowser)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/auth/device/callback", wrapper.CompleteDeviceBrowser)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/refresh", wrapper.RefreshControlSession)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/browser", wrapper.ExchangeBrowserOIDCToken)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/device/cancel", wrapper.CancelDeviceLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/logout", wrapper.LogoutControlSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/identity", wrapper.GetIdentityContext)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams", wrapper.ListTeams)

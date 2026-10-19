@@ -10,7 +10,7 @@ export type { AdHocTunnel, OpenOptions, PublisherFile, PublisherID } from "./int
 export type { FetchHandler } from "./internal/fetch_types.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 
-/** Extended with service types from the generated `.tnl/project.d.ts` file. */
+/** extended with service types from the generated `.tnl/local/project.d.ts` file. */
 export interface TnlProjectMetadata {}
 
 type RegisteredTnlProject = keyof TnlProjectMetadata extends never

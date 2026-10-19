@@ -22,9 +22,17 @@ func protocolForService(service config.Service) controlv1.PublicURLServiceProtoc
 	return controlv1.PublicURLServiceProtocol(config.Protocol(service))
 }
 
+func projectPublisherScope(server, publicURLID string) string {
+	digest := sha256.Sum256([]byte(server + "\x00" + publicURLID))
+	return "project-publisher:" + hex.EncodeToString(digest[:])
+}
+
 // reserveConfiguredURL uses team authority only to create or edit saved state.
-// targets stay private to the native owner for both HTTP and TCP publications.
+// HTTP app and alias targets stay private to the native owner.
 func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg publisher.Config) (controlv1.PublicURL, error) {
+	if cfg.Purpose != controlv1.App && cfg.Purpose != controlv1.Alias || cfg.Ephemeral || cfg.ServiceProtocol != controlv1.Http {
+		return controlv1.PublicURL{}, publisherCLIError("project publications require a saved HTTP app or alias public URL")
+	}
 	// an unchanged saved URL can be read while its publisher holds the
 	// hostname lock. only creation and edits need exclusive access.
 	route, err := services.routes.GetPublicURLByHostname(ctx, services.teamID, cfg.Hostname)
@@ -51,10 +59,7 @@ func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg p
 			return route, keyErr
 		}
 		protocol := cfg.ServiceProtocol
-		if protocol == "" {
-			protocol = "http"
-		}
-		body := controlv1.CreatePublicURLRequest{TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: cfg.Hostname, PublicUrlScope: services.publicURLScope, Purpose: controlv1.App, ServiceProtocol: &protocol, AllowedIpPrefixes: &cfg.AllowedIPPrefixes}
+		body := controlv1.CreatePublicURLRequest{TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: cfg.Hostname, PublicUrlScope: services.publicURLScope, Purpose: cfg.Purpose, ServiceProtocol: &protocol, AllowedIpPrefixes: &cfg.AllowedIPPrefixes}
 		if cfg.AccessMode != "" {
 			mode := cfg.AccessMode
 			body.AccessMode = &mode
@@ -97,7 +102,7 @@ func configuredURLAccessMatches(route controlv1.PublicURL, prefixes []string, cf
 }
 
 func checkedConfiguredURL(route controlv1.PublicURL, services publisherServices, cfg publisher.Config) ([]string, error) {
-	if route.TeamId != services.teamID || route.DomainId != services.domainID || route.CanonicalHostname != cfg.Hostname || route.Purpose != controlv1.App || route.ServiceProtocol != cfg.ServiceProtocol || route.Ephemeral || route.LifecycleState != controlv1.Enabled || route.PublicUrlScope != services.publicURLScope ||
+	if route.TeamId != services.teamID || route.DomainId != services.domainID || route.CanonicalHostname != cfg.Hostname || route.Purpose != cfg.Purpose || route.ServiceProtocol != cfg.ServiceProtocol || route.Ephemeral || route.LifecycleState != controlv1.Enabled || route.PublicUrlScope != services.publicURLScope ||
 		services.publicURLScope == controlv1.Member && (route.MembershipId == nil || *route.MembershipId != services.membershipID) || services.publicURLScope == controlv1.Shared && route.MembershipId != nil {
 		return nil, failure.Wrap("reserve project public URL", failure.ServerResponseInvalid, errors.New("saved public URL differs from the selected service"))
 	}
@@ -114,8 +119,7 @@ func selectNativeProjectPublisher(ctx context.Context, services publisherService
 		return nil, err
 	}
 	server := services.authenticated.ServerEndpoint
-	digest := sha256.Sum256([]byte(server + "\x00" + route.Id))
-	scope := "project-publisher:" + hex.EncodeToString(digest[:])
+	scope := projectPublisherScope(server, route.Id)
 	lock, err := services.state.LockPublisherSigningIdentity(ctx, scope)
 	if err != nil {
 		return nil, err

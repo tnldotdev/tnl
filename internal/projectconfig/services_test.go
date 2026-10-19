@@ -14,24 +14,36 @@ func TestTypeScriptServiceDiscoveryAndPlacementValidation(t *testing.T) {
 		valid        bool
 	}{
 		{"app default", `{services:{web:{}}}`, true},
+		{"removed HTTP publisher pool", `{services:{web:{publisherPool:true}}}`, false},
+		{"removed private publisher pool", `{services:{db:{publisherPool:true,protocol:"tcp",target:{type:"address",address:5432}}}}`, false},
+		{"remote group", `{publishers:{cloud:{description:"database"}},services:{db:{publisher:"cloud",protocol:"postgres",target:{type:"address",address:"db.internal:5432"},access:{team:true}}}}`, true},
+		{"no root pool default", `{publisherPool:true,services:{web:{}}}`, false},
+		{"no public URL pool", `{services:{web:{publicURL:{publisherPool:true,access:"anonymous"}}}}`, false},
+		{"no duplicated public URL name", `{services:{web:{name:"site",publicURL:{name:"other",access:"anonymous"}}}}`, false},
 		{"removed directory", `{services:{web:{directory:"apps/web"}}}`, false},
 		{"removed publisher placement", `{publisher:{type:"compose",service:"publisher"},services:{web:{target:{type:"app"}}}}`, false},
+		{"mixed public defaults", `{publicURL:{access:"anonymous"},services:{web:{},db:{protocol:"tcp",target:{type:"address",address:5432}}}}`, true},
 		{"private TLS", `{services:{db:{protocol:"mysql",target:{type:"address",address:"db.internal:3306",tls:{serverName:"db.internal",caFile:"./ca.pem"}}}}}`, true},
+		{"Postgres pass-through", `{services:{db:{protocol:"postgres",target:{type:"address",address:"db.internal:5432"}}}}`, true},
+		{"bad CA URL", `{services:{db:{protocol:"postgres",target:{type:"address",address:5432},tls:{ca:"http://certs.example.com/ca.pem"}}}}`, false},
 		{"compose", `{services:{web:{target:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000}}}}`, true},
-		{"docker", `{services:{cache:{protocol:"redis",target:{type:"docker",container:"shop-cache",port:6379}}}}`, true},
+		{"docker", `{services:{cache:{protocol:"tcp",target:{type:"docker",container:"shop-cache",port:6379}}}}`, true},
+		{"explicit private name", `{services:{orders:{protocol:"tcp",name:"database",target:{type:"address",address:5432}}}}`, true},
+		{"conflicting private names", `{services:{orders:{protocol:"tcp",target:{type:"address",address:5432}},database:{protocol:"tcp",name:"orders",target:{type:"address",address:3306}}}}`, false},
+		{"private service public URL", `{services:{db:{protocol:"tcp",publicURL:{hostname:"db.example"},target:{type:"address",address:5432}}}}`, false},
 		{"inspection", `{inspection:{mode:"summary",retention:"24h",maxBytes:"64MiB"}}`, true},
-		{"traffic", `{tunnel:{limits:{traffic:{connections:8,rate:5,ratePer:"1s",burst:10,uploadBytes:1048576,downloadBytes:2097152,totalUploadBytes:4194304}}}}`, true},
+		{"traffic", `{publicURL:{limits:{traffic:{connections:8,rate:5,ratePer:"1s",burst:10,uploadBytes:1048576,downloadBytes:2097152,totalUploadBytes:4194304}}}}`, true},
 		{"old root", `{publish:{target:3000}}`, false},
 		{"old readiness", `{readiness:{path:"/"}}`, false},
 		{"old service", `{services:{web:{publish:{target:3000}}}}`, false},
-		{"old limits", `{tunnel:{limits:{requests:3}}}`, false},
+		{"old limits", `{publicURL:{limits:{requests:3}}}`, false},
 		{"visitor TLS", `{services:{web:{target:{type:"address",address:3000,tls:{passthrough:true}}}}}`, false},
 		{"target variant", `{services:{web:{target:{type:"app",address:3000}}}}`, false},
 		{"Docker filter", `{services:{db:{target:{type:"docker",container:"label=app",port:5432}}}}`, false},
 		{"Compose path", `{services:{web:{target:{type:"compose",project:"shop",file:"../compose.yml",service:"web",port:3000}}}}`, false},
 		{"retention bound", `{inspection:{retention:"721h"}}`, false},
 		{"storage bound", `{inspection:{maxBytes:"2GiB"}}`, false},
-		{"integer bound", `{tunnel:{limits:{tcp:{total:9007199254740992}}}}`, false},
+		{"integer bound", `{publicURL:{limits:{tcp:{total:9007199254740992}}}}`, false},
 		{"removed publisher port", `{publisher:{type:"compose",service:"publisher",port:8765}}`, false},
 		{"removed publisher root", `{publisher:{type:"compose",service:"publisher",projectRoot:"/project"}}`, false},
 		{"removed publisher descriptors", `{publisher:{type:"compose",service:"publisher",appEndpoints:{web:"/run/web.json"}}}`, false},
@@ -87,7 +99,7 @@ func TestComposeDefaultsUseSelectedWorktreeAndProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, protocol, port := "db", "postgres", 5432
+	service, protocol, port := "db", "tcp", 5432
 	project := Project{Root: root, Worktree: Worktree{Label: WorktreeLabel{FullLabel: "shop-worktree-a12345"}}, Config: config.TNL{
 		Services: config.Services{"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "compose", Service: &service, Port: &port}}},
 	}}
@@ -121,7 +133,7 @@ func TestResolveFillsComposeTargetDefaultsPerProject(t *testing.T) {
 			t.Fatal(err)
 		}
 		path := filepath.Join(root, "tnl.json")
-		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{"db":{"protocol":"postgres","target":{"type":"compose","service":"db","port":5432}}}}}`), 0600); err != nil {
+		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{"db":{"protocol":"tcp","target":{"type":"compose","service":"db","port":5432}}}}}`), 0600); err != nil {
 			t.Fatal(err)
 		}
 		project, err := Resolve(t.Context(), Selection{Path: path}, root, [32]byte{})
@@ -129,6 +141,9 @@ func TestResolveFillsComposeTargetDefaultsPerProject(t *testing.T) {
 			t.Fatal(err)
 		}
 		target := project.Config.Services["db"].Target
+		if got := config.PrivateServiceName("db", project.Config.Services["db"]); got != "db" {
+			t.Fatalf("default private service name = %q", got)
+		}
 		if target.Project == nil || target.File == nil || *target.Project != project.Worktree.Label.FullLabel || *target.File != "compose.yml" {
 			t.Fatalf("Compose target defaults = %+v", target)
 		}
@@ -146,6 +161,9 @@ func TestEffectiveServiceKeepsAppAndAddressTargetsIndependent(t *testing.T) {
 	p := Project{Config: config.TNL{Services: config.Services{
 		"web": {}, "db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{CAFile: &ca}}},
 	}}}
+	if err := config.ValidateTNL(p.Config); err != nil {
+		t.Fatalf("mixed HTTP and private TCP services: %v", err)
+	}
 	web, err := p.EffectiveService("web")
 	if err != nil {
 		t.Fatal(err)
@@ -191,13 +209,13 @@ func TestResolvePublishNormalizesDiscoveryAndProjectCAPaths(t *testing.T) {
 	root := t.TempDir()
 	project, service, file, port, ca := "shop", "web", "compose.yml", 3000, "certs/ca.pem"
 	p := Project{Root: root, Config: config.TNL{Services: config.Services{
-		"web": {Target: &config.ServiceTarget{Type: "compose", Project: &project, Service: &service, File: &file, Port: &port, TLS: &config.TargetTLS{CAFile: &ca}}},
+		"web": {Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "compose", Project: &project, Service: &service, File: &file, Port: &port, TLS: &config.TargetTLS{CAFile: &ca}}},
 	}}}
 	resolved, err := p.ResolvePublish("web", "127.0.0.1:49152")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(*resolved.Target) != "https://127.0.0.1:49152" || *resolved.TargetCAFile != filepath.Join(root, ca) || resolved.TargetTLS != nil {
+	if string(*resolved.Target) != "https://127.0.0.1:49152" || *resolved.TargetCAFile != filepath.Join(root, ca) || resolved.TargetTLS == nil || !*resolved.TargetTLS {
 		t.Fatalf("publication=%+v", resolved)
 	}
 	if _, err := p.ResolvePublish("web", ""); err == nil {
@@ -208,10 +226,10 @@ func TestResolvePublishNormalizesDiscoveryAndProjectCAPaths(t *testing.T) {
 	}
 }
 
-func TestHTTPPrivateTLSNameSurvivesConfigurationResolution(t *testing.T) {
+func TestPublicHTTPSUpstreamTLSNameSurvivesConfigurationResolution(t *testing.T) {
 	for _, source := range []string{
-		`{services:{web:{protocol:"http",target:{type:"address",address:"https://127.0.0.1:3000",tls:{serverName:"web.internal",caFile:"certs/ca.pem"}}}}}`,
-		`{services:{web:{target:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000,tls:{serverName:"web.internal",caFile:"certs/ca.pem"}}}}}`,
+		`{services:{web:{publicURL:{},protocol:"http",target:{type:"address",address:"https://127.0.0.1:3000",tls:{serverName:"web.internal",caFile:"certs/ca.pem"}}}}}`,
+		`{services:{web:{publicURL:{},target:{type:"compose",project:"shop",file:"compose.yml",service:"web",port:3000,tls:{serverName:"web.internal",caFile:"certs/ca.pem"}}}}}`,
 	} {
 		root := t.TempDir()
 		file := filepath.Join(root, "tnl.config.ts")
@@ -231,7 +249,7 @@ func TestHTTPPrivateTLSNameSurvivesConfigurationResolution(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if effective.Publish.TargetTLSName == nil || *effective.Publish.TargetTLSName != "web.internal" || resolved.TargetTLSName == nil || *resolved.TargetTLSName != "web.internal" || resolved.TargetTLS != nil || resolved.Target == nil || string(*resolved.Target) != "https://127.0.0.1:3000" || resolved.TargetCAFile == nil || *resolved.TargetCAFile != filepath.Join(root, "certs/ca.pem") {
+		if effective.Publish.TargetTLSName == nil || *effective.Publish.TargetTLSName != "web.internal" || resolved.TargetTLSName == nil || *resolved.TargetTLSName != "web.internal" || resolved.TargetTLS == nil || !*resolved.TargetTLS || resolved.Target == nil || string(*resolved.Target) != "https://127.0.0.1:3000" || resolved.TargetCAFile == nil || *resolved.TargetCAFile != filepath.Join(root, "certs/ca.pem") {
 			t.Fatalf("HTTP private TLS settings were lost: effective=%+v resolved=%+v", effective.Publish, resolved)
 		}
 	}

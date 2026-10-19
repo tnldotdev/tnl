@@ -75,8 +75,8 @@ func TestCanonicalRequestAndIPPolicyHashes(t *testing.T) {
 	if prefixes, err := CanonicalizeIPPrefixes(large); err != nil || len(prefixes) != len(large) {
 		t.Fatalf("large prefix policy = %d entries, error = %v", len(prefixes), err)
 	}
-	plan := CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: "tls-alpn-01"}
-	sessionJSON := []byte(`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"canonical_hostname":"route.example","certificate_plan":{"cache_key":"route.example","scope":"route.example","identifiers":["route.example"],"challenge_method":"tls-alpn-01"},"domain_id":"domain_1","ephemeral":true,"membership_id":"membership_1","policy_revision":3,"public_url_id":"public_url_1","public_url_scope":"member","publish_run_number":4,"target":"http://127.0.0.1:3000","team_id":"team_1"}`)
+	plan := CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: "dns-01"}
+	sessionJSON := []byte(`{"allowed_ip_prefixes":["192.0.2.0/24","2001:db8::/64"],"canonical_hostname":"route.example","certificate_plan":{"cache_key":"route.example","scope":"route.example","identifiers":["route.example"],"challenge_method":"dns-01"},"domain_id":"domain_1","ephemeral":true,"membership_id":"membership_1","policy_revision":3,"public_url_id":"public_url_1","public_url_scope":"member","publish_run_number":4,"target":"http://127.0.0.1:3000","team_id":"team_1"}`)
 	sessionRequest := OperationRequest{
 		Operation: OperationPublishRunCreate, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
 		CanonicalHostname: "route.example", PublicURLScope: "member", PublicURLID: "public_url_1", PublishRunNumber: 4,
@@ -110,7 +110,7 @@ func TestCanonicalRequestRejectsUnknownPublicURLScope(t *testing.T) {
 				PublicURLScope: PublicURLScope("unknown"), PublicURLID: "public_url_1",
 				PolicyRevision: 1, PublicURLMutationRevision: 1, PublishRunNumber: 1,
 				Target: "http://127.0.0.1:3000", AllowedIPPrefixes: []string{},
-				CertificatePlan: &CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: "tls-alpn-01"},
+				CertificatePlan: &CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: "dns-01"},
 			}
 			if _, err := CanonicalRequestHash(request); err == nil {
 				t.Fatal("unknown public URL scope was hashed")

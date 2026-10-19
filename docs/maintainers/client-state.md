@@ -12,7 +12,7 @@ the migration and query sources before regenerating `clientstatedb`.
 
 ```text
 server_profiles
-  ├── control_sessions / guest_demo_sessions / public_url_certificate_cache
+  ├── control_sessions / guest_demo_sessions
   └── pending_publisher_enrollments → publisher_identities → publisher_selections
 
 local_tunnels → project_journals → project_events
@@ -21,6 +21,10 @@ local_tunnels → project_journals → project_events
       └── alias_declarations / alias_publish_runs
 
 inspections → inspection_number_counters / inspection_storage_usage
+
+identities/ (or --identity-dir)
+  ├── replica signing identities and selector records
+  └── control/team/publisher/plan-scoped pending and current certificate files
 ```
 
 `installation_settings` and `state_protection` each have one row. The
@@ -36,6 +40,20 @@ SQLite timestamps are Unix nanoseconds except for explicitly suffixed values
 such as `duration_ms`.
 
 ## keep secrets and retries separate
+
+the filesystem identity owner stores publisher TLS keys, pending CSRs and
+staged/current certificates in bounded mode-0600 files under owner-only
+directories. local and deployed publishers use this same cache. atomic replace
+and file/directory sync precede external issuance or installation; certificate
+and replica locks live on that same filesystem. runtime SQLite and its wrapping
+key can be replaced while preserving this directory. Fargate mounts only the
+durable identity directory on EFS and keeps SQLite local.
+
+group signing identities also live in that durable directory. bootstrap input
+is verified with control before retention or import into the runtime cache.
+installed group jobs load their signing key directly from the identity files.
+filesystem permissions and the storage platform's encryption/backup policy
+protect these files independently of SQLite's local secret protector.
 
 Protected publisher signing keys are saved once per server and identity;
 selections point to that installed identity. A pending enrollment holds the

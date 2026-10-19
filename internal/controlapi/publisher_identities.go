@@ -68,10 +68,20 @@ func (h *handler) publisherEditor(w http.ResponseWriter, r *http.Request, team s
 	return nil, controlstate.Membership{}, "", false
 }
 
-func publisherScope(team string, url, domain *string) (controlstate.PublisherScope, bool) {
+func publisherScope(team string, url, domain, private *string) (controlstate.PublisherScope, bool) {
 	s := controlstate.PublisherScope{TeamID: team}
-	if (url == nil) == (domain == nil) {
+	selected := 0
+	for _, value := range []*string{url, domain, private} {
+		if value != nil {
+			selected++
+		}
+	}
+	if selected != 1 {
 		return s, false
+	}
+	if private != nil {
+		s.Kind, s.PrivateServiceID = "private_service", *private
+		return s, opaqueid.Valid(*private, opaqueid.PrivateServicePrefix)
 	}
 	if url != nil {
 		s.Kind, s.PublicURLID = "saved_url", *url
@@ -87,7 +97,7 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher enrollment")
 		return
 	}
-	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId)
+	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId, b.PrivateServiceId)
 	if !valid || s.Kind == "namespace" && !h.config.DNSAutomation {
 		writeProblem(w, 400, controlv1.InvalidRequest, "select a saved URL or an automated HTTP namespace")
 		return
@@ -96,7 +106,11 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	e, err := store.IssuePublisherEnrollment(r.Context(), controlstate.CreatePublisherEnrollmentRequest{Scope: s, Name: b.Name, Kind: string(b.Kind), EditorID: editor, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), Now: time.Now()})
+	request := controlstate.CreatePublisherEnrollmentRequest{Scope: s, Name: b.Name, Kind: string(b.Kind), EditorID: editor, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), Now: time.Now()}
+	if b.Ownership != nil {
+		request.Ownership = string(*b.Ownership)
+	}
+	e, err := store.IssuePublisherEnrollment(r.Context(), request)
 	if err != nil {
 		publisherProblem(w, "issue publisher enrollment", err)
 		return
@@ -104,6 +118,9 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 	result := controlv1.PublisherEnrollment{Id: e.ID, EnrollmentKey: e.Key, ExpiresAt: e.Until, TeamId: s.TeamID, Kind: controlv1.PublisherEnrollmentKind(s.Kind)}
 	if e.Scope.PublicURLID != "" {
 		result.PublicUrlId = &e.Scope.PublicURLID
+	}
+	if e.Scope.PrivateServiceID != "" {
+		result.PrivateServiceId = &e.Scope.PrivateServiceID
 	}
 	if e.Scope.DomainID != "" {
 		result.DomainId = &e.Scope.DomainID
@@ -119,6 +136,9 @@ func publisherGrantResponse(g controlstatedb.ControlPublisherGrant) controlv1.Pu
 	r := controlv1.PublisherGrant{Id: g.ID, Kind: controlv1.PublisherGrantKind(g.Kind), CreatedAt: g.CreatedAt.Time}
 	if g.PublicURLID.Valid {
 		r.PublicUrlId = &g.PublicURLID.String
+	}
+	if g.PrivateServiceID.Valid {
+		r.PrivateServiceId = &g.PrivateServiceID.String
 	}
 	if g.DomainID.Valid {
 		r.DomainId = &g.DomainID.String
@@ -165,6 +185,10 @@ func (h *handler) ListPublisherIdentities(w http.ResponseWriter, r *http.Request
 		}
 		i := record.Identity
 		p := controlv1.PublisherIdentity{Id: i.ID, Name: i.Name, Kind: controlv1.PublisherIdentityKind(i.Kind), CreatedAt: i.CreatedAt.Time, Grants: []controlv1.PublisherGrant{}}
+		p.Ownership = controlv1.PublisherIdentityOwnership(i.Ownership)
+		if i.OwnerMembershipID.Valid {
+			p.OwnerMembershipId = &i.OwnerMembershipID.String
+		}
 		if i.RevokedAt.Valid {
 			p.RevokedAt = &i.RevokedAt.Time
 		}
@@ -185,7 +209,7 @@ func (h *handler) CreatePublisherGrant(w http.ResponseWriter, r *http.Request, i
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher grant")
 		return
 	}
-	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId)
+	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId, b.PrivateServiceId)
 	if !valid || s.Kind == "namespace" && !h.config.DNSAutomation {
 		writeProblem(w, 400, controlv1.InvalidRequest, "select a saved URL or an automated HTTP namespace")
 		return

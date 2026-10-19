@@ -2,15 +2,12 @@ package main
 
 import (
 	"errors"
-	"net"
-	"strconv"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/localproxy"
-	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -20,11 +17,33 @@ func publishProtocol(value string) (controlv1.PublicURLServiceProtocol, error) {
 		return controlv1.Http, nil
 	}
 	protocol := controlv1.PublicURLServiceProtocol(value)
-	if !protocol.Valid() {
+	if value != "http" && value != "tcp" && value != "mysql" && value != "postgres" {
 		return "", failure.Wrap("select service protocol", failure.InvalidTunnelFlags,
-			errors.New("unsupported service protocol"))
+			errors.New("protocol must be http, tcp, mysql, or postgres; publish an existing sshd as tcp"))
 	}
 	return protocol, nil
+}
+
+func privatePublishProtocol(value string) (controlv1.PrivateServiceProtocol, error) {
+	if value == "" {
+		value = "http"
+	}
+	protocol := controlv1.PrivateServiceProtocol(value)
+	if !protocol.Valid() {
+		return "", publisherCLIError("private protocol must be http, tcp, mysql, or postgres")
+	}
+	return protocol, nil
+}
+
+func normalizePrivatePublishTarget(target string, protocol controlv1.PrivateServiceProtocol) (string, error) {
+	if protocol == "http" {
+		return config.NormalizeHTTPServiceTarget(config.Service{}, target)
+	}
+	canonical, err := tcptarget.Normalize(target)
+	if err != nil {
+		return "", diagnostic.Wrap(diagnostic.TargetInvalid, err)
+	}
+	return canonical, nil
 }
 
 func normalizePublishTarget(target string, protocol controlv1.PublicURLServiceProtocol) (string, error) {
@@ -39,31 +58,22 @@ func normalizePublishTarget(target string, protocol controlv1.PublicURLServicePr
 }
 
 func savedPublicAddress(route controlv1.PublicURL) (string, error) {
-	if !route.ServiceProtocol.Valid() {
+	if route.ServiceProtocol != controlv1.Http {
 		return "", failure.Wrap("read public URL protocol", failure.ServerResponseInvalid,
 			errors.New("control returned a public URL with an unknown service protocol"))
-	}
-	if route.ServiceProtocol != controlv1.Http {
-		if route.PublicPort == nil || !tcpport.Valid(*route.PublicPort) {
-			return "", failure.Wrap("read TCP public URL", failure.ServerResponseInvalid,
-				errors.New("control returned a TCP public URL without a public port"))
-		}
-		return net.JoinHostPort(route.CanonicalHostname, strconv.Itoa(*route.PublicPort)), nil
-	}
-	if route.PublicPort != nil {
-		return "", failure.Wrap("read public URL protocol", failure.ServerResponseInvalid,
-			errors.New("control returned an HTTP public URL with a public TCP port"))
 	}
 	return "https://" + route.CanonicalHostname, nil
 }
 
-func validateTCPPublishOptions(flags publishCommand, protocol controlv1.PublicURLServiceProtocol) error {
-	if protocol == controlv1.Http {
-		if flags.TargetTLS {
-			return failure.Wrap("validate publish options", failure.InvalidTunnelFlags,
-				errors.New("target TLS options require a TCP service protocol"))
-		}
-		if flags.TargetTLSName != "" {
+func validateTCPPublishOptions[P ~string](flags publishCommand, protocol P) error {
+	if flags.privateService && (flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" || flags.Ephemeral || flags.Open) {
+		return publisherCLIError("this configured service is private; add an explicit publicURL block to enable public HTTPS")
+	}
+	if flags.TargetTLS != nil && !*flags.TargetTLS && (flags.TargetTLSName != "" || flags.TargetCAFile != "" || strings.HasPrefix(flags.Target, "https://")) {
+		return publisherCLIError("target TLS cannot be disabled while target trust is configured")
+	}
+	if protocol == "http" {
+		if flags.TargetTLSName != "" || flags.TargetCAFile != "" || flags.TargetTLS != nil && *flags.TargetTLS {
 			target, err := localproxy.NormalizeTarget(flags.Target)
 			if err != nil || !strings.HasPrefix(target, "https://") {
 				return failure.Wrap("validate HTTPS target", failure.InvalidTunnelFlags, errors.New("--target-tls-name requires an HTTPS target"))
@@ -76,25 +86,21 @@ func validateTCPPublishOptions(flags publishCommand, protocol controlv1.PublicUR
 			errors.New("TCP publications do not support --open"))
 	}
 	if flags.Ephemeral {
-		return failure.Wrap("validate TCP publication", failure.InvalidTunnelFlags, errors.New("TCP publication requires a saved public URL"))
+		return failure.Wrap("validate TCP publication", failure.InvalidTunnelFlags, errors.New("private services are saved; --ephemeral requires HTTP"))
 	}
-	if !flags.TargetTLS && (flags.TargetTLSName != "" || flags.TargetCAFile != "") {
+	if flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" {
 		return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags,
-			errors.New("--target-tls-name and --target-ca-file require --target-tls"))
+			errors.New("public URL and visitor access flags require HTTP"))
+	}
+	if flags.Requests != nil && *flags.Requests != 0 || flags.RateRequests != nil && *flags.RateRequests != 0 || flags.RatePer != "" || flags.RateBurst != nil && *flags.RateBurst != 0 {
+		return failure.Wrap("validate private publication limits", failure.InvalidTunnelFlags, errors.New("request totals and rates require HTTP; private services support --concurrency"))
+	}
+	if flags.Concurrency != nil && (*flags.Concurrency < 1 || *flags.Concurrency > 4096) {
+		return failure.Wrap("validate private stream capacity", failure.InvalidTunnelFlags, errors.New("private service concurrency must be between 1 and 4096"))
 	}
 	return nil
 }
 
-func selectPublishInspection(flags *publishCommand, protocol controlv1.PublicURLServiceProtocol) error {
-	if protocol != controlv1.Ssh {
-		return nil
-	}
-	if flags.InspectionMode == config.InspectionSummary && !flags.inspectionModeFromCLI && !flags.inspectionModeFromConfig {
-		flags.InspectionMode = config.InspectionNone
-	}
-	if flags.InspectionMode != config.InspectionNone {
-		return failure.Wrap("validate SSH inspection", failure.InvalidTunnelFlags,
-			errors.New("SSH supports --inspection-mode=none only"))
-	}
+func selectPublishInspection(_ *publishCommand, _ controlv1.PublicURLServiceProtocol) error {
 	return nil
 }

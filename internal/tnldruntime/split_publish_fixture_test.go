@@ -69,10 +69,12 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		ingressAddress = unusedTCPAddress(t)
 	}
 	var dnsAddress string
+	var localDNS *privateFixtureDNS
 	if options.dns != nil {
 		dnsAddress = options.dns.address
 	} else {
-		dnsAddress = startIntegrationDNS(t)
+		localDNS = newPrivateFixtureDNS(t)
+		dnsAddress = localDNS.address
 	}
 	pebble := startIntegrationPebble(t, integrationPort(t, publicIngressAddress), dnsAddress)
 	for _, configure := range configureACME {
@@ -80,8 +82,9 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	}
 	serviceHTTP := splitTestServiceHTTPClient(t, certificateAuthority.roots, privateControlAddress)
 	controlConfig := splitPublishConfig(t, tnldconfig.RoleControl)
+	controlConfig.ServicePortRanges = integrationServicePorts(t)
 	controlConfig.DatabaseURL = databaseURL
-	controlConfig.ControlListen = controlAddress
+	controlConfig.ControlListen = unusedTCPAddress(t)
 	controlConfig.PrivateControlListen = privateControlAddress
 	controlConfig.ClusterSecret = testClusterSecret
 	controlConfig.ServerDomain = serverDomain
@@ -92,10 +95,12 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	controlConfig.ACMEEmail = "integration@example.test"
 	controlConfig.ACMEAcceptTerms = true
 	controlConfig.ACMEProfile = "tlsserver"
-	controlConfig.LoginToken = testLoginToken
+	controlConfig.OIDCIssuer, controlConfig.OIDCClientID = testOIDCIssuer, "server"
 	controlConfig.StorageKey = testStorageKey
 	controlConfig.AccessTokenLifetime = 5 * time.Minute
 	controlConfig.RefreshTokenLifetime = time.Hour
+	controlConfig.Route53ManagedZoneID, controlConfig.Route53Region = "fixture-zone", "us-east-1"
+	controlConfig.IngressIPv4Addresses = []string{"127.0.0.1"}
 	if options.dns != nil {
 		controlConfig.ManagedDomain = serverDomain
 		controlConfig.DNSServer = options.dns.address
@@ -112,13 +117,22 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	}
 	// dependencies outlive every incarnation of control, ingress, and relay.
 	owner := newRuntimeTopology(t)
+	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startIntegrationControlProxy(t, owner, controlAddress, controlConfig.ControlListen, controlTLS)
 	if options.proxyIngress {
 		startSplitIngressProxy(t, owner, publicIngressAddress, ingressAddress)
 	}
 	controlOptions := integrationProcessOptions{acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, owner: owner}
+	if localDNS != nil {
+		controlOptions.dns = localDNS
+	}
 	control := startIntegrationProcessWithOptions(t, controlConfig, controlOptions)
 	waitForProcessReady(t, control)
 	ingressConfig := splitPublishConfig(t, tnldconfig.RoleIngress)
+	ingressConfig.ServicePortRanges = controlConfig.ServicePortRanges
 	ingressConfig.ControlHostname = controlHostname
 	ingressConfig.ClusterSecret = testClusterSecret
 	ingressConfig.IngressID = "ingress-split"
@@ -168,7 +182,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 }
 
 // a disposable front address writes trusted PROXY v2 metadata for ordinary
-// ACME TLS-ALPN visitors. database test clients supply their own original port
+// HTTPS visitors. database test clients supply their own original port
 // through the separate private ingress listener.
 func startSplitIngressProxy(t *testing.T, owner *runtimeTopology, public, backend string) {
 	t.Helper()

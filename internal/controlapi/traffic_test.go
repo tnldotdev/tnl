@@ -46,14 +46,14 @@ func TestCreatePublishRunCarriesTrafficSeparatelyFromPublisherAuthority(t *testi
 		Target: "http://127.0.0.1:3000", MutationRevision: 1, AuthorizationPublishRunNumber: 1,
 	}}
 	store.publisher = &controlstate.PublisherIdentity{ID: "publisher", GrantID: "grant", KeyID: "key", CreatorID: "identity", Scope: controlstate.PublisherScope{TeamID: "team", Kind: "saved_url", PublicURLID: "url"}}
-	store.publisherPlan = &authorization.CertificatePlan{CacheKey: "app.example.test", Scope: "app.example.test", Identifiers: []string{"app.example.test"}, ChallengeMethod: certificateidentity.ChallengeTLSALPN01}
+	store.publisherPlan = &authorization.CertificatePlan{CacheKey: "app.example.test", Scope: "app.example.test", Identifiers: []string{"app.example.test"}, ChallengeMethod: certificateidentity.ChallengeDNS01}
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"traffic":{"connections":48,"rate_per":"2s","total_upload_bytes":1048576}}`))
 	r.Header.Set("Authorization", "Bearer publisher-access")
 	r.Header.Set("Idempotency-Key", "retry")
 	r.Header.Set("Publisher-Run-Proof", "proof")
 	w := httptest.NewRecorder()
 	defaults, ceiling := trafficlimits.Default(), trafficlimits.Ceiling()
-	(&handler{store: store, config: Config{TrafficDefaults: defaults, TrafficCeiling: ceiling}}).CreatePublishRun(w, r, "url", controlv1.CreatePublishRunParams{})
+	(&handler{store: store, config: Config{TrafficDefaults: defaults, TrafficCeiling: ceiling, DNSAutomation: true}}).CreatePublishRun(w, r, "url", controlv1.CreatePublishRunParams{})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create run: %d %s", w.Code, w.Body.String())
 	}

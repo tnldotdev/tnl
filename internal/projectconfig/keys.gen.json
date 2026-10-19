@@ -3,6 +3,7 @@
   "download_bytes": "downloadBytes",
   "max_bytes": "maxBytes",
   "public_url": "publicURL",
+  "publisher_pool": "publisherPool",
   "rate_per": "ratePer",
   "server_name": "serverName",
   "source_ips": "sourceIPs",

@@ -119,14 +119,12 @@ func TestPublishHostnameScopeMatrix(t *testing.T) {
 func TestManagedAndCustomDefaultURLShapes(t *testing.T) {
 	for _, test := range []struct {
 		name, mode, teamKind, domainKind, teamName, domain, want, scope string
-		builtin                                                         bool
 	}{
-		{"builtin_managed", "simple", "personal", "managed", "local-administrator", "routes.example.test", "app.routes.example.test", "shared", true},
-		{"personal_managed", "simple", "personal", "managed", "alex", "routes.example.test", "app.alex.routes.example.test", "member", false},
-		{"organization_managed", "simple", "organization", "managed", "studio", "routes.example.test", "app.alex.studio.routes.example.test", "member", false},
-		{"personal_custom", "simple", "personal", "custom", "alex", "dev.example.test", "app.dev.example.test", "shared", false},
-		{"organization_custom", "simple", "organization", "custom", "studio", "studio.example.test", "app.alex.studio.example.test", "member", false},
-		{"hosted_generated", "generated", "organization", "managed", "studio", "tnl.dev", "app.ecstatic-penguin.tnl.dev", "member", false},
+		{"personal_managed", "simple", "personal", "managed", "alex", "routes.example.test", "app.alex.routes.example.test", "member"},
+		{"organization_managed", "simple", "organization", "managed", "studio", "routes.example.test", "app.alex.studio.routes.example.test", "member"},
+		{"personal_custom", "simple", "personal", "custom", "alex", "dev.example.test", "app.dev.example.test", "shared"},
+		{"organization_custom", "simple", "organization", "custom", "studio", "studio.example.test", "app.alex.studio.example.test", "member"},
+		{"hosted_generated", "generated", "organization", "managed", "studio", "tnl.dev", "app.ecstatic-penguin.tnl.dev", "member"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			current := teamContext{
@@ -135,7 +133,7 @@ func TestManagedAndCustomDefaultURLShapes(t *testing.T) {
 					MemberSlug: "alex", ManagedLabel: "ecstatic-penguin"},
 				domains: []authorityv1.Domain{{Id: "domain", Kind: authorityv1.DomainKind(test.domainKind),
 					CanonicalDomain: test.domain, State: authorityv1.DomainStateReady}},
-				mode: naming.ManagedURLMode(test.mode), builtin: test.builtin,
+				mode: naming.ManagedURLMode(test.mode),
 			}
 			hostname, _, scope, err := resolvePublishHostname("", "app", "", current)
 			if err != nil || hostname != test.want || string(scope) != test.scope {

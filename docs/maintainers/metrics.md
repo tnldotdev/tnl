@@ -52,7 +52,6 @@ publisher connections are not the same as database claims.
 | `tnl_control_dns_work_duration_seconds{kind,phase,outcome}`            | DNS work and verification.                                            |
 | `tnl_control_public_url_usage_items_total{result}`                     | Finalized, delivered, or retried items.                               |
 | `tnl_control_cleanup_last_success_timestamp_seconds{kind}`             | Last successful cleanup.                                              |
-| `tnl_control_tcp_port_pool_ports{pool,state}`                          | Available, claimed, quarantined, and configured TCP ports per pool.   |
 | `tnl_control_guest_trials_last_24h{stage}`                             | Issued, allocated, ready, or ended guest trials from committed state. |
 | `tnl_control_public_url_recovery_duration_seconds`                     | Newly observed recovery durations.                                    |
 
@@ -95,6 +94,20 @@ The same purpose can be joined to `control.public_url_usage_buckets` for
 connection and byte totals. Ingress cannot see the HTTP path or whether a
 provider's webhook reached and succeeded at a local handler.
 
+## service audit
+
+`tnl_service_audit_events_total{result}` counts process-local queue and ingestion
+events with fixed results: `queued`, `delivered`, `retry`, `dropped`, `accepted`,
+and `duplicate`. It has no service, identity, source IP, or hostname labels.
+
+Queued visitor observations can be lost on a process crash. `dropped` includes
+invalid input, queue overflow, and observations lost when bounded shutdown
+flushing ends. `delivered` describes a reporter submission; `accepted` and
+`duplicate` describe control ingestion. Do not sum those stages as distinct
+visitors or treat the counter as a durable audit log. Control's service audit
+API reads committed events; transactional management facts commit with their
+mutations independently of the visitor queue.
+
 ## database
 
 | Metric                                                   | What it shows                              |
@@ -106,8 +119,8 @@ provider's webhook reached and succeeded at a local handler.
 
 Scraping never queries PostgreSQL or a remote service. Metric labels use
 fixed operations and outcomes, plus a bounded operator-owned ingress pool ID;
-never public URL IDs, hostnames, credentials, or raw URLs. The pool gauge is a
-database-wide snapshot on each control process, so use the maximum across
-replicas rather than summing it.
+never public URL IDs, hostnames, credentials, or raw URLs. Database-wide
+snapshots repeat across control replicas; use their maximum rather than
+summing them.
 Definitions and role registration live in `internal/observability`; record
 events at their ingress, relay, control, or worker boundary.

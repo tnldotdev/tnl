@@ -79,12 +79,9 @@ func (w *PublicURLWorker) advanceAuthorizations(ctx context.Context, client acme
 			var err error
 			switch phase {
 			case controlstate.ACMEAuthorizationPresenting:
-				if authorization.ChallengeType != certificateidentity.ChallengeDNS01 {
-					continue // control publishes tls-alpn-01 challenges before changing this state.
-				}
-				err = w.presentDNSAuthorization(ctx, work.PublicURLID, authorization, now)
+				err = w.presentDNSAuthorization(ctx, work.ServiceID(), authorization, now)
 			case controlstate.ACMEAuthorizationPresented:
-				err = w.acceptAuthorization(ctx, client, work.ID, work.PublicURLID, authorization, now)
+				err = w.acceptAuthorization(ctx, client, work.ID, work.ServiceID(), authorization, now)
 			case controlstate.ACMEAuthorizationValidating:
 				err = w.pollAuthorization(ctx, client, authorization, now)
 			}
@@ -116,18 +113,6 @@ func (w *PublicURLWorker) acceptAuthorization(ctx context.Context, client acmeAP
 			return err
 		}
 		if !verified {
-			authorization.AvailableAt = now.Add(w.config.PollInterval)
-			return nil
-		}
-	}
-	if authorization.ChallengeType == certificateidentity.ChallengeTLSALPN01 {
-		// wait for every live ingress to acknowledge this challenge projection
-		// before asking the CA to validate the publisher's certificate.
-		ready, err := w.store.ACMEChallengeRoutingReady(ctx, orderID, now)
-		if err != nil {
-			return err
-		}
-		if !ready {
 			authorization.AvailableAt = now.Add(w.config.PollInterval)
 			return nil
 		}

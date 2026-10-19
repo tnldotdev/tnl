@@ -121,6 +121,7 @@ func (a *appRuntime) invocation(ctx context.Context, request privateprotocol.Inv
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
 	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: route.TeamId, DomainID: route.DomainId, PublicURLScope: route.PublicUrlScope, Purpose: route.Purpose, PolicyRevision: uint64(route.PolicyRevision), Hostname: route.CanonicalHostname, ProjectRoot: a.project.Root, Service: request.InvocationId, Target: request.Target, ServiceProtocol: "http", Ephemeral: true, AllocatedPublicURL: &route, QUICConnector: muxsession.QUICConnector{TLSConfig: tlsConfig}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: tlsConfig}}
+	cfg.PublisherID = native.PublisherID()
 	if route.MembershipId != nil {
 		cfg.MembershipID = *route.MembershipId
 	}

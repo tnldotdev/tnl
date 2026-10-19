@@ -64,7 +64,7 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
   services: {
-    app: {},
+    app: { publicURL: {} },
   },
 });
 ```
@@ -83,8 +83,8 @@ Sign in once with `tnl auth login`. The integration prepares public metadata bef
 framework startup, then reports the listener's actual bound port to a local
 `tnl` process. By default, a visitor needs a current sign-in, share link, or
 URL-scoped visitor token. To allow anonymous visitors to a service, set
-`tunnel: { access: "anonymous" }` for that service. An additional IP list in
-`access: { ip: ["192.0.2.0/24"] }` limits where credentialed visitors may connect;
+`publicURL: { access: "anonymous" }` for that service. An additional IP list in
+`publicURL: { access: { ip: ["192.0.2.0/24"] } }` limits where credentialed visitors may connect;
 an IP match does not replace their credential.
 
 `tnl wait` checks a fresh public response. `tnl status` shows every configured
@@ -111,8 +111,8 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
   services: {
-    web: {},
-    api: {},
+    web: { publicURL: {} },
+    api: { publicURL: {} },
   },
 });
 ```
@@ -145,6 +145,10 @@ const apiURL = tnl.services?.api?.url;
 
 Read about [project configuration](https://tnl.dev/docs/configuration) and
 [framework metadata](https://tnl.dev/docs/frameworks#use-a-service-url-in-your-app).
+An explicit `publicURL` block enables public HTTPS. Omit it to keep a service
+private, including HTTP services; use `tnl connect NAME` to reach a private
+service. `protocol` defaults to `http`; `tcp`, `mysql`, and `postgres` describe
+private targets. Set `access: { team: true }` on a service to allow the team.
 For a Node or Bun API, prepare its service before startup and register the bound
 listener. Port 0 lets the application choose an available port:
 
@@ -216,17 +220,17 @@ https://web-example-k7n2p9.chase.dev.example.com
 
 ## self-host
 
-Set `TNLD_MANAGED_DOMAIN=routes.example.com` on your server. After signing in
-with the built-in administrator's login token, publish directly beneath it:
+Configure a standard OIDC issuer and server client on control, and set
+`TNLD_MANAGED_DOMAIN=routes.example.com`. Sign in through the browser approval flow:
 
 ```bash
-tnl auth login --server https://control.example.com --login-token
+tnl auth login --server https://control.example.com --open
 tnl status --scope=server --server https://control.example.com
 tnl publish 3000 --server https://control.example.com --name app
-# https://app.routes.example.com
+# https://app.alex.routes.example.com
 ```
 
-Without `--name`, `tnl` uses a stable project-and-worktree name. Other personal
+Without `--name`, `tnl` uses a stable project-and-worktree name. Personal
 teams use a readable label, such as `app.alex.routes.example.com`; members of
 the `studio` team use `app.alex.studio.routes.example.com`. A shared hosted
 server can set `TNLD_MANAGED_URL_MODE=generated` to assign labels such as
@@ -246,6 +250,14 @@ export default defineConfig({
 ```
 
 The same config works with hosted tnl.dev or your own server.
+
+Named publisher groups can run near services on your private network. Keep
+their service declarations in Git, then run `tnl apply` to save a revision in
+control. Enrolled publishers pull only their group's assignments and report
+their observed revision and health. Starting `pnpm dev` still registers only
+the local listener; it does not apply production changes. Cloud capacity and
+task replacement belong to your infrastructure. The
+[Fargate templates](deploy/publishers/readme.md) show that boundary.
 
 [Run your own server](https://tnl.dev/docs/self-hosting).
 
@@ -277,6 +289,6 @@ if paid options arrive.
 
 ## license
 
-The client and server are [MIT-licensed](LICENSE). See the
+The client and server are licensed under [BSD-3-Clause](LICENSE). See the
 [dependency notices](THIRD_PARTY_LICENSES.txt), browse the
 [command reference](https://tnl.dev/docs/cli), or [contribute](contributing.md).

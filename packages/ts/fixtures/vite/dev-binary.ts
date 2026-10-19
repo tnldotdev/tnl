@@ -9,7 +9,6 @@ assert(reportPath, "report path is required");
 interface FixtureReport {
   readonly cwd: string;
   readonly hasAccessToken: boolean;
-  readonly hasLoginToken: boolean;
   readonly hasRuntimeEnvironment: boolean;
   readonly environmentMetadata?: unknown;
   readonly pid: number;
@@ -21,7 +20,6 @@ const report: FixtureReport = {
   pid: process.pid,
   cwd: process.cwd(),
   hasAccessToken: Object.hasOwn(process.env, "TNL_ACCESS_TOKEN"),
-  hasLoginToken: Object.hasOwn(process.env, "TNL_LOGIN_TOKEN"),
   hasRuntimeEnvironment: Object.hasOwn(process.env, "TNL_PROJECT_RUNTIME"),
   environmentMetadata:
     process.env.TNL_PROJECT_RUNTIME === undefined

@@ -38,6 +38,7 @@ var (
 	ErrNotFound             = failure.Wrap("read control resource", failure.ServerResourceNotFound, errors.New("controlclient: not found"))
 	ErrNameUnavailable      = failure.Wrap("select public URL hostname", failure.ServerConflict, errors.New("controlclient: public URL hostname unavailable"))
 	ErrStatusConflict       = failure.Wrap("update control state", failure.ServerConflict, errors.New("controlclient: status conflict"))
+	ErrProjectManaged       = failure.Wrap("change project-managed resource", failure.ServerConflict, fmt.Errorf("resource is managed by project configuration: %w", ErrStatusConflict))
 	ErrCertificateStatus    = failure.Wrap("issue public URL certificate", failure.CertificateUnavailable, errors.New("controlclient: certificate status conflict"))
 	ErrDNSProofPending      = failure.Wrap("configure domain DNS", failure.DNSPending, errors.New("controlclient: DNS setup pending"))
 	ErrRateLimited          = failure.Wrap("request control API", failure.ServerRateLimited, errors.New("controlclient: rate limited"))
@@ -356,19 +357,6 @@ func (c *Client) GetCertificateIssuance(ctx context.Context, issuanceID string, 
 	})
 }
 
-func (c *Client) MarkCertificateChallengeReady(ctx context.Context, issuanceID string, token credentials.PublishRunToken) (controlv1.CertificateIssuance, error) {
-	return requestWithTimeout[controlv1.CertificateIssuance](ctx, c, certificateCallTimeout, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.MarkCertificateChallengeReady(ctx, issuanceID, editors...)
-	})
-}
-
-func (c *Client) MarkCertificateChallengeRemoved(ctx context.Context, issuanceID string, token credentials.PublishRunToken) error {
-	_, err := request[controlv1.CertificateIssuance](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.MarkCertificateChallengeRemoved(ctx, issuanceID, editors...)
-	})
-	return err
-}
-
 func (c *Client) MarkPublishRunCertificateInstalled(ctx context.Context, publishRunID string, publishRunNumber uint64, issuanceID string, notAfter time.Time, token credentials.PublishRunToken) error {
 	body := controlv1.CertificateInstalledRequest{PublishRunNumber: int64(publishRunNumber), IssuanceId: issuanceID, NotAfter: notAfter}
 	_, err := request[controlv1.PublishRun](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
@@ -460,6 +448,8 @@ func responseError(status int, header http.Header, payload []byte) error {
 		return failure.Wrap("request control API", failure.ServerResponseInvalid, fmt.Errorf("controlclient: HTTP %d", status))
 	}
 	switch problem.Code {
+	case controlv1.ProjectManaged:
+		return fmt.Errorf("%w: %w", ErrProjectManaged, &ProblemError{Status: status, Problem: problem})
 	case controlv1.MemberHostnameDepthExceeded:
 		return ErrMemberHostnameDepth
 	case controlv1.Unauthenticated:

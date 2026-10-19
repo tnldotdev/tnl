@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strconv"
 	"sync"
 	"testing"
@@ -16,7 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
-const testLoginToken = "tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8"
+const testOIDCIssuer = "https://identity.fixture.test"
 const testClusterSecret = "0123456789abcdef0123456789abcdef"
 const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
@@ -24,6 +26,7 @@ type integrationProcessOptions struct {
 	acmeHTTPClient    *http.Client
 	serviceHTTPClient *http.Client
 	relayClientTLS    *tls.Config
+	dns               dnsBackend
 	owner             *runtimeTopology
 }
 
@@ -39,12 +42,13 @@ type integrationProcess struct {
 // runtimeTopology owns all incarnations, including retired and replacement
 // processes. cleanup order follows dependencies rather than start chronology.
 type runtimeTopology struct {
-	directory  string
-	afterStop  []func()
-	publishers []*integrationPublisher
-	ingress    []*integrationProcess
-	relays     []*integrationProcess
-	controls   []*integrationProcess
+	databaseURL, managedDomain string
+	directory                  string
+	afterStop                  []func()
+	publishers                 []*integrationPublisher
+	ingress                    []*integrationProcess
+	relays                     []*integrationProcess
+	controls                   []*integrationProcess
 }
 
 func newRuntimeTopology(t *testing.T) *runtimeTopology {
@@ -116,6 +120,12 @@ func startIntegrationProcess(t *testing.T, cfg tnldconfig.Config, acmeHTTPClient
 
 func startIntegrationProcessWithOptions(t *testing.T, cfg tnldconfig.Config, options integrationProcessOptions) *integrationProcess {
 	t.Helper()
+	if cfg.DNSProviderEnabled() && options.dns == nil {
+		endpoint, err := url.Parse(os.Getenv("AWS_ENDPOINT_URL_ROUTE_53"))
+		if err != nil || endpoint.Scheme != "http" || !(net.ParseIP(endpoint.Hostname()).IsLoopback() || endpoint.Hostname() == "dns" && os.Getenv("AWS_ACCESS_KEY_ID") == "tnl-local-only") {
+			t.Fatal("runtime fixtures require an injected DNS backend or explicit local Route 53 endpoint")
+		}
+	}
 	if options.acmeHTTPClient == nil {
 		options.acmeHTTPClient = &http.Client{Timeout: 10 * time.Second}
 	}
@@ -132,6 +142,9 @@ func startIntegrationProcessWithOptions(t *testing.T, cfg tnldconfig.Config, opt
 	}
 	process := &integrationProcess{cancel: cancel, done: make(chan struct{}), metricsAddress: cfg.MetricsListen, name: name}
 	if options.owner != nil {
+		if cfg.Role.RunsControl() {
+			options.owner.databaseURL, options.owner.managedDomain = cfg.DatabaseURL, cfg.ManagedDomain
+		}
 		options.owner.own(cfg.Role, process)
 	} else {
 		t.Cleanup(func() {
@@ -142,7 +155,7 @@ func startIntegrationProcessWithOptions(t *testing.T, cfg tnldconfig.Config, opt
 		})
 	}
 	go func() {
-		err := serveWithRelayClientTLS(ctx, cfg, options.acmeHTTPClient, options.serviceHTTPClient, options.relayClientTLS)
+		err := serveWithDNSBackend(ctx, cfg, options.acmeHTTPClient, options.serviceHTTPClient, options.relayClientTLS, options.dns)
 		process.mu.Lock()
 		process.err = err
 		process.mu.Unlock()
@@ -309,8 +322,9 @@ func unusedUDPAddress(t *testing.T) string {
 func splitTestConfig(role tnldconfig.Role, metricsAddress string) tnldconfig.Config {
 	return tnldconfig.Config{
 		Role: role, MetricsListen: metricsAddress,
-		PublicURLCertificateWorkers: 4,
-		ClientHelloConnectionLimit:  1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
+		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
+		PublicURLCertificateWorkers:      4,
+		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		VisitorConnectionLimit: 100, PublisherConnectionLimit: 10,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,

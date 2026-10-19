@@ -6,127 +6,145 @@ import (
 )
 
 const (
-	InvalidControlURL                 Reason = "TNL_CLIENT_INVALID_CONTROL_URL"
-	InvalidControlPort                Reason = "TNL_CLIENT_INVALID_CONTROL_PORT"
-	InvalidAuthorityURL               Reason = "TNL_CLIENT_INVALID_AUTHORITY_URL"
-	InvalidTarget                     Reason = "TNL_CLIENT_INVALID_TARGET"
-	MissingTarget                     Reason = "TNL_CLIENT_MISSING_TARGET"
-	InvalidCommand                    Reason = "TNL_CLIENT_INVALID_COMMAND"
-	AppReadinessTimeout               Reason = "TNL_CLIENT_APP_READINESS_TIMEOUT"
-	AppCursorExpired                  Reason = "TNL_CLIENT_APP_CURSOR_EXPIRED"
-	OutputUnavailable                 Reason = "TNL_CLIENT_OUTPUT_UNAVAILABLE"
-	InitFailed                        Reason = "TNL_CLIENT_INIT_FAILED"
-	TunnelUnavailable                 Reason = "TNL_CLIENT_TUNNEL_UNAVAILABLE"
-	TeamUnavailable                   Reason = "TNL_CLIENT_TEAM_UNAVAILABLE"
-	DomainUnavailable                 Reason = "TNL_CLIENT_DOMAIN_UNAVAILABLE"
-	AdminUnavailable                  Reason = "TNL_CLIENT_ADMIN_UNAVAILABLE"
-	ServiceNotConfigured              Reason = "TNL_CLIENT_SERVICE_NOT_CONFIGURED"
-	InvalidTunnelFlags                Reason = "TNL_CLIENT_INVALID_TUNNEL_FLAGS"
-	DemoTargetNotAllowed              Reason = "TNL_CLIENT_DEMO_TARGET_NOT_ALLOWED"
-	DemoConfigNotUsed                 Reason = "TNL_CLIENT_DEMO_CONFIG_NOT_USED"
-	DemoURLManaged                    Reason = "TNL_CLIENT_DEMO_URL_MANAGED"
-	DemoMustBeEphemeral               Reason = "TNL_CLIENT_DEMO_MUST_BE_EPHEMERAL"
-	DemoLocalServiceUnavailable       Reason = "TNL_CLIENT_DEMO_LOCAL_SERVICE_UNAVAILABLE"
-	ProjectConfigMissing              Reason = "TNL_CLIENT_PROJECT_CONFIG_MISSING"
-	ClientStateLocked                 Reason = "TNL_CLIENT_STATE_LOCKED"
-	ClientStateUnavailable            Reason = "TNL_CLIENT_STATE_UNAVAILABLE"
-	GuestSessionInvalid               Reason = "TNL_CLIENT_GUEST_SESSION_INVALID"
-	CurrentDirectoryUnavailable       Reason = "TNL_CLIENT_CURRENT_DIRECTORY_UNAVAILABLE"
-	TeamNotFound                      Reason = "TNL_CLIENT_TEAM_NOT_FOUND"
-	TeamSelectionAmbiguous            Reason = "TNL_CLIENT_TEAM_SELECTION_AMBIGUOUS"
-	DomainNotAvailable                Reason = "TNL_CLIENT_DOMAIN_NOT_AVAILABLE"
-	DomainNotReady                    Reason = "TNL_CLIENT_DOMAIN_NOT_READY"
-	CustomDomainsDisabled             Reason = "TNL_CLIENT_CUSTOM_DOMAINS_DISABLED"
-	MemberHostnameDepthExceeded       Reason = "TNL_CLIENT_MEMBER_HOSTNAME_DEPTH_EXCEEDED"
-	InvalidDomainName                 Reason = "TNL_CLIENT_INVALID_DOMAIN_NAME"
-	LoginTokenInvalid                 Reason = "TNL_CLIENT_LOGIN_TOKEN_INVALID"
-	LoginTerminalRequired             Reason = "TNL_CLIENT_LOGIN_TERMINAL_REQUIRED"
-	ProjectConfigInvalid              Reason = "TNL_CLIENT_PROJECT_CONFIG_INVALID"
-	AliasOwned                        Reason = "TNL_CLIENT_ALIAS_OWNED"
-	AliasReceiverUnready              Reason = "TNL_CLIENT_ALIAS_RECEIVER_UNREADY"
-	AliasNotSelected                  Reason = "TNL_CLIENT_ALIAS_NOT_SELECTED"
-	AliasPolicyConflict               Reason = "TNL_CLIENT_ALIAS_POLICY_CONFLICT"
-	WebhookOwned                      Reason = "TNL_CLIENT_WEBHOOK_OWNED"
-	WebhookReceiverUnready            Reason = "TNL_CLIENT_WEBHOOK_RECEIVER_UNREADY"
-	WebhookNotSelected                Reason = "TNL_CLIENT_WEBHOOK_NOT_SELECTED"
-	IntegrationURLNotReady            Reason = "TNL_CLIENT_INTEGRATION_URL_NOT_READY"
-	IntegrationURLLeaseExpired        Reason = "TNL_CLIENT_INTEGRATION_URL_LEASE_EXPIRED"
-	WebhookNoReadyReceivers           Reason = "TNL_CLIENT_WEBHOOK_NO_READY_RECEIVERS"
-	WebhookOwnerMissing               Reason = "TNL_CLIENT_WEBHOOK_OWNER_MISSING"
-	WebhookOwnerUnready               Reason = "TNL_CLIENT_WEBHOOK_OWNER_UNREADY"
-	WebhookPolicyConflict             Reason = "TNL_CLIENT_WEBHOOK_POLICY_CONFLICT"
-	InitPackageManager                Reason = "TNL_CLIENT_INIT_PACKAGE_MANAGER"
-	InitFramework                     Reason = "TNL_CLIENT_INIT_FRAMEWORK"
-	InvalidSetupInput                 Reason = "TNL_CLIENT_INVALID_SETUP_INPUT"
-	FeedbackInputInvalid              Reason = "TNL_CLIENT_FEEDBACK_INPUT_INVALID"
-	ShareInputInvalid                 Reason = "TNL_CLIENT_SHARE_INPUT_INVALID"
-	PreviewNotSaved                   Reason = "TNL_CLIENT_PREVIEW_NOT_SAVED"
-	PreviewStateConflict              Reason = "TNL_CLIENT_PREVIEW_STATE_CONFLICT"
-	BrowserOpenFailed                 Reason = "TNL_CLIENT_BROWSER_OPEN_FAILED"
-	TransportUnavailable              Reason = "TNL_CLIENT_TRANSPORT_UNAVAILABLE"
-	TransportFallback                 Reason = "TNL_CLIENT_TRANSPORT_FALLBACK"
-	Authentication                    Reason = "TNL_CLIENT_AUTHENTICATION_REQUIRED"
-	AuthRecoveryRequired              Reason = "TNL_CLIENT_AUTH_RECOVERY_REQUIRED"
-	AuthWaitTimeout                   Reason = "TNL_CLIENT_AUTH_WAIT_TIMEOUT"
-	AuthOperationNotFound             Reason = "TNL_CLIENT_AUTH_OPERATION_NOT_FOUND"
-	AuthCancelled                     Reason = "TNL_CLIENT_AUTH_CANCELLED"
-	AuthDenied                        Reason = "TNL_CLIENT_AUTH_DENIED"
-	AuthExpired                       Reason = "TNL_CLIENT_AUTH_EXPIRED"
-	AuthMethodUnavailable             Reason = "TNL_CLIENT_AUTH_METHOD_UNAVAILABLE"
-	AuthProviderUnavailable           Reason = "TNL_CLIENT_AUTH_PROVIDER_UNAVAILABLE"
-	ServerResourceNotFound            Reason = "TNL_CLIENT_SERVER_RESOURCE_NOT_FOUND"
-	ServerConflict                    Reason = "TNL_CLIENT_SERVER_CONFLICT"
-	ServerDenied                      Reason = "TNL_CLIENT_SERVER_DENIED"
-	ServerUnavailable                 Reason = "TNL_CLIENT_SERVER_UNAVAILABLE"
-	ServerRateLimited                 Reason = "TNL_CLIENT_SERVER_RATE_LIMITED"
-	GuestTrialExhausted               Reason = "TNL_CLIENT_GUEST_TRIAL_EXHAUSTED"
-	GuestDemoOnly                     Reason = "TNL_CLIENT_GUEST_DEMO_ONLY"
-	GuestIssuanceLimited              Reason = "TNL_CLIENT_GUEST_ISSUANCE_LIMITED"
-	GuestSignInRequired               Reason = "TNL_CLIENT_GUEST_SIGN_IN_REQUIRED"
-	GuestIPChanged                    Reason = "TNL_CLIENT_GUEST_IP_CHANGED"
-	ServerResponseInvalid             Reason = "TNL_CLIENT_SERVER_RESPONSE_INVALID"
-	ServerRequestInvalid              Reason = "TNL_CLIENT_SERVER_REQUEST_INVALID"
-	DNSPending                        Reason = "TNL_CLIENT_DNS_PENDING"
-	CertificateUnavailable            Reason = "TNL_CLIENT_CERTIFICATE_UNAVAILABLE"
-	RelayLeaseStale                   Reason = "relay.lease_stale"
-	InvalidRole                       Reason = "server.invalid_role"
-	DatabaseUnavailable               Reason = "server.database_unavailable"
-	ServerConfigInvalid               Reason = "server.config_invalid"
-	ServerListenAddressInvalid        Reason = "server.listen_address_invalid"
-	ServerDatabaseURLInvalid          Reason = "server.database_url_invalid"
-	ServerStorageKeyInvalid           Reason = "server.storage_key_invalid"
-	ServerACMEInvalid                 Reason = "server.acme_invalid"
-	ServerOIDCInvalid                 Reason = "server.oidc_invalid"
-	ServerDNSConfigInvalid            Reason = "server.dns_config_invalid"
-	ServerUsageConfigInvalid          Reason = "server.usage_config_invalid"
-	ServerEmailConfigInvalid          Reason = "server.email_config_invalid"
-	ServerWebsiteConfigInvalid        Reason = "server.website_config_invalid"
-	ServerClusterSecretInvalid        Reason = "server.cluster_secret_invalid"
-	ServerLoginTokenInvalid           Reason = "server.login_token_invalid"
-	ServerConfigFileInvalid           Reason = "server.config_file_invalid"
-	ServerCommandInvalid              Reason = "server.command_invalid"
-	DirectDatabaseURLMissing          Reason = "server.direct_database_url_missing"
-	ServerMigrationFailed             Reason = "server.migration_failed"
-	ServerStartupFailed               Reason = "server.startup_failed"
-	ServerOutputUnavailable           Reason = "server.output_unavailable"
-	ServerWorkerFailed                Reason = "server.worker_failed"
-	ServerIngressFailed               Reason = "server.ingress_failed"
-	ServerRelayFailed                 Reason = "server.relay_failed"
-	ServerConnectionFailed            Reason = "server.connection_failed"
-	ServerCertificateFailed           Reason = "server.certificate_failed"
-	ServerCertificateRejected         Reason = "server.certificate_rejected"
-	ServerDNSFailed                   Reason = "server.dns_failed"
-	ServerDNSConflict                 Reason = "server.dns_conflict"
-	ServerUsageDeliveryFailed         Reason = "server.usage_delivery_failed"
-	ServerEmailDeliveryFailed         Reason = "server.email_delivery_failed"
-	ServerEmailLeaseStale             Reason = "server.email_lease_stale"
-	ServerStoredStateInvalid          Reason = "server.stored_state_invalid"
-	ServerAPIInternal                 Reason = "server.api_internal"
-	ServerIdentityProviderUnavailable Reason = "server.identity_provider_unavailable"
-	ServerAuthorityUnavailable        Reason = "server.authority_unavailable"
-	BenchmarkInputInvalid             Reason = "benchmark.input_invalid"
-	BenchmarkMeasurementFailed        Reason = "benchmark.measurement_failed"
-	Unexpected                        Reason = "internal.unexpected"
+	InvalidControlURL                   Reason = "TNL_CLIENT_INVALID_CONTROL_URL"
+	InvalidControlPort                  Reason = "TNL_CLIENT_INVALID_CONTROL_PORT"
+	InvalidAuthorityURL                 Reason = "TNL_CLIENT_INVALID_AUTHORITY_URL"
+	InvalidTarget                       Reason = "TNL_CLIENT_INVALID_TARGET"
+	TargetTLSRejected                   Reason = "TNL_CLIENT_TARGET_TLS_REJECTED"
+	TargetUnavailable                   Reason = "TNL_CLIENT_TARGET_UNAVAILABLE"
+	MissingTarget                       Reason = "TNL_CLIENT_MISSING_TARGET"
+	InvalidCommand                      Reason = "TNL_CLIENT_INVALID_COMMAND"
+	AppReadinessTimeout                 Reason = "TNL_CLIENT_APP_READINESS_TIMEOUT"
+	AppCursorExpired                    Reason = "TNL_CLIENT_APP_CURSOR_EXPIRED"
+	OutputUnavailable                   Reason = "TNL_CLIENT_OUTPUT_UNAVAILABLE"
+	InitFailed                          Reason = "TNL_CLIENT_INIT_FAILED"
+	TunnelUnavailable                   Reason = "TNL_CLIENT_TUNNEL_UNAVAILABLE"
+	TeamUnavailable                     Reason = "TNL_CLIENT_TEAM_UNAVAILABLE"
+	DomainUnavailable                   Reason = "TNL_CLIENT_DOMAIN_UNAVAILABLE"
+	AdminUnavailable                    Reason = "TNL_CLIENT_ADMIN_UNAVAILABLE"
+	ServiceNotConfigured                Reason = "TNL_CLIENT_SERVICE_NOT_CONFIGURED"
+	InvalidTunnelFlags                  Reason = "TNL_CLIENT_INVALID_TUNNEL_FLAGS"
+	ConnectModeInvalid                  Reason = "TNL_CLIENT_CONNECT_MODE_INVALID"
+	ConnectNativeModeRequired           Reason = "TNL_CLIENT_CONNECT_NATIVE_MODE_REQUIRED"
+	ConnectStdioProtocolInvalid         Reason = "TNL_CLIENT_CONNECT_STDIO_PROTOCOL_INVALID"
+	ConnectOutputModeInvalid            Reason = "TNL_CLIENT_CONNECT_OUTPUT_MODE_INVALID"
+	ConnectProtocolMismatch             Reason = "TNL_CLIENT_CONNECT_PROTOCOL_MISMATCH"
+	ConnectServerRootsUnavailable       Reason = "TNL_CLIENT_CONNECT_SERVER_ROOTS_UNAVAILABLE"
+	ConnectAccessRequired               Reason = "TNL_CLIENT_CONNECT_ACCESS_REQUIRED"
+	DemoTargetNotAllowed                Reason = "TNL_CLIENT_DEMO_TARGET_NOT_ALLOWED"
+	DemoConfigNotUsed                   Reason = "TNL_CLIENT_DEMO_CONFIG_NOT_USED"
+	DemoURLManaged                      Reason = "TNL_CLIENT_DEMO_URL_MANAGED"
+	DemoMustBeEphemeral                 Reason = "TNL_CLIENT_DEMO_MUST_BE_EPHEMERAL"
+	DemoLocalServiceUnavailable         Reason = "TNL_CLIENT_DEMO_LOCAL_SERVICE_UNAVAILABLE"
+	ProjectConfigMissing                Reason = "TNL_CLIENT_PROJECT_CONFIG_MISSING"
+	ClientStateLocked                   Reason = "TNL_CLIENT_STATE_LOCKED"
+	ClientStateUnavailable              Reason = "TNL_CLIENT_STATE_UNAVAILABLE"
+	PublisherIdentityStateUnavailable   Reason = "TNL_CLIENT_PUBLISHER_IDENTITY_STATE_UNAVAILABLE"
+	PublisherIdentityStateInvalid       Reason = "TNL_CLIENT_PUBLISHER_IDENTITY_STATE_INVALID"
+	PublisherCertificateStateMissing    Reason = "TNL_CLIENT_PUBLISHER_CERTIFICATE_STATE_MISSING"
+	ServiceNotInstalled                 Reason = "TNL_CLIENT_SERVICE_NOT_INSTALLED"
+	InstalledPublisherSelectionMissing  Reason = "TNL_CLIENT_INSTALLED_PUBLISHER_SELECTION_MISSING"
+	InstalledServiceIdentityUnavailable Reason = "TNL_CLIENT_INSTALLED_SERVICE_IDENTITY_UNAVAILABLE"
+	PrivatePublisherUnavailable         Reason = "TNL_CLIENT_PRIVATE_PUBLISHER_UNAVAILABLE"
+	LocalPrivateServiceUnavailable      Reason = "TNL_CLIENT_LOCAL_PRIVATE_SERVICE_UNAVAILABLE"
+	InstalledTargetMissing              Reason = "TNL_CLIENT_INSTALLED_TARGET_MISSING"
+	InstalledJobAmbiguous               Reason = "TNL_CLIENT_INSTALLED_JOB_AMBIGUOUS"
+	DetachedNotFound                    Reason = "TNL_CLIENT_DETACHED_NOT_FOUND"
+	DetachedStartFailed                 Reason = "TNL_CLIENT_DETACHED_START_FAILED"
+	GuestSessionInvalid                 Reason = "TNL_CLIENT_GUEST_SESSION_INVALID"
+	CurrentDirectoryUnavailable         Reason = "TNL_CLIENT_CURRENT_DIRECTORY_UNAVAILABLE"
+	TeamNotFound                        Reason = "TNL_CLIENT_TEAM_NOT_FOUND"
+	TeamSelectionAmbiguous              Reason = "TNL_CLIENT_TEAM_SELECTION_AMBIGUOUS"
+	DomainNotAvailable                  Reason = "TNL_CLIENT_DOMAIN_NOT_AVAILABLE"
+	DomainNotReady                      Reason = "TNL_CLIENT_DOMAIN_NOT_READY"
+	CustomDomainsDisabled               Reason = "TNL_CLIENT_CUSTOM_DOMAINS_DISABLED"
+	MemberHostnameDepthExceeded         Reason = "TNL_CLIENT_MEMBER_HOSTNAME_DEPTH_EXCEEDED"
+	InvalidDomainName                   Reason = "TNL_CLIENT_INVALID_DOMAIN_NAME"
+	ProjectConfigInvalid                Reason = "TNL_CLIENT_PROJECT_CONFIG_INVALID"
+	AliasOwned                          Reason = "TNL_CLIENT_ALIAS_OWNED"
+	AliasReceiverUnready                Reason = "TNL_CLIENT_ALIAS_RECEIVER_UNREADY"
+	AliasNotSelected                    Reason = "TNL_CLIENT_ALIAS_NOT_SELECTED"
+	AliasPolicyConflict                 Reason = "TNL_CLIENT_ALIAS_POLICY_CONFLICT"
+	WebhookOwned                        Reason = "TNL_CLIENT_WEBHOOK_OWNED"
+	WebhookReceiverUnready              Reason = "TNL_CLIENT_WEBHOOK_RECEIVER_UNREADY"
+	WebhookNotSelected                  Reason = "TNL_CLIENT_WEBHOOK_NOT_SELECTED"
+	IntegrationURLNotReady              Reason = "TNL_CLIENT_INTEGRATION_URL_NOT_READY"
+	IntegrationURLLeaseExpired          Reason = "TNL_CLIENT_INTEGRATION_URL_LEASE_EXPIRED"
+	WebhookNoReadyReceivers             Reason = "TNL_CLIENT_WEBHOOK_NO_READY_RECEIVERS"
+	WebhookOwnerMissing                 Reason = "TNL_CLIENT_WEBHOOK_OWNER_MISSING"
+	WebhookOwnerUnready                 Reason = "TNL_CLIENT_WEBHOOK_OWNER_UNREADY"
+	WebhookPolicyConflict               Reason = "TNL_CLIENT_WEBHOOK_POLICY_CONFLICT"
+	InitPackageManager                  Reason = "TNL_CLIENT_INIT_PACKAGE_MANAGER"
+	InitFramework                       Reason = "TNL_CLIENT_INIT_FRAMEWORK"
+	InvalidSetupInput                   Reason = "TNL_CLIENT_INVALID_SETUP_INPUT"
+	FeedbackInputInvalid                Reason = "TNL_CLIENT_FEEDBACK_INPUT_INVALID"
+	ShareInputInvalid                   Reason = "TNL_CLIENT_SHARE_INPUT_INVALID"
+	PreviewNotSaved                     Reason = "TNL_CLIENT_PREVIEW_NOT_SAVED"
+	PreviewStateConflict                Reason = "TNL_CLIENT_PREVIEW_STATE_CONFLICT"
+	BrowserOpenFailed                   Reason = "TNL_CLIENT_BROWSER_OPEN_FAILED"
+	TransportUnavailable                Reason = "TNL_CLIENT_TRANSPORT_UNAVAILABLE"
+	TransportFallback                   Reason = "TNL_CLIENT_TRANSPORT_FALLBACK"
+	Authentication                      Reason = "TNL_CLIENT_AUTHENTICATION_REQUIRED"
+	AuthRecoveryRequired                Reason = "TNL_CLIENT_AUTH_RECOVERY_REQUIRED"
+	AuthWaitTimeout                     Reason = "TNL_CLIENT_AUTH_WAIT_TIMEOUT"
+	AuthOperationNotFound               Reason = "TNL_CLIENT_AUTH_OPERATION_NOT_FOUND"
+	AuthCancelled                       Reason = "TNL_CLIENT_AUTH_CANCELLED"
+	AuthDenied                          Reason = "TNL_CLIENT_AUTH_DENIED"
+	AuthExpired                         Reason = "TNL_CLIENT_AUTH_EXPIRED"
+	AuthMethodUnavailable               Reason = "TNL_CLIENT_AUTH_METHOD_UNAVAILABLE"
+	AuthProviderUnavailable             Reason = "TNL_CLIENT_AUTH_PROVIDER_UNAVAILABLE"
+	ServerResourceNotFound              Reason = "TNL_CLIENT_SERVER_RESOURCE_NOT_FOUND"
+	ServerConflict                      Reason = "TNL_CLIENT_SERVER_CONFLICT"
+	ServerDenied                        Reason = "TNL_CLIENT_SERVER_DENIED"
+	ServerUnavailable                   Reason = "TNL_CLIENT_SERVER_UNAVAILABLE"
+	ServerRateLimited                   Reason = "TNL_CLIENT_SERVER_RATE_LIMITED"
+	GuestTrialExhausted                 Reason = "TNL_CLIENT_GUEST_TRIAL_EXHAUSTED"
+	GuestDemoOnly                       Reason = "TNL_CLIENT_GUEST_DEMO_ONLY"
+	GuestIssuanceLimited                Reason = "TNL_CLIENT_GUEST_ISSUANCE_LIMITED"
+	GuestSignInRequired                 Reason = "TNL_CLIENT_GUEST_SIGN_IN_REQUIRED"
+	GuestIPChanged                      Reason = "TNL_CLIENT_GUEST_IP_CHANGED"
+	ServerResponseInvalid               Reason = "TNL_CLIENT_SERVER_RESPONSE_INVALID"
+	ServerRequestInvalid                Reason = "TNL_CLIENT_SERVER_REQUEST_INVALID"
+	DNSPending                          Reason = "TNL_CLIENT_DNS_PENDING"
+	CertificateUnavailable              Reason = "TNL_CLIENT_CERTIFICATE_UNAVAILABLE"
+	RelayLeaseStale                     Reason = "relay.lease_stale"
+	InvalidRole                         Reason = "server.invalid_role"
+	DatabaseUnavailable                 Reason = "server.database_unavailable"
+	ServerConfigInvalid                 Reason = "server.config_invalid"
+	ServerListenAddressInvalid          Reason = "server.listen_address_invalid"
+	ServerDatabaseURLInvalid            Reason = "server.database_url_invalid"
+	ServerStorageKeyInvalid             Reason = "server.storage_key_invalid"
+	ServerACMEInvalid                   Reason = "server.acme_invalid"
+	ServerOIDCInvalid                   Reason = "server.oidc_invalid"
+	ServerDNSConfigInvalid              Reason = "server.dns_config_invalid"
+	ServerUsageConfigInvalid            Reason = "server.usage_config_invalid"
+	ServerEmailConfigInvalid            Reason = "server.email_config_invalid"
+	ServerWebsiteConfigInvalid          Reason = "server.website_config_invalid"
+	ServerClusterSecretInvalid          Reason = "server.cluster_secret_invalid"
+	ServerConfigFileInvalid             Reason = "server.config_file_invalid"
+	ServerCommandInvalid                Reason = "server.command_invalid"
+	DirectDatabaseURLMissing            Reason = "server.direct_database_url_missing"
+	ServerMigrationFailed               Reason = "server.migration_failed"
+	ServerStartupFailed                 Reason = "server.startup_failed"
+	ServerOutputUnavailable             Reason = "server.output_unavailable"
+	ServerWorkerFailed                  Reason = "server.worker_failed"
+	ServerIngressFailed                 Reason = "server.ingress_failed"
+	ServerRelayFailed                   Reason = "server.relay_failed"
+	ServerConnectionFailed              Reason = "server.connection_failed"
+	ServerCertificateFailed             Reason = "server.certificate_failed"
+	ServerCertificateRejected           Reason = "server.certificate_rejected"
+	ServerDNSFailed                     Reason = "server.dns_failed"
+	ServerDNSConflict                   Reason = "server.dns_conflict"
+	ServerUsageDeliveryFailed           Reason = "server.usage_delivery_failed"
+	ServerEmailDeliveryFailed           Reason = "server.email_delivery_failed"
+	ServerEmailLeaseStale               Reason = "server.email_lease_stale"
+	ServerStoredStateInvalid            Reason = "server.stored_state_invalid"
+	ServerAPIInternal                   Reason = "server.api_internal"
+	ServerIdentityProviderUnavailable   Reason = "server.identity_provider_unavailable"
+	ServerAuthorityUnavailable          Reason = "server.authority_unavailable"
+	BenchmarkInputInvalid               Reason = "benchmark.input_invalid"
+	BenchmarkMeasurementFailed          Reason = "benchmark.measurement_failed"
+	Unexpected                          Reason = "internal.unexpected"
 )
 
 const ServerControlConnectionFailed Reason = "server.control_connection_failed"
@@ -137,6 +155,14 @@ const (
 )
 
 var definitions = map[Reason]Definition{
+	TargetTLSRejected: {
+		Class: Invalid, Message: "target TLS could not be verified or negotiated",
+		Action: "check the target protocol, target.tls.server_name, and target.tls.ca_file, then retry", Retry: RetryAfterChange,
+	},
+	TargetUnavailable: {
+		Class: Unavailable, Message: "the publisher could not reach the target",
+		Action: "check the target listener and publisher network connection, then retry", Retry: RetryLater,
+	},
 	AppReadinessTimeout: {Class: Unavailable, Message: "public readiness checks timed out", Action: "check tnl status and the app response, then run tnl wait again", Retry: RetryLater},
 	AppCursorExpired:    {Class: Invalid, Message: "the local event cursor has expired", Action: "run tnl watch without --after to follow current events", Retry: RetryAfterChange},
 	InvalidControlURL: {
@@ -195,6 +221,34 @@ var definitions = map[Reason]Definition{
 		Class: Invalid, Message: "tunnel options conflict or contain an invalid value",
 		Action: "check --public-url, --name, --allow-ip, and --concurrency", Retry: RetryAfterChange,
 	},
+	ConnectModeInvalid: {
+		Class: Invalid, Message: "connect options select incompatible modes",
+		Action: "select one of --foreground, --detach, or --install; --stdio takes none of these, --listen, or --output=json", Retry: RetryAfterChange,
+	},
+	ConnectNativeModeRequired: {
+		Class: Invalid, Message: "public HTTP and database connections print native instructions and exit",
+		Action: "run tnl connect NAME without --install, --detach, --foreground, or --listen", Retry: RetryAfterChange,
+	},
+	ConnectStdioProtocolInvalid: {
+		Class: Invalid, Message: "--stdio requires a service with the approved tcp protocol",
+		Action: "omit --stdio for native HTTP and database clients; no flag changes the service's authentication", Retry: RetryAfterChange,
+	},
+	ConnectOutputModeInvalid: {
+		Class: Invalid, Message: "--output=json is only available for finite public HTTP and database instructions",
+		Action: "omit --output=json when running a listener or an opaque stream", Retry: RetryAfterChange,
+	},
+	ConnectProtocolMismatch: {
+		Class: Invalid, Message: "--protocol differs from the approved service protocol",
+		Action: "omit --protocol to use trusted service metadata; no flag changes the service's authentication", Retry: RetryAfterChange,
+	},
+	ConnectServerRootsUnavailable: {
+		Class: NotFound, Message: "mysql needs a server CA bundle for VERIFY_IDENTITY",
+		Action: "install system CA certificates or set SSL_CERT_FILE to a trusted PEM bundle, then run tnl connect again", Retry: RetryAfterChange,
+	},
+	ConnectAccessRequired: {
+		Class: Forbidden, Message: "the current sign-in or device cannot access this service",
+		Action: "run tnl auth login --team <team> to refresh company sign-in, and check device and service access before reconnecting", Retry: RetryAfterChange,
+	},
 	DemoTargetNotAllowed: {
 		Class: Invalid, Message: "the built-in demo starts its own local service",
 		Action: "remove the service or target argument from tnl publish --demo", Retry: RetryAfterChange,
@@ -228,6 +282,54 @@ var definitions = map[Reason]Definition{
 		Action: "check the state directory and its permissions, then retry", Retry: RetryAfterChange,
 		Cases: []Case{{ID: "permission-denied", Description: "tnl cannot access the local client state directory.",
 			Action: "check permissions on the state directory, then retry", DiagramDetail: "state directory access denied"}},
+	},
+	PublisherIdentityStateUnavailable: {
+		Class: Unavailable, Message: "tnl could not use the durable publisher identity files",
+		Action: "check the identity directory's mount and available space, then retry", Retry: RetryLater,
+	},
+	PublisherIdentityStateInvalid: {
+		Class: Invalid, Message: "the durable publisher identity files are unsafe, invalid or belong to another scope",
+		Action: "check the identity directory, permissions and replica ownership, or restore its valid files", Retry: RetryAfterChange,
+	},
+	PublisherCertificateStateMissing: {
+		Class: NotFound, Message: "this replica's durable publisher certificate state is missing",
+		Action: "restore this replica's identity directory and select it with --identity-dir", Retry: RetryAfterChange,
+	},
+	ServiceNotInstalled: {
+		Class: NotFound, Message: "the selected tnl service is not installed or running",
+		Action: "log into your user session and run tnl service install, or run sudo tnl service install --system for headless publications", Retry: RetryAfterChange,
+	},
+	InstalledPublisherSelectionMissing: {
+		Class: NotFound, Message: "this service has no saved scoped publisher grant",
+		Action: "publish the service once to save its public URL, then enroll a publisher for that URL and retry --install with --enroll-key", Retry: RetryAfterChange,
+	},
+	InstalledServiceIdentityUnavailable: {
+		Class: Unavailable, Message: "tnl could not determine the configured service's exact public hostname and team",
+		Action: "sign in to resolve the selected team and domain, or configure an exact tunnel.public_url and select its publisher explicitly", Retry: RetryAfterChange,
+	},
+	PrivatePublisherUnavailable: {
+		Class: Unavailable, Message: "the private TCP publisher is not connected to the relay service yet",
+		Action: "wait for private publisher relay support before installing this service", Retry: RetryAfterChange,
+	},
+	LocalPrivateServiceUnavailable: {
+		Class: NotFound, Message: "the local private service is not available in this worktree",
+		Action: "start the app or run tnl publish with the configured service key, check visitor access, then retry tnl connect", Retry: RetryAfterChange,
+	},
+	InstalledTargetMissing: {
+		Class: Invalid, Message: "the configured service has no fixed target to install",
+		Action: "set this service's target to an address that remains valid after restart, then retry --install", Retry: RetryAfterChange,
+	},
+	InstalledJobAmbiguous: {
+		Class: Conflict, Message: "more than one installed publication has this name",
+		Action: "run tnl service list and use the job ID for start, stop, or remove", Retry: RetryAfterChange,
+	},
+	DetachedNotFound: {
+		Class: NotFound, Message: "the detached publication is not running",
+		Action: "run tnl detached list to see current publications", Retry: RetryAfterChange,
+	},
+	DetachedStartFailed: {
+		Class: Unavailable, Message: "the detached publication did not start",
+		Action: "run tnl publish without --detach to see the failure, then retry", Retry: RetryAfterChange,
 	},
 	GuestSessionInvalid: {
 		Class: Invalid, Message: "the saved guest demo state is invalid",
@@ -264,14 +366,6 @@ var definitions = map[Reason]Definition{
 	MemberHostnameDepthExceeded: {
 		Class: Forbidden, Message: "this hostname exceeds the server's member URL depth limit on its managed domain",
 		Action: "use fewer labels beneath your namespace", Retry: RetryAfterChange,
-	},
-	LoginTokenInvalid: {
-		Class: Unauthenticated, Message: "the login token is invalid",
-		Action: "get a new login token for this server and retry", Retry: RetryAfterChange,
-	},
-	LoginTerminalRequired: {
-		Class: Invalid, Message: "login-token authentication requires an interactive terminal",
-		Action: "run tnl auth login --login-token in a terminal or supply TNL_LOGIN_TOKEN", Retry: RetryAfterChange,
 	},
 	ProjectConfigInvalid: {
 		Class: Invalid, Message: "tnl could not use the project configuration",
@@ -522,10 +616,6 @@ var definitions = map[Reason]Definition{
 	ServerClusterSecretInvalid: {
 		Class: Invalid, Message: "cluster secret configuration is invalid for this role",
 		Action: "check TNLD_CLUSTER_SECRET and the selected role", Retry: RetryAfterChange,
-	},
-	ServerLoginTokenInvalid: {
-		Class: Invalid, Message: "built-in authority login token is missing or invalid",
-		Action: "configure TNLD_LOGIN_TOKEN", Retry: RetryAfterChange,
 	},
 	ServerConfigFileInvalid: {
 		Class: Invalid, Message: "tnld could not read the configuration file",

@@ -32,10 +32,6 @@ func acmeAccountKeyContext(accountID string) string {
 	return "control.acme_accounts.account_key_ciphertext\x00" + accountID
 }
 
-func controlTLSCacheContext(directoryURL, cacheKey string) string {
-	return "control.control_tls_certificate_cache.cache_ciphertext\x00" + directoryURL + "\x00" + cacheKey
-}
-
 func relayTransportPrivateKeyContext(relayServiceID string) string {
 	return "control.relay_services.transport_private_key_ciphertext\x00" + relayServiceID
 }

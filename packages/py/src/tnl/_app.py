@@ -71,46 +71,45 @@ class PreparedService:
         ):
             raise InvalidResponse()
         name = service_name(assignment.get("service"))
-        host = hostname(assignment.get("hostname"))
-        url = f"https://{host}"
+        private_service = assignment.get("hostname") == "" and assignment.get("public_url") == ""
+        host = "" if private_service else hostname(assignment.get("hostname"))
+        url = "" if private_service else f"https://{host}"
         project = object_value(
             assignment.get("project"),
             {"namespace", "dev", "services", "oauth", "webhooks", "aliases", "worktree"},
         )
-        hostname(project.get("namespace"))
         services = project.get("services")
-        if (
-            not isinstance(services, dict)
-            or not services
-            or len(services) > 32
-            or project.get("dev") is not True
-        ):
+        if not isinstance(services, dict) or len(services) > 32 or project.get("dev") is not True:
             raise InvalidResponse()
+        if (
+            project.get("namespace") != ""
+            or services
+            or any(key in project for key in ("oauth", "webhooks", "aliases"))
+        ):
+            hostname(project.get("namespace"))
         for key, raw in services.items():
             service_name(key)
-            item = object_value(
-                raw, {"protocol", "namespace", "hostname", "url", "port", "address", "paths"}
-            )
+            item = object_value(raw, {"protocol", "namespace", "hostname", "url", "paths"})
             hostname(item.get("namespace"))
             item_host = hostname(item.get("hostname"))
-            if item.get("protocol") == "http":
-                if item.get("url") != f"https://{item_host}" or "port" in item or "address" in item:
-                    raise InvalidResponse()
-            elif (
-                item.get("protocol") not in ("postgres", "mysql", "redis", "ssh")
-                or type(item.get("port")) is not int
-            ):
+            if item.get("protocol") != "http" or item.get("url") != f"https://{item_host}":
                 raise InvalidResponse()
         own = services.get(name)
         if (
             name != endpoint.service
             or assignment.get("public_url") != url
-            or not isinstance(own, dict)
-            or own.get("protocol") != "http"
-            or own.get("hostname") != host
+            or (private_service and own is not None)
+            or (
+                not private_service
+                and (
+                    not isinstance(own, dict)
+                    or own.get("protocol") != "http"
+                    or own.get("hostname") != host
+                )
+            )
         ):
             raise InvalidResponse()
-        if self.public_url and (url != self.public_url or name != self.service):
+        if self.service and (url != self.public_url or name != self.service):
             await self._native.request(
                 endpoint,
                 "unregister",

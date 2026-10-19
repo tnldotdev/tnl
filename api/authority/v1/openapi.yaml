@@ -9,6 +9,294 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example
 paths:
+  /v1/service/teams/{team_id}/identity-connections:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "#/components/parameters/CompanyActorToken" }
+    get:
+      operationId: readCompanyConnections
+      summary: Read active and pending connections with current owner proof
+      security: [{ webServiceAuth: [] }]
+      responses:
+        "200":
+          description: Current nonretired connection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CompanyConnections" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: beginIdentityConnectionSetup
+      summary: Begin consent setup without changing current enforcement
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateIdentityConnectionRequest" }
+      responses:
+        "201":
+          description: Immutable team-bound connection and scoped provisioning credential
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IdentityConnectionSetup" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { name: identity_connection_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "#/components/parameters/CompanyActorToken" }
+    delete:
+      operationId: disconnectIdentityConnection
+      summary: Abort pending consent or retire an active connection
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_revision]
+              properties:
+                expected_revision: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "204": { description: Connection revision advanced and old source work fenced }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/activate:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { name: identity_connection_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "#/components/parameters/CompanyActorToken" }
+    post:
+      operationId: activateIdentityConnection
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_revision, setup_token]
+              properties:
+                expected_revision: { type: integer, format: int64, minimum: 1 }
+                setup_token: { type: string }
+      responses:
+        "200":
+          description: Consent verified; source revision advanced and provisioning token issued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IdentityConnectionSecret" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/identity-connections/{identity_connection_id}/provisioning-token:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { name: identity_connection_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "#/components/parameters/CompanyActorToken" }
+    post:
+      operationId: rotateCompanyProvisioningToken
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_revision]
+              properties:
+                expected_revision: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Old provisioning credential revoked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IdentityConnectionSecret" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/company-eligibility:
+    post:
+      operationId: provisionCompanyEligibility
+      summary: Apply one revision-fenced eligibility delta without granting roles
+      description: Requires both website authentication and the exact connection provisioning credential. Missing entries never remove members. A revision retry must have identical content.
+      security: [{ webServiceAuth: [] }]
+      parameters:
+        - { name: X-Tnl-Provisioning-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CompanyEligibilityRequest" }
+      responses:
+        "204": { description: Eligibility recorded; managed admission creates only member access }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/memberships/{membership_id}/company-decision:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { name: membership_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "#/components/parameters/CompanyActorToken" }
+    put:
+      operationId: setCompanyMembershipDecision
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [suspended, personal_account_exception]
+              properties:
+                suspended: { type: boolean }
+                personal_account_exception: { type: boolean }
+      responses:
+        "204": { description: Independent owner decision recorded and audited }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/invitations/{invitation_id}/company-decision:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { name: invitation_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "#/components/parameters/CompanyActorToken" }
+    put:
+      operationId: setCompanyInvitationException
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [personal_account_exception]
+              properties:
+                personal_account_exception: { type: boolean }
+      responses:
+        "204": { description: Pending invitation owner exception recorded }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/company-admissions:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "#/components/parameters/CompanyActorToken" }
+    get:
+      operationId: listCompanyAdmissions
+      security: [{ webServiceAuth: [] }]
+      responses:
+        "200":
+          description: Control-owned admission requests
+          content:
+            application/json:
+              schema:
+                { type: array, items: { $ref: "#/components/schemas/CompanyAdmissionRequest" } }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/service/teams/{team_id}/company-admissions/{request_id}:
+    parameters:
+      - { name: team_id, in: path, required: true, schema: { type: string } }
+      - { name: request_id, in: path, required: true, schema: { type: string } }
+      - { $ref: "#/components/parameters/CompanyActorToken" }
+    post:
+      operationId: decideCompanyAdmission
+      security: [{ webServiceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [connection_revision, decision]
+              properties:
+                connection_revision: { type: integer, format: int64 }
+                decision:
+                  {
+                    type: string,
+                    enum: [approved, denied],
+                    x-enum-varnames: [AdmissionApproved, AdmissionDenied],
+                  }
+      responses:
+        "204": { description: Current owner decision applied without role escalation }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/auth/company-admissions:
+    post:
+      operationId: requestCompanyAdmission
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [team_id, identity_connection_id, connection_revision, member_slug]
+              properties:
+                team_id: { type: string }
+                identity_connection_id: { type: string }
+                connection_revision: { type: integer, format: int64 }
+                member_slug: { type: string }
+      responses:
+        "200":
+          description: Eligible user request; managed admission may complete immediately
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CompanyAdmissionRequest" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/auth/company-intents:
+    post:
+      operationId: createCompanyLoginIntent
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [team_id]
+              properties:
+                team_id: { type: string }
+      responses:
+        "201":
+          description: Exact current company selection and control-owned OIDC callback binding
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CompanyLoginIntent" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/auth/company-intents/{intent_id}/resolve:
+    parameters:
+      - { name: intent_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: resolveCompanyLoginIntent
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CompanyIntentCredential" }
+      responses:
+        "200":
+          description: Bound selection for the issuer or control browser handler
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CompanyLoginIntent" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/company-access/recovery:
+    post:
+      operationId: recoverCompanyOwner
+      summary: Explicit audited recovery grants a personal-account exception to a nonremoved owner
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [team_id, membership_id]
+              properties:
+                team_id: { type: string }
+                membership_id: { type: string }
+      responses:
+        "204":
+          { description: Current owner or server administrator explicitly recovered this owner }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/teams/{team_id}/feedback-policy:
     parameters:
       - { name: team_id, in: path, required: true, schema: { type: string } }
@@ -39,7 +327,7 @@ paths:
         default: { $ref: "#/components/responses/Problem" }
   /v1/auth/browser-handoff:
     post:
-      operationId: issueAdminBrowserHandoff
+      operationId: issueControlBrowserHandoff
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -171,46 +459,96 @@ paths:
                 $ref: "#/components/schemas/Membership"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/auth/token:
+  /v1/auth/device:
     post:
-      operationId: exchangeLoginToken
-      summary: Exchange a login token for a control session
+      operationId: startDeviceLogin
+      summary: Start a control-owned device login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StartDeviceLoginRequest" }
+      responses:
+        "201":
+          description: Private polling credential and browser approval instructions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceLoginChallenge"
+        default:
+          $ref: "#/components/responses/Problem"
+  /v1/auth/device/poll:
+    post:
+      operationId: pollDeviceLogin
+      summary: Read a device login result; safe to retry until expiration
       security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/LoginTokenExchangeRequest"
+              $ref: "#/components/schemas/DeviceLoginCredential"
       responses:
         "200":
-          description: Control session
+          description: Pending or approved device login
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ControlSessionResponse"
+                $ref: "#/components/schemas/DeviceLoginResult"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/auth/oidc:
+  /v1/auth/device/approve:
+    get:
+      operationId: beginDeviceBrowser
+      summary: Begin browser authentication for a control-issued device code
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema: { type: string, minLength: 13, maxLength: 13 }
+      responses:
+        "302": { description: Redirect to the configured OIDC provider with state, nonce, and PKCE }
+        default: { $ref: "#/components/responses/Problem" }
     post:
-      operationId: exchangeOIDCToken
-      summary: Exchange an OIDC ID token for a control session
+      operationId: approveDeviceBrowser
+      summary: Confirm the displayed device code after browser OIDC authentication
       security: []
       requestBody:
         required: true
         content:
-          application/json:
+          application/x-www-form-urlencoded:
             schema:
-              $ref: "#/components/schemas/OIDCTokenExchangeRequest"
+              type: object
+              required: [code, binding]
+              properties:
+                code: { type: string, minLength: 13, maxLength: 13 }
+                binding: { type: string, minLength: 43, maxLength: 43 }
+      responses:
+        "200": { description: Login approved; return to the terminal }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/auth/device/callback:
+    get:
+      operationId: completeDeviceBrowser
+      summary: Redeem one state-bound authorization code and show explicit device confirmation
+      security: []
+      parameters:
+        - {
+            name: state,
+            in: query,
+            required: true,
+            schema: { type: string, minLength: 43, maxLength: 43 },
+          }
+        - { name: code, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: error, in: query, schema: { type: string, maxLength: 128 } }
       responses:
         "200":
-          description: Control session
+          description: Device confirmation form bound to the authenticated browser
           content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ControlSessionResponse"
-        default:
-          $ref: "#/components/responses/Problem"
+            text/html:
+              schema: { type: string }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/auth/refresh:
     post:
       operationId: refreshControlSession
@@ -231,24 +569,20 @@ paths:
                 $ref: "#/components/schemas/ControlSessionResponse"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/auth/browser:
+  /v1/auth/device/cancel:
     post:
-      operationId: exchangeBrowserOIDCToken
-      summary: Exchange a browser OIDC ID token for a control session
+      operationId: cancelDeviceLogin
+      summary: Cancel an attempt and revoke any session it issued
       security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/OIDCTokenExchangeRequest"
+              $ref: "#/components/schemas/DeviceLoginCredential"
       responses:
-        "200":
-          description: Browser control session
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ControlSessionResponse"
+        "204":
+          description: Attempt cancelled
         default:
           $ref: "#/components/responses/Problem"
   /v1/auth/logout:
@@ -543,6 +877,12 @@ components:
       scheme: bearer
       bearerFormat: OAuth access token
   parameters:
+    CompanyActorToken:
+      name: X-Tnl-Actor-Token
+      in: header
+      required: true
+      description: Fresh configured-issuer ID token; nonce is the operation-bound digest specified by company access. Its OIDC sub resolves the actor. The website credential alone grants no owner authority.
+      schema: { type: string }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -595,6 +935,220 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    CompanyConnections:
+      type: object
+      additionalProperties: false
+      properties:
+        active: { $ref: "#/components/schemas/IdentityConnection" }
+        setup: { $ref: "#/components/schemas/IdentityConnection" }
+    CompanyAdmissionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          request_id,
+          team_id,
+          identity_connection_id,
+          connection_revision,
+          identity_id,
+          subject,
+          member_slug,
+          state,
+          created_at,
+        ]
+      properties:
+        request_id: { type: string }
+        team_id: { type: string }
+        identity_connection_id: { type: string }
+        connection_revision: { type: integer, format: int64 }
+        identity_id: { type: string }
+        subject: { type: string }
+        member_slug: { type: string }
+        state: { type: string }
+        created_at: { type: string, format: date-time }
+    CompanyIntentCredential:
+      type: object
+      additionalProperties: false
+      required: [binding_token]
+      properties:
+        binding_token: { type: string }
+    CompanyLoginIntent:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          intent_id,
+          team_id,
+          identity_connection_id,
+          connection_revision,
+          source_id,
+          issuer,
+          client_id,
+          redirect_uri,
+          nonce,
+          expires_at,
+        ]
+      properties:
+        intent_id: { type: string }
+        team_id: { type: string }
+        identity_connection_id: { type: string }
+        connection_revision: { type: integer, format: int64 }
+        source_id: { type: string }
+        issuer: { type: string }
+        client_id: { type: string }
+        redirect_uri: { type: string }
+        nonce: { type: string }
+        binding_token: { type: string }
+        expires_at: { type: string, format: date-time }
+    IdentityConnectionSetup:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          identity_connection_id,
+          team_id,
+          issuer,
+          source_id,
+          admission,
+          state,
+          revision,
+          setup_token,
+          expires_at,
+        ]
+      properties:
+        identity_connection_id: { type: string }
+        team_id: { type: string }
+        issuer: { type: string }
+        source_id: { type: string }
+        admission: { type: string }
+        state: { type: string }
+        revision: { type: integer, format: int64 }
+        setup_token: { type: string }
+        expires_at: { type: string, format: date-time }
+    IdentityConnection:
+      type: object
+      additionalProperties: false
+      required: [identity_connection_id, team_id, issuer, source_id, admission, state, revision]
+      properties:
+        identity_connection_id: { type: string }
+        team_id: { type: string }
+        issuer: { type: string }
+        source_id: { type: string }
+        admission:
+          {
+            type: string,
+            enum: [approval, managed],
+            x-enum-varnames: [ConnectionViewApproval, ConnectionViewManaged],
+          }
+        state:
+          {
+            type: string,
+            enum: [pending, active, retired],
+            x-enum-varnames: [ConnectionViewPending, ConnectionViewActive, ConnectionViewRetired],
+          }
+        revision: { type: integer, format: int64 }
+    CreateIdentityConnectionRequest:
+      type: object
+      additionalProperties: false
+      required: [admission, source_id]
+      properties:
+        source_id:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 256,
+            description: Opaque immutable source fingerprint; provider configuration stays at the issuer,
+          }
+        admission:
+          {
+            type: string,
+            enum: [approval, managed],
+            x-enum-varnames: [CreateConnectionApproval, CreateConnectionManaged],
+          }
+        replace_id: { type: string }
+        expected_revision: { type: integer, format: int64, minimum: 1 }
+    IdentityConnectionSecret:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          identity_connection_id,
+          team_id,
+          issuer,
+          source_id,
+          admission,
+          state,
+          revision,
+          provisioning_token,
+        ]
+      properties:
+        identity_connection_id: { type: string }
+        team_id: { type: string }
+        issuer: { type: string }
+        source_id: { type: string }
+        admission:
+          {
+            type: string,
+            enum: [approval, managed],
+            x-enum-varnames: [ConnectionAdmissionApproval, ConnectionAdmissionManaged],
+          }
+        state: { type: string, enum: [active], x-enum-varnames: [ConnectionActive] }
+        revision: { type: integer, format: int64 }
+        provisioning_token:
+          {
+            type: string,
+            description: One-time scoped provisioning credential; control stores only its digest,
+          }
+    CompanyEligibilityRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          team_id,
+          identity_connection_id,
+          connection_revision,
+          account_subject,
+          subject,
+          revision,
+          eligible,
+          valid_until,
+          member_slug,
+        ]
+      properties:
+        team_id: { type: string }
+        identity_connection_id: { type: string }
+        connection_revision: { type: integer, format: int64, minimum: 1 }
+        account_subject:
+          {
+            type: string,
+            description: Website OIDC sub under the configured issuer; never a directory subject or email,
+          }
+        subject: { type: string, maxLength: 256 }
+        revision: { type: integer, format: int64, minimum: 1 }
+        eligible: { type: boolean }
+        valid_until: { type: string, format: date-time }
+        member_slug: { type: string }
+    VerifiedOIDCTeamContext:
+      description: The configured issuer signs this value in the tnl_team_contexts ID-token claim. Control binds it to the identity and newly created session after verifying the token and consuming its assertion. This schema is documentation, never a client authentication input.
+      type: object
+      additionalProperties: false
+      required:
+        [team_id, identity_connection_id, connection_revision, source_id, subject, authenticated_at]
+      properties:
+        team_id: { type: string }
+        identity_connection_id: { type: string }
+        connection_revision: { type: integer, format: int64, minimum: 1 }
+        subject: { type: string }
+        source_id: { type: string }
+        authenticated_at:
+          {
+            type: integer,
+            format: int64,
+            description: Unix seconds of actual company authentication; not token refresh time,
+          }
+    PrivateServiceID:
+      type: string
+      pattern: "^psvc_[A-Za-z0-9]{22}$"
     TeamFeedbackPolicy:
       type: object
       additionalProperties: false
@@ -623,8 +1177,9 @@ components:
         key_id: { type: string }
         grant_id: { type: string }
         team_id: { type: string }
-        kind: { type: string, enum: [saved_url, namespace] }
+        kind: { type: string, enum: [saved_url, namespace, private_service] }
         public_url_id: { type: string }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
         domain_id: { type: string }
         namespace: { type: string }
     PublisherTokenRequest:
@@ -758,24 +1313,38 @@ components:
       minLength: 1
       maxLength: 63
       pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
-    LoginTokenExchangeRequest:
+    StartDeviceLoginRequest:
       type: object
       additionalProperties: false
-      required: [login_token]
       properties:
-        login_token:
-          type: string
-          minLength: 1
-          maxLength: 4096
-    OIDCTokenExchangeRequest:
+        team: { type: string, maxLength: 128 }
+        refresh_token: { type: string, maxLength: 4096 }
+    DeviceLoginCredential:
       type: object
       additionalProperties: false
-      required: [id_token]
+      required: [polling_credential]
       properties:
-        id_token:
+        polling_credential:
           type: string
-          minLength: 1
-          maxLength: 65536
+          minLength: 43
+          maxLength: 43
+    DeviceLoginChallenge:
+      type: object
+      additionalProperties: false
+      required: [polling_credential, approval_url, user_code, expires_at, interval_seconds]
+      properties:
+        polling_credential: { type: string, minLength: 43, maxLength: 43 }
+        approval_url: { type: string, format: uri }
+        user_code: { type: string, minLength: 13, maxLength: 13 }
+        expires_at: { type: string, format: date-time }
+        interval_seconds: { type: integer, minimum: 1, maximum: 30 }
+    DeviceLoginResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [pending, approved, cancelled, denied] }
+        session: { $ref: "#/components/schemas/ControlSessionResponse" }
     RefreshControlSessionRequest:
       type: object
       additionalProperties: false
@@ -791,6 +1360,10 @@ components:
       required:
         [session_id, access_token, access_expires_at, refresh_token, refresh_expires_at, identity]
       properties:
+        company_authentication_expires_at:
+          type: string
+          format: date-time
+          description: Fixed company authentication deadline, bounded by original authentication age and control refresh expiry; refreshing never advances it. Expired or revoked company context rejects refresh and requires a new company login intent.
         session_id:
           $ref: "#/components/schemas/ResourceID"
         access_token:
@@ -837,6 +1410,8 @@ components:
         identity:
           $ref: "#/components/schemas/Identity"
         personal_team_id:
+          $ref: "#/components/schemas/TeamID"
+        default_team_id:
           $ref: "#/components/schemas/TeamID"
         memberships:
           type: array
@@ -921,6 +1496,15 @@ components:
           updated_at,
         ]
       properties:
+        identity_connection_id:
+          {
+            type: string,
+            description: Immutable managed admission source; absent for manually admitted members,
+          }
+        manual_suspended_at: { type: string, format: date-time }
+        personal_account_exception: { type: boolean }
+        company_sign_in_required: { type: boolean }
+        active: { type: boolean }
         id:
           $ref: "#/components/schemas/MembershipID"
         team_id:
@@ -973,6 +1557,8 @@ components:
       additionalProperties: false
       required: [id, team_id, member_slug, initial_role, state, created_at, expires_at]
       properties:
+        personal_account_exception:
+          { type: boolean, description: Explicit owner-approved personal-account sign-in exception }
         id:
           $ref: "#/components/schemas/InvitationID"
         team_id:
@@ -1019,6 +1605,12 @@ components:
       additionalProperties: false
       required: [member_slug, initial_role, expires_at]
       properties:
+        personal_account_exception:
+          {
+            type: boolean,
+            default: false,
+            description: Only a current team owner may explicitly allow personal-account sign-in,
+          }
         member_slug:
           $ref: "#/components/schemas/CanonicalLabel"
         initial_role:
@@ -1124,7 +1716,7 @@ components:
       enum: [member, shared]
     CertificateChallengeMethod:
       type: string
-      enum: [dns-01, tls-alpn-01]
+      enum: [dns-01]
     CertificatePlan:
       type: object
       additionalProperties: false

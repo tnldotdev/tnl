@@ -19,7 +19,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
@@ -156,9 +155,9 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 		t.Fatal(err)
 	}
 	owner.cleanupResource(t, func() { _ = stateDatabase.Close() })
-	authenticated, err := clientauth.Login(ctx, clientauth.Config{
+	saveRuntimeOIDCSession(t, stateDatabase, controlOrigin, owner.databaseURL, owner.managedDomain)
+	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
 		ServerEndpoint: controlOrigin, State: stateDatabase, HTTPClient: controlHTTP, Diagnostics: io.Discard,
-		ForceLoginToken: true, LoginToken: func() (credentials.LoginToken, error) { return credentials.LoginToken(testLoginToken), nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -203,28 +202,16 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 	return &integrationPublishingIdentity{
 		controlOrigin: controlOrigin, hostname: hostname, teamID: team.Id, domainID: domain.Id, membershipID: membership.Id,
 		policyRevision: uint64(team.PolicyRevision), state: publisherState, routes: authenticated.Control, authority: authenticated.Authority, publicURLScope: controlv1.Member,
-		certificatePlan: controlv1.CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.TlsAlpn01},
+		certificatePlan: controlv1.CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.Dns01},
 	}
 }
 
-// the fixture retains a control session for URL creation, but every run is
-// created using the publisher's own scoped identity and signing key.
+// the fixture retains a control session only until the selected saved URL and
+// its native publisher are prepared, before the runtime acquires identity locks.
 type integrationScopedRunControl struct {
 	*controlclient.Client
 	state     *clientstate.Store
 	authority *authorityclient.Client
-}
-
-func (c *integrationScopedRunControl) CreatePublishRun(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
-	route, err := c.Client.GetPublicURL(ctx, id)
-	if err != nil {
-		return controlv1.PublishRunSetup{}, err
-	}
-	native, _, err := nativeauth.EnsureOwner(ctx, c.state, c.Client, c.authority, route)
-	if err != nil {
-		return controlv1.PublishRunSetup{}, err
-	}
-	return native.CreatePublishRun(ctx, id, retry)
 }
 
 func (i *integrationPublishingIdentity) publisherConfig(target string, quicConnector, tcpConnector muxsession.Connector) publisher.Config {
@@ -247,8 +234,57 @@ type integrationPublisher struct {
 	diagnostics func() string
 }
 
+func prepareIntegrationPublisher(ctx context.Context, config publisher.Config) (publisher.Config, error) {
+	bootstrap, _ := config.Control.(*integrationScopedRunControl)
+	observed, _ := config.Control.(*certificateObservingControlClient)
+	if observed != nil {
+		bootstrap = observed.bootstrap
+	}
+	if bootstrap != nil {
+		prepare, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		route, err := bootstrap.GetPublicURLByHostname(prepare, config.TeamID, config.Hostname)
+		if errors.Is(err, controlclient.ErrNotFound) {
+			mode := config.AccessMode
+			if mode == "" {
+				mode = controlv1.Anonymous
+			}
+			target := config.Target
+			if config.PreserveSavedURLTarget {
+				target = ""
+			}
+			body := controlv1.CreatePublicURLRequest{TeamId: config.TeamID, DomainId: config.DomainID,
+				CanonicalHostname: config.Hostname, PublicUrlScope: config.PublicURLScope,
+				Purpose: config.Purpose, Target: target, AccessMode: &mode,
+				AllowedIpPrefixes: &config.AllowedIPPrefixes, Ephemeral: &config.Ephemeral}
+			if config.PublicURLScope == controlv1.Member {
+				body.MembershipId = &config.MembershipID
+			}
+			route, err = bootstrap.CreatePublicURL(prepare, body, "fixture-"+config.Hostname)
+		}
+		if err != nil {
+			return config, fmt.Errorf("prepare saved public URL: %w", err)
+		}
+		native, identity, err := nativeauth.EnsureOwner(prepare, bootstrap.state, bootstrap.Client, bootstrap.authority, route)
+		if err != nil {
+			return config, fmt.Errorf("prepare enrolled public publisher: %w", err)
+		}
+		config.Control, config.PublisherID = native, identity.ClientId
+		if observed != nil {
+			observed.Native = native
+			config.Control = observed
+		}
+	}
+	return config, nil
+}
+
 func startOwnedIntegrationPublisher(t *testing.T, owner *runtimeTopology, config publisher.Config, diagnostics func() string) *integrationPublisher {
 	t.Helper()
+	var err error
+	config, err = prepareIntegrationPublisher(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	handle := &integrationPublisher{cancel: cancel, done: make(chan struct{}), diagnostics: diagnostics}
 	if owner != nil {

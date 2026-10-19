@@ -5,11 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,8 +17,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/tcpport"
-	"github.com/tnldotdev/tnl/internal/tcptarget"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -103,7 +99,6 @@ type TunnelInfo struct {
 	ServiceProtocol  controlv1.PublicURLServiceProtocol `json:"service_protocol,omitempty"`
 	PublicURLID      string                             `json:"public_url_id,omitempty"`
 	PublishRunNumber uint64                             `json:"publish_run_number,omitempty"`
-	PublicPort       uint16                             `json:"public_port,omitempty"`
 	Hostname         string                             `json:"hostname,omitempty"`
 	PublicURL        string                             `json:"public_url,omitempty"`
 	Target           string                             `json:"target,omitempty"`
@@ -130,16 +125,12 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if protocol == "" {
 		protocol = controlv1.Http
 	}
-	if !protocol.Valid() || options.Command == TunnelCommandDev && protocol != controlv1.Http {
+	if protocol != controlv1.Http {
 		return nil, errors.New("clientstate: invalid tunnel service protocol")
 	}
 	options.ServiceProtocol = protocol
 	if options.Target != "" {
-		if protocol == controlv1.Http {
-			options.Target, err = localproxy.NormalizeTarget(options.Target)
-		} else {
-			options.Target, err = tcptarget.Normalize(options.Target)
-		}
+		options.Target, err = localproxy.NormalizeTarget(options.Target)
 		if err != nil {
 			return nil, err
 		}
@@ -268,7 +259,7 @@ func (t *Tunnel) SetProvisioning(ctx context.Context, publishRunNumber uint64) e
 }
 
 func (t *Tunnel) SetReady(ctx context.Context, publicURL string, publishRunNumber uint64) error {
-	hostname, publicPort, err := parsePublicTunnelAddress(publicURL)
+	hostname, err := parsePublicTunnelAddress(publicURL)
 	if err != nil {
 		return err
 	}
@@ -277,37 +268,28 @@ func (t *Tunnel) SetReady(ctx context.Context, publicURL string, publishRunNumbe
 		return errors.New("clientstate: invalid tunnel publish run number")
 	}
 	rows, err := t.database.queries.SetTunnelReady(ctx, clientstatedb.SetTunnelReadyParams{
-		Hostname: sql.NullString{String: hostname, Valid: true}, PublicPort: int64(publicPort),
+		Hostname:         sql.NullString{String: hostname, Valid: true},
 		PublishRunNumber: sql.NullInt64{Int64: versionValue, Valid: true},
 		Now:              t.database.now().UTC().UnixNano(), ID: t.id,
 	})
 	return tunnelUpdateResult(rows, err)
 }
 
-func parsePublicTunnelAddress(address string) (string, uint16, error) {
+func parsePublicTunnelAddress(address string) (string, error) {
 	invalid := errors.New("clientstate: invalid tunnel public address")
 	if !strings.HasPrefix(address, "https://") {
-		host, text, err := net.SplitHostPort(address)
-		if err != nil {
-			return "", 0, invalid
-		}
-		hostname, err := naming.CanonicalizeHostname(host)
-		port, portErr := strconv.Atoi(text)
-		if err != nil || hostname != host || portErr != nil || !tcpport.Valid(port) || net.JoinHostPort(hostname, strconv.Itoa(port)) != address {
-			return "", 0, invalid
-		}
-		return hostname, uint16(port), nil
+		return "", invalid
 	}
 	parsed, err := url.Parse(address)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Port() != "" ||
 		parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", 0, invalid
+		return "", invalid
 	}
 	hostname, err := naming.CanonicalizeHostname(parsed.Hostname())
-	if err != nil || hostname != parsed.Hostname() {
-		return "", 0, invalid
+	if err != nil || hostname != parsed.Host {
+		return "", invalid
 	}
-	return hostname, 0, nil
+	return hostname, nil
 }
 
 func (t *Tunnel) SetDraining(ctx context.Context) error {
@@ -388,28 +370,8 @@ func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnap
 		Aliases:         aliases,
 	}
 	for _, row := range records {
-		state := TunnelState(row.State)
-		if !unixNanoTime(row.LeaseExpiresAt).After(observedAt) {
-			state = TunnelStateStale
-		}
-		info := TunnelInfo{
-			ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
-			Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service.String,
-			PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64), PublicPort: uint16(row.PublicPort.Int64),
-			Hostname: row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String, IntegrationGroup: row.IntegrationGroup,
-			StartedAt: unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
-			HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
-		}
-		if row.ServiceProtocol != string(controlv1.Http) {
-			info.ServiceProtocol = controlv1.PublicURLServiceProtocol(row.ServiceProtocol)
-		}
-		if info.Hostname != "" && (info.PublicPort != 0 || info.ServiceProtocol == "") {
-			if info.PublicPort != 0 {
-				info.PublicURL = net.JoinHostPort(info.Hostname, strconv.Itoa(int(info.PublicPort)))
-			} else {
-				info.PublicURL = "https://" + info.Hostname
-			}
-		}
+		info := tunnelInfo(row, observedAt)
+		state := info.State
 		snapshot.Tunnels = append(snapshot.Tunnels, info)
 		snapshot.Summary.Total++
 		switch state {
@@ -457,21 +419,14 @@ func tunnelInfo(row clientstatedb.LocalTunnel, observedAt time.Time) TunnelInfo 
 	info := TunnelInfo{
 		ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
 		Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service.String,
-		PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64), PublicPort: uint16(row.PublicPort.Int64),
+		PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64),
 		Hostname: row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String, IntegrationGroup: row.IntegrationGroup,
 		StartedAt: unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
 		HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
 		Failure: row.FailureCode.String,
 	}
-	if row.ServiceProtocol != string(controlv1.Http) {
-		info.ServiceProtocol = controlv1.PublicURLServiceProtocol(row.ServiceProtocol)
-	}
 	if info.Hostname != "" {
-		if info.PublicPort != 0 {
-			info.PublicURL = net.JoinHostPort(info.Hostname, strconv.Itoa(int(info.PublicPort)))
-		} else if info.ServiceProtocol == "" {
-			info.PublicURL = "https://" + info.Hostname
-		}
+		info.PublicURL = "https://" + info.Hostname
 	}
 	return info
 }

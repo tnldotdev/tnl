@@ -47,9 +47,6 @@ func TestInspectClientHelloFromTLSClient(t *testing.T) {
 	if result.ServerName != "demo.example" {
 		t.Fatalf("got SNI %q", result.ServerName)
 	}
-	if result.ACMETLSALPN {
-		t.Fatal("unexpected ACME ALPN")
-	}
 
 	serverConnection.Close()
 	clientConnection.Close()
@@ -58,7 +55,7 @@ func TestInspectClientHelloFromTLSClient(t *testing.T) {
 func TestInspectClientHelloFragmentsAndReplays(t *testing.T) {
 	handshake := buildClientHello(
 		sni("demo.example"),
-		alpnExtension("h2", acmeTLSALPN),
+		alpnExtension("h2", "http/1.1"),
 	)
 	input := append(tlsRecords(handshake, 2, 17), []byte("remaining TLS bytes")...)
 
@@ -69,9 +66,6 @@ func TestInspectClientHelloFragmentsAndReplays(t *testing.T) {
 	if result.ServerName != "demo.example" {
 		t.Fatalf("got SNI %q", result.ServerName)
 	}
-	if result.ACMETLSALPN {
-		t.Fatal("mixed ALPN was accepted as ACME TLS-ALPN-01")
-	}
 	replayed, err := io.ReadAll(result.Replay())
 	if err != nil {
 		t.Fatal(err)
@@ -81,14 +75,14 @@ func TestInspectClientHelloFragmentsAndReplays(t *testing.T) {
 	}
 }
 
-func TestInspectClientHelloDetectsSoleACMETLSALPN(t *testing.T) {
-	input := tlsRecords(buildClientHello(sni("demo.example"), alpnExtension(acmeTLSALPN)))
+func TestInspectClientHelloAcceptsUnknownALPN(t *testing.T) {
+	input := tlsRecords(buildClientHello(sni("demo.example"), alpnExtension("custom/1")))
 	result, err := inspectClientHello(bytes.NewReader(input))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.ACMETLSALPN {
-		t.Fatal("sole ACME ALPN was not detected")
+	if result.ServerName != "demo.example" {
+		t.Fatal("unknown ALPN changed hostname inspection")
 	}
 }
 
@@ -127,7 +121,7 @@ func TestInspectCapturedBrowserClientHellos(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.ServerName != "route.example" || result.ACMETLSALPN {
+			if result.ServerName != "route.example" {
 				t.Fatalf("captured ClientHello = %#v", result)
 			}
 			replayed, err := io.ReadAll(result.Replay())
@@ -211,8 +205,8 @@ func TestInspectClientHelloRejectsInvalidInput(t *testing.T) {
 
 func FuzzInspectClientHello(f *testing.F) {
 	f.Add(tlsRecords(buildClientHello(sni("demo.example")), 7))
-	f.Add(tlsRecords(buildClientHello(sni("demo.example"), alpnExtension(acmeTLSALPN))))
-	f.Add(tlsRecords(buildClientHello(sni("demo.example"), alpnExtension("h2", acmeTLSALPN))))
+	f.Add(tlsRecords(buildClientHello(sni("demo.example"), alpnExtension("custom/1"))))
+	f.Add(tlsRecords(buildClientHello(sni("demo.example"), alpnExtension("h2", "http/1.1"))))
 	f.Add(tlsRecords(buildClientHello(sni("demo.example"), extension{kind: alpnExt, data: []byte{0, 1, 0}})))
 	f.Add(tlsRecords(buildClientHello(sni("demo.example"), extension{kind: echExtension})))
 	f.Add(tlsRecords(buildClientHello(sni("demo.example"), sni("other.example"))))

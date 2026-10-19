@@ -38,21 +38,25 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 
 ### choose a test tier
 
-| When you need to check           | Command after `mise exec --`                                 | What you need                                                             |
-| -------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| Routine behavior                 | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages         |
-| Go races                         | `task go:test:race`                                          | No database                                                               |
-| Database and service boundaries  | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                |
-| Real TCP clients                 | `task go:test:integration:tcp-clients`                       | Docker; Task manages disposable PostgreSQL, MySQL, Redis, and SSH targets |
-| Binary behavior                  | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available  |
-| Compose target discovery         | `task go:test:integration:compose`                           | Docker; disposable HTTP and TCP targets with container replacement        |
-| Authoritative DNS                | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers               |
-| Public Route 53 and ACME staging | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in   |
-| Fuzz targets                     | `task go:test:fuzz`                                          | Go toolchain                                                              |
-| npm exports and tarballs         | `pnpm run pack`                                              | Built package dependencies                                                |
-| Python ASGI and socket contract  | `task py:check`                                              | Pinned Python and uv; uses the locked dependencies in `packages/py`       |
-| Local release snapshot           | `task package`                                               | Builds and checks packages; does not publish                              |
-| Deployed release check           | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain               |
+| When you need to check           | Command after `mise exec --`                                 | What you need                                                                                                 |
+| -------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| Routine behavior                 | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages                                             |
+| Go races                         | `task go:test:race`                                          | No database                                                                                                   |
+| Database and service boundaries  | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                                                    |
+| Private services and groups      | `task go:test:integration:private-services`                  | Docker; saved services, applied groups, grants, and audit in PostgreSQL                                       |
+| Private runtime topology         | `task go:test:integration:private-topology`                  | Docker and Pebble; separated and standalone private visitor lifecycle                                         |
+| Real database clients            | `task go:test:integration:tcp-clients`                       | Docker CLI; disposable TLS providers also run psql and mysql                                                  |
+| CLI and OpenSSH stdio            | `task go:test:integration:cli`                               | Isolated Linux, Docker, sshd/ssh/ssh-keygen, writable `/etc/hosts` or passwordless sudo for that fixture only |
+| Existing OpenSSH target          | `task go:test:integration:private-sshd`                      | System `sshd`, `ssh`, and `ssh-keygen`; no root tnl process                                                   |
+| Binary behavior                  | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available                                      |
+| Compose target discovery         | `task go:test:integration:compose`                           | Docker; disposable HTTP and TCP targets with container replacement                                            |
+| Authoritative DNS                | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers                                                   |
+| Public Route 53 and ACME staging | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in                                       |
+| Fuzz targets                     | `task go:test:fuzz`                                          | Go toolchain                                                                                                  |
+| npm exports and tarballs         | `pnpm run pack`                                              | Built package dependencies                                                                                    |
+| Python ASGI and socket contract  | `task py:check`                                              | Pinned Python and uv; uses the locked dependencies in `packages/py`                                           |
+| Local release snapshot           | `task package`                                               | Builds and checks packages; does not publish                                                                  |
+| Deployed release check           | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain                                                   |
 
 Use `RUN` to select an integration test, for example:
 
@@ -64,6 +68,21 @@ Binary integration changes subprocess trust and binds privileged ports. Run it
 only on Linux; the [integration workflow](.github/workflows/integration.yml)
 shows its setup. For database and runtime load tests, see the
 [local workloads](docs/benchmarks/local-workloads.md). Large runs are opt-in.
+
+When Linux tests run inside a Docker host-network container, mount the Docker
+socket and a shared temporary directory at the same absolute path on the runner
+and Docker host. Set `TMPDIR` to that shared directory so the built-binary Compose
+test can mount its binaries, CA roots, and project files into sibling containers.
+Keep client-state socket directories short. Install `sshd` and create `/run/sshd`
+inside the disposable runner before the CLI tier. The binary tier also builds
+the JavaScript package, so use a writable checkout snapshot with Linux npm
+dependencies rather than the host's platform-specific `node_modules`.
+
+If Docker Desktop's `host-gateway` points outside the host-network runner, pass
+its bridge address explicitly with
+`task go:test:integration:binary COMPOSE_HOST_ADDRESS=172.17.0.1` (use the address
+reported by `docker network inspect bridge`). This only selects the disposable
+test ingress address; TLS names and certificate verification remain unchanged.
 
 The DNS e2e job in Checks uses one fresh name under `test.tnl.wtf`, a disposable
 Let's Encrypt staging account, and at most one order per `main` push. It
@@ -125,6 +144,30 @@ baseline requires a fresh database and a coordinated stop/start of all serving
 roles. Control checks both the exact migration version and baseline identity
 before serving.
 
+For local services, an explicit `publicURL` block (`public_url` in static files)
+enables public HTTPS. Without it, the service is private, including `protocol: http`.
+Named groups use their own `public` setting for reachability and always require
+current HTTP credentials. Their service `publicURL` blocks hold only restricted
+HTTP/IP settings and HTTP request limits; they cannot change the group's endpoint.
+The protocol defaults to `http`; `tcp` carries opaque bytes, and `mysql` and
+`postgres` select private database handling. A service's saved `name` defaults
+to its configuration key on either path. `access: {team: true}` declares team
+access. `target.tls` enables verified publisher-to-target TLS for every protocol;
+the protocol selects direct TLS or PostgreSQL/MySQL negotiation. It accepts
+optional `server_name` and project-relative `ca_file` (`serverName` and `caFile`
+in TypeScript); an empty block uses system roots. Omitting it permits a plaintext
+target and never disables managed visitor TLS. Service-level `tls` and
+`target.tls.mode` are rejected. An existing sshd is an
+ordinary private `tcp` target. See [private service boundaries](docs/maintainers/private-services.md).
+
+Project configuration stays in Git. `tnl apply` stores an evaluated revision in
+control; named group publishers pull and acknowledge only their assignments.
+The reserved `local` publisher handles app-reported development listeners by
+default. Starting an app does not apply production configuration. Group entries
+accept `description`, `domain`, and `public`; cloud capacity belongs in infrastructure
+configuration. See [applied projects](docs/maintainers/applied-projects.md) and
+the [publisher infrastructure templates](deploy/publishers/readme.md).
+
 | Source                                                                                    | Generated output                                                                          |
 | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | Seven HTTP OpenAPI contracts under `api/*/v1`                                             | `pkg/api/*`; publisher browser validators under `internal/publisherapi`                   |
@@ -136,13 +179,16 @@ before serving.
 | `internal/failure/reasons.go`                                                             | `internal/failure/catalog.gen.json` and the tnl.dev client-error pages                    |
 
 `packages/ts/dist` is disposable build output. The CLI generates project-local
-`.tnl/project.json` and `.tnl/project.d.ts`; see the
+`.tnl/local/project.json` and `.tnl/local/project.d.ts`. Both contain values tied
+to the current worktree and client installation. Ignore only `/.tnl/local/` at
+the selected project root; `.tnl/generated/` is reserved for future trackable
+output. See the
 [framework guide](https://tnl.dev/docs/frameworks) for their use.
 
 ## try the local stack
 
-The local stack builds this checkout and runs PostgreSQL, Pebble, and standalone
-`tnld`. It uses `127.0.0.1.nip.io` for public URL hostnames and binds host
+The local stack builds this checkout and runs PostgreSQL, Pebble, a development
+OIDC provider, and standalone `tnld`. It uses `127.0.0.1.nip.io` for public URL hostnames and binds host
 ports on localhost. With Docker running:
 
 ```console
@@ -158,7 +204,7 @@ separate from your usual tnl state. To use it from another project, set these
 values while still in the tnl repo:
 
 ```console
-export TNL_SERVER=https://control.127.0.0.1.nip.io
+export TNL_SERVER=https://control.127.0.0.1.nip.io:8445
 export TNL_STATE_DIR="$(pwd)/.local/client-state"
 ```
 
@@ -166,9 +212,12 @@ Then start the app normally from that project's directory. `task local:down` pre
 PostgreSQL state; `task local:reset` removes trust, containers, volumes, and
 `.local`. Run both through `mise exec --` from this repo.
 
-The baseline PostgreSQL migration needs a new database and coordinated restart,
-not an in-place upgrade of an older server. Releases publish immutable image
-digests but do not deploy production.
+Hosted Fly manifests, rollout tooling, and staging qualification belong to
+[tnl.dev](https://github.com/tnldotdev/tnl.dev/tree/main/deploy/server). Run their
+offline manifest checks in that repository. This repository owns generic
+self-hosted Compose and publisher infrastructure templates. The baseline
+PostgreSQL migration needs a fresh database. Releases publish immutable image
+digests; deploying and qualifying them requires separate operator approval.
 
 ## find the right reference
 

@@ -22,23 +22,25 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/projectpublisher"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type publishCommand struct {
-	openOptions   `embed:""`
-	remoteFlags   `embed:""`
-	tunnelFlags   `embed:""`
-	Target        string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or TCP host:port."`
-	Protocol      string            `name:"protocol" env:"TNL_PROTOCOL" help:"Local service protocol; defaults to http."`
-	TargetTLSName string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in an HTTPS or TCP target's TLS certificate; defaults to the target host."`
-	TargetTLS     bool              `name:"target-tls" env:"TNL_TARGET_TLS" help:"Use verified TLS for the TCP target."`
-	EnrollmentKey string            `name:"enroll-key" env:"TNL_ENROLL_KEY" help:"One-use publisher enrollment key; use - to read stdin."`
-	PublisherID   string            `name:"publisher" env:"TNL_PUBLISHER" help:"Saved scoped publisher identity ID."`
-	PublisherFile string            `name:"publisher-file" env:"TNL_PUBLISHER_FILE" type:"path" help:"Portable scoped publisher identity file; no login session is used."`
-	Output        publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
-	Demo          bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
+	openOptions            `embed:""`
+	remoteFlags            `embed:""`
+	tunnelFlags            `embed:""`
+	backgroundPublishFlags `embed:""`
+	Target                 string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or TCP host:port."`
+	Protocol               string            `name:"protocol" env:"TNL_PROTOCOL" help:"Service protocol: http (default), tcp, mysql, or postgres. Configured services need publicURL for public HTTPS."`
+	TargetTLS              *bool             `name:"target-tls" help:"Verify publisher-to-target TLS using native protocol negotiation. Independent of visitor TLS."`
+	TargetTLSName          string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the target's TLS certificate; defaults to the target host."`
+	EnrollmentKey          string            `name:"enroll-key" env:"TNL_ENROLL_KEY" help:"One-use publisher enrollment key; use - to read stdin."`
+	PublisherID            string            `name:"publisher" env:"TNL_PUBLISHER" help:"Saved scoped publisher identity ID."`
+	PublisherFile          string            `name:"publisher-file" env:"TNL_PUBLISHER_FILE" type:"path" help:"Portable scoped publisher identity file; no login session is used."`
+	Output                 publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
+	Demo                   bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
 	serverFromConfig bool
 	selectedTeam     string
@@ -46,15 +48,60 @@ type publishCommand struct {
 	demoNameFromCLI  bool
 	Service          string `kong:"-"`
 	project          projectConfiguration
+	privateService   bool
+	namedOverrides   bool
 }
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
 	telemetry := optionalTelemetryReporter(reporters)
 	selection := enrolledPublishSelection{EnrollmentKey: flags.EnrollmentKey, PublisherID: flags.PublisherID, PublisherFile: flags.PublisherFile}
+	if flags.Foreground && (flags.Install || flags.Detach) {
+		return publisherCLIError("select only one of --foreground, --detach, or --install")
+	}
+	if flags.Install && flags.Detach {
+		return publisherCLIError("--install and --detach cannot be combined")
+	}
+	credentialOwned := flags.EnrollmentKey != "" || flags.PublisherID != "" || flags.PublisherFile != ""
+	if credentialOwned && flags.Service != "" {
+		resolved, err := projectpublisher.ResolveTarget(ctx, flags.project.Project, flags.Service, runtimeTargetResolver)
+		if err != nil {
+			return err
+		}
+		if resolved.Target == nil {
+			return publisherCLIError("scoped publication requires an address, Docker, or Compose target")
+		}
+		flags.Target = string(*resolved.Target)
+	}
+	if flags.privateService && !flags.Install && flags.Service != "" && !credentialOwned {
+		invocation, err := resolveNamedPrivate(flags)
+		if err != nil {
+			return err
+		}
+		output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
+		if err != nil {
+			return err
+		}
+		output.detachedCtx = ctx
+		defer func() { result = output.finish(ctx, result) }()
+		return runNamedPublish(ctx, invocation.resolvedNamedInvocation, flags.StateDir, output)
+	}
+	if flags.privateService || flags.Protocol != "" && flags.Protocol != "http" {
+		return runPrivatePublish(ctx, flags, stdout, stderr)
+	}
+	if flags.Install {
+		if flags.Output != "human" {
+			return publisherCLIError("--install requires --output=human")
+		}
+		return runEnrolledBackgroundPublish(ctx, flags, selection, flags.backgroundPublishFlags, stdout, os.Stdin, nil)
+	}
+	if flags.System || flags.ServiceName != "" || flags.SystemStateDir != "" || flags.ServerCAFile != "" {
+		return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
+	}
 	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
 	if err != nil {
 		return err
 	}
+	output.detachedCtx = ctx
 	defer func() { result = output.finish(ctx, result) }()
 	if flags.EnrollmentKey != "" || flags.PublisherID != "" || flags.PublisherFile != "" {
 		return runEnrolledPublish(ctx, flags, selection, output, telemetry, os.Stdin)
@@ -74,10 +121,14 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		return err
 	}
 	if flags.Service != "" {
+		invocation, err := resolveNamedPublic(flags)
+		if err != nil {
+			return err
+		}
 		if protocol == controlv1.Http {
 			output.openURL = browserOpener(ctx, flags.Open, true)
 		}
-		return runNamedPublish(ctx, flags.project, flags.StateDir, flags.Service, output)
+		return runNamedPublish(ctx, invocation.resolvedNamedInvocation, flags.StateDir, output)
 	}
 	var localDemo *demo.Server
 	if flags.Demo {
@@ -173,13 +224,6 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	if protocol == controlv1.Ssh {
-		if flags.access != nil && flags.access.VisitorMode() != "anonymous" {
-			return failure.Wrap("validate SSH visitor access", failure.InvalidTunnelFlags, errors.New("SSH uses target authentication; select anonymous access for an optional IP list"))
-		}
-		policy.access = controlv1.Anonymous
-		policy.explicit = true
-	}
 	if guest != nil {
 		// guest publication remains bound to its issuing IP. control discards
 		// that prefix after checking it, so browser visits use the guest link.
@@ -242,7 +286,6 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if protocol != controlv1.Http {
 		publisherConfig.TargetTLSName = flags.TargetTLSName
 	}
-	publisherConfig.TargetTLS = flags.TargetTLS
 	publisherConfig.TargetOptions = targetOptions
 	recorder, err := newInspectionRecorder(ctx, tunnel, flags.projectRoot, flags.Service, flags.InspectionMode, flags.inspection)
 	if err != nil {

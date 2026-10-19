@@ -17,7 +17,11 @@ WHERE public_url_id = sqlc.arg(public_url_id)
 SELECT *
 FROM control.publish_runs
 WHERE public_url_id = sqlc.arg(public_url_id)
-  AND closed_at IS NULL;
+  AND closed_at IS NULL ORDER BY publish_run_number DESC LIMIT 1;
+
+-- name: ListOpenPublishRuns :many
+SELECT * FROM control.publish_runs WHERE public_url_id=sqlc.arg(public_url_id)
+  AND closed_at IS NULL ORDER BY publish_run_number FOR UPDATE;
 
 -- lock public URLs before publish runs, as heartbeat and closure do. the
 -- partial expiration index finds candidates; SKIP LOCKED leaves busy public
@@ -51,7 +55,7 @@ JOIN control.teams AS t
  AND t.deleted_at IS NULL
 WHERE m.team_id = sqlc.arg(team_id)
   AND m.identity_id = sqlc.arg(identity_id)
-  AND m.removed_at IS NULL
+  AND control.active_membership(m.id,CURRENT_TIMESTAMP)
 FOR SHARE OF m, t;
 
 -- name: ListPublishRunConnections :many
@@ -77,7 +81,7 @@ WHERE id = sqlc.arg(public_url_id)
   AND mutation_revision = sqlc.arg(expected_mutation_revision)
   AND mutation_revision < 9223372036854775807
   AND lifecycle_state = 'enabled'
-RETURNING (next_publish_run_number - 1)::bigint AS publish_run_number
+RETURNING (next_publish_run_number - 1)::bigint AS publish_run_number, service_protocol
 )
 INSERT INTO control.publish_runs (
     id,
@@ -85,6 +89,8 @@ INSERT INTO control.publish_runs (
     team_id,
     membership_id,
     acting_identity_id,
+    publisher_identity_id,
+    publisher_grant_id,
     publish_run_number,
     idempotency_key,
     request_digest_ciphertext,
@@ -107,6 +113,8 @@ INSERT INTO control.publish_runs (
     sqlc.arg(team_id),
     sqlc.narg(membership_id),
     sqlc.arg(acting_identity_id),
+    sqlc.narg(publisher_identity_id),
+    sqlc.narg(publisher_grant_id),
     version.publish_run_number,
     sqlc.arg(idempotency_key),
     sqlc.arg(request_digest_ciphertext),
@@ -114,10 +122,10 @@ INSERT INTO control.publish_runs (
     sqlc.arg(publish_run_token_id),
     sqlc.arg(publish_run_token_digest),
     sqlc.arg(policy_revision),
-    sqlc.arg(certificate_cache_key),
-    sqlc.arg(certificate_scope),
-    sqlc.arg(certificate_identifiers),
-    sqlc.arg(certificate_challenge_method),
+    sqlc.arg(certificate_cache_key)::text,
+    sqlc.arg(certificate_scope)::text,
+    sqlc.arg(certificate_identifiers)::text[],
+    sqlc.arg(certificate_challenge_method)::text,
     convert_from(sqlc.arg(traffic_limits)::bytea, 'UTF8')::jsonb,
     'starting',
     sqlc.arg(created_at),

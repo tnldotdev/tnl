@@ -43,7 +43,7 @@ func runURLAvailable(ctx context.Context, f urlAvailableCommand, o, d io.Writer)
 	}
 	blocks := make([]clioutput.Block, 0, len(items))
 	for _, item := range items {
-		blocks = append(blocks, clioutput.Section(item.CanonicalHostname, clioutput.Fields(clioutput.Field{Label: "public URL ID", Value: item.Id}, clioutput.Field{Label: "team", Value: item.TeamName}, clioutput.Field{Label: "protocol", Value: item.ServiceProtocol}, clioutput.Field{Label: "access", Value: string(item.VisitorAccess)})))
+		blocks = append(blocks, clioutput.Section(item.CanonicalHostname, clioutput.Fields(clioutput.Field{Label: "public URL ID", Value: item.Id}, clioutput.Field{Label: "team", Value: item.TeamName}, clioutput.Field{Label: "protocol", Value: string(item.ServiceProtocol)}, clioutput.Field{Label: "access", Value: string(item.VisitorAccess)})))
 	}
 	return writeHumanFrame(o, "tnl url available", countState(len(items), "public URL", "public URLs"), "", blocks...)
 }

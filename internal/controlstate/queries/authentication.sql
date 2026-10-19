@@ -1,11 +1,11 @@
 -- name: LockIdentityBootstrap :exec
 SELECT pg_advisory_xact_lock(837174137711267953);
 
--- name: FindBuiltinIdentity :one
-SELECT *
-FROM control.identities
-WHERE kind = 'builtin'
-  AND disabled_at IS NULL;
+-- name: ResolveLoginTeam :one
+SELECT id FROM control.teams WHERE (display_name=sqlc.arg(selection) OR id=sqlc.arg(selection)) AND deleted_at IS NULL;
+
+-- name: LoginTeamRequiresCompany :one
+SELECT company_sign_in_required FROM control.teams WHERE id=sqlc.arg(id) AND deleted_at IS NULL;
 
 -- name: FindOIDCIdentity :one
 SELECT *
@@ -78,34 +78,6 @@ INSERT INTO control.managed_label_reservations (label, created_at)
 VALUES (sqlc.arg(label), sqlc.arg(created_at))
 ON CONFLICT (label) DO NOTHING
 RETURNING label;
-
--- name: ReserveManagedDirectName :one
-INSERT INTO control.managed_label_reservations (label, created_at, direct_team_id)
-VALUES (sqlc.arg(label), sqlc.arg(created_at), sqlc.arg(team_id))
-ON CONFLICT (label) DO UPDATE SET direct_team_id = EXCLUDED.direct_team_id
-WHERE control.managed_label_reservations.direct_team_id = EXCLUDED.direct_team_id
-RETURNING label;
-
--- name: CreateIdentity :exec
-INSERT INTO control.identities (
-    id,
-    kind,
-    display_name,
-    normalized_email,
-    email_verified,
-    administrator,
-    created_at,
-    updated_at
-) VALUES (
-    sqlc.arg(id),
-    sqlc.arg(kind),
-    sqlc.arg(display_name),
-    sqlc.narg(normalized_email),
-    sqlc.arg(email_verified),
-    sqlc.arg(administrator),
-    sqlc.arg(created_at),
-    sqlc.arg(updated_at)
-);
 
 -- name: CreateManagedDomain :exec
 INSERT INTO control.domains (
@@ -205,7 +177,8 @@ SELECT
     i.email_verified,
     i.administrator,
     i.created_at,
-    t.id AS personal_team_id
+    t.id AS personal_team_id,
+    COALESCE((SELECT m.team_id FROM control.team_memberships m JOIN control.teams initial ON initial.id = m.team_id AND initial.deleted_at IS NULL WHERE m.team_id = i.initial_team_id AND m.identity_id = i.id AND m.removed_at IS NULL), t.id)::text AS default_team_id
 FROM control.identities AS i
 JOIN control.teams AS t
   ON t.created_by_identity_id = i.id
@@ -216,10 +189,13 @@ WHERE i.id = sqlc.arg(identity_id)
 
 -- name: ListIdentityMembershipContexts :many
 SELECT
+    m.identity_connection_id,m.manual_suspended_at,m.personal_account_exception,t.company_sign_in_required,
+    control.active_membership(m.id,CURRENT_TIMESTAMP)::boolean AS active,
     m.id,
     m.team_id,
     m.identity_id,
     t.display_name AS team_display_name,
+    t.managed_label AS team_managed_label,
     t.kind AS team_kind,
     m.role,
     s.member_slug,
@@ -241,9 +217,6 @@ ORDER BY t.created_at, t.id;
 INSERT INTO control.control_sessions (
     id,
     identity_id,
-    authentication_method,
-    authentication_source_revision,
-    administrator,
     access_token_id,
     access_token_digest,
     access_expires_at,
@@ -257,9 +230,6 @@ INSERT INTO control.control_sessions (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(identity_id),
-    sqlc.arg(authentication_method),
-    sqlc.arg(authentication_source_revision),
-    sqlc.arg(administrator),
     sqlc.arg(access_token_id),
     sqlc.arg(access_token_digest),
     sqlc.arg(access_expires_at),
@@ -276,14 +246,14 @@ INSERT INTO control.control_sessions (
 SELECT
     s.id,
     s.identity_id,
-    s.authentication_method,
-    s.authentication_source_revision,
     s.access_token_digest,
     s.access_expires_at,
     s.retry_secret_ciphertext,
     s.retry_secret_storage_key_id,
     s.refresh_expires_at,
-    i.administrator
+    i.administrator,
+    i.issuer,
+    i.subject
 FROM control.control_sessions AS s
 JOIN control.identities AS i ON i.id = s.identity_id
 WHERE s.access_token_id = sqlc.arg(access_token_id)
@@ -294,8 +264,6 @@ WHERE s.access_token_id = sqlc.arg(access_token_id)
 SELECT
     s.id,
     s.identity_id,
-    s.authentication_method,
-    s.authentication_source_revision,
     s.refresh_token_digest,
     s.refresh_expires_at,
     i.administrator

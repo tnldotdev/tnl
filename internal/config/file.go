@@ -163,19 +163,40 @@ func ValidateTNL(config TNL) error {
 	if err := validateServerAndTeam(config.Server, config.Team); err != nil {
 		return err
 	}
+	if config.Name != nil && !naming.ValidServiceName(*config.Name) {
+		return errors.New("name must be one lowercase DNS label beginning with a letter")
+	}
 	if err := validateTunnel(config.Tunnel); err != nil {
 		return err
 	}
 	if err := validateLimits(tunnelLimits(config.Tunnel), nil, ""); err != nil {
 		return err
 	}
-	if len(config.Services) != 0 && config.Tunnel != nil {
-		if config.Tunnel.Name != nil || config.Tunnel.PublicURL != nil {
-			return errors.New("tunnel.name and tunnel.public_url belong under services.NAME.tunnel when services are configured")
-		}
+	if config.Name != nil && config.Tunnel != nil && config.Tunnel.PublicURL != nil {
+		return errors.New("name and public_url.hostname are mutually exclusive")
+	}
+	if len(config.Services) != 0 && (config.Name != nil || config.Tunnel != nil && (config.Tunnel.Name != nil || config.Tunnel.PublicURL != nil)) {
+		return errors.New("name and public_url.hostname belong under services.NAME when services are configured")
 	}
 	if len(config.Services) > 32 {
 		return errors.New("services may contain at most 32 entries")
+	}
+	if len(config.Publishers) > 32 {
+		return errors.New("publishers may contain at most 32 entries")
+	}
+	for name, group := range config.Publishers {
+		if name == "local" || !naming.ValidServiceName(name) {
+			return fmt.Errorf("publisher group %q must be a lowercase DNS label other than reserved local", name)
+		}
+		if group.Description != nil && (len(*group.Description) > 1024 || !utf8.ValidString(*group.Description)) {
+			return fmt.Errorf("publishers.%s.description must be valid UTF-8 of at most 1024 bytes", name)
+		}
+		if group.Domain != nil {
+			domain, err := naming.CanonicalizeHostname(*group.Domain)
+			if err != nil || domain != *group.Domain {
+				return fmt.Errorf("publishers.%s.domain must be a canonical team domain", name)
+			}
+		}
 	}
 	if err := ValidateWebhooks(config.Services, config.Webhooks); err != nil {
 		return err
@@ -188,10 +209,48 @@ func ValidateTNL(config TNL) error {
 		names = append(names, name)
 	}
 	slices.Sort(names)
+	savedNames := make(map[string]string)
+	publicHostnames := make(map[string]string)
 	for _, name := range names {
 		service := config.Services[name]
+		if service.Access != nil && !service.Access.Team {
+			return fmt.Errorf("services.%s.access requires team: true", name)
+		}
+		if !naming.ValidServiceName(name) {
+			return fmt.Errorf("service name %q must be one lowercase DNS label beginning with a letter", name)
+		}
 		if err := validateTarget(service); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
+		}
+		if group := PublisherName(service); group != "local" {
+			if _, found := config.Publishers[group]; !found {
+				return fmt.Errorf("services.%s.publisher: group %q is not configured", name, group)
+			}
+			if TargetType(service) != "address" {
+				return fmt.Errorf("services.%s: remote publisher groups require a reachable address target", name)
+			}
+			if service.HTTP != nil {
+				return fmt.Errorf("services.%s.http: remote publisher assignments do not support HTTP settings; use a local service", name)
+			}
+		}
+		if service.Publisher != nil && *service.Publisher == "" {
+			return fmt.Errorf("services.%s.publisher must not be empty", name)
+		}
+		savedName := ServiceName(name, service)
+		if !naming.ValidServiceName(savedName) {
+			return fmt.Errorf("services.%s: name must be one lowercase DNS label beginning with a letter", name)
+		}
+		if existing := savedNames[savedName]; existing != "" {
+			return fmt.Errorf("services.%s: saved name %q is already used by services.%s", name, savedName, existing)
+		}
+		savedNames[savedName] = name
+		if service.Name != nil && service.Tunnel != nil && service.Tunnel.PublicURL != nil {
+			return fmt.Errorf("services.%s: name and public_url.hostname are mutually exclusive", name)
+		}
+		if Protocol(service) != "http" {
+			if service.Tunnel != nil {
+				return fmt.Errorf("services.%s: private services cannot use public_url settings", name)
+			}
 		}
 		if service.HTTP != nil && Protocol(service) != "http" {
 			return fmt.Errorf("services.%s: http settings require protocol http", name)
@@ -204,23 +263,26 @@ func ValidateTNL(config TNL) error {
 		if err := ValidateInspection(service.Inspection); err != nil {
 			return fmt.Errorf("services.%s.inspection: %w", name, err)
 		}
-		if !naming.ValidServiceName(name) {
-			return fmt.Errorf("service name %q must be one lowercase DNS label beginning with a letter", name)
-		}
 		if err := validateTunnel(service.Tunnel); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
+		if service.Tunnel != nil && service.Tunnel.PublicURL != nil {
+			hostname, _ := naming.ParseExactPublicURL(*service.Tunnel.PublicURL)
+			if existing := publicHostnames[hostname]; existing != "" {
+				return fmt.Errorf("services.%s: public_url.hostname is already used by services.%s", name, existing)
+			}
+			publicHostnames[hostname] = name
+		}
 		protocol := Protocol(service)
-		if protocol != "http" {
-			selected := MergeInspection(config.Inspection, service.Inspection)
-			if protocol == "ssh" && selected != nil && selected.Mode != nil && *selected.Mode != InspectionNone {
-				return fmt.Errorf("services.%s: SSH inspection supports none only", name)
+		if IsPublicService(service) {
+			if err := validateLimits(tunnelLimits(service.Tunnel), tunnelLimits(config.Tunnel), protocol); err != nil {
+				return fmt.Errorf("services.%s: %w", name, err)
 			}
 		}
-		if err := validateLimits(tunnelLimits(service.Tunnel), tunnelLimits(config.Tunnel), protocol); err != nil {
-			return fmt.Errorf("services.%s: %w", name, err)
-		}
 		paths := ServicePaths(service)
+		if len(paths) != 0 && !IsPublicService(service) {
+			return fmt.Errorf("services.%s.http.paths requires an explicit public_url block", name)
+		}
 		if len(paths) > 32 {
 			return fmt.Errorf("services.%s.http.paths may contain at most 32 mounts", name)
 		}
@@ -236,6 +298,9 @@ func ValidateTNL(config TNL) error {
 			}
 			if destination, found := config.Services[mount.Service]; !found || mount.Service == name || Protocol(destination) != "http" {
 				return fmt.Errorf("services.%s.http.paths[%q]: service %q must name another configured HTTP service", name, prefix, mount.Service)
+			}
+			if PublisherName(config.Services[mount.Service]) != "local" {
+				return fmt.Errorf("services.%s.http.paths[%q]: mounted service must use the local publisher", name, prefix)
 			}
 		}
 	}
@@ -270,28 +335,28 @@ func validateServerAndTeam(server, team *string) error {
 func validateTunnel(tunnel *Tunnel) error {
 	if tunnel != nil {
 		if tunnel.Name != nil && tunnel.PublicURL != nil {
-			return errors.New("tunnel.name and tunnel.public_url are mutually exclusive")
+			return errors.New("name and public_url.hostname are mutually exclusive")
 		}
 		if tunnel.Domain != nil {
 			canonical, err := naming.CanonicalizeHostname(*tunnel.Domain)
 			if err != nil || canonical != *tunnel.Domain {
-				return errors.New("tunnel.domain must be a canonical domain name")
+				return errors.New("public_url.domain must be a canonical domain name")
 			}
 		}
 		if tunnel.Name != nil {
 			canonical, err := naming.CanonicalizeHostname(*tunnel.Name)
 			if err != nil || canonical != *tunnel.Name || strings.Contains(*tunnel.Name, ".") {
-				return errors.New("tunnel.name must be one lowercase ASCII DNS label")
+				return errors.New("name must be one lowercase ASCII DNS label")
 			}
 		}
 		if tunnel.PublicURL != nil {
 			if _, err := naming.ParseExactPublicURL(*tunnel.PublicURL); err != nil {
-				return errors.New("tunnel.public_url must be a canonical hostname or HTTPS public URL without a port, path, query, or fragment")
+				return errors.New("public_url.hostname must be a canonical hostname or HTTPS public URL without a port, path, query, or fragment")
 			}
 		}
 		if tunnel.Access != nil {
 			if err := tunnel.Access.Validate(); err != nil {
-				return fmt.Errorf("tunnel.access: %w", err)
+				return fmt.Errorf("public_url.access: %w", err)
 			}
 		}
 	}

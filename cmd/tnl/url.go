@@ -16,13 +16,12 @@ import (
 )
 
 type publicURLCommand struct {
-	List        publicURLListCommand      `cmd:"" help:"List public URLs you may visit; --team filters the results."`
-	Available   urlAvailableCommand       `cmd:"" help:"List public URLs you may visit."`
-	Inventory   publicURLInventoryCommand `cmd:"" help:"List saved public URLs owned by the selected team."`
-	Certificate visitorCertificateCommand `cmd:"" help:"Save a locally generated visitor key and database certificate."`
-	Access      urlAccessCommand          `cmd:"" help:"Show or replace one public URL's complete visitor access policy."`
-	Update      publicURLUpdateCommand    `cmd:"" help:"Change a saved public URL target."`
-	Delete      publicURLDeleteCommand    `cmd:"" help:"Delete a public URL by ID; use tnl url list to find it."`
+	List      publicURLListCommand      `cmd:"" help:"List public URLs you may visit; --team filters the results."`
+	Available urlAvailableCommand       `cmd:"" help:"List public URLs you may visit."`
+	Inventory publicURLInventoryCommand `cmd:"" help:"List saved public URLs owned by the selected team."`
+	Access    urlAccessCommand          `cmd:"" help:"Show or replace one public URL's complete visitor access policy."`
+	Update    publicURLUpdateCommand    `cmd:"" help:"Change a saved public URL target."`
+	Delete    publicURLDeleteCommand    `cmd:"" help:"Delete a public URL by ID; use tnl url list to find it."`
 }
 
 type publicURLUpdateCommand struct {
@@ -68,7 +67,7 @@ func runURLList(ctx context.Context, command publicURLListCommand, output, diagn
 			clioutput.Field{Label: "public URL", Value: address},
 			clioutput.Field{Label: "public URL ID", Value: item.Id},
 			clioutput.Field{Label: "team", Value: item.TeamName},
-			clioutput.Field{Label: "protocol", Value: item.ServiceProtocol},
+			clioutput.Field{Label: "protocol", Value: string(item.ServiceProtocol)},
 			clioutput.Field{Label: "access", Value: string(item.VisitorAccess)},
 		)))
 	}
@@ -110,12 +109,7 @@ func visitorURLList(ctx context.Context, control visitorURLListClient, team stri
 }
 
 func availablePublicAddress(item controlv1.AvailablePublicURL) (string, error) {
-	var port *int
-	if item.PublicPort != nil {
-		value := int(*item.PublicPort)
-		port = &value
-	}
-	return savedPublicAddress(controlv1.PublicURL{CanonicalHostname: item.CanonicalHostname, ServiceProtocol: controlv1.PublicURLServiceProtocol(item.ServiceProtocol), PublicPort: port})
+	return savedPublicAddress(controlv1.PublicURL{CanonicalHostname: item.CanonicalHostname, ServiceProtocol: controlv1.PublicURLServiceProtocol(item.ServiceProtocol)})
 }
 
 func runURLInventory(ctx context.Context, command publicURLInventoryCommand, output, diagnostics io.Writer) error {

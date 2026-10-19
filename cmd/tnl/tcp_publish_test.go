@@ -4,72 +4,58 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
-	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func TestTCPPublishAndEnrollmentFlags(t *testing.T) {
-	for _, test := range []struct {
-		args []string
-		want string
-	}{
-		{[]string{"publish", "db.internal:5432", "--protocol", "postgres", "--name", "orders", "--target-tls", "--target-tls-name", "db.internal"}, "postgres"},
-		{[]string{"publish", "db.internal:3306", "--protocol", "mysql", "--publisher", "pub_example"}, "mysql"},
-		{[]string{"publish", "cache.internal:6379", "--protocol", "redis", "--enroll-key", "-"}, "redis"},
-	} {
-		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
+func TestPrivatePublishTargetAndPublicBoundary(t *testing.T) {
+	requests, excessiveConcurrency := 1, 4097
+	for _, value := range []string{"tcp", "mysql", "postgres"} {
+		protocol, err := publishProtocol(value)
+		if err != nil || string(protocol) != value {
+			t.Fatalf("protocol %q: %v", value, err)
 		}
-		if _, err := parser.Parse(test.args); err != nil {
-			t.Fatal(err)
-		}
-		if test.want == "postgres" {
-			if flags.Publish.Target != "db.internal:5432" || flags.Publish.Protocol != test.want ||
-				flags.Publish.Name != "orders" || !flags.Publish.TargetTLS || flags.Publish.TargetTLSName != "db.internal" {
-				t.Fatalf("TCP publish flags = %+v", flags.Publish)
+		for input, want := range map[string]string{"5432": "127.0.0.1:5432", "db.internal:5432": "db.internal:5432"} {
+			if got, err := normalizePublishTarget(input, protocol); err != nil || got != want {
+				t.Fatalf("%s target %q = %q, %v", value, input, got, err)
 			}
-		} else if flags.Publish.Protocol != test.want || flags.Publish.PublisherID == "" && flags.Publish.EnrollmentKey == "" {
-			t.Fatalf("TCP enrollment flags = %+v", flags.Publish)
 		}
+		for _, target := range []string{"http://db.internal:5432", "db.internal", "db.internal:0", "db.internal:65536"} {
+			if _, err := normalizePublishTarget(target, protocol); err == nil {
+				t.Fatalf("invalid target %q accepted", target)
+			}
+		}
+		if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: protocol}); err == nil {
+			t.Fatal("private service accepted as a public URL")
+		}
+		for _, flags := range []publishCommand{
+			{openOptions: openOptions{Open: true}},
+			{tunnelFlags: tunnelFlags{Ephemeral: true}},
+			{tunnelFlags: tunnelFlags{PublicURL: "db.example"}},
+			{tunnelFlags: tunnelFlags{Anonymous: true}},
+			{tunnelFlags: tunnelFlags{Requests: &requests}},
+			{tunnelFlags: tunnelFlags{Concurrency: &excessiveConcurrency}},
+		} {
+			if err := validateTCPPublishOptions(flags, protocol); err == nil {
+				t.Fatalf("private %s accepted HTTP/target TLS flags", value)
+			}
+		}
+	}
+	for _, value := range []string{"ssh", "redis", "other"} {
+		if _, err := publishProtocol(value); err == nil {
+			t.Fatalf("unsupported protocol %q accepted", value)
+		}
+	}
+	if address, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Http, CanonicalHostname: "web.example"}); err != nil || address != "https://web.example" {
+		t.Fatalf("HTTP public address = %q, %v", address, err)
 	}
 }
 
-func TestTCPInspectionSelectionDefaultsToSummaryExceptSSH(t *testing.T) {
-	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql, controlv1.Redis} {
-		flags := publishCommand{tunnelFlags: tunnelFlags{InspectionMode: config.InspectionSummary}}
-		if err := selectPublishInspection(&flags, protocol); err != nil || flags.InspectionMode != config.InspectionSummary {
-			t.Fatalf("%s default inspection = %q, %v", protocol, flags.InspectionMode, err)
-		}
-		flags.InspectionMode = config.InspectionNone
-		flags.inspectionModeFromCLI = true
-		if err := selectPublishInspection(&flags, protocol); err != nil || flags.InspectionMode != config.InspectionNone {
-			t.Fatalf("%s explicit none inspection = %q, %v", protocol, flags.InspectionMode, err)
-		}
-	}
-	flags := publishCommand{tunnelFlags: tunnelFlags{InspectionMode: config.InspectionSummary}}
-	if err := selectPublishInspection(&flags, controlv1.Ssh); err != nil || flags.InspectionMode != config.InspectionNone {
-		t.Fatalf("SSH default inspection = %q, %v", flags.InspectionMode, err)
-	}
-	for _, explicit := range []tunnelFlags{{InspectionMode: config.InspectionSummary, inspectionModeFromCLI: true},
-		{InspectionMode: config.InspectionSummary, inspectionModeFromConfig: true}} {
-		flags := publishCommand{tunnelFlags: explicit}
-		if err := selectPublishInspection(&flags, controlv1.Ssh); err == nil {
-			t.Fatal("SSH accepted explicit summary inspection")
-		}
-	}
-}
-
-func TestRemovedCredentialAndPassthroughFlagsAreRejected(t *testing.T) {
+func TestRemovedSSHAndPublicDatabaseCommandsAreRejected(t *testing.T) {
 	for _, args := range [][]string{
-		{"publish", "3000", "--credential", "secret"},
-		{"publish", "3000", "--ephemeral-credential", "secret"},
-		{"publish", "db.internal:5432", "--protocol", "postgres", "--visitor-tls-passthrough"},
-		{"publish", "db.internal:5432", "--protocol", "postgres", "--database-tls-passthrough"},
-		{"url", "credential", "create"},
-		{"runtime", "address", "--project", "/tmp/project"},
+		{"ssh", "enable"}, {"share", "team", "create", "web.example", "--ssh-user", "deploy"},
+		{"publish", "3000", "--credential", "secret"}, {"publish", "3000", "--ephemeral-credential", "secret"},
+		{"publish", "db:5432", "--visitor-tls-passthrough"}, {"url", "credential", "create"},
+		{"url", "certificate", "db.example", "--directory", "/tmp/visitor"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)
@@ -77,135 +63,7 @@ func TestRemovedCredentialAndPassthroughFlagsAreRejected(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := parser.Parse(args); err == nil {
-			t.Fatalf("removed command or flag accepted: %v", args)
+			t.Fatalf("removed command accepted: %v", args)
 		}
-	}
-}
-
-func TestRedisPublishTargetAndAddress(t *testing.T) {
-	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parser.Parse([]string{"publish", "redis:6379", "--protocol", "redis", "--name", "cache"}); err != nil {
-		t.Fatal(err)
-	}
-	if flags.Publish.Target != "redis:6379" || flags.Publish.Protocol != "redis" || flags.Publish.Name != "cache" {
-		t.Fatalf("Redis publish flags = %+v", flags.Publish)
-	}
-	protocol, err := publishProtocol(flags.Publish.Protocol)
-	if err != nil || protocol != controlv1.Redis {
-		t.Fatalf("Redis protocol = %q, %v", protocol, err)
-	}
-	if target, err := normalizePublishTarget(flags.Publish.Target, protocol); err != nil || target != "redis:6379" {
-		t.Fatalf("Redis private target = %q, %v", target, err)
-	}
-	if err := validateTCPPublishOptions(flags.Publish, protocol); err != nil {
-		t.Fatal(err)
-	}
-	port := 6379
-	if address, err := savedPublicAddress(controlv1.PublicURL{CanonicalHostname: "cache.example", ServiceProtocol: protocol, PublicPort: &port}); err != nil || address != "cache.example:6379" {
-		t.Fatalf("Redis public address = %q, %v", address, err)
-	}
-	if err := validateTCPPublishOptions(publishCommand{TargetTLSName: "redis.internal"}, protocol); err == nil {
-		t.Fatal("Redis accepted a target TLS name without target TLS")
-	}
-}
-
-func TestSSHPublishTargetAndAddress(t *testing.T) {
-	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parser.Parse([]string{"publish", "sshd:22", "--protocol", "ssh", "--name", "shell"}); err != nil {
-		t.Fatal(err)
-	}
-	protocol, err := publishProtocol(flags.Publish.Protocol)
-	if err != nil || protocol != controlv1.Ssh {
-		t.Fatalf("SSH protocol = %q, %v", protocol, err)
-	}
-	if target, err := normalizePublishTarget(flags.Publish.Target, protocol); err != nil || target != "sshd:22" {
-		t.Fatalf("SSH private target = %q, %v", target, err)
-	}
-	if err := validateTCPPublishOptions(flags.Publish, protocol); err != nil {
-		t.Fatal(err)
-	}
-	port := 2222
-	if address, err := savedPublicAddress(controlv1.PublicURL{CanonicalHostname: "shell.example", ServiceProtocol: protocol, PublicPort: &port}); err != nil || address != "shell.example:2222" {
-		t.Fatalf("SSH public address = %q, %v", address, err)
-	}
-	if err := validateTCPPublishOptions(publishCommand{openOptions: openOptions{Open: true}}, protocol); err == nil {
-		t.Fatal("SSH --open was silently ignored")
-	}
-}
-
-func TestDatabasePublishTargetAndScopedProtocol(t *testing.T) {
-	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql} {
-		if got, err := normalizePublishTarget("db.internal:5432", protocol); err != nil || got != "db.internal:5432" {
-			t.Fatalf("%s target = %q, %v", protocol, got, err)
-		}
-		if got, err := normalizePublishTarget("5432", protocol); err != nil || got != "127.0.0.1:5432" {
-			t.Fatalf("%s bare port target = %q, %v", protocol, got, err)
-		}
-		if got, err := enrolledTarget(controlv1.PublicURL{ServiceProtocol: protocol}, "db.internal:5432"); err != nil || got != "db.internal:5432" {
-			t.Fatalf("%s enrolled target = %q, %v", protocol, got, err)
-		}
-		if _, err := enrolledTarget(controlv1.PublicURL{ServiceProtocol: protocol}, ""); err == nil {
-			t.Fatal("database enrollment accepted a missing local target")
-		}
-		if _, err := enrolledTarget(controlv1.PublicURL{ServiceProtocol: protocol, Target: "db.internal:5432"}, "db.internal:5432"); err == nil {
-			t.Fatal("database enrollment accepted a control-stored private target")
-		}
-	}
-	for _, target := range []string{"http://db.internal:5432", "db.internal", "db.internal:0", "db.internal:65536"} {
-		if _, err := normalizePublishTarget(target, controlv1.Postgres); err == nil {
-			t.Fatalf("invalid database target %q was accepted", target)
-		} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.TargetInvalid {
-			t.Fatalf("invalid target %q diagnostic = %q, %v", target, code, err)
-		}
-	}
-	if _, err := publishProtocol("other"); err == nil {
-		t.Fatal("unsupported protocol accepted")
-	}
-	if _, err := normalizePublishTarget("127.0.0.1:5432", controlv1.Http); err == nil {
-		t.Fatal("HTTP accepted a database target syntax")
-	}
-}
-
-func TestTCPPublicAddressAndFlags(t *testing.T) {
-	port := 15432
-	address, err := savedPublicAddress(controlv1.PublicURL{
-		CanonicalHostname: "orders.example", ServiceProtocol: controlv1.Postgres, PublicPort: &port,
-	})
-	if err != nil || address != "orders.example:15432" {
-		t.Fatalf("TCP address = %q, %v", address, err)
-	}
-	if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Mysql}); err == nil {
-		t.Fatal("TCP public URL without a public port was accepted")
-	}
-	for _, invalid := range []int{1023, 65536} {
-		if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Postgres, PublicPort: &invalid}); err == nil {
-			t.Fatalf("out-of-range public port %d was accepted", invalid)
-		}
-	}
-	if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: "unknown"}); err == nil {
-		t.Fatal("unknown public URL protocol was accepted")
-	}
-	if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Http, PublicPort: &port}); err == nil {
-		t.Fatal("HTTP public URL advertised a TCP port")
-	}
-	if got, err := savedPublicAddress(controlv1.PublicURL{CanonicalHostname: "api.example", ServiceProtocol: controlv1.Http}); err != nil || got != "https://api.example" {
-		t.Fatalf("HTTP address = %q, %v", got, err)
-	}
-	if err := validateTCPPublishOptions(publishCommand{TargetTLSName: "db.internal"}, controlv1.Http); err == nil {
-		t.Fatal("HTTP accepted TCP target TLS settings")
-	}
-	if err := validateTCPPublishOptions(publishCommand{TargetTLSName: "db.internal"}, controlv1.Postgres); err == nil {
-		t.Fatal("TCP accepted target TLS name without target TLS")
-	}
-	if err := validateTCPPublishOptions(publishCommand{openOptions: openOptions{Open: true}}, controlv1.Mysql); err == nil {
-		t.Fatal("TCP --open was silently ignored")
 	}
 }

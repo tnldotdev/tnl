@@ -26,7 +26,7 @@ import (
 const (
 	// the coordinated baseline requires the exact migration and identity.
 	schemaVersion       int64 = 1
-	baselineID                = "tnl-services-public-v1"
+	baselineID                = "tnl-control-fresh-v1-services-oidc-company-managed-http-dns"
 	versionTable              = "control.goose_db_version"
 	bootstrapRetryDelay       = 25 * time.Millisecond
 )
@@ -37,6 +37,7 @@ var migrationFiles embed.FS
 // Database is the PostgreSQL connection pool for control state. its database
 // details remain private to this package.
 type Database struct {
+	oidcAdmissions map[string]configuredAdmission
 	pool           *pgxpool.Pool
 	storageKey     *storagekey.Keyring
 	managedURLMode naming.ManagedURLMode

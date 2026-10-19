@@ -26,7 +26,7 @@ const (
 
 type statusCommand struct {
 	Output        statusOutputMode     `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
-	Scope         string               `name:"scope" enum:"local,server,both" default:"local" help:"Read local snapshots (default), fresh server state, or both."`
+	Scope         string               `name:"scope" enum:"local,server,both" default:"both" help:"Read local snapshots, fresh server state, or both (default)."`
 	ServerURL     string               `name:"server" env:"TNL_SERVER" help:"Control URL to read; independent of --scope."`
 	AccessToken   string               `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token for server status; defaults to saved session."`
 	StateDir      string               `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
@@ -74,7 +74,7 @@ type statusResult struct {
 
 func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error {
 	if flags.Scope == "" {
-		flags.Scope = "local"
+		flags.Scope = "both"
 	}
 	root, err := clientStateRoot(flags.StateDir)
 	if err != nil {

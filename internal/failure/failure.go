@@ -22,11 +22,11 @@ const (
 	SettingDatabaseURL          Setting = "TNLD_DATABASE_URL"
 	SettingDatabaseDirectURL    Setting = "TNLD_DATABASE_DIRECT_URL"
 	SettingStorageKey           Setting = "TNLD_STORAGE_KEY"
-	SettingLoginToken           Setting = "TNLD_LOGIN_TOKEN"
 	SettingMetricsListen        Setting = "TNLD_METRICS_LISTEN"
 	SettingControlListen        Setting = "TNLD_CONTROL_LISTEN"
 	SettingPrivateControlListen Setting = "TNLD_PRIVATE_CONTROL_LISTEN"
 	SettingIngressListen        Setting = "TNLD_INGRESS_LISTEN"
+	SettingIngressUDPListen     Setting = "TNLD_INGRESS_UDP_LISTEN"
 	SettingRelayTCPListen       Setting = "TNLD_RELAY_TCP_LISTEN"
 	SettingRelayUDPListen       Setting = "TNLD_RELAY_UDP_LISTEN"
 	SettingInternalRelayListen  Setting = "TNLD_INTERNAL_RELAY_LISTEN"
@@ -39,8 +39,8 @@ const (
 
 func (setting Setting) valid() bool {
 	switch setting {
-	case SettingDatabaseURL, SettingDatabaseDirectURL, SettingStorageKey, SettingLoginToken,
-		SettingMetricsListen, SettingControlListen, SettingPrivateControlListen, SettingIngressListen,
+	case SettingDatabaseURL, SettingDatabaseDirectURL, SettingStorageKey,
+		SettingMetricsListen, SettingControlListen, SettingPrivateControlListen, SettingIngressListen, SettingIngressUDPListen,
 		SettingRelayTCPListen, SettingRelayUDPListen, SettingInternalRelayListen, SettingDNSServer,
 		SettingEmailURL, SettingWebhookSecret, SettingWebServiceSecret, SettingOIDCIssuer:
 		return true

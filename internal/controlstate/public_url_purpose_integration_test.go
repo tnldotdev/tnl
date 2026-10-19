@@ -18,7 +18,7 @@ func TestIntegrationPublicURLPurposeSurvivesReadAndIsNotRelabeledByRetry(t *test
 	database, now := newControlStateIntegrationDatabase(t, "public_url_purpose")
 	metrics := observability.New("control")
 	database.Instrument(metrics)
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	request.Purpose = PublicURLPurposeWebhooks
 	created, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil || created.Purpose != PublicURLPurposeWebhooks {

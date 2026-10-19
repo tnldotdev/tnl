@@ -28,6 +28,12 @@ type VisitorGrant struct {
 // visitorManager is independent of visitor permission: a grant permits visits,
 // never grant management or publishing.
 func visitorManager(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, actorID string) error {
+	if err := requireTeamSession(ctx, q, url.TeamID, actorID, time.Now()); err != nil {
+		if errors.Is(err, ErrAuthorityAccess) {
+			return errors.Join(ErrPreviewAccess, err)
+		}
+		return err
+	}
 	member, err := q.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{TeamID: url.TeamID, IdentityID: actorID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrPreviewAccess
@@ -46,7 +52,18 @@ func visitorGrantFromRow(row controlstatedb.ControlVisitorGrant) VisitorGrant {
 		CreatedAt: row.CreatedAt.Time, ExpiresAt: optionalTime(row.ExpiresAt), RevokedAt: optionalTime(row.RevokedAt)}
 }
 
-func (d *Database) CreateTeamVisitorGrant(ctx context.Context, urlID, actorID, key string, expires *time.Time, now time.Time) (result VisitorGrant, retErr error) {
+func (d *Database) CreateTeamVisitorGrant(ctx context.Context, urlID, actorID, key string, expires *time.Time, now time.Time) (VisitorGrant, error) {
+	return d.createVisitorGrant(ctx, urlID, actorID, key, "", expires, now)
+}
+
+func (d *Database) CreateIdentityVisitorGrant(ctx context.Context, urlID, actorID, key, identityID string, expires *time.Time, now time.Time) (VisitorGrant, error) {
+	if identityID == "" {
+		return VisitorGrant{}, ErrShareInvalid
+	}
+	return d.createVisitorGrant(ctx, urlID, actorID, key, identityID, expires, now)
+}
+
+func (d *Database) createVisitorGrant(ctx context.Context, urlID, actorID, key, identityID string, expires *time.Time, now time.Time) (result VisitorGrant, retErr error) {
 	if !validFeedbackKey(key) || expires != nil && !expires.After(now) {
 		return result, ErrShareInvalid
 	}
@@ -60,28 +77,40 @@ func (d *Database) CreateTeamVisitorGrant(ctx context.Context, urlID, actorID, k
 	if err != nil {
 		return result, err
 	}
-	if url.Purpose != "app" || url.ServiceProtocol != "http" && !databaseProtocol(url.ServiceProtocol) {
+	if url.Purpose != "app" || url.ServiceProtocol != "http" {
 		return result, ErrShareInvalid
 	}
 	if err = visitorManager(ctx, q, url, actorID); err != nil {
 		return result, err
+	}
+	kind := "team"
+	if identityID != "" {
+		kind = "identity"
+		if _, err = q.LockVisitorIdentity(ctx, identityID); errors.Is(err, pgx.ErrNoRows) {
+			return result, ErrShareInvalid
+		} else if err != nil {
+			return result, err
+		}
 	}
 	id, err := opaqueid.New(opaqueid.SharePrefix)
 	if err != nil {
 		return result, err
 	}
 	encoded, _ := json.Marshal(struct {
-		URL     string
-		Expires *time.Time
-	}{urlID, expires})
+		URL, Identity string
+		Expires       *time.Time
+	}{urlID, identityID, expires})
 	digest := sha256.Sum256(encoded)
 	row, err := q.CreateVisitorGrant(ctx, controlstatedb.CreateVisitorGrantParams{ID: id, PublicURLID: urlID, TeamID: url.TeamID,
-		Kind: "team", CreatedByIdentityID: actorID, IdempotencyKey: key, RequestDigest: digest[:], CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
+		Kind: kind, IdentityID: nullableText(identityID), CreatedByIdentityID: actorID, IdempotencyKey: key, RequestDigest: digest[:], CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
 	if err != nil {
 		return result, err
 	}
 	if row.RevokedAt.Valid || subtle.ConstantTimeCompare(row.RequestDigest, digest[:]) != 1 {
 		return result, ErrShareIdempotency
+	}
+	if err = auditPublicMutation(ctx, tx, urlID, actorID, "grant.create", row.ID, row.CreatedAt.Time); err != nil {
+		return result, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
@@ -135,7 +164,13 @@ func (d *Database) RevokeVisitorGrant(ctx context.Context, urlID, actorID, grant
 	if err != nil {
 		return err
 	}
+	if err = rejectProjectManagedGrant(ctx, tx, grantID); err != nil {
+		return err
+	}
 	if err = q.RevokeVisitorGrant(ctx, controlstatedb.RevokeVisitorGrantParams{ID: grantID, RevokedAt: timestamptz(now)}); err != nil {
+		return err
+	}
+	if err = auditPublicMutation(ctx, tx, urlID, actorID, "grant.revoke", grantID, now); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -171,7 +206,7 @@ func (d *Database) CreateVisitorInvitation(ctx context.Context, urlID, actorID, 
 	if err != nil {
 		return result, err
 	}
-	if url.Purpose != "app" || url.ServiceProtocol != "http" && !databaseProtocol(url.ServiceProtocol) {
+	if url.Purpose != "app" || url.ServiceProtocol != "http" {
 		return result, ErrShareInvalid
 	}
 	if err = visitorManager(ctx, q, url, actorID); err != nil {
@@ -194,6 +229,9 @@ func (d *Database) CreateVisitorInvitation(ctx context.Context, urlID, actorID, 
 	}
 	if row.RevokedAt.Valid || row.AcceptedAt.Valid || subtle.ConstantTimeCompare(row.RequestDigest, digest[:]) != 1 {
 		return result, ErrShareIdempotency
+	}
+	if err = auditPublicMutation(ctx, tx, urlID, actorID, "invitation.create", row.ID, row.CreatedAt.Time); err != nil {
+		return result, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
@@ -225,7 +263,7 @@ func (d *Database) AcceptVisitorInvitation(ctx context.Context, identityID, secr
 	if err != nil {
 		return result, err
 	}
-	if url.Purpose != "app" || url.ServiceProtocol != "http" && !databaseProtocol(url.ServiceProtocol) {
+	if url.Purpose != "app" || url.ServiceProtocol != "http" {
 		return result, ErrShareNotFound
 	}
 	row, err := q.LockVisitorInvitation(ctx, id)
@@ -255,6 +293,12 @@ func (d *Database) AcceptVisitorInvitation(ctx context.Context, identityID, secr
 	}
 	if grant.ID != id || grant.Kind != "identity" || grant.IdentityID.String != identityID || grant.PublicURLID != url.ID || subtle.ConstantTimeCompare(grant.RequestDigest, row.RequestDigest) != 1 {
 		return result, ErrShareIdempotency
+	}
+	if err = auditPublicMutation(ctx, tx, url.ID, identityID, "invitation.accept", id, now); err != nil {
+		return result, err
+	}
+	if err = auditPublicMutation(ctx, tx, url.ID, identityID, "grant.create", id, now); err != nil {
+		return result, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
@@ -315,6 +359,12 @@ func (d *Database) RevokeVisitorInvitation(ctx context.Context, urlID, actorID, 
 		if err = q.RevokeVisitorGrant(ctx, controlstatedb.RevokeVisitorGrantParams{ID: id, RevokedAt: timestamptz(now)}); err != nil {
 			return err
 		}
+		if err = auditPublicMutation(ctx, tx, urlID, actorID, "grant.revoke", id, now); err != nil {
+			return err
+		}
+	}
+	if err = auditPublicMutation(ctx, tx, urlID, actorID, "invitation.revoke", id, now); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }
@@ -325,7 +375,6 @@ type AvailablePublicURL struct {
 	TeamName          string `json:"team_name"`
 	CanonicalHostname string `json:"canonical_hostname"`
 	ServiceProtocol   string `json:"service_protocol"`
-	PublicPort        *int32 `json:"public_port,omitempty"`
 	VisitorAccess     string `json:"visitor_access"`
 }
 type AvailablePublicURLPage struct {
@@ -334,16 +383,13 @@ type AvailablePublicURLPage struct {
 }
 
 func (d *Database) ListAvailablePublicURLs(ctx context.Context, identityID, teamID, cursor string, now time.Time) (AvailablePublicURLPage, error) {
-	rows, err := controlstatedb.New(d.pool).ListVisitorInventory(ctx, controlstatedb.ListVisitorInventoryParams{IdentityID: identityID, TeamID: teamID, Cursor: cursor, Now: timestamptz(now)})
+	rows, err := controlstatedb.New(d.pool).ListVisitorInventory(ctx, controlstatedb.ListVisitorInventoryParams{IdentityID: identityID, TeamID: teamID, Cursor: cursor, Now: timestamptz(now), ControlSessionID: companySessionID(ctx, identityID)})
 	if err != nil {
 		return AvailablePublicURLPage{}, err
 	}
 	page := AvailablePublicURLPage{PublicURLs: make([]AvailablePublicURL, min(len(rows), 100))}
 	for i, row := range rows[:len(page.PublicURLs)] {
 		item := AvailablePublicURL{ID: row.ID, TeamID: row.TeamID, TeamName: row.TeamName, CanonicalHostname: row.CanonicalHostname, ServiceProtocol: row.ServiceProtocol, VisitorAccess: row.VisitorAccess}
-		if row.PublicPort.Valid {
-			item.PublicPort = &row.PublicPort.Int32
-		}
 		page.PublicURLs[i] = item
 	}
 	if len(rows) > 100 {

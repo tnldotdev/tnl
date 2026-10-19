@@ -2,14 +2,11 @@ package controlstate
 
 import (
 	"bytes"
-	"crypto/ecdsa"
-	"crypto/elliptic"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"slices"
 	"sync"
@@ -18,13 +15,12 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/visitorcert"
 )
 
 func finalVisitorRun(t *testing.T, protocol string) (*publishRunFixture, PublishRunAuthentication) {
 	t.Helper()
 	database, now := newControlStateIntegrationDatabase(t, "final-visitor")
-	creation := builtinRouteRequest(t, database, now)
+	creation := oidcRouteRequest(t, database, now)
 	url := createTestPublicURL(t, database, creation, now)
 	leases := make(map[string]RelayLease)
 	for _, id := range []string{"final-visitor-a", "final-visitor-b"} {
@@ -38,16 +34,14 @@ func finalVisitorRun(t *testing.T, protocol string) (*publishRunFixture, Publish
 	}
 	request := PublishRunRequest{PublicURLID: url.ID, TeamID: url.TeamID, ActingIdentityID: creation.ActingIdentityID, MembershipID: url.MembershipID,
 		RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "final-visitor", RequestDigest: sha256.Sum256([]byte("final-visitor")), PolicyRevision: uint64(url.PolicyRevision),
-		CertificateCacheKey: "final-visitor", CertificateScope: "public-url", CertificateIdentifiers: []string{url.CanonicalHostname}, CertificateChallenge: "tls-alpn-01", ExpectedMutationRevision: url.MutationRevision}
+		CertificateCacheKey: "final-visitor", CertificateScope: "public-url", CertificateIdentifiers: []string{url.CanonicalHostname}, CertificateChallenge: "dns-01", ExpectedMutationRevision: url.MutationRevision}
 	setup, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f := publishRunFixture{database: database, now: now, request: request, setup: setup, leases: leases}
 	if protocol != "http" {
-		if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.public_urls SET service_protocol=$2,target='',public_port=15432 WHERE id=$1`, f.setup.PublicURLID, protocol); err != nil {
-			t.Fatal(err)
-		}
+		t.Fatal("public URLs are HTTP-only")
 	}
 	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state='ready',ready_at=$2,publisher_expires_at=$3 WHERE id=$1`, f.setup.PublishRunID, f.now, f.now.Add(24*time.Hour)); err != nil {
 		t.Fatal(err)
@@ -66,13 +60,13 @@ func finalVisitorIdentity(t *testing.T, d *Database, now time.Time, email string
 }
 
 func TestIntegrationFinalVisitorGrantsInventoryInvitationAndRevocation(t *testing.T) {
-	f, auth := finalVisitorRun(t, "postgres")
+	f, auth := finalVisitorRun(t, "http")
 	d := f.database
 	owner := f.request.ActingIdentityID
 	visitor := finalVisitorIdentity(t, d, f.now, "visitor@example.test")
 	check := func(person string, allowed bool, at time.Time) {
 		t.Helper()
-		permission, err := d.DatabaseVisitorPermission(t.Context(), auth, person, "192.0.2.9", at)
+		permission, err := identityPermission(t.Context(), controlstatedb.New(d.pool), auth.PublicURLID, person, "", at)
 		if err != nil || permission.VisitAllowed != allowed {
 			t.Fatalf("allowed=%t want=%t: %v", permission.VisitAllowed, allowed, err)
 		}
@@ -154,7 +148,7 @@ func TestIntegrationFinalVisitorGrantsInventoryInvitationAndRevocation(t *testin
 }
 
 func TestIntegrationFinalVisitorLiveIPExpiryAndRunBoundary(t *testing.T) {
-	f, auth := finalVisitorRun(t, "redis")
+	f, auth := finalVisitorRun(t, "http")
 	d := f.database
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, auth.PublicURLID); err != nil {
 		t.Fatal(err)
@@ -169,13 +163,13 @@ func TestIntegrationFinalVisitorLiveIPExpiryAndRunBoundary(t *testing.T) {
 	}
 	check := func(at time.Time, want bool) {
 		t.Helper()
-		p, err := d.DatabaseVisitorPermission(t.Context(), auth, "", "192.0.2.9", at)
+		p, err := d.HTTPVisitorPermission(t.Context(), auth, HTTPVisitorRequest{SourceIP: "192.0.2.9"}, at)
 		if err != nil || p.VisitAllowed != want {
 			t.Fatalf("IP allowed=%t want=%t: %v", p.VisitAllowed, want, err)
 		}
 	}
 	check(f.now, true)
-	if permission, err := d.DatabaseVisitorPermission(t.Context(), auth, "", "192.0.2.9", f.now); err != nil || permission.ExpiresAt == nil || !permission.ExpiresAt.Equal(expiry) {
+	if permission, err := d.HTTPVisitorPermission(t.Context(), auth, HTTPVisitorRequest{SourceIP: "192.0.2.9"}, f.now); err != nil || permission.ExpiresAt == nil || !permission.ExpiresAt.Equal(expiry) {
 		t.Fatalf("cached database decision outlived IP grant: %+v %v", permission, err)
 	}
 	check(expiry, false)
@@ -209,13 +203,13 @@ func TestIntegrationFinalVisitorLiveIPExpiryAndRunBoundary(t *testing.T) {
 	}
 	wrong := auth
 	wrong.PublishRunNumber++
-	if _, err = d.DatabaseVisitorPermission(t.Context(), wrong, "", "192.0.2.9", f.now); !errors.Is(err, ErrPublishRunStale) {
+	if _, err = d.HTTPVisitorPermission(t.Context(), wrong, HTTPVisitorRequest{SourceIP: "192.0.2.9"}, f.now); !errors.Is(err, ErrPublishRunStale) {
 		t.Fatalf("wrong run number admitted: %v", err)
 	}
 	if err = d.ClosePublishRun(t.Context(), auth.PublishRunID, auth.PublishRunToken, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.DatabaseVisitorPermission(t.Context(), auth, "", "192.0.2.9", f.now); !errors.Is(err, ErrPublishRunStale) {
+	if _, err = d.HTTPVisitorPermission(t.Context(), auth, HTTPVisitorRequest{SourceIP: "192.0.2.9"}, f.now); !errors.Is(err, ErrPublishRunStale) {
 		t.Fatalf("closed run admitted: %v", err)
 	}
 }
@@ -228,7 +222,7 @@ func finalBrowserSession(t *testing.T, f *publishRunFixture, auth PublishRunAuth
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	issued, err := d.createControlSession(t.Context(), controlstatedb.New(tx), identityID, false, oidcAuthenticationMethod, 1, time.Hour, 24*time.Hour, f.now)
+	issued, err := d.createControlSession(t.Context(), controlstatedb.New(tx), identityID, time.Hour, 24*time.Hour, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,118 +318,49 @@ func TestIntegrationFinalVisitorBrowserIdentityFeedbackAuthorPolicyAndSessionRev
 	}
 }
 
-func TestIntegrationFinalVisitorCertificateCSRScopeAndCurrentPermission(t *testing.T) {
-	f, auth := finalVisitorRun(t, "mysql")
+func TestIntegrationFinalVisitorDeviceEnrollmentRevocationAndIdentityBoundary(t *testing.T) {
+	f, _ := finalVisitorRun(t, "http")
 	d := f.database
-	issuer, err := visitorcert.New(bytes.Repeat([]byte{7}, 32))
+	key, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := d.pool.Begin(t.Context())
+	identity := f.request.ActingIdentityID
+	device, err := d.EnrollVisitorDevice(t.Context(), identity, key, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(t.Context())
-	session, err := d.createControlSession(t.Context(), controlstatedb.New(tx), f.request.ActingIdentityID, true, oidcAuthenticationMethod, 1, time.Hour, 24*time.Hour, f.now)
-	if err != nil {
+	retry, err := d.EnrollVisitorDevice(t.Context(), identity, key, f.now)
+	if err != nil || retry.ID != device.ID {
+		t.Fatal("device enrollment retry changed key identity", err)
+	}
+	other := finalVisitorIdentity(t, d, f.now, "device@example.test")
+	if err = d.RevokeVisitorDevice(t.Context(), other, device.ID, f.now); !errors.Is(err, ErrPrivateServiceAccess) {
+		t.Fatalf("another identity revoked device: %v", err)
+	}
+	if err = d.RevokeVisitorDevice(t.Context(), identity, device.ID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if err = tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: []string{"wrong.example.test"}}, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	certificate, expires, err := d.IssueVisitorCertificateScope(t.Context(), session.AccessToken, auth.PublicURLID, f.now, func(urlID, identityID string, expiry time.Time) ([]byte, error) {
-		return issuer.Issue(csr, urlID, identityID, expiry, f.now)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	block, _ := pem.Decode(certificate)
-	leaf, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leaf.DNSNames) != 0 || !leaf.NotAfter.Equal(expires) || leaf.NotAfter.Sub(leaf.NotBefore) > 7*24*time.Hour {
-		t.Fatal("CSR supplied scope or unbounded validity")
-	}
-	identity, err := issuer.Identity(leaf, auth.PublicURLID, f.now)
-	if err != nil || identity != f.request.ActingIdentityID {
-		t.Fatal(identity, err)
-	}
-	other, _ := opaqueid.New(opaqueid.PublicURLPrefix)
-	if _, err = issuer.Identity(leaf, other, f.now); !errors.Is(err, visitorcert.ErrInvalidCertificate) {
-		t.Fatal("wrong certificate URL admitted", err)
-	}
-	visitor := finalVisitorIdentity(t, d, f.now, "certificate@example.test")
-	inviteSecret := bytes.Repeat([]byte{4}, 32)
-	inviteHash := sha256.Sum256(inviteSecret)
-	grantExpiry := f.now.Add(35 * time.Second)
-	invite, err := d.CreateVisitorInvitation(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, "certificate-invite", "certificate@example.test", inviteHash, grantExpiry, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	grant, err := d.AcceptVisitorInvitation(t.Context(), visitor, invite.ID+"."+base64.RawURLEncoding.EncodeToString(inviteSecret), f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	visitorSession := browserTestControlSession(t, d, visitor, f.now)
-	visitorPEM, visitorExpiry, err := d.IssueVisitorCertificateScope(t.Context(), visitorSession.AccessToken, auth.PublicURLID, f.now, func(urlID, identityID string, expiry time.Time) ([]byte, error) {
-		return issuer.Issue(csr, urlID, identityID, expiry, f.now)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if visitorExpiry.After(grantExpiry) {
-		t.Fatal("certificate outlived its grant")
-	}
-	visitorBlock, _ := pem.Decode(visitorPEM)
-	visitorLeaf, err := x509.ParseCertificate(visitorBlock.Bytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	certificateIdentity, err := issuer.Identity(visitorLeaf, auth.PublicURLID, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p, err := d.DatabaseVisitorPermission(t.Context(), auth, certificateIdentity, "192.0.2.9", f.now); err != nil || !p.VisitAllowed {
-		t.Fatal(p, err)
-	}
-	if err = d.RevokeVisitorGrant(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, grant.ID, f.now); err != nil {
-		t.Fatal(err)
-	}
-	if p, err := d.DatabaseVisitorPermission(t.Context(), auth, certificateIdentity, "192.0.2.9", f.now); err != nil || p.VisitAllowed {
-		t.Fatal("revoked grant bypassed by certificate", p, err)
-	}
-	csr[len(csr)-1] ^= 1
-	if _, err = issuer.Issue(csr, auth.PublicURLID, identity, expires, f.now); !errors.Is(err, visitorcert.ErrInvalidCertificate) {
-		t.Fatal("bad CSR proof accepted", err)
+	if _, err = d.EnrollVisitorDevice(t.Context(), identity, key, f.now); !errors.Is(err, ErrPrivateServiceAccess) {
+		t.Fatalf("revoked key was resurrected: %v", err)
 	}
 	if _, err = d.pool.Exec(t.Context(), `UPDATE control.identities SET disabled_at=$2 WHERE id=$1`, identity, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.DatabaseVisitorPermission(t.Context(), auth, identity, "192.0.2.9", f.now); !errors.Is(err, ErrVisitorSignIn) {
-		t.Fatal("disabled identity admitted", err)
-	}
-	if err = d.ClosePublishRun(t.Context(), auth.PublishRunID, auth.PublishRunToken, f.now); err != nil {
+	key, _, err = ed25519.GenerateKey(rand.Reader)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.DatabaseVisitorPermission(t.Context(), auth, certificateIdentity, "192.0.2.9", f.now); !errors.Is(err, ErrPublishRunStale) {
-		t.Fatal("certificate bypassed revoked current run", err)
+	if _, err = d.EnrollVisitorDevice(t.Context(), identity, key, f.now); !errors.Is(err, ErrPrivateServiceAccess) {
+		t.Fatalf("disabled identity enrolled key: %v", err)
 	}
 }
 
 func TestIntegrationFinalVisitorAdminBrowserHandoffHasIndependentSessionAndFollowsCLIRevocation(t *testing.T) {
 	f, auth := finalVisitorRun(t, "http")
 	d := f.database
-	parent := newBuiltinSession(t, d, f.now)
-	handoff, host, err := d.IssueAdminBrowserHandoff(t.Context(), parent.AccessToken, parent.RefreshToken, auth.PublicURLID, 7, time.Hour, 24*time.Hour, f.now)
+	parent := newOIDCSession(t, d, f.now)
+	handoff, host, err := d.IssueControlBrowserHandoff(t.Context(), parent.AccessToken, parent.RefreshToken, auth.PublicURLID, time.Hour, 24*time.Hour, f.now)
 	if err != nil || host == "" {
 		t.Fatal(err)
 	}
@@ -456,7 +381,7 @@ func TestIntegrationFinalVisitorAdminBrowserHandoffHasIndependentSessionAndFollo
 	if _, err = d.BrowserAuthorizationForRun(t.Context(), auth, cookie, f.now); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatal("browser survived parent revocation", err)
 	}
-	if _, _, err = d.IssueAdminBrowserHandoff(t.Context(), parent.AccessToken, parent.RefreshToken, auth.PublicURLID, 7, time.Hour, 24*time.Hour, f.now); !errors.Is(err, ErrControlAuthentication) {
+	if _, _, err = d.IssueControlBrowserHandoff(t.Context(), parent.AccessToken, parent.RefreshToken, auth.PublicURLID, time.Hour, 24*time.Hour, f.now); !errors.Is(err, ErrControlAuthentication) {
 		t.Fatal("revoked CLI created handoff", err)
 	}
 }

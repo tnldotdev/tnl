@@ -1,7 +1,10 @@
 package tnldruntime
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
@@ -18,12 +21,13 @@ import (
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publishertarget"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 var composeHostAddress = flag.String("tnl-test-compose-host-address", "host-gateway", "address of the disposable binary test's ingress on the Docker host")
 
-// an ordinary Compose service runs tnl publish against private HTTP and TCP
-// targets. visitors still cross public ingress, relay, and the publisher.
+// an ordinary Compose service publishes a public HTTP target and a private
+// database. visitors use public HTTPS or the production tnl connect client.
 func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierBinary)
 	fixture := startIntegrationBinaryStandaloneWithBind(t, true, "simple")
@@ -31,6 +35,7 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	initializeIntegrationBinaryProject(t, root, "compose")
 	appBinary := filepath.Join(root, "compose-app-linux")
 	buildIntegrationBinary(t, fixture.repositoryRoot, appBinary, "./internal/tnldruntime/testdata/compose-publisher")
 	if *composeHostAddress != "host-gateway" {
@@ -41,12 +46,12 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 	image := "mirror.gcr.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61"
 	postgresImage := "mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
 	base := filepath.Join(root, "compose.yaml")
-	configuration := fmt.Sprintf("services:\n  publisher:\n    image: %s\n    command: [sleep, infinity]\n    working_dir: /workspace\n    extra_hosts:\n      - control.127.0.0.1.nip.io:host-gateway\n      - relay.127.0.0.1.nip.io:host-gateway\n    environment:\n      SSL_CERT_FILE: /run/tnl/roots.pem\n      TNL_SERVER: https://control.127.0.0.1.nip.io\n      TNL_STATE_DIR: /run/tnl/state/owner-state\n    volumes:\n      - %q\n      - %q\n      - %q\n      - publisher-state:/run/tnl/state\n  web:\n    image: %s\n    command: [/fixture/app]\n    volumes:\n      - %q\n  db:\n    image: %s\n    environment:\n      POSTGRES_PASSWORD: postgres\n    healthcheck:\n      test: [CMD-SHELL, pg_isready -U postgres -d postgres]\n      interval: 2s\n      timeout: 5s\n      retries: 10\nvolumes:\n  publisher-state:\n", image, fixture.tnlPath+":/usr/local/bin/tnl:ro", fixture.trustFile+":/run/tnl/roots.pem:ro", root+":/workspace:ro", image, appBinary+":/fixture/app:ro", postgresImage)
+	configuration := fmt.Sprintf("services:\n  publisher:\n    image: %s\n    command: [sleep, infinity]\n    working_dir: /workspace\n    extra_hosts:\n      - control.127.0.0.1.nip.io:host-gateway\n      - relay.127.0.0.1.nip.io:host-gateway\n    environment:\n      SSL_CERT_FILE: /run/tnl/roots.pem\n      TNL_SERVER: https://control.127.0.0.1.nip.io:8445\n      TNL_STATE_DIR: /run/tnl/state/owner-state\n    volumes:\n      - %q\n      - %q\n      - %q\n      - publisher-state:/run/tnl/state\n  web:\n    image: %s\n    command: [/fixture/app]\n    volumes:\n      - %q\n  db:\n    image: %s\n    environment:\n      POSTGRES_PASSWORD: postgres\n    healthcheck:\n      test: [CMD-SHELL, pg_isready -U postgres -d postgres]\n      interval: 2s\n      timeout: 5s\n      retries: 10\nvolumes:\n  publisher-state:\n", image, fixture.tnlPath+":/usr/local/bin/tnl:ro", fixture.trustFile+":/run/tnl/roots.pem:ro", root+":/workspace", image, appBinary+":/fixture/app:ro", postgresImage)
 	configuration = strings.ReplaceAll(configuration, ":host-gateway", ":"+*composeHostAddress)
 	if err := os.WriteFile(base, []byte(configuration), 0600); err != nil {
 		t.Fatal(err)
 	}
-	projectConfig := "version: 1\ntnl:\n  server: https://control.127.0.0.1.nip.io\n  services:\n    web:\n      target: {type: address, address: 'http://web:3000'}\n      tunnel: {name: compose-web, access: anonymous}\n    db:\n      protocol: postgres\n      target: {type: address, address: 'db:5432'}\n      tunnel: {name: compose-db, access: anonymous}\n"
+	projectConfig := "version: 1\ntnl:\n  server: https://control.127.0.0.1.nip.io:8445\n  services:\n    web:\n      name: compose-web\n      target: {type: address, address: 'http://web:3000'}\n      public_url: {access: anonymous}\n    db:\n      name: compose-db\n      protocol: postgres\n      access: {team: true}\n      target: {type: address, address: 'db:5432'}\n"
 	if err := os.WriteFile(filepath.Join(root, "tnl.yml"), []byte(projectConfig), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -83,9 +88,11 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 		t.Helper()
 		command := exec.CommandContext(ctx, "docker", append(append([]string{}, args...), arguments...)...)
 		command.Dir = root
-		output, err := command.CombinedOutput()
+		var diagnostics bytes.Buffer
+		command.Stderr = &diagnostics
+		output, err := command.Output()
 		if err != nil {
-			t.Fatalf("run disposable Compose command: %v\n%s", err, output)
+			t.Fatalf("run disposable Compose command: %v\n%s\n%s", err, output, diagnostics.String())
 		}
 		return output
 	}
@@ -103,7 +110,8 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 		t.Logf("disposable server output:\n%s", fixture.server.output.String())
 	})
 	compose("up", "--detach", "--wait")
-	compose("run", "--rm", "--no-deps", "--no-TTY", "--env", "TNL_LOGIN_TOKEN="+testLoginToken, "publisher", "tnl", "auth", "login", "--login-token")
+	op := binaryApproveDevice(t, compose("run", "--rm", "--no-deps", "--no-TTY", "publisher", "tnl", "auth", "login", "start", "--output=json"), fixture.trustFile)
+	compose("run", "--rm", "--no-deps", "--no-TTY", "publisher", "tnl", "auth", "login", "wait", op.ID, "--output=json")
 	start := func(service string) *integrationBinaryPublish {
 		t.Helper()
 		arguments := append(append([]string{}, args...), "exec", "--no-TTY", "publisher", "tnl", "publish", service, "--output=ndjson")
@@ -134,40 +142,76 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 	first := request("")
 	databasePublish := start("db")
 	databaseReady := waitForIntegrationBinaryPublishEvent(t, databasePublish, "ready", 90*time.Second)
-	queryDatabase := func() {
-		t.Helper()
-		hostname, port, err := net.SplitHostPort(databaseReady.URL)
-		if err != nil || port != "15432" {
-			t.Fatalf("database public address has no verified ingress port: %q, %v", databaseReady.URL, err)
+	if databaseReady.URL != "" || databaseReady.PublishRunNumber == 0 {
+		t.Fatalf("database publication is not private: %+v", databaseReady)
+	}
+	available := startIntegrationBinaryProcess(t, fixture.repositoryRoot, fixture.environment, fixture.tnlPath,
+		"--no-config", "connect", "available", "--output=json")
+	if err := waitForDoneWithin(available.done, 15*time.Second); err != nil {
+		t.Fatal("private service discovery did not finish")
+	}
+	assertIntegrationBinaryProcessResult(t, available)
+	var services []controlv1.PrivateService
+	if err := json.Unmarshal([]byte(available.output.String()), &services); err != nil {
+		t.Fatalf("decode available private services: %v", err)
+	}
+	var databaseServiceID, databaseHostname string
+	for _, service := range services {
+		if strings.HasPrefix(service.Name, "compose-db-") && service.Protocol == controlv1.Postgres && service.PrivateRunId != nil {
+			if databaseServiceID != "" {
+				t.Fatal("private database discovery returned multiple services")
+			}
+			databaseServiceID = service.Id
+			if service.ManagedTls == nil {
+				t.Fatal("private database has no managed TLS endpoint")
+			}
+			databaseHostname = service.ManagedTls.Hostname
 		}
+	}
+	if databaseServiceID == "" {
+		t.Fatalf("published database is not available to the signed-in visitor: %+v", services)
+	}
+	listenAddress := unusedTCPAddress(t)
+	connector := startIntegrationBinaryProcess(t, fixture.repositoryRoot, fixture.environment, fixture.tnlPath,
+		"--no-config", "connect", databaseServiceID, "--listen", listenAddress)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("tnl connect output:\n%s", connector.output.String())
+		}
+	})
+	queryDatabase := func() time.Time {
+		t.Helper()
+		var started time.Time
 		waitForIntegrationCondition(t, 45*time.Second, func(ctx context.Context) (bool, error) {
-			settings, err := pgx.ParseConfig("postgres://postgres:postgres@" + databaseReady.URL + "/postgres?sslmode=verify-full&channel_binding=disable")
+			settings, err := pgx.ParseConfig("postgres://postgres:postgres@" + listenAddress + "/postgres?sslmode=verify-full")
 			if err != nil {
 				return false, err
 			}
-			settings.TLSConfig.RootCAs = fixture.pebble.roots
-			settings.TLSConfig.ServerName = hostname
+			settings.ConnectTimeout = 3 * time.Second
+			settings.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: fixture.pebble.roots, ServerName: databaseHostname}
 			settings.Fallbacks = nil
-			settings.DialFunc = func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return new(net.Dialer).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
-			}
 			connection, err := pgx.ConnectConfig(ctx, settings)
 			if err != nil {
 				return false, err
 			}
 			defer connection.Close(ctx)
 			var value int
-			err = connection.QueryRow(ctx, "SELECT 42").Scan(&value)
+			err = connection.QueryRow(ctx, "SELECT 42, pg_postmaster_start_time()").Scan(&value, &started)
 			return err == nil && value == 42, err
 		})
+		return started
 	}
-	queryDatabase()
+	firstDatabase := queryDatabase()
 	compose("up", "--detach", "--no-deps", "--force-recreate", "web")
 	second := request(first)
-	queryDatabase()
+	if started := queryDatabase(); !started.Equal(firstDatabase) {
+		t.Fatal("recreating the HTTP app replaced the database")
+	}
 	compose("up", "--detach", "--no-deps", "--force-recreate", "db")
 	compose("up", "--detach", "--wait", "db")
-	queryDatabase()
+	if started := queryDatabase(); started.Equal(firstDatabase) {
+		t.Fatal("recreated database answered with its old process identity")
+	}
 	if second == first {
 		t.Fatal("recreated app answered with its old container identity")
 	}

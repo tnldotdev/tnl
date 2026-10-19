@@ -13,6 +13,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/authorityapi"
 	"github.com/tnldotdev/tnl/internal/controlapi"
+	"github.com/tnldotdev/tnl/internal/controlproxy"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/ingressapi"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -22,28 +23,23 @@ import (
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
-func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client, visitorIssuerSeed ...string) controlapi.Config {
-	seed := ""
-	if len(visitorIssuerSeed) == 1 {
-		seed = visitorIssuerSeed[0]
-	}
+func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) controlapi.Config {
 	return controlapi.Config{
 		TrafficDefaults:                   cfg.TrafficDefaults(),
 		TrafficCeiling:                    cfg.TrafficCeiling(),
-		VisitorIssuerSeed:                 seed,
 		Role:                              cfg.Role,
 		ManagedDomain:                     cfg.ManagedDomain,
 		ManagedURLMode:                    cfg.ManagedURLMode,
 		ManagedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels,
 		CustomDomainsEnabled:              cfg.CustomDomainsEnabled,
 		ControlURL:                        cfg.ControlOrigin(),
-		LoginToken:                        cfg.LoginToken,
 		OIDCIssuer:                        cfg.OIDCIssuer,
 		OIDCClientID:                      cfg.OIDCClientID,
-		BrowserOIDCClientID:               cfg.BrowserOIDCClientID,
-		OIDCLoginFlow:                     cfg.OIDCLoginFlow,
+		OIDCClientSecret:                  cfg.OIDCClientSecret,
+		AccessTokenLifetime:               cfg.AccessTokenLifetime,
+		RefreshTokenLifetime:              cfg.RefreshTokenLifetime,
 		OIDCScopes:                        cfg.EffectiveOIDCScopes(),
-		CertificateIssuance:               cfg.ACMEEnabled(),
+		CertificateIssuance:               cfg.ACMEEnabled() && cfg.DNSAutomationEnabled(),
 		ACMEDirectoryURL:                  cfg.ACMEDirectoryURL,
 		ServerDomain:                      cfg.ServerDomain,
 		HTTPClient:                        httpClient,
@@ -52,18 +48,16 @@ func controlAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client, visito
 	}
 }
 
-func authorityAPIConfigFrom(cfg tnldconfig.Config, verifier, browserVerifier oidcauth.Verifier) authorityapi.Config {
+func authorityAPIConfigFrom(cfg tnldconfig.Config, httpClient *http.Client) authorityapi.Config {
 	return authorityapi.Config{
 		ControlURL: cfg.ControlOrigin(),
 		OIDCIssuer: cfg.OIDCIssuer, WebServiceSecret: cfg.WebServiceSecret,
 		ManagedDomain:        cfg.ManagedDomain,
 		CustomDomainsEnabled: cfg.CustomDomainsEnabled,
-		LoginToken:           cfg.LoginToken,
+		OIDCClientID:         cfg.OIDCClientID, OIDCClientSecret: cfg.OIDCClientSecret, OIDCScopes: cfg.EffectiveOIDCScopes(), HTTPClient: httpClient,
 		AccessTokenLifetime:  cfg.AccessTokenLifetime,
 		RefreshTokenLifetime: cfg.RefreshTokenLifetime,
 		DNSAutomation:        cfg.DNSAutomationEnabled(),
-		OIDCVerifier:         verifier,
-		BrowserOIDCVerifier:  browserVerifier,
 		EmailDelivery:        cfg.EmailURL != "",
 	}
 }
@@ -76,9 +70,8 @@ func newPublicAPIHandler(
 	metrics *observability.Metrics,
 	d *daemon,
 	route53Readiness func(context.Context) error,
-	visitorIssuerSeed ...string,
 ) (http.Handler, error) {
-	controlConfig := controlAPIConfigFrom(cfg, httpClient, visitorIssuerSeed...)
+	controlConfig := controlAPIConfigFrom(cfg, httpClient)
 	controlConfig.StartedAt = startedAt
 	controlConfig.Metrics = metrics
 	controlConfig.Route53CredentialsReadiness = route53Readiness
@@ -94,25 +87,19 @@ func newPublicAPIHandler(
 		return nil, err
 	}
 	var authorityRoutes authorityapi.Routes
-	var verifier, browserVerifier oidcauth.Verifier
-	if cfg.OIDCEnabled() {
-		var err error
-		verifier, err = oidcauth.NewVerifier(oidcauth.VerifierConfig{
-			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, HTTPClient: httpClient,
-		})
-		if err != nil {
-			return nil, err
-		}
+	seedContext, stopSeeding := context.WithTimeout(context.Background(), 30*time.Second)
+	defer stopSeeding()
+	if err := database.SeedHumanAuthentication(seedContext, cfg.ManagedDomain, controlstate.HumanAuthenticationSeeds{Issuer: cfg.OIDCIssuer, Administrators: cfg.InitialAdministrators, TeamOwners: cfg.InitialTeamOwners, DefaultTeam: cfg.DefaultTeam, DefaultTeamMembers: cfg.DefaultTeamMembers}, time.Now()); err != nil {
+		return nil, err
 	}
-	if cfg.BrowserOIDCClientID != "" {
-		browserVerifier, err = oidcauth.NewVerifier(oidcauth.VerifierConfig{
-			Issuer: cfg.OIDCIssuer, ClientID: cfg.BrowserOIDCClientID, HTTPClient: httpClient,
-		})
-		if err != nil {
-			return nil, err
-		}
+	admissions, err := oidcauth.LoadAdmissions(cfg.OIDCAdmissionFile)
+	if err != nil {
+		return nil, err
 	}
-	authorityRoutes, err = authorityapi.Register(mux, authorityAPIConfigFrom(cfg, verifier, browserVerifier), database)
+	if err := database.ConfigureOIDCAdmissions(seedContext, cfg.OIDCIssuer, admissions, time.Now()); err != nil {
+		return nil, err
+	}
+	authorityRoutes, err = authorityapi.Register(mux, authorityAPIConfigFrom(cfg, httpClient), database)
 	if err != nil {
 		return nil, err
 	}
@@ -134,20 +121,30 @@ func newPublicAPIHandler(
 	}), nil
 }
 
-func (d *daemon) startControl(listenAddress string, requireProxyHeader bool, handler http.Handler) error {
+func (d *daemon) startControl(listenAddress string, proxy controlproxy.Config, handler http.Handler) error {
+	handler, err := proxy.Handler(handler)
+	if err != nil {
+		return err
+	}
 	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
 		return fmt.Errorf("listen for control API: %w", err)
 	}
 	d.controlListener = listener
-	d.controlServer = controlHTTPServer(handler, d.controlTLS)
-	publicListener := net.Listener(listener)
-	if requireProxyHeader {
-		publicListener = controlProxyListener{Listener: listener}
-	}
-	d.start("serve control API", func() error { return serveTLS(d.controlServer, publicListener) })
+	d.controlServer = controlHTTPServer(handler, nil)
+	d.start("serve control API", func() error {
+		err := d.controlServer.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
+			return nil
+		}
+		return err
+	})
 	log.Printf("control API listening on %s", listener.Addr())
 	return nil
+}
+
+func controlProxyConfig(cfg tnldconfig.Config) controlproxy.Config {
+	return cfg.ControlProxy()
 }
 
 // startVisitorPermissionWorkers uses the daemon component lifetime, so expiry
@@ -163,6 +160,9 @@ func (d *daemon) startVisitorPermissionWorkers(lifetime context.Context) {
 			case now := <-ticker.C:
 				ctx, cancel := context.WithTimeout(lifetime, 10*time.Second)
 				err := d.database.ExpireVisitorPermissions(ctx, now)
+				if err == nil {
+					err = d.database.ExpireDeviceLogins(ctx, now)
+				}
 				cancel()
 				if err != nil && lifetime.Err() == nil {
 					log.Print("visitor IP expiry failed; retrying")

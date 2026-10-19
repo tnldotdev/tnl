@@ -107,7 +107,14 @@ func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]routeb
 // PublicURL converts one validated routing-table projection into an immutable
 // public URL view used by Server for a visitor connection.
 func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicURL, error) {
-	backends, err := f.Backends(entry)
+	eligible := entry
+	eligible.PublisherConnections = make([]ingressv1.IngressRoutingPublisherConnection, 0, len(entry.PublisherConnections))
+	for _, connection := range entry.PublisherConnections {
+		if connection.AvailableStreams == nil || *connection.AvailableStreams > 0 {
+			eligible.PublisherConnections = append(eligible.PublisherConnections, connection)
+		}
+	}
+	backends, err := f.Backends(eligible)
 	if err != nil {
 		return PublicURL{}, err
 	}
@@ -150,14 +157,22 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 		}
 		route.Traffic = &limits
 	}
-	if entry.PublicPort != nil {
-		port := uint16(*entry.PublicPort)
-		route.PublicPort = &port
-	}
 	if entry.RecoveryEpisodeId != nil && *entry.RecoveryEpisodeId > 0 {
 		route.RecoveryEpisodeID = uint64(*entry.RecoveryEpisodeId)
 	}
 	return route, nil
+}
+
+func (f *Forwarder) PublicURLs(entries []ingressv1.IngressRoutingTableEntry) ([]PublicURL, error) {
+	result := make([]PublicURL, 0, len(entries))
+	for _, entry := range entries {
+		route, err := f.PublicURL(entry)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, route)
+	}
+	return result, nil
 }
 
 // Close stops new forwarding work and closes every pooled relay session.

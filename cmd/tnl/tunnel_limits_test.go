@@ -68,7 +68,7 @@ func TestRetiredRequestLimitFlagIsNotAccepted(t *testing.T) {
 	}
 }
 
-func TestEnrolledLimitsWaitForTheSavedProtocol(t *testing.T) {
+func TestEnrolledPublishNeverInheritsRootPublicURLLimits(t *testing.T) {
 	httpTotal, tcpTotal, burst := 80, 5, 3
 	count, period := 2, config.Duration(time.Second)
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Tunnel: &config.Tunnel{Limits: &config.Limits{
@@ -86,7 +86,7 @@ func TestEnrolledLimitsWaitForTheSavedProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := flags.limits()
-	if limits.Requests != tcpTotal || limits.RateRequests != count || limits.RatePer != time.Second || limits.RateBurst != burst {
-		t.Fatalf("enrolled TCP limits = %+v", limits)
+	if limits.Requests != 0 || limits.RateRequests != 0 || limits.RatePer != 0 || limits.RateBurst != 0 {
+		t.Fatalf("raw enrolled publication inherited root public URL limits: %+v", limits)
 	}
 }

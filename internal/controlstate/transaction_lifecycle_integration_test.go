@@ -28,7 +28,7 @@ func TestIntegrationTransactionRoutingClockSerializesAllocation(t *testing.T) {
 	sessions := make([]PublishRunAuthentication, 2)
 	for index := range routes {
 		hostname := fmt.Sprintf("route-%d.example.test", index)
-		plan := CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01"}
+		plan := CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "dns-01"}
 		routes[index], sessions[index] = newExternalPlanSession(t, database, now, "team_external", hostname, "managed:example.test", plan)
 	}
 	first, err := database.pool.Begin(ctx)
@@ -113,7 +113,7 @@ func TestIntegrationTransactionRoutingEntryRevisionFollowsRouteLock(t *testing.T
 	database, now := newCertificatePlanDatabase(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	plan := CertificatePlan{CacheKey: "entry.example.test", Scope: "entry.example.test", Identifiers: []string{"entry.example.test"}, ChallengeMethod: "tls-alpn-01"}
+	plan := CertificatePlan{CacheKey: "entry.example.test", Scope: "entry.example.test", Identifiers: []string{"entry.example.test"}, ChallengeMethod: "dns-01"}
 	route, authentication := newExternalPlanSession(t, database, now, "team_entry", "entry.example.test", "managed:example.test", plan)
 	first, err := database.pool.Begin(ctx)
 	if err != nil {
@@ -180,7 +180,7 @@ func TestIntegrationTransactionRoutingEntryRevisionFollowsRouteLock(t *testing.T
 func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *testing.T) {
 	database, now := newCertificatePlanDatabase(t)
 	plan := func(hostname string) CertificatePlan {
-		return CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01"}
+		return CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "dns-01"}
 	}
 	routeA, authenticationA := newExternalPlanSession(t, database, now, "team_pending_a", "pending-a.example.test", "managed:example.test", plan("pending-a.example.test"))
 	routeB, authenticationB := newExternalPlanSession(t, database, now, "team_pending_b", "pending-b.example.test", "managed:example.test", plan("pending-b.example.test"))
@@ -195,6 +195,7 @@ func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rollbackTestTransaction(t, tx)
 	queries := controlstatedb.New(tx)
 	storedA, err := queries.LockPublicURLForRun(t.Context(), routeA.ID)
 	if err != nil {
@@ -220,7 +221,7 @@ func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := pending.addChallengeEvent(t.Context(), queries, storedA, sessionA, nil, IngressChallengeTombstone, now.Add(time.Minute), now)
+	second, err := pending.addRouteEvent(t.Context(), queries, storedA, sessionA, nil, IngressPublicURLTombstone, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +273,7 @@ func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err = pending.addChallengeEvent(t.Context(), queries, storedA, sessionA, nil, IngressChallengeTombstone, now.Add(time.Minute), now)
+	second, err = pending.addRouteEvent(t.Context(), queries, storedA, sessionA, nil, IngressPublicURLTombstone, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +296,7 @@ func TestIntegrationTransactionRoutingPublicationRollbackAndPendingEvents(t *tes
 func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(t *testing.T) {
 	database, now := newCertificatePlanDatabase(t)
 	plan := func(hostname string) CertificatePlan {
-		return CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "tls-alpn-01"}
+		return CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: "dns-01"}
 	}
 	_, heartbeatAuthentication := newExternalPlanSession(t, database, now, "team_cycle_heartbeat", "heartbeat-cycle.example.test", "managed:example.test", plan("heartbeat-cycle.example.test"))
 	replacementPublicURL, replacementAuthentication := newExternalPlanSession(t, database, now, "team_cycle_replacement", "replacement-cycle.example.test", "managed:example.test", plan("replacement-cycle.example.test"))
@@ -328,7 +329,7 @@ func TestIntegrationTransactionExpiredReplacementFollowsHeartbeatPlacementLocks(
 		ActingIdentityID: "identity_" + strings.TrimPrefix(replacementPublicURL.TeamID, "team_"), RetrySecret: secret[:], IdempotencyKey: "replacement",
 		RequestDigest: sha256.Sum256([]byte("replacement")), PolicyRevision: 1,
 		CertificateCacheKey: replacementPublicURL.CanonicalHostname, CertificateScope: replacementPublicURL.CanonicalHostname,
-		CertificateIdentifiers: []string{replacementPublicURL.CanonicalHostname}, CertificateChallenge: "tls-alpn-01",
+		CertificateIdentifiers: []string{replacementPublicURL.CanonicalHostname}, CertificateChallenge: "dns-01",
 		ExpectedMutationRevision: replacementPublicURL.MutationRevision + 1,
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -704,7 +705,7 @@ type transactionAuthorityFixture struct {
 func newTransactionAuthorityFixture(t *testing.T) transactionAuthorityFixture {
 	t.Helper()
 	database, now := newControlStateIntegrationDatabase(t, "transaction_authority")
-	local, err := database.CreateBuiltinControlSession(t.Context(), "managed.example.test", 1, time.Hour, 24*time.Hour, now)
+	local, err := createTestControlSession(t.Context(), database, "managed.example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}

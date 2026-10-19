@@ -12,10 +12,10 @@ export async function temporaryDirectory(prefix: string): Promise<string> {
 export async function createProjectFixture(prefix: string) {
   const root = await temporaryDirectory(prefix);
   const serviceDirectory = path.join(root, "apps", "api");
-  await mkdir(path.join(root, ".tnl"), { recursive: true });
+  await mkdir(path.join(root, ".tnl", "local"), { recursive: true });
   await mkdir(serviceDirectory, { recursive: true });
   await writeFile(
-    path.join(root, ".tnl", "project.json"),
+    path.join(root, ".tnl", "local", "project.json"),
     `${JSON.stringify(testProjectDocument())}\n`,
   );
   return { root, serviceDirectory };

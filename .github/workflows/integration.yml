@@ -46,8 +46,23 @@ jobs:
       - name: Run integration tests
         run: task go:test:integration
 
+      - name: Install OpenSSH fixture
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends openssh-server
+          sudo install -d -m 0755 /run/sshd
+
+      - name: Verify CLI workflows
+        run: task go:test:integration:cli
+
+      - name: Verify private connector and publisher lifecycle
+        run: task go:test:integration:tcp-lifecycle
+
       - name: Verify TCP clients
         run: task go:test:integration:tcp-clients
+
+      - name: Verify existing sshd through private streams
+        run: task go:test:integration:private-sshd
 
   binary:
     name: Binary integration

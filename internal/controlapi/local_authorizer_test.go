@@ -17,6 +17,22 @@ type localAuthorizationStoreStub struct {
 	identity            controlstate.IdentityContext
 	domains             []controlstate.Domain
 	authenticationError error
+	companyError        error
+}
+
+func (s localAuthorizationStoreStub) AuthorizeTeamSession(_ context.Context, p controlstate.ControlPrincipal, team string, _ time.Time) error {
+	if s.companyError != nil {
+		return s.companyError
+	}
+	if p.IdentityID != s.principal.IdentityID {
+		return controlstate.ErrAuthorityAccess
+	}
+	for _, m := range s.identity.Memberships {
+		if m.TeamID == team {
+			return nil
+		}
+	}
+	return controlstate.ErrAuthorityAccess
 }
 
 func TestSimpleManagedOrganizationUsesFullMemberNamespace(t *testing.T) {
@@ -55,7 +71,7 @@ func TestPersonalDirectURLCannotUseMemberScope(t *testing.T) {
 			principal: controlstate.ControlPrincipal{IdentityID: "admin", Administrator: true},
 			identity: controlstate.IdentityContext{Memberships: []controlstate.Membership{{
 				ID: "membership", TeamID: "personal", TeamKind: controlstate.TeamKindPersonal,
-				TeamDisplayName: "local-administrator", Role: controlstate.TeamRoleOwner, MemberSlug: "local-administrator",
+				TeamDisplayName: "operator", Role: controlstate.TeamRoleOwner, MemberSlug: "operator",
 			}}},
 			domains: []controlstate.Domain{{ID: "domain", Kind: kind, CanonicalDomain: "dev.example.com", State: controlstate.DomainReady}},
 		}
@@ -73,7 +89,7 @@ func TestPersonalDirectURLCannotUseMemberScope(t *testing.T) {
 	}
 }
 
-func (s localAuthorizationStoreStub) AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error) {
+func (s localAuthorizationStoreStub) AuthenticateAccessToken(context.Context, credentials.AccessToken, time.Time) (controlstate.ControlPrincipal, error) {
 	return s.principal, s.authenticationError
 }
 func (s localAuthorizationStoreStub) IdentityContext(context.Context, string) (controlstate.IdentityContext, error) {

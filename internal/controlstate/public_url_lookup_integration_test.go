@@ -10,7 +10,7 @@ import (
 
 func TestIntegrationAuthorizedRouteHostnameLookup(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "hostname_lookup")
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	_, suffix, _ := strings.Cut(request.CanonicalHostname, ".")
 	var target PublicURL
 	for index := range publicURLPageSize + 5 {

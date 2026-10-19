@@ -7,11 +7,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-const testLoginToken = "tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8"
+const testOIDCIssuer = "https://identity.example.test"
 const testClusterSecret = "0123456789abcdef0123456789abcdef"
 const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 func TestParseStandaloneDerivesAddresses(t *testing.T) {
+	t.Setenv("TNLD_ROUTE53_SERVER_ZONE_ID", "ZSERVER")
 	config, err := Parse([]string{
 		"--role", "standalone",
 		"--database-url", "postgres://tnl:secret@database.example/tnl",
@@ -19,7 +20,7 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 		"--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com",
 		"--acme-accept-terms",
-		"--login-token", testLoginToken,
+		"--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 		"--storage-key", testStorageKey,
 	})
 	if err != nil {
@@ -29,7 +30,7 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 		config.StandaloneRelayHostname() != "relay.tnl.example.com" || config.ManagedDomain != "tunnels.example.com" {
 		t.Fatalf("derived hostnames = %q, %q, %q, %q", config.ServerHostname(), config.IngressHostname(), config.StandaloneRelayHostname(), config.ManagedDomain)
 	}
-	if config.ControlListen != ":443" || config.PrivateControlListen != ":9443" ||
+	if config.ControlListen != "127.0.0.1:8080" || config.PrivateControlListen != ":9443" ||
 		config.IngressListen != ":443" || config.RelayTCPListen != ":443" || config.RelayUDPListen != ":443" {
 		t.Fatalf("standalone listeners = %#v", config)
 	}
@@ -55,7 +56,7 @@ func TestParsePublicURLCertificateWorkers(t *testing.T) {
 		"--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com",
 		"--acme-accept-terms",
-		"--login-token", testLoginToken,
+		"--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 		"--storage-key", testStorageKey,
 	}
 	for _, value := range []string{"0", "9"} {
@@ -66,9 +67,10 @@ func TestParsePublicURLCertificateWorkers(t *testing.T) {
 }
 
 func TestParseDomainPolicy(t *testing.T) {
+	t.Setenv("TNLD_ROUTE53_SERVER_ZONE_ID", "ZSERVER")
 	base := []string{"--role", "standalone", "--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
-		"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken, "--storage-key", testStorageKey}
+		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server", "--storage-key", testStorageKey}
 	if _, err := Parse(append(base, "--managed-domain-max-member-child-labels=-1")); err == nil {
 		t.Fatal("negative managed-domain depth accepted")
 	}
@@ -96,7 +98,7 @@ func TestParseRequiresValidStorageKey(t *testing.T) {
 		"--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com",
 		"--acme-accept-terms",
-		"--login-token", testLoginToken,
+		"--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 	}
 	if _, err := Parse(base); err == nil {
 		t.Fatal("missing storage key was accepted")
@@ -113,13 +115,13 @@ func TestParseSplitRoles(t *testing.T) {
 	control, err := Parse([]string{
 		"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
-		"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken,
+		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if control.ControlListen != ":443" || control.PrivateControlListen != ":9443" {
+	if control.ControlListen != "127.0.0.1:8080" || control.PrivateControlListen != ":9443" {
 		t.Fatalf("control listeners = %#v", control)
 	}
 	if control.RelayServiceHostname("relay-a") != "relay-a.tnl.example.com" ||
@@ -167,7 +169,7 @@ func TestConfigPrivateControlAddressRequiresSplitDialAddress(t *testing.T) {
 	if _, err := Parse([]string{
 		"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
-		"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken,
+		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
 		"--private-control-address", "control.internal:9443",
 	}); err == nil {
@@ -175,11 +177,30 @@ func TestConfigPrivateControlAddressRequiresSplitDialAddress(t *testing.T) {
 	}
 }
 
+func TestSplitIngressUDPListener(t *testing.T) {
+	for _, role := range []Role{RoleControl, RoleStandalone, RoleIngress, RoleRelay} {
+		config := validCertificateConfig(t, role)
+		config.IngressUDPListen = "fly-global-services:443"
+		if err := config.Validate(); (err == nil) != (role == RoleIngress) {
+			t.Fatalf("role %s: %v", role, err)
+		}
+	}
+	config := validCertificateConfig(t, RoleIngress)
+	config.IngressUDPListen = "127.0.0.1:0"
+	if err := config.Validate(); err == nil {
+		t.Fatal("accepted an invalid private QUIC bind port")
+	}
+	t.Setenv("TNLD_INGRESS_UDP_LISTEN", "fly-global-services:443")
+	if config := validCertificateConfig(t, RoleIngress); config.IngressUDPListen != "fly-global-services:443" {
+		t.Fatal("private QUIC bind was not parsed")
+	}
+}
+
 func TestParseDNSAutomation(t *testing.T) {
 	config, err := Parse([]string{
 		"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
-		"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken,
+		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
 		"--route53-managed-zone-id", "Z0123456789ABC", "--ingress-ipv4-address", "192.0.2.10",
 		"--ingress-ipv6-address", "2001:db8::10", "--route53-server-zone-id", "ZSERVER123",
@@ -201,7 +222,7 @@ func TestParseDNSAutomation(t *testing.T) {
 		base := []string{
 			"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
 			"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
-			"--acme-email", "operator@example.com", "--acme-accept-terms", "--login-token", testLoginToken,
+			"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 			"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
 		}
 		if _, err := Parse(append(base, args...)); err == nil {
@@ -216,7 +237,7 @@ func TestConfigControlHostnameRejectsURLAndPort(t *testing.T) {
 		ClusterSecret: testClusterSecret, IngressID: "ingress-1",
 		IngressListen: ":443", MetricsListen: "127.0.0.1:9090",
 		VisitorConnectionLimit: 1, PublisherConnectionLimit: 1,
-		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
+		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		RelayStreamCapacity: 1, QUICMaxIncomingStreams: 1,
 		IngressLeaseDuration: 30 * time.Second, RelayLeaseDuration: 30 * time.Second,
@@ -278,7 +299,7 @@ func TestConfigStaticCertificateRoleMatrix(t *testing.T) {
 		control, relay, serverDNS bool
 		wantError                 bool
 	}{
-		{"standalone_automatic", RoleStandalone, false, false, false, false},
+		{"standalone_without_relay_issuer", RoleStandalone, false, false, false, true},
 		{"standalone_static_control_only", RoleStandalone, true, false, false, true},
 		{"standalone_static_both", RoleStandalone, true, true, false, false},
 		{"standalone_static_control_server_dns", RoleStandalone, true, false, true, false},
@@ -294,6 +315,7 @@ func TestConfigStaticCertificateRoleMatrix(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := validCertificateConfig(t, test.role)
+			cfg.Route53ServerZoneID = ""
 			if test.control {
 				cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile = "control.pem", "control.key"
 			}
@@ -336,7 +358,7 @@ func TestConfigStatelessRoleSecretIsolation(t *testing.T) {
 			"previous_storage": func(c *Config) { c.StorageKeyPrevious = testStorageKey },
 			"website":          func(c *Config) { c.WebServiceSecret = testClusterSecret },
 			"webhook":          func(c *Config) { c.WebhookSecret = testClusterSecret },
-			"login_token":      func(c *Config) { c.LoginToken = testLoginToken },
+			"oidc_client":      func(c *Config) { c.OIDCIssuer = testOIDCIssuer; c.OIDCClientID = "server" },
 			"managed_zone":     func(c *Config) { c.Route53ManagedZoneID = "ZMANAGED" },
 			"server_zone":      func(c *Config) { c.Route53ServerZoneID = "ZSERVER" },
 			"ingress_ipv4":     func(c *Config) { c.IngressIPv4Addresses = []string{"192.0.2.10"} },
@@ -382,10 +404,13 @@ func TestConfigDNSIngressAddressValidation(t *testing.T) {
 func validCertificateConfig(t *testing.T, role Role) Config {
 	t.Helper()
 	args := []string{"--role", string(role)}
+	if role == RoleStandalone {
+		args = append(args, "--route53-server-zone-id", "ZSERVER")
+	}
 	if role.RunsControl() {
 		args = append(args, "--database-url", "postgres://tnl:secret@database.example/tnl",
 			"--server-domain", "infra.example.test", "--managed-domain", "routes.other.test",
-			"--acme-email", "operator@example.test", "--acme-accept-terms", "--login-token", testLoginToken, "--storage-key", testStorageKey)
+			"--acme-email", "operator@example.test", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server", "--storage-key", testStorageKey)
 	} else {
 		args = append(args, "--control-hostname", "control.infra.example.test")
 	}

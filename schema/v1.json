@@ -22,6 +22,10 @@
     },
     "TNL": {
       "properties": {
+        "name": {
+          "type": "string",
+          "description": "Saved name for an unnamed HTTP service; named services use their service key unless overridden."
+        },
         "server": {
           "type": "string",
           "description": "Control URL used by this project."
@@ -42,26 +46,17 @@
           "$ref": "#/$defs/Inspection",
           "description": "Local inspection capture and retention for HTTP and supported TCP services."
         },
-        "tunnel": {
-          "allOf": [
-            {
-              "not": {
-                "required": ["name", "public_url"]
-              }
-            }
-          ],
+        "public_url": {
           "properties": {
+            "name": false,
+            "publisher_pool": false,
             "domain": {
               "type": "string",
               "description": "Ready team domain used for generated public URL hostnames."
             },
-            "name": {
+            "hostname": {
               "type": "string",
-              "description": "One DNS label beneath the member namespace."
-            },
-            "public_url": {
-              "type": "string",
-              "description": "Exact public URL hostname or HTTPS origin to publish."
+              "description": "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."
             },
             "access": {
               "oneOf": [
@@ -225,36 +220,118 @@
           },
           "additionalProperties": false,
           "type": "object",
-          "description": "Default public URL and tunnel settings."
+          "description": "Defaults applied only to explicit services.NAME.public_url blocks. These defaults never enable a public URL for another service."
+        },
+        "publishers": {
+          "additionalProperties": {
+            "properties": {
+              "description": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "domain": {
+                "type": "string",
+                "maxLength": 253,
+                "minLength": 1
+              },
+              "public": {
+                "type": "boolean",
+                "default": false
+              }
+            },
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "propertyNames": {
+            "not": {
+              "const": "local"
+            },
+            "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+          },
+          "type": "object",
+          "maxProperties": 32,
+          "description": "Named publisher groups with a durable namespace beneath a ready team domain. local is reserved for the built-in local publisher."
         },
         "services": {
           "additionalProperties": {
             "oneOf": [
               {
+                "allOf": [
+                  {
+                    "not": {
+                      "properties": {
+                        "public_url": {
+                          "required": ["hostname"]
+                        }
+                      },
+                      "required": ["name", "public_url"]
+                    }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "publisher": {
+                          "not": {
+                            "const": "local"
+                          }
+                        }
+                      },
+                      "required": ["publisher"]
+                    },
+                    "then": {
+                      "properties": {
+                        "http": false,
+                        "target": {
+                          "properties": {
+                            "type": {
+                              "const": "address"
+                            }
+                          },
+                          "required": ["type"]
+                        }
+                      },
+                      "required": ["target"]
+                    }
+                  }
+                ],
                 "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Saved name for either HTTP or private services; defaults to the service key."
+                  },
+                  "publisher": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Assigned publisher group; defaults to the built-in local publisher.",
+                    "default": "local"
+                  },
+                  "publisher_pool": false,
+                  "access": {
+                    "properties": {
+                      "team": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["team"]
+                  },
                   "inspection": {
                     "$ref": "#/$defs/Inspection"
                   },
-                  "tunnel": {
-                    "allOf": [
-                      {
-                        "not": {
-                          "required": ["name", "public_url"]
-                        }
-                      }
-                    ],
+                  "public_url": {
                     "properties": {
+                      "name": false,
+                      "publisher_pool": false,
                       "domain": {
                         "type": "string",
                         "description": "Ready team domain used for generated public URL hostnames."
                       },
-                      "name": {
+                      "hostname": {
                         "type": "string",
-                        "description": "One DNS label beneath the member namespace."
-                      },
-                      "public_url": {
-                        "type": "string",
-                        "description": "Exact public URL hostname or HTTPS origin to publish."
+                        "description": "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."
                       },
                       "access": {
                         "oneOf": [
@@ -383,7 +460,7 @@
                     },
                     "additionalProperties": false,
                     "type": "object",
-                    "description": "PublicURL and tunnel overrides for this service."
+                    "description": "Explicitly enable public HTTPS for this HTTP service. Omit this block for private HTTP. Root public URL defaults apply only when this block is present."
                   },
                   "protocol": {
                     "type": "string",
@@ -397,13 +474,30 @@
                             "type": "string",
                             "const": "app"
                           },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
                           "address": false,
                           "project": false,
                           "file": false,
                           "service": false,
                           "port": false,
-                          "container": false,
-                          "tls": false
+                          "container": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -433,15 +527,18 @@
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
-                                "minLength": 1
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
                               },
                               "ca_file": {
                                 "type": "string",
-                                "minLength": 1
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
                           },
                           "project": false,
                           "file": false,
@@ -482,15 +579,18 @@
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
-                                "minLength": 1
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
                               },
                               "ca_file": {
                                 "type": "string",
-                                "minLength": 1
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
                           },
                           "address": false,
                           "container": false
@@ -519,15 +619,18 @@
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
-                                "minLength": 1
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
                               },
                               "ca_file": {
                                 "type": "string",
-                                "minLength": 1
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
                           },
                           "address": false,
                           "project": false,
@@ -540,6 +643,7 @@
                       }
                     ]
                   },
+                  "tls": false,
                   "http": {
                     "properties": {
                       "readiness": {
@@ -551,7 +655,8 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["path"]
+                        "required": ["path"],
+                        "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
                       },
                       "open": {
                         "type": "boolean"
@@ -581,7 +686,7 @@
                         },
                         "type": "object",
                         "maxProperties": 32,
-                        "description": "Mount another configured service at a path on this service's public URL."
+                        "description": "Mount another local HTTP service at a path on this local service's public URL. Remote publisher assignments do not support path mounts."
                       }
                     },
                     "additionalProperties": false,
@@ -589,169 +694,107 @@
                   }
                 },
                 "additionalProperties": false,
-                "type": "object"
+                "type": "object",
+                "required": ["public_url"]
               },
               {
-                "properties": {
-                  "inspection": {
-                    "$ref": "#/$defs/Inspection"
-                  },
-                  "tunnel": {
-                    "allOf": [
-                      {
-                        "not": {
-                          "required": ["name", "public_url"]
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "publisher": {
+                          "not": {
+                            "const": "local"
+                          }
                         }
-                      }
-                    ],
+                      },
+                      "required": ["publisher"]
+                    },
+                    "then": {
+                      "properties": {
+                        "http": false,
+                        "target": {
+                          "properties": {
+                            "type": {
+                              "const": "address"
+                            }
+                          },
+                          "required": ["type"]
+                        }
+                      },
+                      "required": ["target"]
+                    }
+                  }
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Saved name for either HTTP or private services; defaults to the service key."
+                  },
+                  "publisher": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Assigned publisher group; defaults to the built-in local publisher.",
+                    "default": "local"
+                  },
+                  "publisher_pool": false,
+                  "access": {
                     "properties": {
-                      "domain": {
-                        "type": "string",
-                        "description": "Ready team domain used for generated public URL hostnames."
-                      },
-                      "name": {
-                        "type": "string",
-                        "description": "One DNS label beneath the member namespace."
-                      },
-                      "public_url": {
-                        "type": "string",
-                        "description": "Exact public URL hostname or HTTPS origin to publish."
-                      },
-                      "access": {
-                        "oneOf": [
-                          {
-                            "type": "string",
-                            "enum": ["restricted", "anonymous"]
-                          },
-                          {
-                            "properties": {
-                              "mode": {
-                                "type": "string",
-                                "enum": ["restricted", "anonymous"]
-                              },
-                              "ip": {
-                                "items": {
-                                  "type": "string"
-                                },
-                                "type": "array",
-                                "maxItems": 256,
-                                "minItems": 1,
-                                "uniqueItems": true
-                              }
-                            },
-                            "additionalProperties": false,
-                            "type": "object"
-                          }
-                        ]
-                      },
-                      "ephemeral": {
+                      "team": {
                         "type": "boolean",
-                        "description": "Remove the public URL when this tunnel stops."
-                      },
-                      "limits": {
-                        "properties": {
-                          "http": false,
-                          "tcp": {
-                            "properties": {
-                              "total": {
-                                "type": "integer",
-                                "maximum": 9007199254740991,
-                                "minimum": 1
-                              },
-                              "concurrency": {
-                                "type": "integer",
-                                "maximum": 9007199254740991,
-                                "minimum": 1
-                              },
-                              "rate": {
-                                "properties": {
-                                  "count": {
-                                    "type": "integer",
-                                    "maximum": 9007199254740991,
-                                    "minimum": 1
-                                  },
-                                  "per": {
-                                    "type": "string",
-                                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                                  },
-                                  "burst": {
-                                    "type": "integer",
-                                    "maximum": 9007199254740991,
-                                    "minimum": 1
-                                  }
-                                },
-                                "additionalProperties": false,
-                                "type": "object"
-                              }
-                            },
-                            "additionalProperties": false,
-                            "type": "object"
-                          },
-                          "traffic": {
-                            "properties": {
-                              "connections": {
-                                "type": "integer",
-                                "maximum": 9007199254740991,
-                                "minimum": 1
-                              },
-                              "rate": {
-                                "type": "integer",
-                                "maximum": 9007199254740991,
-                                "minimum": 1
-                              },
-                              "burst": {
-                                "type": "integer",
-                                "maximum": 9007199254740991,
-                                "minimum": 1
-                              },
-                              "upload_bytes": {
-                                "type": "integer",
-                                "maximum": 9007199254740991,
-                                "minimum": 1
-                              },
-                              "download_bytes": {
-                                "type": "integer",
-                                "maximum": 9007199254740991,
-                                "minimum": 1
-                              },
-                              "total_connections": {
-                                "type": "integer",
-                                "maximum": 9007199254740991,
-                                "minimum": 1
-                              },
-                              "total_upload_bytes": {
-                                "type": "integer",
-                                "maximum": 9007199254740991,
-                                "minimum": 1
-                              },
-                              "total_download_bytes": {
-                                "type": "integer",
-                                "maximum": 9007199254740991,
-                                "minimum": 1
-                              },
-                              "rate_per": {
-                                "type": "string",
-                                "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
-                              }
-                            },
-                            "additionalProperties": false,
-                            "type": "object"
-                          }
-                        },
-                        "additionalProperties": false,
-                        "type": "object"
+                        "const": true
                       }
                     },
                     "additionalProperties": false,
                     "type": "object",
-                    "description": "PublicURL and tunnel overrides for this service."
+                    "required": ["team"]
                   },
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "public_url": false,
                   "protocol": {
                     "type": "string",
-                    "enum": ["postgres", "mysql", "redis", "ssh"]
+                    "enum": ["http"]
                   },
                   "target": {
                     "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "app"
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "address": false,
+                          "project": false,
+                          "file": false,
+                          "service": false,
+                          "port": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type"]
+                      },
                       {
                         "properties": {
                           "type": {
@@ -776,15 +819,18 @@
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
-                                "minLength": 1
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
                               },
                               "ca_file": {
                                 "type": "string",
-                                "minLength": 1
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
                           },
                           "project": false,
                           "file": false,
@@ -825,15 +871,18 @@
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
-                                "minLength": 1
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
                               },
                               "ca_file": {
                                 "type": "string",
-                                "minLength": 1
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
                           },
                           "address": false,
                           "container": false
@@ -862,15 +911,18 @@
                               "server_name": {
                                 "type": "string",
                                 "maxLength": 253,
-                                "minLength": 1
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
                               },
                               "ca_file": {
                                 "type": "string",
-                                "minLength": 1
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
                               }
                             },
                             "additionalProperties": false,
-                            "type": "object"
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
                           },
                           "address": false,
                           "project": false,
@@ -883,6 +935,657 @@
                       }
                     ]
                   },
+                  "tls": false,
+                  "http": {
+                    "properties": {
+                      "readiness": {
+                        "properties": {
+                          "path": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["path"],
+                        "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
+                      },
+                      "open": {
+                        "type": "boolean"
+                      },
+                      "paths": false
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object"
+              },
+              {
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "publisher": {
+                          "not": {
+                            "const": "local"
+                          }
+                        }
+                      },
+                      "required": ["publisher"]
+                    },
+                    "then": {
+                      "properties": {
+                        "http": false,
+                        "target": {
+                          "properties": {
+                            "type": {
+                              "const": "address"
+                            }
+                          },
+                          "required": ["type"]
+                        }
+                      },
+                      "required": ["target"]
+                    }
+                  }
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Saved name for either HTTP or private services; defaults to the service key."
+                  },
+                  "publisher": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Assigned publisher group; defaults to the built-in local publisher.",
+                    "default": "local"
+                  },
+                  "publisher_pool": false,
+                  "access": {
+                    "properties": {
+                      "team": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["team"]
+                  },
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "public_url": false,
+                  "protocol": {
+                    "type": "string",
+                    "enum": ["tcp"]
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "project": false,
+                          "file": false,
+                          "service": false,
+                          "port": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "compose"
+                          },
+                          "project": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
+                          },
+                          "file": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^(?!/)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[^\\\\\\u0000]+$"
+                          },
+                          "service": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "address": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "service", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "docker"
+                          },
+                          "container": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "address": false,
+                          "project": false,
+                          "file": false,
+                          "service": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container", "port"]
+                      }
+                    ]
+                  },
+                  "tls": false,
+                  "http": false
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["protocol", "target"]
+              },
+              {
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "publisher": {
+                          "not": {
+                            "const": "local"
+                          }
+                        }
+                      },
+                      "required": ["publisher"]
+                    },
+                    "then": {
+                      "properties": {
+                        "http": false,
+                        "target": {
+                          "properties": {
+                            "type": {
+                              "const": "address"
+                            }
+                          },
+                          "required": ["type"]
+                        }
+                      },
+                      "required": ["target"]
+                    }
+                  }
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Saved name for either HTTP or private services; defaults to the service key."
+                  },
+                  "publisher": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Assigned publisher group; defaults to the built-in local publisher.",
+                    "default": "local"
+                  },
+                  "publisher_pool": false,
+                  "access": {
+                    "properties": {
+                      "team": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["team"]
+                  },
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "public_url": false,
+                  "protocol": {
+                    "type": "string",
+                    "enum": ["mysql"]
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "project": false,
+                          "file": false,
+                          "service": false,
+                          "port": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "compose"
+                          },
+                          "project": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
+                          },
+                          "file": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^(?!/)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[^\\\\\\u0000]+$"
+                          },
+                          "service": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "address": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "service", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "docker"
+                          },
+                          "container": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "address": false,
+                          "project": false,
+                          "file": false,
+                          "service": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container", "port"]
+                      }
+                    ]
+                  },
+                  "tls": false,
+                  "http": false
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["protocol", "target"]
+              },
+              {
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "publisher": {
+                          "not": {
+                            "const": "local"
+                          }
+                        }
+                      },
+                      "required": ["publisher"]
+                    },
+                    "then": {
+                      "properties": {
+                        "http": false,
+                        "target": {
+                          "properties": {
+                            "type": {
+                              "const": "address"
+                            }
+                          },
+                          "required": ["type"]
+                        }
+                      },
+                      "required": ["target"]
+                    }
+                  }
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Saved name for either HTTP or private services; defaults to the service key."
+                  },
+                  "publisher": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Assigned publisher group; defaults to the built-in local publisher.",
+                    "default": "local"
+                  },
+                  "publisher_pool": false,
+                  "access": {
+                    "properties": {
+                      "team": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["team"]
+                  },
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "public_url": false,
+                  "protocol": {
+                    "type": "string",
+                    "enum": ["postgres"]
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "project": false,
+                          "file": false,
+                          "service": false,
+                          "port": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "compose"
+                          },
+                          "project": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
+                          },
+                          "file": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^(?!/)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[^\\\\\\u0000]+$"
+                          },
+                          "service": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "address": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "service", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "docker"
+                          },
+                          "container": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "address": false,
+                          "project": false,
+                          "file": false,
+                          "service": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container", "port"]
+                      }
+                    ]
+                  },
+                  "tls": false,
                   "http": false
                 },
                 "additionalProperties": false,
@@ -896,13 +1599,15 @@
           },
           "type": "object",
           "maxProperties": 32,
-          "description": "Named services, private targets, and public tunnel settings."
+          "description": "Named services. Only an explicit service public_url block enables public HTTPS; all other services are private, including HTTP."
         },
         "webhooks": {
           "additionalProperties": {
             "properties": {
               "service": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1,
+                "description": "Configured local HTTP service with an explicit public_url block. App, address, Compose and Docker targets are supported."
               },
               "path": {
                 "type": "string",
@@ -1081,7 +1786,21 @@
         },
         "control_listen": {
           "type": "string",
-          "description": "Public control HTTPS listen address."
+          "description": "Private HTTP backend for the deployment's control HTTPS proxy."
+        },
+        "control_trusted_proxies": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Exact trusted control HTTPS proxy peer CIDRs.",
+          "default": "127.0.0.1/32,::1/128"
+        },
+        "control_client_ip_header": {
+          "type": "string",
+          "enum": ["X-Forwarded-For", "Fly-Client-IP"],
+          "description": "Source header overwritten by the trusted control HTTPS proxy.",
+          "default": "X-Forwarded-For"
         },
         "private_control_listen": {
           "type": "string",
@@ -1090,6 +1809,10 @@
         "ingress_listen": {
           "type": "string",
           "description": "Public visitor TCP listen address."
+        },
+        "ingress_udp_listen": {
+          "type": "string",
+          "description": "Private connector QUIC listen address for split ingress; defaults to the ingress TCP bind address."
         },
         "relay_tcp_listen": {
           "type": "string",
@@ -1110,6 +1833,10 @@
         "server_domain": {
           "type": "string",
           "description": "Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."
+        },
+        "control_url": {
+          "type": "string",
+          "description": "External HTTPS origin of the control deployment proxy; defaults to https://control.\u003cserver-domain\u003e."
         },
         "control_hostname": {
           "type": "string",
@@ -1138,13 +1865,13 @@
           "type": "boolean",
           "description": "Allow teams to add custom domains; requires managed DNS automation."
         },
-        "control_tls_certificate_file": {
+        "private_control_tls_certificate_file": {
           "type": "string",
-          "description": "Optional static control certificate chain."
+          "description": "Certificate chain for authenticated internal control HTTPS."
         },
-        "control_tls_private_key_file": {
+        "private_control_tls_private_key_file": {
           "type": "string",
-          "description": "Optional static control private key."
+          "description": "Private key for authenticated internal control HTTPS."
         },
         "relay_tls_certificate_file": {
           "type": "string",
@@ -1184,17 +1911,42 @@
           "type": "string",
           "description": "OIDC client ID used by the authority."
         },
-        "browser_oidc_client_id": {
+        "oidc_client_secret": {
           "type": "string",
-          "description": "OIDC client ID for browser preview sign-in."
+          "description": "Optional secret for control's OIDC server client."
+        },
+        "oidc_admission_file": {
+          "type": "string",
+          "description": "JSON admission rules for the configured direct OIDC issuer."
+        },
+        "initial_administrator": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Exact subject at the configured OIDC issuer; grants administrator once."
+        },
+        "initial_team_owner": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Organization team=subject at the configured OIDC issuer; seeds ownership once."
+        },
+        "default_team": {
+          "type": "string",
+          "description": "Initial team selected for explicitly eligible identities."
+        },
+        "default_team_member": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Exact OIDC subject eligible for initial default-team membership; applied once."
         },
         "web_service_secret": {
           "type": "string",
           "description": "Scoped credential for identity-context and website invitation operations."
-        },
-        "oidc_login_flow": {
-          "type": "string",
-          "description": "OIDC login flow: device_code or authorization_code_pkce."
         },
         "oidc_scope": {
           "items": {
@@ -1202,10 +1954,6 @@
           },
           "type": "array",
           "description": "OIDC scope requested by clients; repeat for each scope."
-        },
-        "login_token": {
-          "type": "string",
-          "description": "Login token for the built-in administrator identity."
         },
         "access_token_lifetime": {
           "type": "string",
@@ -1264,10 +2012,6 @@
           "type": "array",
           "description": "Stable ingress IPv6 address published in owned public URL records; repeat for each address."
         },
-        "tcp_ports": {
-          "type": "string",
-          "description": "TCP ports verified on the public ingress address, as comma-separated numbers or ranges."
-        },
         "cluster_secret": {
           "type": "string",
           "description": "Current shared secret for private communication among control, ingress, and relays."
@@ -1283,10 +2027,6 @@
         "storage_key_previous": {
           "type": "string",
           "description": "Previous storage key retained only during re-encryption."
-        },
-        "visitor_issuer_seed": {
-          "type": "string",
-          "description": "Unpadded base64url 32-byte visitor certificate issuer seed; control and standalone only."
         },
         "traffic_default_connections": {
           "type": "integer",
@@ -1472,6 +2212,14 @@
           "description": "Ingress pool served by this ingress process.",
           "default": "ingress-a"
         },
+        "service_port_ranges": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Managed TCP ports exposed by this ingress pool; direct ingress binds every port, proxied ingress requires destination metadata.",
+          "default": "20000-20015"
+        },
         "relay_service_id": {
           "type": "string",
           "description": "Stable relay service identity for this relay process."
@@ -1492,16 +2240,6 @@
           "type": "integer",
           "description": "Maximum simultaneous public connection metadata and TLS ClientHello inspections (default: automatic).",
           "default": -1
-        },
-        "challenge_connection_limit": {
-          "type": "integer",
-          "description": "Maximum concurrent public URL certificate validation connections per ingress process (default: automatic).",
-          "default": -1
-        },
-        "challenge_hostname_connection_limit": {
-          "type": "integer",
-          "description": "Maximum concurrent public URL certificate validation connections per hostname on each ingress process.",
-          "default": 8
         },
         "standalone_control_connection_limit": {
           "type": "integer",
@@ -1530,7 +2268,14 @@
         },
         "require_proxy_header": {
           "type": "boolean",
-          "description": "Require one trusted outer PROXY v2 header on public ingress traffic or the control API."
+          "description": "Require one trusted outer PROXY v2 header on ingress TCP traffic."
+        },
+        "ingress_trusted_proxies": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Exact trusted peers supplying ingress PROXY v2 source and destination metadata."
         },
         "quic_max_incoming_streams": {
           "type": "integer",

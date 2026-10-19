@@ -48,8 +48,6 @@ x-runtime: &runtime
         -tnl-runtime-load-bandwidth-streams='${BANDWIDTH_STREAMS:-64}' \
         -tnl-runtime-load-bandwidth-measure='${BANDWIDTH_MEASURE:-0s}' \
         -tnl-runtime-load-client-hello-connection-limit='${CLIENT_HELLO_CONNECTION_LIMIT:--1}' \
-        -tnl-runtime-load-challenge-connection-limit='${CHALLENGE_CONNECTION_LIMIT:--1}' \
-        -tnl-runtime-load-challenge-hostname-connection-limit='${CHALLENGE_HOSTNAME_CONNECTION_LIMIT:-8}' \
         -tnl-runtime-load-visitor-connection-limit='${VISITOR_CONNECTION_LIMIT:--1}' \
         -tnl-runtime-load-publisher-connection-limit='${PUBLISHER_CONNECTION_LIMIT:--1}' \
         -tnl-runtime-load-publisher-concurrency='${PUBLISHER_CONCURRENCY:-500}' \
@@ -85,6 +83,7 @@ services:
       - -ec
       - |
         go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
+        go build -o /artifacts/dnsdev ./internal/devdns/cmd/dnsdev
         if [ "$${RACE}" = 1 ]; then
           go test -race -c -o /artifacts/runtime.test ./internal/tnldruntime
         else
@@ -125,6 +124,11 @@ services:
     environment:
       <<: *environment
       SEPARATED_COMPONENT: control-a
+      AWS_ENDPOINT_URL_ROUTE_53: http://dns:8080
+      AWS_ACCESS_KEY_ID: tnl-local-only
+      AWS_SECRET_ACCESS_KEY: tnl-local-only
+      AWS_EC2_METADATA_DISABLED: "true"
+    depends_on: [dns]
     networks:
       default:
         aliases: [control, control.split.integration.test]
@@ -138,6 +142,11 @@ services:
     environment:
       <<: *environment
       SEPARATED_COMPONENT: control-b
+      AWS_ENDPOINT_URL_ROUTE_53: http://dns:8080
+      AWS_ACCESS_KEY_ID: tnl-local-only
+      AWS_SECRET_ACCESS_KEY: tnl-local-only
+      AWS_EC2_METADATA_DISABLED: "true"
+    depends_on: [dns]
     networks:
       default:
         aliases: [control, control.split.integration.test]
@@ -324,6 +333,15 @@ services:
       <<: *environment
       SEPARATED_COMPONENT: app-4
 
+  dns:
+    <<: *runtime
+    cpus: "0.25"
+    mem_limit: 64m
+    memswap_limit: 64m
+    command: [sh, -ec, 'export DNS_ADDRESS="$$(hostname -i)"; exec /artifacts/dnsdev']
+    environment:
+      DNS_DOMAIN: routes.split.integration.test
+
   pebble:
     <<: *runtime
     cpus: "${PEBBLE_CPUS:-1}"
@@ -332,6 +350,7 @@ services:
     environment:
       <<: *environment
       SEPARATED_COMPONENT: pebble
+    depends_on: [dns]
 
   coordinator:
     <<: *runtime

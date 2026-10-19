@@ -81,9 +81,6 @@ const createControlSession = `-- name: CreateControlSession :exec
 INSERT INTO control.control_sessions (
     id,
     identity_id,
-    authentication_method,
-    authentication_source_revision,
-    administrator,
     access_token_id,
     access_token_digest,
     access_expires_at,
@@ -106,37 +103,28 @@ INSERT INTO control.control_sessions (
     $9,
     $10,
     $11,
-    $12,
-    $13,
-    $14,
-    $14
+    $11
 )
 `
 
 type CreateControlSessionParams struct {
-	ID                           string
-	IdentityID                   string
-	AuthenticationMethod         string
-	AuthenticationSourceRevision int64
-	Administrator                bool
-	AccessTokenID                string
-	AccessTokenDigest            []byte
-	AccessExpiresAt              pgtype.Timestamptz
-	RefreshTokenID               string
-	RefreshTokenDigest           []byte
-	RetrySecretCiphertext        []byte
-	RetrySecretStorageKeyID      string
-	RefreshExpiresAt             pgtype.Timestamptz
-	CreatedAt                    pgtype.Timestamptz
+	ID                      string
+	IdentityID              string
+	AccessTokenID           string
+	AccessTokenDigest       []byte
+	AccessExpiresAt         pgtype.Timestamptz
+	RefreshTokenID          string
+	RefreshTokenDigest      []byte
+	RetrySecretCiphertext   []byte
+	RetrySecretStorageKeyID string
+	RefreshExpiresAt        pgtype.Timestamptz
+	CreatedAt               pgtype.Timestamptz
 }
 
 func (q *Queries) CreateControlSession(ctx context.Context, arg CreateControlSessionParams) error {
 	_, err := q.db.Exec(ctx, createControlSession,
 		arg.ID,
 		arg.IdentityID,
-		arg.AuthenticationMethod,
-		arg.AuthenticationSourceRevision,
-		arg.Administrator,
 		arg.AccessTokenID,
 		arg.AccessTokenDigest,
 		arg.AccessExpiresAt,
@@ -146,53 +134,6 @@ func (q *Queries) CreateControlSession(ctx context.Context, arg CreateControlSes
 		arg.RetrySecretStorageKeyID,
 		arg.RefreshExpiresAt,
 		arg.CreatedAt,
-	)
-	return err
-}
-
-const createIdentity = `-- name: CreateIdentity :exec
-INSERT INTO control.identities (
-    id,
-    kind,
-    display_name,
-    normalized_email,
-    email_verified,
-    administrator,
-    created_at,
-    updated_at
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8
-)
-`
-
-type CreateIdentityParams struct {
-	ID              string
-	Kind            string
-	DisplayName     string
-	NormalizedEmail pgtype.Text
-	EmailVerified   bool
-	Administrator   bool
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-}
-
-func (q *Queries) CreateIdentity(ctx context.Context, arg CreateIdentityParams) error {
-	_, err := q.db.Exec(ctx, createIdentity,
-		arg.ID,
-		arg.Kind,
-		arg.DisplayName,
-		arg.NormalizedEmail,
-		arg.EmailVerified,
-		arg.Administrator,
-		arg.CreatedAt,
-		arg.UpdatedAt,
 	)
 	return err
 }
@@ -254,7 +195,7 @@ INSERT INTO control.identities (
     $7,
     $7
 )
-RETURNING id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, created_at, updated_at, disabled_at
+RETURNING id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, initial_team_id, created_at, updated_at, disabled_at
 `
 
 type CreateOIDCIdentityParams struct {
@@ -287,6 +228,7 @@ func (q *Queries) CreateOIDCIdentity(ctx context.Context, arg CreateOIDCIdentity
 		&i.NormalizedEmail,
 		&i.EmailVerified,
 		&i.Administrator,
+		&i.InitialTeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DisabledAt,
@@ -388,32 +330,6 @@ func (q *Queries) DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now p
 	return err
 }
 
-const findBuiltinIdentity = `-- name: FindBuiltinIdentity :one
-SELECT id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, created_at, updated_at, disabled_at
-FROM control.identities
-WHERE kind = 'builtin'
-  AND disabled_at IS NULL
-`
-
-func (q *Queries) FindBuiltinIdentity(ctx context.Context) (ControlIdentity, error) {
-	row := q.db.QueryRow(ctx, findBuiltinIdentity)
-	var i ControlIdentity
-	err := row.Scan(
-		&i.ID,
-		&i.Kind,
-		&i.Issuer,
-		&i.Subject,
-		&i.DisplayName,
-		&i.NormalizedEmail,
-		&i.EmailVerified,
-		&i.Administrator,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DisabledAt,
-	)
-	return i, err
-}
-
 const findManagedDomain = `-- name: FindManagedDomain :one
 SELECT id, kind, team_id, canonical_domain, dns_authority_reference, state, authority_revision, verification_token_digest, created_by_identity_id, claim_idempotency_key, claim_request_digest, make_default_when_ready, created_at, verified_at, reusable_after, released_at, updated_at
 FROM control.domains
@@ -447,7 +363,7 @@ func (q *Queries) FindManagedDomain(ctx context.Context) (ControlDomain, error) 
 }
 
 const findOIDCIdentity = `-- name: FindOIDCIdentity :one
-SELECT id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, created_at, updated_at, disabled_at
+SELECT id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, initial_team_id, created_at, updated_at, disabled_at
 FROM control.identities
 WHERE kind = 'oidc'
   AND issuer = $1
@@ -471,6 +387,7 @@ func (q *Queries) FindOIDCIdentity(ctx context.Context, arg FindOIDCIdentityPara
 		&i.NormalizedEmail,
 		&i.EmailVerified,
 		&i.Administrator,
+		&i.InitialTeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DisabledAt,
@@ -482,14 +399,14 @@ const getControlSessionByAccessID = `-- name: GetControlSessionByAccessID :one
 SELECT
     s.id,
     s.identity_id,
-    s.authentication_method,
-    s.authentication_source_revision,
     s.access_token_digest,
     s.access_expires_at,
     s.retry_secret_ciphertext,
     s.retry_secret_storage_key_id,
     s.refresh_expires_at,
-    i.administrator
+    i.administrator,
+    i.issuer,
+    i.subject
 FROM control.control_sessions AS s
 JOIN control.identities AS i ON i.id = s.identity_id
 WHERE s.access_token_id = $1
@@ -498,16 +415,16 @@ WHERE s.access_token_id = $1
 `
 
 type GetControlSessionByAccessIDRow struct {
-	ID                           string
-	IdentityID                   string
-	AuthenticationMethod         string
-	AuthenticationSourceRevision int64
-	AccessTokenDigest            []byte
-	AccessExpiresAt              pgtype.Timestamptz
-	RetrySecretCiphertext        []byte
-	RetrySecretStorageKeyID      string
-	RefreshExpiresAt             pgtype.Timestamptz
-	Administrator                bool
+	ID                      string
+	IdentityID              string
+	AccessTokenDigest       []byte
+	AccessExpiresAt         pgtype.Timestamptz
+	RetrySecretCiphertext   []byte
+	RetrySecretStorageKeyID string
+	RefreshExpiresAt        pgtype.Timestamptz
+	Administrator           bool
+	Issuer                  pgtype.Text
+	Subject                 pgtype.Text
 }
 
 func (q *Queries) GetControlSessionByAccessID(ctx context.Context, accessTokenID string) (GetControlSessionByAccessIDRow, error) {
@@ -516,14 +433,14 @@ func (q *Queries) GetControlSessionByAccessID(ctx context.Context, accessTokenID
 	err := row.Scan(
 		&i.ID,
 		&i.IdentityID,
-		&i.AuthenticationMethod,
-		&i.AuthenticationSourceRevision,
 		&i.AccessTokenDigest,
 		&i.AccessExpiresAt,
 		&i.RetrySecretCiphertext,
 		&i.RetrySecretStorageKeyID,
 		&i.RefreshExpiresAt,
 		&i.Administrator,
+		&i.Issuer,
+		&i.Subject,
 	)
 	return i, err
 }
@@ -536,7 +453,8 @@ SELECT
     i.email_verified,
     i.administrator,
     i.created_at,
-    t.id AS personal_team_id
+    t.id AS personal_team_id,
+    COALESCE((SELECT m.team_id FROM control.team_memberships m JOIN control.teams initial ON initial.id = m.team_id AND initial.deleted_at IS NULL WHERE m.team_id = i.initial_team_id AND m.identity_id = i.id AND m.removed_at IS NULL), t.id)::text AS default_team_id
 FROM control.identities AS i
 JOIN control.teams AS t
   ON t.created_by_identity_id = i.id
@@ -554,6 +472,7 @@ type GetIdentityContextIdentityRow struct {
 	Administrator   bool
 	CreatedAt       pgtype.Timestamptz
 	PersonalTeamID  string
+	DefaultTeamID   string
 }
 
 func (q *Queries) GetIdentityContextIdentity(ctx context.Context, identityID string) (GetIdentityContextIdentityRow, error) {
@@ -567,16 +486,20 @@ func (q *Queries) GetIdentityContextIdentity(ctx context.Context, identityID str
 		&i.Administrator,
 		&i.CreatedAt,
 		&i.PersonalTeamID,
+		&i.DefaultTeamID,
 	)
 	return i, err
 }
 
 const listIdentityMembershipContexts = `-- name: ListIdentityMembershipContexts :many
 SELECT
+    m.identity_connection_id,m.manual_suspended_at,m.personal_account_exception,t.company_sign_in_required,
+    control.active_membership(m.id,CURRENT_TIMESTAMP)::boolean AS active,
     m.id,
     m.team_id,
     m.identity_id,
     t.display_name AS team_display_name,
+    t.managed_label AS team_managed_label,
     t.kind AS team_kind,
     m.role,
     s.member_slug,
@@ -596,17 +519,23 @@ ORDER BY t.created_at, t.id
 `
 
 type ListIdentityMembershipContextsRow struct {
-	ID              string
-	TeamID          string
-	IdentityID      string
-	TeamDisplayName string
-	TeamKind        string
-	Role            string
-	MemberSlug      string
-	ManagedLabel    string
-	PolicyRevision  int64
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	IdentityConnectionID     pgtype.Text
+	ManualSuspendedAt        pgtype.Timestamptz
+	PersonalAccountException bool
+	CompanySignInRequired    bool
+	Active                   bool
+	ID                       string
+	TeamID                   string
+	IdentityID               string
+	TeamDisplayName          string
+	TeamManagedLabel         string
+	TeamKind                 string
+	Role                     string
+	MemberSlug               string
+	ManagedLabel             string
+	PolicyRevision           int64
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
 }
 
 func (q *Queries) ListIdentityMembershipContexts(ctx context.Context, identityID string) ([]ListIdentityMembershipContextsRow, error) {
@@ -619,10 +548,16 @@ func (q *Queries) ListIdentityMembershipContexts(ctx context.Context, identityID
 	for rows.Next() {
 		var i ListIdentityMembershipContextsRow
 		if err := rows.Scan(
+			&i.IdentityConnectionID,
+			&i.ManualSuspendedAt,
+			&i.PersonalAccountException,
+			&i.CompanySignInRequired,
+			&i.Active,
 			&i.ID,
 			&i.TeamID,
 			&i.IdentityID,
 			&i.TeamDisplayName,
+			&i.TeamManagedLabel,
 			&i.TeamKind,
 			&i.Role,
 			&i.MemberSlug,
@@ -645,8 +580,6 @@ const lockControlSessionByRefreshID = `-- name: LockControlSessionByRefreshID :o
 SELECT
     s.id,
     s.identity_id,
-    s.authentication_method,
-    s.authentication_source_revision,
     s.refresh_token_digest,
     s.refresh_expires_at,
     i.administrator
@@ -659,13 +592,11 @@ FOR UPDATE OF s
 `
 
 type LockControlSessionByRefreshIDRow struct {
-	ID                           string
-	IdentityID                   string
-	AuthenticationMethod         string
-	AuthenticationSourceRevision int64
-	RefreshTokenDigest           []byte
-	RefreshExpiresAt             pgtype.Timestamptz
-	Administrator                bool
+	ID                 string
+	IdentityID         string
+	RefreshTokenDigest []byte
+	RefreshExpiresAt   pgtype.Timestamptz
+	Administrator      bool
 }
 
 func (q *Queries) LockControlSessionByRefreshID(ctx context.Context, refreshTokenID string) (LockControlSessionByRefreshIDRow, error) {
@@ -674,8 +605,6 @@ func (q *Queries) LockControlSessionByRefreshID(ctx context.Context, refreshToke
 	err := row.Scan(
 		&i.ID,
 		&i.IdentityID,
-		&i.AuthenticationMethod,
-		&i.AuthenticationSourceRevision,
 		&i.RefreshTokenDigest,
 		&i.RefreshExpiresAt,
 		&i.Administrator,
@@ -692,25 +621,15 @@ func (q *Queries) LockIdentityBootstrap(ctx context.Context) error {
 	return err
 }
 
-const reserveManagedDirectName = `-- name: ReserveManagedDirectName :one
-INSERT INTO control.managed_label_reservations (label, created_at, direct_team_id)
-VALUES ($1, $2, $3)
-ON CONFLICT (label) DO UPDATE SET direct_team_id = EXCLUDED.direct_team_id
-WHERE control.managed_label_reservations.direct_team_id = EXCLUDED.direct_team_id
-RETURNING label
+const loginTeamRequiresCompany = `-- name: LoginTeamRequiresCompany :one
+SELECT company_sign_in_required FROM control.teams WHERE id=$1 AND deleted_at IS NULL
 `
 
-type ReserveManagedDirectNameParams struct {
-	Label     string
-	CreatedAt pgtype.Timestamptz
-	TeamID    pgtype.Text
-}
-
-func (q *Queries) ReserveManagedDirectName(ctx context.Context, arg ReserveManagedDirectNameParams) (string, error) {
-	row := q.db.QueryRow(ctx, reserveManagedDirectName, arg.Label, arg.CreatedAt, arg.TeamID)
-	var label string
-	err := row.Scan(&label)
-	return label, err
+func (q *Queries) LoginTeamRequiresCompany(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, loginTeamRequiresCompany, id)
+	var company_sign_in_required bool
+	err := row.Scan(&company_sign_in_required)
+	return company_sign_in_required, err
 }
 
 const reserveManagedLabel = `-- name: ReserveManagedLabel :one
@@ -730,6 +649,17 @@ func (q *Queries) ReserveManagedLabel(ctx context.Context, arg ReserveManagedLab
 	var label string
 	err := row.Scan(&label)
 	return label, err
+}
+
+const resolveLoginTeam = `-- name: ResolveLoginTeam :one
+SELECT id FROM control.teams WHERE (display_name=$1 OR id=$1) AND deleted_at IS NULL
+`
+
+func (q *Queries) ResolveLoginTeam(ctx context.Context, selection string) (string, error) {
+	row := q.db.QueryRow(ctx, resolveLoginTeam, selection)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const revokeControlSession = `-- name: RevokeControlSession :execrows
@@ -850,7 +780,7 @@ SET display_name = $1,
 WHERE id = $5
   AND kind = 'oidc'
   AND disabled_at IS NULL
-RETURNING id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, created_at, updated_at, disabled_at
+RETURNING id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, initial_team_id, created_at, updated_at, disabled_at
 `
 
 type UpdateOIDCIdentityParams struct {
@@ -879,6 +809,7 @@ func (q *Queries) UpdateOIDCIdentity(ctx context.Context, arg UpdateOIDCIdentity
 		&i.NormalizedEmail,
 		&i.EmailVerified,
 		&i.Administrator,
+		&i.InitialTeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DisabledAt,

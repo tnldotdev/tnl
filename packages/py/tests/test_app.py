@@ -14,8 +14,9 @@ import pytest
 
 
 @pytest.mark.parametrize("reload", [False, True])
+@pytest.mark.parametrize("private_service", [False, True])
 def test_worker_registers_after_bind_and_joins_before_lifespan_stop(
-    tmp_path: Path, reload: bool
+    tmp_path: Path, reload: bool, private_service: bool
 ) -> None:
     async def scenario() -> None:
         tmp_path.chmod(0o700)
@@ -57,12 +58,14 @@ def test_worker_registers_after_bind_and_joins_before_lifespan_stop(
                             "version": 1,
                             "registration_id": active["registration_id"],
                             "service": "web",
-                            "hostname": "web.member.example",
-                            "public_url": "https://web.member.example",
+                            "hostname": "" if private_service else "web.member.example",
+                            "public_url": "" if private_service else "https://web.member.example",
                             "project": {
-                                "namespace": "member.example",
+                                "namespace": "" if private_service else "member.example",
                                 "dev": True,
-                                "services": {
+                                "services": {}
+                                if private_service
+                                else {
                                     "web": {
                                         "protocol": "http",
                                         "namespace": "member.example",

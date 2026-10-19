@@ -91,7 +91,7 @@ func TestCaptureFileVerifiesDatabaseIdentityAndRejectsEscape(t *testing.T) {
 	}
 	host := "db.example"
 	cache := NewCache(nil)
-	snapshot, err := cache.Capture(t.Context(), directory, server.Listener.Addr().String(), config.ServiceTLS{CA: "provider.pem", Hostname: &host})
+	snapshot, err := cache.Capture(t.Context(), directory, server.Listener.Addr().String(), config.TrustSource{CA: "provider.pem", Hostname: &host})
 	if err != nil || snapshot.System || len(snapshot.PEM) == 0 || snapshot.Digest == "" {
 		t.Fatalf("captured provider root: %#v, %v", snapshot, err)
 	}
@@ -118,7 +118,7 @@ func TestCaptureFileVerifiesDatabaseIdentityAndRejectsEscape(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(directory, "escape.pem")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cache.Capture(t.Context(), directory, server.Listener.Addr().String(), config.ServiceTLS{CA: "escape.pem"}); err == nil {
+	if _, err := cache.Capture(t.Context(), directory, server.Listener.Addr().String(), config.TrustSource{CA: "escape.pem"}); err == nil {
 		t.Fatal("CA symlink escaped the project")
 	}
 }
@@ -139,7 +139,7 @@ func TestHTTPSBundleRefreshNeverFallsBackToStaleOrPlaintext(t *testing.T) {
 	cache := NewCache(server.Client())
 	clock := time.Now()
 	cache.now = func() time.Time { return clock }
-	setting := config.ServiceTLS{CA: server.URL}
+	setting := config.TrustSource{CA: server.URL}
 	firstSnapshot, err := cache.Capture(context.Background(), t.TempDir(), "127.0.0.1:5432", setting)
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestCaptureRejectsNonCAAndOversizedBundles(t *testing.T) {
 		if err := os.WriteFile(file, data, 0600); err != nil {
 			t.Fatal(err)
 		}
-		_, err := NewCache(nil).Capture(t.Context(), directory, "127.0.0.1:5432", config.ServiceTLS{CA: "invalid.pem"})
+		_, err := NewCache(nil).Capture(t.Context(), directory, "127.0.0.1:5432", config.TrustSource{CA: "invalid.pem"})
 		if !errors.Is(err, ErrInvalidBundle) {
 			t.Fatalf("invalid bundle accepted: %v", err)
 		}
@@ -202,7 +202,7 @@ func TestSnapshotCanonicalizationKeepsEquivalentMetadataDigest(t *testing.T) {
 	directory := t.TempDir()
 	file := filepath.Join(directory, "ca.pem")
 	name := "DB.Example"
-	setting := config.ServiceTLS{CA: "ca.pem", Hostname: &name}
+	setting := config.TrustSource{CA: "ca.pem", Hostname: &name}
 	cache := NewCache(nil)
 	var baseline Snapshot
 	for index, data := range [][]byte{
@@ -242,7 +242,7 @@ func (transport failingSourceTransport) RoundTrip(*http.Request) (*http.Response
 func TestCASourceErrorsKeepTypedCausesAndHideSourceCredentials(t *testing.T) {
 	const secret = "private-source-token"
 	location := "https://example.com/%invalid?token=" + secret
-	_, err := NewCache(nil).Capture(t.Context(), t.TempDir(), "db.example:5432", config.ServiceTLS{CA: location})
+	_, err := NewCache(nil).Capture(t.Context(), t.TempDir(), "db.example:5432", config.TrustSource{CA: location})
 	var source *SourceError
 	var setting *config.CAURLError
 	var parsed *url.Error
@@ -254,7 +254,7 @@ func TestCASourceErrorsKeepTypedCausesAndHideSourceCredentials(t *testing.T) {
 	}
 	broken := errors.New("provider failed at ?token=" + secret)
 	cache := NewCache(&http.Client{Transport: failingSourceTransport{err: broken}})
-	_, err = cache.Capture(t.Context(), t.TempDir(), "db.example:5432", config.ServiceTLS{CA: "https://example.com/ca.pem?token=" + secret})
+	_, err = cache.Capture(t.Context(), t.TempDir(), "db.example:5432", config.TrustSource{CA: "https://example.com/ca.pem?token=" + secret})
 	if !errors.Is(err, ErrFetchBundle) || !errors.Is(err, broken) || !errors.As(err, &source) || !errors.As(err, &parsed) {
 		t.Fatalf("lost typed fetch cause: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestSystemSnapshotUsesVisitorMachineRootsWithoutPublisherBundle(t *testing.
 	_, cert := testCA(t)
 	server := testTLS(t, cert)
 	cache := NewCache(nil)
-	snapshot, err := cache.Capture(t.Context(), t.TempDir(), server.Listener.Addr().String(), config.ServiceTLS{CA: "system"})
+	snapshot, err := cache.Capture(t.Context(), t.TempDir(), server.Listener.Addr().String(), config.TrustSource{CA: "system"})
 	if err != nil || !snapshot.System || len(snapshot.PEM) != 0 {
 		t.Fatalf("system snapshot: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestSystemSnapshotUsesVisitorMachineRootsWithoutPublisherBundle(t *testing.
 		t.Fatal("system selection trusted an uninstalled publisher root")
 	}
 	for _, host := range []string{"", "db/path", "*.example", "bad..example", "[::1]", "fe80::1%lo0", "xn--a.example"} {
-		if _, err := cache.Capture(t.Context(), t.TempDir(), "127.0.0.1:5432", config.ServiceTLS{CA: "system", Hostname: &host}); err == nil {
+		if _, err := cache.Capture(t.Context(), t.TempDir(), "127.0.0.1:5432", config.TrustSource{CA: "system", Hostname: &host}); err == nil {
 			t.Fatalf("invalid certificate hostname accepted: %q", host)
 		}
 	}
@@ -301,7 +301,7 @@ func TestHTTPSBundleRejectsUnverifiedTransportRedirectsAndInvalidBodies(t *testi
 		_, _ = w.Write(body)
 	}))
 	defer server.Close()
-	setting := config.ServiceTLS{CA: server.URL}
+	setting := config.TrustSource{CA: server.URL}
 	if _, err := NewCache(nil).Capture(t.Context(), t.TempDir(), "db.example:5432", setting); err == nil {
 		t.Fatal("untrusted HTTPS CA source accepted")
 	}
@@ -319,7 +319,7 @@ func TestHTTPSBundleRejectsUnverifiedTransportRedirectsAndInvalidBodies(t *testi
 		t.Fatal("invalid HTTPS bundle accepted")
 	}
 	for _, ca := range []string{"https://user:secret@example.com/ca", "https://example.com:0/ca", "https://example.com:65536/ca", "https://example.com:/ca", "https://bad..example/ca", "https://example.com/#fragment", "http://example.com/ca", "../ca.pem"} {
-		if _, err := NewCache(nil).Capture(t.Context(), t.TempDir(), "db.example:5432", config.ServiceTLS{CA: ca}); err == nil {
+		if _, err := NewCache(nil).Capture(t.Context(), t.TempDir(), "db.example:5432", config.TrustSource{CA: ca}); err == nil {
 			t.Fatalf("invalid CA source accepted: %q", ca)
 		}
 	}

@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	DirectoryName    = ".tnl"
+	DirectoryName    = ".tnl/local"
 	JSONName         = "project.json"
 	DeclarationsName = "project.d.ts"
 	MaxFileBytes     = 64 << 10
@@ -37,6 +37,9 @@ func Write(ctx context.Context, projectRoot string, metadata Metadata) error {
 		return err
 	}
 	directory := filepath.Join(filepath.Clean(projectRoot), DirectoryName)
+	if err := prepareDirectory(filepath.Dir(directory)); err != nil {
+		return err
+	}
 	if err := prepareDirectory(directory); err != nil {
 		return err
 	}
@@ -139,13 +142,8 @@ func renderDeclarations(metadata Metadata) []byte {
 		output.WriteString(typeScriptString(service.Hostname))
 		output.WriteString(";\n        readonly protocol: ")
 		output.WriteString(typeScriptString(service.Protocol))
-		if service.Protocol == "http" {
-			output.WriteString(";\n        readonly url: ")
-			output.WriteString(typeScriptString(service.URL))
-		} else {
-			output.WriteString(";\n        readonly address: " + typeScriptString(service.Address))
-			output.WriteString(fmt.Sprintf(";\n        readonly port: %d", *service.Port))
-		}
+		output.WriteString(";\n        readonly url: ")
+		output.WriteString(typeScriptString(service.URL))
 		output.WriteString(";\n")
 		if len(service.Paths) > 0 {
 			output.WriteString("        readonly paths: {\n")

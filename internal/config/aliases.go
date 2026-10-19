@@ -78,7 +78,7 @@ func ValidateAliases(config TNL) error {
 		if alias.Name != nil && alias.PublicURL != nil {
 			return fmt.Errorf("aliases.%s: name and public_url are mutually exclusive", key)
 		}
-		// ordinary tunnel validation owns domain, exact URL, and IP policy rules.
+		// public URL validation owns domain, exact hostname, and IP policy rules.
 		if err := validateTunnel(&Tunnel{Domain: alias.Domain, PublicURL: alias.PublicURL, Access: alias.Access}); err != nil {
 			return fmt.Errorf("aliases.%s: %w", key, err)
 		}

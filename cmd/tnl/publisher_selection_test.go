@@ -65,7 +65,7 @@ func TestReserveConfiguredURLCreatesBeforeEnrollingPublisher(t *testing.T) {
 		t.Fatal(err)
 	}
 	services := publisherServices{state: state, routes: control, teamID: route.TeamId, domainID: route.DomainId, publicURLScope: controlv1.Shared}
-	cfg := publisher.Config{Hostname: route.CanonicalHostname, ServiceProtocol: route.ServiceProtocol, AccessMode: controlv1.Anonymous, AllowedIPPrefixes: prefixes}
+	cfg := publisher.Config{Hostname: route.CanonicalHostname, Purpose: route.Purpose, ServiceProtocol: route.ServiceProtocol, AccessMode: controlv1.Anonymous, AllowedIPPrefixes: prefixes}
 	for range 2 {
 		selected, err := reserveConfiguredURL(t.Context(), services, cfg)
 		if err != nil || selected.Id != route.Id || !created {
@@ -130,7 +130,7 @@ func TestReserveConfiguredURLReplacesVisitorAccessBeforeNativePublisher(t *testi
 		t.Fatal(err)
 	}
 	services := publisherServices{state: state, routes: control, teamID: route.TeamId, domainID: route.DomainId, publicURLScope: controlv1.Shared}
-	cfg := publisher.Config{Hostname: route.CanonicalHostname, ServiceProtocol: route.ServiceProtocol, AccessMode: controlv1.Anonymous}
+	cfg := publisher.Config{Hostname: route.CanonicalHostname, Purpose: route.Purpose, ServiceProtocol: route.ServiceProtocol, AccessMode: controlv1.Anonymous}
 	for range 2 {
 		selected, err := reserveConfiguredURL(t.Context(), services, cfg)
 		if err != nil || selected.AccessMode != controlv1.Anonymous || updates != 1 {

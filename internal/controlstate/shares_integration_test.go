@@ -13,7 +13,7 @@ import (
 
 func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "shares")
-	routeRequest := builtinRouteRequest(t, database, now)
+	routeRequest := oidcRouteRequest(t, database, now)
 	route := createTestPublicURL(t, database, routeRequest, now)
 	preview, err := database.CreatePreview(t.Context(), route.TeamID, routeRequest.ActingIdentityID, "preview", now)
 	if err != nil {
@@ -100,7 +100,7 @@ func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
 
 func TestIntegrationShareRejectsStaleOrUnrelatedURLs(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "share_guards")
-	routeRequest := builtinRouteRequest(t, database, now)
+	routeRequest := oidcRouteRequest(t, database, now)
 	route := createTestPublicURL(t, database, routeRequest, now)
 	preview, err := database.CreatePreview(t.Context(), route.TeamID, routeRequest.ActingIdentityID, "preview", now)
 	if err != nil {
@@ -134,7 +134,7 @@ func TestIntegrationShareRejectsStaleOrUnrelatedURLs(t *testing.T) {
 
 func TestIntegrationExactAndPreviewShareSnapshotsHaveDifferentScopes(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "share_scopes")
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	first := createTestPublicURL(t, database, request, now)
 	request.IdempotencyKey = "second-service"
 	request.RequestDigest = sha256.Sum256([]byte("second-service"))

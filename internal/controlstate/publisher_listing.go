@@ -2,6 +2,8 @@ package controlstate
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 )
@@ -59,6 +61,12 @@ func (d *Database) AuthorizePublisherManagement(ctx context.Context, team, publi
 // mutation callers hold the team guard through commit before reading current
 // membership and locking the publisher. a prior HTTP read is not authorization.
 func authorizePublisherManagement(ctx context.Context, q *controlstatedb.Queries, team, publisher, editor string) error {
+	if err := requireTeamSession(ctx, q, team, editor, time.Now()); err != nil {
+		if errors.Is(err, ErrAuthorityAccess) {
+			return ErrPublisherIdentity
+		}
+		return err
+	}
 	m, err := q.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{TeamID: team, IdentityID: editor})
 	if err != nil {
 		return publisherLookupError(err, ErrPublisherIdentity)
@@ -67,7 +75,7 @@ func authorizePublisherManagement(ctx context.Context, q *controlstatedb.Queries
 	if err != nil {
 		return publisherLookupError(err, ErrPublisherIdentity)
 	}
-	if i.TeamID != team || i.CreatedByIdentityID != editor && m.Role != "owner" && m.Role != "admin" {
+	if i.TeamID != team || (i.Ownership != "member" || i.OwnerMembershipID.String != m.ID) && m.Role != "owner" && m.Role != "admin" {
 		return ErrPublisherIdentity
 	}
 	return nil

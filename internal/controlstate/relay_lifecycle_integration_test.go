@@ -266,7 +266,7 @@ func newRelayLifecycleSession(t *testing.T, database *Database, now time.Time) (
 		MembershipID: "membership_relaylifecycle",
 		RetrySecret:  bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
 		PolicyRevision: 1, ExpectedMutationRevision: 1, CertificateCacheKey: "relay_lifecycle", CertificateScope: "route",
-		CertificateIdentifiers: []string{"route-relaylifecycle.example.test"}, CertificateChallenge: "tls-alpn-01",
+		CertificateIdentifiers: []string{"route-relaylifecycle.example.test"}, CertificateChallenge: "dns-01",
 	}, now, time.Hour, time.Minute)
 	if err != nil {
 		t.Fatal(err)

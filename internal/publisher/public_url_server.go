@@ -23,82 +23,74 @@ import (
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/internal/tlschallenge"
+	"github.com/tnldotdev/tnl/internal/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
-	"golang.org/x/crypto/acme"
 )
 
 // PublicURLServerConfig configures publisher TLS termination and local HTTP forwarding.
 type PublicURLServerConfig struct {
-	Hostname                    string
-	PreviewID                   string
-	PublicURLID                 string
-	PublishRunNumber            uint64
-	PublishRunID                string
-	Target                      string
-	ResolveTarget               func(context.Context) (string, string, error)
-	ServiceProtocol             controlv1.PublicURLServiceProtocol
-	Purpose                     controlv1.PublicURLPurpose
-	AccessMode                  controlv1.VisitorAccessMode
-	PublicPort                  uint16
-	TargetTLSName               string
-	TargetTLS                   bool
-	TargetOptions               localproxy.TargetOptions
-	Handler                     http.Handler
-	AdmitRequest                func(*http.Request) error
-	ObserveResponse             func(*http.Response) error
-	Mounts                      []localproxy.Mount
-	ShareAccess                 *shareAccess
-	BrowserAccess               *browserAccess
-	BrowserLoginAvailable       bool
-	Feedback                    *feedbackRuntime
-	Limits                      ApplicationLimits
-	OnTargetFailure             func()
-	ObserveSummary              inspection.Observer
-	PromoteVisitor              PromoteVisitor
-	AdmitVisitor                AdmitVisitor
-	AuthorizeVisitorCertificate AuthorizeVisitorCertificate
-	ReadinessProof              *ReadinessProof
-	OnWarning                   func(string)
-	InspectionMode              inspection.Mode
-	Certificate                 tls.Certificate
-	CertificatePlan             controlv1.CertificatePlan
+	AuditSink             serviceaudit.Sink
+	Hostname              string
+	PreviewID             string
+	PublicURLID           string
+	PublishRunNumber      uint64
+	PublishRunID          string
+	Target                string
+	ResolveTarget         func(context.Context) (string, string, error)
+	ServiceProtocol       controlv1.PublicURLServiceProtocol
+	Purpose               controlv1.PublicURLPurpose
+	AccessMode            controlv1.VisitorAccessMode
+	TargetTLSName         string
+	TargetOptions         localproxy.TargetOptions
+	Handler               http.Handler
+	AdmitRequest          func(*http.Request) error
+	ObserveResponse       func(*http.Response) error
+	Mounts                []localproxy.Mount
+	ShareAccess           *shareAccess
+	BrowserAccess         *browserAccess
+	BrowserLoginAvailable bool
+	Feedback              *feedbackRuntime
+	Limits                ApplicationLimits
+	OnTargetFailure       func()
+	ObserveSummary        inspection.Observer
+	PromoteVisitor        PromoteVisitor
+	AdmitVisitor          AdmitVisitor
+	ReadinessProof        *ReadinessProof
+	OnWarning             func(string)
+	InspectionMode        inspection.Mode
+	Certificate           tls.Certificate
+	CertificatePlan       controlv1.CertificatePlan
 }
 
 type PublicURLServer struct {
-	hostname           string
-	tcp                *tcpForwarding
-	certificatePlan    controlv1.CertificatePlan
-	tls                *tls.Config
-	certificate        atomic.Pointer[tls.Certificate]
-	certificateTimer   *time.Timer
-	certificateExpired chan struct{}
-	challenges         tlschallenge.TLSALPNChallenges
-	queue              *publicURLListener
-	http               *http.Server
-	mu                 sync.Mutex
-	started            bool
-	closed             bool
-	draining           bool
-	streams            map[net.Conn]struct{}
-	handlers           sync.WaitGroup
-	httpDone           chan error
-	closeOnce          sync.Once
-	closeErr           error
-	admission          *applicationAdmission
-	run                PublishRunIdentity
-	promote            PromoteVisitor
-	defaultPromote     PromoteVisitor
-	guard              AdmitVisitor
-	life               context.Context
-	cancel             context.CancelFunc
-	sessions           [publisherConnectionCount]*livePublisherSession
-
-	// certificate transactions retain challenge identity across lost control responses.
-	challengeIssuanceID string
-	challengeID         string
+	hostname              string
+	certificatePlan       controlv1.CertificatePlan
+	tls                   *tls.Config
+	certificate           atomic.Pointer[tls.Certificate]
+	certificateTimer      *time.Timer
+	certificateExpired    chan struct{}
+	queue                 *publicURLListener
+	http                  *http.Server
+	mu                    sync.Mutex
+	started               bool
+	closed                bool
+	draining              bool
+	streams               map[net.Conn]struct{}
+	visitorPolicyRevision int64
+	handlers              sync.WaitGroup
+	httpDone              chan error
+	closeOnce             sync.Once
+	closeErr              error
+	admission             *applicationAdmission
+	run                   PublishRunIdentity
+	promote               PromoteVisitor
+	defaultPromote        PromoteVisitor
+	guard                 AdmitVisitor
+	life                  context.Context
+	cancel                context.CancelFunc
+	sessions              [publisherConnectionCount]*livePublisherSession
 }
 
 type denialContextKey struct{}
@@ -142,18 +134,14 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if config.InspectionMode != "" && !config.InspectionMode.Valid() {
 		return nil, errors.New("publisher: request inspection mode must be none or summary")
 	}
-	forwarding, err := newTCPForwarding(config)
-	if err != nil {
-		return nil, err
+	if config.ServiceProtocol != "" && config.ServiceProtocol != controlv1.Http {
+		return nil, errors.New("publisher: public URL server requires HTTP; use a private stream for TCP")
 	}
-	admission, err := newApplicationAdmission(config.Limits, forwarding != nil)
+	admission, err := newApplicationAdmission(config.Limits)
 	if err != nil {
 		return nil, err
 	}
 	config.Limits = admission.limits
-	if forwarding != nil {
-		forwarding.admission = admission
-	}
 	if config.CertificatePlan.Identifiers != nil || config.CertificatePlan.CacheKey != "" || config.CertificatePlan.Scope != "" || config.CertificatePlan.ChallengeMethod != "" {
 		config.CertificatePlan, err = certificateidentity.CanonicalPlan(config.CertificatePlan)
 		if err != nil || !certificateidentity.Covers(config.CertificatePlan.Identifiers, hostname) {
@@ -166,9 +154,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		modifyResponse, observe = config.Feedback.modifyResponse, config.Feedback.observe
 	}
 	var handler http.Handler
-	if forwarding != nil {
-		handler = http.NotFoundHandler()
-	} else if config.Handler != nil {
+	if config.Handler != nil {
 		handler = config.Handler
 	} else {
 		hooks := localproxy.ResponseHooks{ModifyHTML: modifyResponse, Observe: config.ObserveResponse, ObserveStatus: observe, OnForwarded: func(request *http.Request) {
@@ -194,7 +180,6 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	life, cancelLife := context.WithCancel(context.Background())
 	route := &PublicURLServer{
 		hostname:  hostname,
-		tcp:       forwarding,
 		admission: admission,
 		run:       PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber},
 		promote:   config.PromoteVisitor,
@@ -204,11 +189,29 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		queue:           queue,
 		tls: &tls.Config{
 			MinVersion:             tls.VersionTLS12,
-			NextProtos:             []string{"h2", "http/1.1", acme.ALPNProto},
+			NextProtos:             []string{"h2", "http/1.1"},
 			SessionTicketsDisabled: true,
 		},
 		http: &http.Server{
 			Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				auditOutcome, auditReason := "denied", "invalid_request"
+				auditReport := true
+				auditSent := false
+				emitAudit := func() {
+					if auditSent {
+						return
+					}
+					auditSent = true
+					if !auditReport || config.AuditSink == nil {
+						return
+					}
+					session, _ := request.Context().Value(visitorSessionKey{}).(*visitorSession)
+					if session == nil || session.visitor.Header.VisitorConnectionID == "" {
+						return
+					}
+					serviceaudit.Emit(config.AuditSink, serviceaudit.Observation{ServiceID: config.PublicURLID, ServiceKind: "public_url", RunID: config.PublishRunID, RunNumber: int64(config.PublishRunNumber), VisitorConnectionID: session.visitor.Header.VisitorConnectionID, SourceIP: session.visitor.Source.Addr().Unmap().String(), EventType: "http.decision", Outcome: auditOutcome, Reason: auditReason})
+				}
+				defer emitAudit()
 				if config.ObserveSummary != nil && config.InspectionMode != inspection.None && !strings.HasPrefix(request.URL.Path, "/__tnl/") {
 					started := time.Now()
 					forwarded := &atomic.Bool{}
@@ -239,10 +242,12 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				proof := config.ReadinessProof.consume(request, PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber})
 				request.Header.Del(localproxy.ReadinessProbeHeader)
 				if proof {
+					auditReport = false
 					request = localproxy.WithReadinessProbe(request)
 				}
 				if config.AdmitRequest != nil {
 					if err := config.AdmitRequest(request); err != nil {
+						auditReason = "authorization"
 						code, ok := diagnostic.CodeOf(err)
 						if !ok {
 							code = diagnostic.ServerUnavailable
@@ -283,6 +288,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
 						_ = connection.SetDeadline(time.Time{})
 					}
+					auditOutcome, auditReason = "allowed", ""
 					shareRedirect(response, redemption)
 					return
 				}
@@ -337,12 +343,14 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					return
 				}
 				if !allowed {
+					auditReason = "authorization"
 					if config.BrowserLoginAvailable && config.BrowserAccess != nil && config.BrowserAccess.redirectRestricted(response, request) {
 						return
 					}
 					diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
 					return
 				}
+				auditOutcome, auditReason = "allowed", ""
 				if config.Feedback != nil {
 					if config.Feedback.handle(response, request, !allowed) {
 						return
@@ -373,6 +381,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				}
 				release, status, retryAfter := admission.acquire(request.Context())
 				if status != 0 {
+					auditOutcome, auditReason = "failed", "capacity"
 					if request.ProtoMajor == 1 {
 						// avoid draining an unread body before sending the rejection.
 						response.Header().Set("Connection", "close")
@@ -394,16 +403,19 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				}
 				if session, _ := request.Context().Value(visitorSessionKey{}).(*visitorSession); session != nil {
 					if err := session.admit(request.Context(), proof); err != nil {
+						auditOutcome, auditReason = "failed", "capacity"
 						admission.refund()
 						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
 						return
 					}
 				}
 				if request.Context().Err() != nil {
+					auditOutcome, auditReason = "failed", "cancelled"
 					admission.refund()
 					return
 				}
 				defer release()
+				emitAudit()
 				handler.ServeHTTP(response, request)
 			}),
 			ConnContext: func(ctx context.Context, connection net.Conn) context.Context {
@@ -447,15 +459,6 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	}
 	return route, nil
 }
-
-func (r *PublicURLServer) InstallChallenge(challenge tlschallenge.TLSALPNChallenge) error {
-	if challenge.Hostname != r.hostname {
-		return errors.New("publisher: TLS-ALPN challenge hostname does not match public URL")
-	}
-	return r.challenges.Install(challenge)
-}
-
-func (r *PublicURLServer) RemoveChallenge(id string) bool { return r.challenges.Remove(id) }
 
 func (r *PublicURLServer) InstallCertificate(certificate tls.Certificate) error {
 	copy := certificate
@@ -542,18 +545,12 @@ func (r *PublicURLServer) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certi
 		return nil, errors.New("publisher: TLS SNI does not match public URL")
 	}
 	if hello.ServerName == "" {
-		// a dedicated MySQL public port selects this certificate without SNI.
-		if r.tcp == nil || r.tcp.protocol != controlv1.Mysql {
-			return nil, errors.New("publisher: TLS SNI does not match public URL")
-		}
+		return nil, errors.New("publisher: TLS SNI does not match public URL")
 	} else {
 		hostname, err := naming.CanonicalizeHostname(hello.ServerName)
 		if err != nil || hostname != r.hostname {
 			return nil, errors.New("publisher: TLS SNI does not match public URL")
 		}
-	}
-	if len(hello.SupportedProtos) == 1 && hello.SupportedProtos[0] == acme.ALPNProto {
-		return r.challenges.GetCertificate(hello)
 	}
 	certificate := r.certificate.Load()
 	if certificate == nil {
@@ -711,6 +708,28 @@ func (r *PublicURLServer) stopAdmissions() {
 	r.http.SetKeepAlivesEnabled(false)
 }
 
+// invalidateVisitorPolicy closes existing application streams, including HTTP
+// upgrades. the run and publisher connections continue admitting fresh visitors.
+func (r *PublicURLServer) invalidateVisitorPolicy(revision int64) {
+	r.mu.Lock()
+	if revision <= r.visitorPolicyRevision {
+		r.mu.Unlock()
+		return
+	}
+	previous := r.visitorPolicyRevision
+	r.visitorPolicyRevision = revision
+	var streams []net.Conn
+	if previous > 0 {
+		for stream := range r.streams {
+			streams = append(streams, stream)
+		}
+	}
+	r.mu.Unlock()
+	for _, stream := range streams {
+		_ = stream.Close()
+	}
+}
+
 func (r *PublicURLServer) Close() error {
 	r.closeOnce.Do(func() {
 		if r.cancel != nil {
@@ -799,30 +818,6 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 		_ = connection.SetWriteDeadline(time.Time{})
 	}
 	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied, session: session}
-	if r.tcp != nil {
-		if header.Destination.Port() == r.tcp.publicPort {
-			if !denied || r.tcp.protocol != controlv1.Ssh {
-				select {
-				case <-r.admission.completed:
-					return
-				default:
-				}
-				// ssh has no visitor TLS handshake, so check the same installed
-				// certificate that gates publish-run readiness before forwarding.
-				if r.tcp.protocol == controlv1.Ssh {
-					if err := r.withValidCertificate(func() error { return nil }); err != nil {
-						return
-					}
-				}
-				r.tcp.forward(metadata, r.tls, session)
-			}
-			return
-		}
-		// certificate challenges still arrive on HTTPS port 443.
-		if header.Destination.Port() != 443 {
-			return
-		}
-	}
 	tracked := newDoneConn(metadata)
 	secured := tls.Server(tracked, r.tls)
 	ctx, cancelHandshake := context.WithTimeout(life, 10*time.Second)
@@ -836,10 +831,6 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 		_ = secured.SetDeadline(time.Now().Add(visitorPromotionTimeout))
 	} else {
 		_ = secured.SetDeadline(time.Time{})
-	}
-	if secured.ConnectionState().NegotiatedProtocol == acme.ALPNProto {
-		_ = tracked.Close()
-		return
 	}
 	if !r.queue.enqueue(secured) {
 		_ = secured.Close()
@@ -933,6 +924,13 @@ func (c *metadataConn) Close() error {
 
 func (c *publicURLReaderConn) CloseWrite() error { return closeWrite(c.Conn) }
 func (c *metadataConn) CloseWrite() error        { return closeWrite(c.Conn) }
+
+func closeWrite(conn net.Conn) error {
+	if half, ok := conn.(interface{ CloseWrite() error }); ok {
+		return half.CloseWrite()
+	}
+	return nil
+}
 
 func (c *metadataConn) RemoteAddr() net.Addr { return tcpAddress(c.header.Source) }
 func (c *metadataConn) LocalAddr() net.Addr  { return tcpAddress(c.header.Destination) }

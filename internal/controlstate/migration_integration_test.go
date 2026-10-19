@@ -45,8 +45,8 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	}
 	for _, table := range []string{
 		"schema_identity", "identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "guest_retry_keys", "dns_authorities", "dns_challenge_changes",
-		"public_urls", "publish_runs", "publish_run_connection_slots", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events", "relay_service_reservations",
-		"control_tls_certificate_cache", "acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_usage_runs", "ingress_usage_reports",
+		"public_urls", "publish_runs", "publisher_service_connection_slots", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events", "relay_service_reservations",
+		"acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_usage_runs", "ingress_usage_reports",
 		"visitor_network_hash_keys", "public_url_usage_buckets", "public_url_usage_deliveries", "public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
 	} {
 		var exists bool
@@ -61,6 +61,12 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 			JOIN pg_attribute AS a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
 			WHERE c.conrelid = ('control.' || $1)::regclass AND c.contype = 'p'`, table).Scan(&key); err != nil || key != "id" {
 			t.Errorf("control.%s primary key = %q, %v; want id", table, key, err)
+		}
+	}
+	for _, view := range []string{"publish_run_connection_slots", "private_service_connection_slots", "publisher_service_runs"} {
+		var exists bool
+		if err := database.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.views WHERE table_schema='control' AND table_name=$1)`, view).Scan(&exists); err != nil || !exists {
+			t.Errorf("control.%s typed view missing: %v", view, err)
 		}
 	}
 	var version int64
@@ -113,7 +119,7 @@ func TestIntegrationScopedForeignKeys(t *testing.T) {
 	insertTestPublishRun(t, database, testPublishRun{
 		ID: "session_owner_a", PublicURLID: "public_url_owner_a", TeamID: "team_owner_a",
 		ActingIdentityID: "identity_owner_a", CertificateCacheKey: "owner_a", CertificateScope: "owner_a",
-		CertificateIdentifiers: []string{"route-owner_a.example.test"}, ChallengeMethod: "tls-alpn-01",
+		CertificateIdentifiers: []string{"route-owner_a.example.test"}, ChallengeMethod: "dns-01",
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	})
 	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.member_slug_reservations
@@ -141,7 +147,7 @@ func TestIntegrationScopedForeignKeys(t *testing.T) {
 			challenge_method, csr_der, csr_digest, state, available_at, created_at, updated_at)
 			VALUES ('order_wrong_run', $1, 'session_owner_a', 'public_url_owner_b', 1,
 			'wrong-run', decode(repeat('03', 32), 'hex'), 'owner_a', 'owner_a', ARRAY['owner-a.example.test'],
-			'tls-alpn-01', decode('01', 'hex'), decode(repeat('04', 32), 'hex'), 'pending', now(), now(), now())`, args: []any{account.ID}},
+			'dns-01', decode('01', 'hex'), decode(repeat('04', 32), 'hex'), 'pending', now(), now(), now())`, args: []any{account.ID}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := database.pool.Exec(t.Context(), test.query, test.args...)

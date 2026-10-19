@@ -10,37 +10,6 @@ import (
 	"database/sql"
 )
 
-const deleteCertificateMaterial = `-- name: DeleteCertificateMaterial :exec
-DELETE FROM public_url_certificate_cache
-WHERE server_origin = ?1
-  AND team_id = ?2
-  AND publisher_identity_id=?3
-  AND cache_key = ?4
-  AND plan = ?5
-  AND phase = ?6
-`
-
-type DeleteCertificateMaterialParams struct {
-	ServerOrigin        string
-	TeamID              string
-	PublisherIdentityID string
-	CacheKey            string
-	Plan                string
-	Phase               string
-}
-
-func (q *Queries) DeleteCertificateMaterial(ctx context.Context, arg DeleteCertificateMaterialParams) error {
-	_, err := q.db.ExecContext(ctx, deleteCertificateMaterial,
-		arg.ServerOrigin,
-		arg.TeamID,
-		arg.PublisherIdentityID,
-		arg.CacheKey,
-		arg.Plan,
-		arg.Phase,
-	)
-	return err
-}
-
 const deleteControlSession = `-- name: DeleteControlSession :exec
 DELETE FROM control_sessions
 WHERE server_origin = ?1
@@ -96,54 +65,6 @@ func (q *Queries) FinishTunnel(ctx context.Context, arg FinishTunnelParams) (int
 		return 0, err
 	}
 	return result.RowsAffected()
-}
-
-const getCertificateMaterial = `-- name: GetCertificateMaterial :one
-SELECT id, server_origin, team_id, publisher_identity_id, cache_key, "plan", phase, private_key_ciphertext, csr_der, certificate_pem, renew_at, issuance_id, updated_at
-FROM public_url_certificate_cache
-WHERE server_origin = ?1
-  AND team_id = ?2
-  AND publisher_identity_id=?3
-  AND cache_key = ?4
-  AND plan = ?5
-  AND phase = ?6
-`
-
-type GetCertificateMaterialParams struct {
-	ServerOrigin        string
-	TeamID              string
-	PublisherIdentityID string
-	CacheKey            string
-	Plan                string
-	Phase               string
-}
-
-func (q *Queries) GetCertificateMaterial(ctx context.Context, arg GetCertificateMaterialParams) (PublicUrlCertificateCache, error) {
-	row := q.db.QueryRowContext(ctx, getCertificateMaterial,
-		arg.ServerOrigin,
-		arg.TeamID,
-		arg.PublisherIdentityID,
-		arg.CacheKey,
-		arg.Plan,
-		arg.Phase,
-	)
-	var i PublicUrlCertificateCache
-	err := row.Scan(
-		&i.ID,
-		&i.ServerOrigin,
-		&i.TeamID,
-		&i.PublisherIdentityID,
-		&i.CacheKey,
-		&i.Plan,
-		&i.Phase,
-		&i.PrivateKeyCiphertext,
-		&i.CsrDer,
-		&i.CertificatePem,
-		&i.RenewAt,
-		&i.IssuanceID,
-		&i.UpdatedAt,
-	)
-	return i, err
 }
 
 const getControlSession = `-- name: GetControlSession :one
@@ -334,7 +255,7 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 }
 
 const listOpenTunnels = `-- name: ListOpenTunnels :many
-SELECT id, command, process_id, server_origin, project_root, service, service_protocol, public_port, primary_project_root, integration_namespace, integration_group, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
+SELECT id, command, process_id, server_origin, project_root, service, service_protocol, primary_project_root, integration_namespace, integration_group, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
 FROM local_tunnels
 WHERE stopped_at IS NULL
 ORDER BY started_at, id
@@ -357,7 +278,6 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 			&i.ProjectRoot,
 			&i.Service,
 			&i.ServiceProtocol,
-			&i.PublicPort,
 			&i.PrimaryProjectRoot,
 			&i.IntegrationNamespace,
 			&i.IntegrationGroup,
@@ -388,7 +308,7 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 }
 
 const listOpenTunnelsForProject = `-- name: ListOpenTunnelsForProject :many
-SELECT id, command, process_id, server_origin, project_root, service, service_protocol, public_port, primary_project_root, integration_namespace, integration_group, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
+SELECT id, command, process_id, server_origin, project_root, service, service_protocol, primary_project_root, integration_namespace, integration_group, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
 FROM local_tunnels
 WHERE stopped_at IS NULL AND project_root = ?1
 ORDER BY started_at, id
@@ -411,7 +331,6 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 			&i.ProjectRoot,
 			&i.Service,
 			&i.ServiceProtocol,
-			&i.PublicPort,
 			&i.PrimaryProjectRoot,
 			&i.IntegrationNamespace,
 			&i.IntegrationGroup,
@@ -608,16 +527,14 @@ func (q *Queries) SetTunnelPublicURL(ctx context.Context, arg SetTunnelPublicURL
 const setTunnelReady = `-- name: SetTunnelReady :execrows
 UPDATE local_tunnels
 SET hostname = ?1,
-    public_port = nullif(?2, 0),
-    publish_run_number = ?3,
+    publish_run_number = ?2,
     state = 'ready',
-    updated_at = ?4
-WHERE id = ?5 AND stopped_at IS NULL
+    updated_at = ?3
+WHERE id = ?4 AND stopped_at IS NULL
 `
 
 type SetTunnelReadyParams struct {
 	Hostname         sql.NullString
-	PublicPort       interface{}
 	PublishRunNumber sql.NullInt64
 	Now              int64
 	ID               string
@@ -626,7 +543,6 @@ type SetTunnelReadyParams struct {
 func (q *Queries) SetTunnelReady(ctx context.Context, arg SetTunnelReadyParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setTunnelReady,
 		arg.Hostname,
-		arg.PublicPort,
 		arg.PublishRunNumber,
 		arg.Now,
 		arg.ID,
@@ -645,121 +561,6 @@ WHERE id = 1 AND worktree_hash_salt IS NULL
 
 func (q *Queries) SetWorktreeHashSalt(ctx context.Context, worktreeHashSalt []byte) error {
 	_, err := q.db.ExecContext(ctx, setWorktreeHashSalt, worktreeHashSalt)
-	return err
-}
-
-const stageCertificateMaterial = `-- name: StageCertificateMaterial :execrows
-UPDATE public_url_certificate_cache
-SET private_key_ciphertext=?1,certificate_pem=?2,
-    renew_at=?3,issuance_id=?4,updated_at=?5
-WHERE server_origin=?6 AND team_id=?7
-    AND publisher_identity_id=?8 AND cache_key=?9 AND plan=?10
-    AND phase='pending' AND csr_der=?11 AND private_key_ciphertext=?12
-`
-
-type StageCertificateMaterialParams struct {
-	PrivateKeyCiphertext  []byte
-	CertificatePem        []byte
-	RenewAt               sql.NullInt64
-	IssuanceID            string
-	UpdatedAt             int64
-	ServerOrigin          string
-	TeamID                string
-	PublisherIdentityID   string
-	CacheKey              string
-	Plan                  string
-	CsrDer                []byte
-	PreviousKeyCiphertext []byte
-}
-
-func (q *Queries) StageCertificateMaterial(ctx context.Context, arg StageCertificateMaterialParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, stageCertificateMaterial,
-		arg.PrivateKeyCiphertext,
-		arg.CertificatePem,
-		arg.RenewAt,
-		arg.IssuanceID,
-		arg.UpdatedAt,
-		arg.ServerOrigin,
-		arg.TeamID,
-		arg.PublisherIdentityID,
-		arg.CacheKey,
-		arg.Plan,
-		arg.CsrDer,
-		arg.PreviousKeyCiphertext,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const upsertCertificateMaterial = `-- name: UpsertCertificateMaterial :exec
-INSERT INTO public_url_certificate_cache (
-    server_origin,
-    team_id,
-    publisher_identity_id,
-    cache_key,
-    plan,
-    phase,
-    private_key_ciphertext,
-    csr_der,
-    certificate_pem,
-    renew_at,
-    issuance_id,
-    updated_at
-) VALUES (
-    ?1,
-    ?2,
-    ?3,
-    ?4,
-    ?5,
-    ?6,
-    ?7,
-    ?8,
-    ?9,
-    ?10,
-    ?11,
-    ?12
-)
-ON CONFLICT (server_origin, team_id, publisher_identity_id, cache_key, plan, phase) DO UPDATE SET
-    private_key_ciphertext = excluded.private_key_ciphertext,
-    csr_der = excluded.csr_der,
-    certificate_pem = excluded.certificate_pem,
-    renew_at = excluded.renew_at,
-    issuance_id = excluded.issuance_id,
-    updated_at = excluded.updated_at
-`
-
-type UpsertCertificateMaterialParams struct {
-	ServerOrigin         string
-	TeamID               string
-	PublisherIdentityID  string
-	CacheKey             string
-	Plan                 string
-	Phase                string
-	PrivateKeyCiphertext []byte
-	CsrDer               []byte
-	CertificatePem       []byte
-	RenewAt              sql.NullInt64
-	IssuanceID           string
-	UpdatedAt            int64
-}
-
-func (q *Queries) UpsertCertificateMaterial(ctx context.Context, arg UpsertCertificateMaterialParams) error {
-	_, err := q.db.ExecContext(ctx, upsertCertificateMaterial,
-		arg.ServerOrigin,
-		arg.TeamID,
-		arg.PublisherIdentityID,
-		arg.CacheKey,
-		arg.Plan,
-		arg.Phase,
-		arg.PrivateKeyCiphertext,
-		arg.CsrDer,
-		arg.CertificatePem,
-		arg.RenewAt,
-		arg.IssuanceID,
-		arg.UpdatedAt,
-	)
 	return err
 }
 

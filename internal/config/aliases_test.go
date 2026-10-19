@@ -82,7 +82,7 @@ func TestInvalidAliasDeclarations(t *testing.T) {
 		})
 	}
 	var duplicateInherited TNL
-	if err := json.Unmarshal([]byte(`{"tunnel":{"domain":"custom.example.test"},"services":{"api":{},"web":{"tunnel":{"domain":"custom.example.test"}}},"aliases":{"first":{"service":"api","name":"review"},"second":{"service":"web","name":"review"}}}`), &duplicateInherited); err != nil {
+	if err := json.Unmarshal([]byte(`{"public_url":{"domain":"custom.example.test"},"services":{"api":{},"web":{"public_url":{"domain":"custom.example.test"}}},"aliases":{"first":{"service":"api","name":"review"},"second":{"service":"web","name":"review"}}}`), &duplicateInherited); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateTNL(duplicateInherited); err == nil {

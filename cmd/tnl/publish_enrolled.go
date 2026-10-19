@@ -22,10 +22,25 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
+	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type enrolledPublishSelection struct{ EnrollmentKey, PublisherID, PublisherFile string }
+
+func publisherFileServer(selected, path string) (string, error) {
+	file, err := credentialfile.Read(path)
+	if err != nil {
+		return "", err
+	}
+	if selected != "" {
+		server, err := naming.CanonicalControlURL(selected)
+		if err != nil || server != file.ControlURL {
+			return "", nativeauth.ErrScope
+		}
+	}
+	return file.ControlURL, nil
+}
 
 var _ publisher.PublicURLControlClient = (*nativeauth.Native)(nil)
 
@@ -105,31 +120,61 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 		return err
 	}
 	var native *nativeauth.Native
+	var identity authorityv1.PublisherEnrollmentResult
 	if selection.EnrollmentKey != "" {
 		secret, err := enrollmentKeyInput(selection.EnrollmentKey, input)
 		if err != nil {
 			return err
 		}
-		native, _, err = nativeauth.EnrollNative(ctx, profile, control, authority, secret)
+		native, identity, err = nativeauth.EnrollNative(ctx, profile, control, authority, secret)
 		if err != nil {
 			return err
 		}
 	} else if selection.PublisherID != "" {
-		native, _, err = nativeauth.LoadNative(ctx, profile, control, authority, selection.PublisherID)
+		native, identity, err = nativeauth.LoadNative(ctx, profile, control, authority, selection.PublisherID)
 		if err != nil {
 			return err
 		}
 	} else {
+		file, err := credentialfile.Read(selection.PublisherFile)
+		if err != nil {
+			return err
+		}
+		identity, _, err = file.Validate()
+		if err != nil {
+			return err
+		}
 		native, err = nativeauth.LoadFile(selection.PublisherFile, server, control, authority)
 		if err != nil {
 			return err
 		}
 	}
+	if identity.Kind == authorityv1.PrivateService {
+		if flags.Service != "" && config.IsPublicService(flags.project.Config.Services[flags.Service]) {
+			return publisherCLIError("the publisher grant is private; select a configured service without publicURL")
+		}
+		service, err := native.SavedPrivateService(ctx)
+		if err != nil {
+			return err
+		}
+		if flags.Protocol != "" && flags.Protocol != string(service.Protocol) {
+			return publisherCLIError("--protocol differs from the approved private service")
+		}
+		flags.Protocol = string(service.Protocol)
+		flags.privateService = true
+		output.delegatedLifecycle = true
+		flags.EnrollmentKey = ""
+		if flags.PublisherFile == "" {
+			flags.PublisherID = identity.ClientId
+		}
+		flags.ServerURL = server
+		return runPrivatePublish(ctx, flags, output.stdout, output.stderr)
+	}
 	// a saved-URL grant returns its exact URL; namespace grants allocate one
 	// HTTP URL per invocation and remove that same allocation after drain.
 	route, err := native.SavedURL(ctx)
 	if errors.Is(err, nativeauth.ErrScope) {
-		if flags.Protocol != "" && flags.Protocol != "http" || flags.TargetTLS || flags.TargetTLSName != "" {
+		if flags.Protocol != "" && flags.Protocol != "http" || flags.TargetTLSName != "" {
 			return publisherCLIError("namespace publication requires an HTTP target")
 		}
 		target, err := normalizePublishTarget(flags.Target, controlv1.Http)
@@ -230,7 +275,8 @@ func runEnrolledPublish(ctx context.Context, flags publishCommand, selection enr
 	if err != nil {
 		return err
 	}
-	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membership, PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: route.PublicUrlScope, Purpose: route.Purpose, Hostname: route.CanonicalHostname, Target: target, AllowedIPPrefixes: prefixes, ServiceProtocol: route.ServiceProtocol, TargetTLS: flags.TargetTLS, TargetTLSName: flags.TargetTLSName, TargetOptions: options, PreserveSavedURLTarget: route.Target == "", Limits: flags.limits(), InspectionMode: inspection.Mode(flags.InspectionMode), QUICConnector: muxsession.QUICConnector{TLSConfig: transportTLS}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: transportTLS}}
+	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: route.TeamId, DomainID: route.DomainId, MembershipID: membership, PolicyRevision: uint64(route.PolicyRevision), PublicURLScope: route.PublicUrlScope, Purpose: route.Purpose, Hostname: route.CanonicalHostname, Target: target, AllowedIPPrefixes: prefixes, ServiceProtocol: route.ServiceProtocol, TargetTLSName: flags.TargetTLSName, TargetOptions: options, PreserveSavedURLTarget: route.Target == "", Limits: flags.limits(), InspectionMode: inspection.Mode(flags.InspectionMode), QUICConnector: muxsession.QUICConnector{TLSConfig: transportTLS}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: transportTLS}}
+	cfg.PublisherID = native.PublisherID()
 	if route.Ephemeral {
 		cfg.Ephemeral = true
 		cfg.AllocatedPublicURL = &route

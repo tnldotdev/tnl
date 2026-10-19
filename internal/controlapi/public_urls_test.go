@@ -502,7 +502,7 @@ func TestCreateRouteCanonicalEquivalenceAndIdempotency(t *testing.T) {
 	}
 }
 
-func TestCreateSavedAppPublicURLWithoutATarget(t *testing.T) {
+func TestCreateSavedPublicURLWithoutATarget(t *testing.T) {
 	store := &publicURLCreationStore{result: controlstate.PublicURL{
 		ID: "public_url_created", CanonicalHostname: "demo.example", Purpose: controlstate.PublicURLPurposeApp,
 	}}
@@ -516,8 +516,12 @@ func TestCreateSavedAppPublicURLWithoutATarget(t *testing.T) {
 		want                  int
 	}{
 		{"saved app", "app", "", http.StatusCreated},
+		{"saved alias", "alias", "", http.StatusCreated},
 		{"ephemeral app", "app", `,"ephemeral":true`, http.StatusBadRequest},
+		{"ephemeral alias", "alias", `,"ephemeral":true`, http.StatusBadRequest},
 		{"saved demo", "demo", "", http.StatusBadRequest},
+		{"saved oauth", "oauth", "", http.StatusBadRequest},
+		{"saved webhooks", "webhooks", "", http.StatusBadRequest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := `{"team_id":"team_1","membership_id":"membership_1","domain_id":"domain_1","canonical_hostname":"demo.example","public_url_scope":"member","target":"","purpose":"` + test.purpose + `"` + test.suffix + `}`
@@ -531,31 +535,19 @@ func TestCreateSavedAppPublicURLWithoutATarget(t *testing.T) {
 			}
 		})
 	}
-	if len(store.requests) != 1 || store.requests[0].Target != "" || len(authorizer.requests) != 1 {
+	if len(store.requests) != 2 || store.requests[0].Target != "" || store.requests[1].Purpose != controlstate.PublicURLPurposeAlias || len(authorizer.requests) != 2 {
 		t.Fatalf("targetless creation = %#v, authorization = %#v", store.requests, authorizer.requests)
 	}
 }
 
-func TestCreateDatabasePublicURLReturnsAssignedAddress(t *testing.T) {
-	port := uint16(15432)
-	store := &publicURLCreationStore{result: controlstate.PublicURL{
-		ID: "url_created", CanonicalHostname: "orders.example", Purpose: controlstate.PublicURLPurposeApp,
-		ServiceProtocol: controlstate.PublicURLServicePostgres, PublicPort: &port,
-	}}
-	authorizer := &recordingAuthorizer{decision: authorization.Decision{
-		IdentityID: "identity_1", TeamID: "team_1", PublicURLMembershipID: "membership_1", DomainID: "domain_1",
-		CanonicalHostname: "orders.example", PublicURLScope: "member", PolicyRevision: 9,
-	}}
-	h := &handler{store: store, authorizer: authorizer}
+func TestCreateDatabasePublicURLRequiresPrivateService(t *testing.T) {
+	store := &publicURLCreationStore{}
+	h := &handler{store: store}
 	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(`{"team_id":"team_1","membership_id":"membership_1","domain_id":"domain_1","canonical_hostname":"orders.example","public_url_scope":"member","target":"","purpose":"app","service_protocol":"postgres"}`))
-	request.Header.Set("Authorization", "Bearer exact-access-token")
-	request.Header.Set("Idempotency-Key", "create-db")
 	response := httptest.NewRecorder()
 	h.CreatePublicURL(response, request, controlv1.CreatePublicURLParams{})
-	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"service_protocol":"postgres"`) ||
-		!strings.Contains(response.Body.String(), `"public_port":15432`) || len(store.requests) != 1 ||
-		store.requests[0].ServiceProtocol != controlstate.PublicURLServicePostgres || store.requests[0].Target != "" {
-		t.Fatalf("database URL create = %d %s, requests=%#v", response.Code, response.Body.String(), store.requests)
+	if response.Code != http.StatusBadRequest || len(store.requests) != 0 {
+		t.Fatalf("database public URL create = %d %s, requests=%#v", response.Code, response.Body.String(), store.requests)
 	}
 }
 
@@ -568,22 +560,46 @@ func TestCreatePublicURLRejectsUnknownServiceProtocol(t *testing.T) {
 	}
 }
 
-func TestTargetlessSavedAppPublicURLCanUpdateOnlyItsVisitorPolicy(t *testing.T) {
-	store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
-		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
-		CanonicalHostname: "demo.example", PublicURLScope: controlstate.PublicURLScopeMember,
-		Purpose: controlstate.PublicURLPurposeApp, MutationRevision: 4,
-	}}
-	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
-		IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1", PolicyRevision: 7,
-		DomainID: "domain_1", CanonicalHostname: "demo.example", PublicURLScope: "member",
-	}}
-	request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"target":"","allowed_ip_prefixes":[]}`))
-	request.Header.Set("Authorization", "Bearer exact-access-token")
-	response := httptest.NewRecorder()
-	(&handler{store: store, authorizer: authorizer}).UpdatePublicURL(response, request, "public_url_1")
-	if response.Code != http.StatusOK || store.updates != 1 || store.update.Target != "" {
-		t.Fatalf("targetless policy update = %d: %s, store = %#v", response.Code, response.Body.String(), store)
+func TestTargetlessSavedPublicURLPolicyUpdateValidatesPurposeAndLifecycle(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		purpose   controlstate.PublicURLPurpose
+		target    string
+		ephemeral bool
+		want      int
+	}{
+		{"saved app", controlstate.PublicURLPurposeApp, "", false, http.StatusOK},
+		{"saved alias", controlstate.PublicURLPurposeAlias, "", false, http.StatusOK},
+		{"ephemeral app", controlstate.PublicURLPurposeApp, "", true, http.StatusBadRequest},
+		{"ephemeral alias", controlstate.PublicURLPurposeAlias, "", true, http.StatusBadRequest},
+		{"oauth", controlstate.PublicURLPurposeOAuth, "", false, http.StatusBadRequest},
+		{"webhooks", controlstate.PublicURLPurposeWebhooks, "", false, http.StatusBadRequest},
+		{"demo", controlstate.PublicURLPurposeDemo, "", false, http.StatusBadRequest},
+		{"targeted alias", controlstate.PublicURLPurposeAlias, "http://127.0.0.1:3000", false, http.StatusBadRequest},
+		{"unknown purpose", "unknown", "", false, http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &publicURLMutationStoreStub{route: controlstate.PublicURL{
+				ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
+				CanonicalHostname: "demo.example", PublicURLScope: controlstate.PublicURLScopeMember,
+				Purpose: test.purpose, Target: test.target, Ephemeral: test.ephemeral, ServiceProtocol: controlstate.PublicURLServiceHTTP, MutationRevision: 4,
+			}}
+			authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
+				IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1", PolicyRevision: 7,
+				DomainID: "domain_1", CanonicalHostname: "demo.example", PublicURLScope: "member",
+			}}
+			request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"target":"","allowed_ip_prefixes":[]}`))
+			request.Header.Set("Authorization", "Bearer exact-access-token")
+			response := httptest.NewRecorder()
+			(&handler{store: store, authorizer: authorizer}).UpdatePublicURL(response, request, "public_url_1")
+			wantUpdates := 0
+			if test.want == http.StatusOK {
+				wantUpdates = 1
+			}
+			if response.Code != test.want || store.updates != wantUpdates || store.update.Target != "" {
+				t.Fatalf("targetless policy update = %d: %s, store = %#v", response.Code, response.Body.String(), store)
+			}
+		})
 	}
 }
 

@@ -61,6 +61,25 @@ function assignment(registration = "a") {
   };
 }
 
+test("private HTTP preparation has no public address or browser-visible target", async () => {
+  const handle = await createPreparedService({ service: "api" }, "node", {
+    start: async () => testEndpoint,
+    request: async (_endpoint, operation) =>
+      operation === "prepare"
+        ? {
+            ...assignment(),
+            hostname: "",
+            public_url: "",
+            project: { namespace: "", services: {}, dev: true },
+          }
+        : undefined,
+  });
+  expect(handle.hostname).toBeUndefined();
+  expect(handle.publicURL).toBeUndefined();
+  expect(handle.services).toEqual({});
+  await handle.close();
+});
+
 test("preparation exposes only public metadata and registers an actual port-0 Node listener", async () => {
   const bootstrap = await startTestBootstrap();
   const start = vi.fn(async () => bootstrap.endpoint);

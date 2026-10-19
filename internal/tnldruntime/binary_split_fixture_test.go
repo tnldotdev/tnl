@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -43,15 +42,16 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 	const (
 		serverDomain  = "127.0.0.2.nip.io"
 		controlHost   = "control." + serverDomain
-		publicURLHost = "split-binary.routes.127.0.0.1.nip.io"
+		publicURLHost = "split-binary.developer.routes.127.0.0.1.nip.io"
 	)
 	root := newIntegrationTestCA(t)
 	controlCertificate := root.issueServer(t, controlHost)
+	oidcIssuer := binaryOIDCProvider(t, root.issueServer(t, "localhost"), "https://"+controlHost)
 	relayAHost, relayBHost := "relay-a."+serverDomain, "relay-b."+serverDomain
 	relayACertificate := root.issueServer(t, relayAHost)
 	relayBCertificate := root.issueServer(t, relayBHost)
-	dnsAddress := startIntegrationDNS(t)
-	pebble := startIntegrationPebble(t, 443, dnsAddress)
+	dns := newIntegrationRoute53(t, "binary", "routes.127.0.0.1.nip.io")
+	pebble := startIntegrationPebble(t, 443, dns.address)
 	trustFile := filepath.Join(t.TempDir(), "integration-roots.pem")
 	trustedCertificates := append([]byte{}, root.certificatePEM...)
 	trustedCertificates = append(trustedCertificates, pebble.apiRootPEM...)
@@ -61,32 +61,45 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 	}
 
 	controlMetrics := unusedTCPAddress(t)
+	controlBackend := unusedTCPAddress(t)
+	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startIntegrationControlProxy(t, nil, "127.0.0.2:443", controlBackend, controlTLS)
 	controlEnvironment := integrationBinaryEnvironment(map[string]string{
-		"SSL_CERT_FILE":                     trustFile,
-		"TNLD_ACCESS_TOKEN_LIFETIME":        "5m",
-		"TNLD_ACME_ACCEPT_TERMS":            "true",
-		"TNLD_ACME_DIRECTORY_URL":           pebble.directoryURL,
-		"TNLD_ACME_EMAIL":                   "integration@example.test",
-		"TNLD_ACME_PROFILE":                 "tlsserver",
-		"TNLD_CLUSTER_SECRET":               testClusterSecret,
-		"TNLD_CONTROL_LISTEN":               "127.0.0.2:443",
-		"TNLD_CONTROL_TLS_CERTIFICATE_FILE": controlCertificate.certificateFile,
-		"TNLD_CONTROL_TLS_PRIVATE_KEY_FILE": controlCertificate.privateKeyFile,
-		"TNLD_DATABASE_URL":                 databaseURL,
-		"TNLD_DRAIN_TIMEOUT":                "3s",
-		"TNLD_INGRESS_LEASE_DURATION":       "5s",
-		"TNLD_LEASE_RENEWAL_INTERVAL":       "500ms",
-		"TNLD_LOGIN_TOKEN":                  testLoginToken,
-		"TNLD_MANAGED_DOMAIN":               "routes.127.0.0.1.nip.io",
-		"TNLD_MANAGED_URL_MODE":             "simple",
-		"TNLD_METRICS_LISTEN":               controlMetrics,
-		"TNLD_ROLE":                         "control",
-		"TNLD_PRIVATE_CONTROL_LISTEN":       "127.0.0.2:9443",
-		"TNLD_REFRESH_TOKEN_LIFETIME":       "1h",
-		"TNLD_RELAY_LEASE_DURATION":         "5s",
-		"TNLD_ROUTING_TABLE_WAIT":           "1s",
-		"TNLD_SERVER_DOMAIN":                serverDomain,
-		"TNLD_STORAGE_KEY":                  testStorageKey,
+		"SSL_CERT_FILE":                             trustFile,
+		"TNLD_ACCESS_TOKEN_LIFETIME":                "5m",
+		"TNLD_ACME_ACCEPT_TERMS":                    "true",
+		"TNLD_ACME_DIRECTORY_URL":                   pebble.directoryURL,
+		"TNLD_ACME_EMAIL":                           "integration@example.test",
+		"TNLD_ACME_PROFILE":                         "tlsserver",
+		"TNLD_CLUSTER_SECRET":                       testClusterSecret,
+		"TNLD_CONTROL_LISTEN":                       controlBackend,
+		"TNLD_PRIVATE_CONTROL_TLS_CERTIFICATE_FILE": controlCertificate.certificateFile,
+		"TNLD_PRIVATE_CONTROL_TLS_PRIVATE_KEY_FILE": controlCertificate.privateKeyFile,
+		"TNLD_ROUTE53_MANAGED_ZONE_ID":              "binary",
+		"TNLD_INGRESS_IPV4_ADDRESSES":               "127.0.0.1",
+		"TNLD_DNS_SERVER":                           dns.address,
+		"AWS_ENDPOINT_URL_ROUTE_53":                 dns.server.URL,
+		"AWS_ACCESS_KEY_ID":                         "tnl-integration-only",
+		"AWS_SECRET_ACCESS_KEY":                     "tnl-integration-only",
+		"AWS_EC2_METADATA_DISABLED":                 "true",
+		"TNLD_DATABASE_URL":                         databaseURL,
+		"TNLD_DRAIN_TIMEOUT":                        "3s",
+		"TNLD_INGRESS_LEASE_DURATION":               "5s",
+		"TNLD_LEASE_RENEWAL_INTERVAL":               "500ms",
+		"TNLD_OIDC_ISSUER":                          oidcIssuer, "TNLD_OIDC_CLIENT_ID": "server", "TNLD_OIDC_CLIENT_SECRET": "fixture-secret", "TNLD_INITIAL_ADMINISTRATORS": "developer",
+		"TNLD_MANAGED_DOMAIN":         "routes.127.0.0.1.nip.io",
+		"TNLD_MANAGED_URL_MODE":       "simple",
+		"TNLD_METRICS_LISTEN":         controlMetrics,
+		"TNLD_ROLE":                   "control",
+		"TNLD_PRIVATE_CONTROL_LISTEN": "127.0.0.2:9443",
+		"TNLD_REFRESH_TOKEN_LIFETIME": "1h",
+		"TNLD_RELAY_LEASE_DURATION":   "5s",
+		"TNLD_ROUTING_TABLE_WAIT":     "1s",
+		"TNLD_SERVER_DOMAIN":          serverDomain,
+		"TNLD_STORAGE_KEY":            testStorageKey,
 	})
 	owner := newBinaryTopology(t)
 	control := owner.start(t, tnldconfig.RoleControl, repositoryRoot, controlEnvironment, tnldPath, "serve")
@@ -120,19 +133,14 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		controlHost, "relay-b", "relay-b-binary", relayBHost, relayBPort, relayBCertificate)
 	waitForIntegrationBinaryReady(t, relayB, relayBMetrics, databaseURL)
 
-	stateDirectory := filepath.Join(t.TempDir(), "state")
-	if err := os.Mkdir(stateDirectory, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	stateDirectory := binaryStateDirectory(t)
 	clientEnvironment := integrationBinaryEnvironment(map[string]string{
 		"SSL_CERT_FILE":    trustFile,
-		"TNL_LOGIN_TOKEN":  testLoginToken,
 		"TNL_NO_TELEMETRY": "1",
 		"TNL_SERVER":       "https://" + controlHost,
 		"TNL_STATE_DIR":    stateDirectory,
 	})
-	runIntegrationBinaryCommand(t, repositoryRoot, clientEnvironment, tnlPath, "auth", "login", "--login-token")
-	clientEnvironment = removeIntegrationEnvironment(clientEnvironment, "TNL_LOGIN_TOKEN")
+	binaryOIDCLogin(t, repositoryRoot, clientEnvironment, tnlPath, trustFile)
 
 	return &integrationBinarySplit{repositoryRoot: repositoryRoot, tnlPath: tnlPath, databaseURL: databaseURL,
 		publicURLHost: publicURLHost, environment: clientEnvironment, pebble: pebble}
@@ -218,15 +226,4 @@ func assertIntegrationTCPAddressAvailable(t *testing.T, address string) {
 		t.Fatalf("binary integration requires TCP %s: %v", address, err)
 	}
 	_ = listener.Close()
-}
-
-func removeIntegrationEnvironment(environment []string, name string) []string {
-	prefix := name + "="
-	result := make([]string, 0, len(environment))
-	for _, value := range environment {
-		if !strings.HasPrefix(value, prefix) {
-			result = append(result, value)
-		}
-	}
-	return result
 }

@@ -117,7 +117,6 @@ type LocalTunnel struct {
 	ProjectRoot          string
 	Service              sql.NullString
 	ServiceProtocol      string
-	PublicPort           sql.NullInt64
 	PrimaryProjectRoot   sql.NullString
 	IntegrationNamespace sql.NullString
 	IntegrationGroup     string
@@ -190,6 +189,25 @@ type PendingPublisherEnrollment struct {
 	UpdatedAt                  int64
 }
 
+type PrivateConnector struct {
+	ServerOrigin   string
+	IdentityID     string
+	ServiceID      string
+	Protocol       string
+	ProcessID      int64
+	ListenPort     int64
+	State          string
+	UpdatedAt      int64
+	LeaseExpiresAt int64
+}
+
+type PrivateServicePort struct {
+	ServerOrigin string
+	IdentityID   string
+	ServiceID    string
+	Port         int64
+}
+
 type ProjectAlias struct {
 	ID                  string
 	ServerOrigin        string
@@ -239,22 +257,6 @@ type ProjectUrlInventory struct {
 	LastSeenAt   int64
 }
 
-type PublicUrlCertificateCache struct {
-	ID                   int64
-	ServerOrigin         string
-	TeamID               string
-	PublisherIdentityID  string
-	CacheKey             string
-	Plan                 string
-	Phase                string
-	PrivateKeyCiphertext []byte
-	CsrDer               []byte
-	CertificatePem       []byte
-	RenewAt              sql.NullInt64
-	IssuanceID           string
-	UpdatedAt            int64
-}
-
 type PublisherIdentity struct {
 	ServerOrigin         string
 	IdentityID           string
@@ -292,6 +294,19 @@ type ServerProfile struct {
 	LastUsedAt     int64
 }
 
+type ServiceClientCertificate struct {
+	ServerOrigin         string
+	IdentityID           string
+	PrivateServiceID     string
+	DeviceID             string
+	PrivateKeyCiphertext []byte
+	CsrDer               []byte
+	IssuedCsrDer         []byte
+	CsrCreatedAt         int64
+	CertificatePem       []byte
+	IssuerPem            []byte
+}
+
 type StateProtection struct {
 	ID                 int64
 	ProtectionMode     string
@@ -302,6 +317,15 @@ type TelemetryOutbox struct {
 	EventID   string
 	CreatedAt int64
 	EventJson string
+}
+
+type VisitorDevice struct {
+	ServerOrigin         string
+	IdentityID           string
+	DeviceID             string
+	PublicKey            []byte
+	SigningKeyCiphertext []byte
+	UpdatedAt            int64
 }
 
 type WebhookDeclaration struct {

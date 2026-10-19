@@ -6,24 +6,29 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/httpsubject"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
 const browserSessionLifetime = 24 * time.Hour
 
 type BrowserLoginAttempt struct {
-	PublishRunID string
-	PreviewID    string
-	PublicURLID  string
-	ReturnPath   string
-	Nonce        string
-	Verifier     string
+	Subject       httpsubject.Subject
+	ManagedRunIDs []string
+	CompanyIntent *CompanyIntentBinding
+	PublishRunID  string
+	PreviewID     string
+	PublicURLID   string
+	ReturnPath    string
+	Nonce         string
+	Verifier      string
 }
 
 type BrowserAccessSession struct {
@@ -47,6 +52,7 @@ type BrowserTokenRotation struct {
 }
 
 type BrowserHandoff struct {
+	Origin      string
 	Token       string
 	PublicURLID string
 	ReturnPath  string
@@ -71,7 +77,7 @@ func browserDigest(token string) ([]byte, error) {
 
 func browserContext(digest []byte) string { return "browser-access:" + hex.EncodeToString(digest) }
 
-func (d *Database) BeginBrowserLogin(ctx context.Context, previewID, publicURLID, path, nonce, verifier string, browserBinding []byte, now time.Time) (string, error) {
+func (d *Database) BeginBrowserLogin(ctx context.Context, previewID, publicURLID, path, nonce, verifier string, browserBinding []byte, intent *CompanyLoginIntent, now time.Time) (string, error) {
 	if previewID != "" && !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) || !opaqueid.Valid(publicURLID, opaqueid.PublicURLPrefix) ||
 		!validFeedbackPath(path) || len(path) > 2048 || len(nonce) < 16 || len(nonce) > 256 || len(verifier) < 43 || len(verifier) > 128 || len(browserBinding) != 32 {
 		return "", ErrPreviewAccess
@@ -85,7 +91,15 @@ func (d *Database) BeginBrowserLogin(ctx context.Context, previewID, publicURLID
 	}
 	digest, _ := browserDigest(state)
 	bindingDigest := sha256.Sum256(browserBinding)
-	sealed, err := d.storageKey.Seal(browserContext(digest), []byte(verifier))
+	private := BrowserLoginAttempt{Verifier: verifier}
+	if intent != nil {
+		private.CompanyIntent = &CompanyIntentBinding{ID: intent.ID, BindingToken: intent.BindingToken, RedirectURI: intent.RedirectURI}
+	}
+	payload, err := json.Marshal(private)
+	if err != nil {
+		return "", err
+	}
+	sealed, err := d.storageKey.Seal(browserContext(digest), payload)
 	if err != nil {
 		return "", err
 	}
@@ -111,6 +125,7 @@ func (d *Database) BeginBrowserLogin(ctx context.Context, previewID, publicURLID
 		PublishRunID: runID,
 		ReturnPath:   path, Nonce: nonce, VerifierCiphertext: sealed,
 		VerifierStorageKeyID: d.storageKey.CurrentID(), ExpiresAt: timestamptz(now.Add(5 * time.Minute)),
+		Now: timestamptz(now),
 	}); err != nil {
 		return "", fmt.Errorf("controlstate: start browser login: %w", err)
 	}
@@ -127,7 +142,7 @@ func (d *Database) ConsumeBrowserLogin(ctx context.Context, state string, browse
 		StateDigest: digest, BindingDigest: bindingDigest[:], Now: timestamptz(now),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return BrowserLoginAttempt{}, ErrPreviewAccess
+		return d.consumeManagedBrowserLogin(ctx, digest, bindingDigest[:], now)
 	}
 	if err != nil {
 		return BrowserLoginAttempt{}, fmt.Errorf("controlstate: consume browser login: %w", err)
@@ -136,12 +151,22 @@ func (d *Database) ConsumeBrowserLogin(ctx context.Context, state string, browse
 	if err != nil {
 		return BrowserLoginAttempt{}, err
 	}
-	return BrowserLoginAttempt{PreviewID: row.PreviewID.String, PublicURLID: row.PublicURLID,
+	var private BrowserLoginAttempt
+	if err := json.Unmarshal(verifier, &private); err != nil {
+		return BrowserLoginAttempt{}, err
+	}
+	return BrowserLoginAttempt{Subject: httpsubject.Subject{Kind: httpsubject.PublicURL, ID: row.PublicURLID}, PreviewID: row.PreviewID.String, PublicURLID: row.PublicURLID,
 		PublishRunID: row.PublishRunID,
-		ReturnPath:   row.ReturnPath, Nonce: row.Nonce, Verifier: string(verifier)}, nil
+		ReturnPath:   row.ReturnPath, Nonce: row.Nonce, Verifier: private.Verifier, CompanyIntent: private.CompanyIntent}, nil
 }
 
 func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLoginAttempt, session BrowserAccessSession, now time.Time) (BrowserHandoff, error) {
+	if attempt.Subject.Kind == httpsubject.ManagedService {
+		return d.issueManagedBrowserHandoff(ctx, attempt, session, now)
+	}
+	if attempt.Subject.Kind != "" && (attempt.Subject.Kind != httpsubject.PublicURL || attempt.Subject.ID != attempt.PublicURLID) {
+		return BrowserHandoff{}, ErrPreviewAccess
+	}
 	if d.storageKey == nil || session.IdentityID == "" || session.DisplayName == "" || session.AccessToken == "" ||
 		session.RefreshToken == "" || !session.AccessExpiresAt.After(now) || !session.ExpiresAt.After(now) ||
 		attempt.PublicURLID == "" {
@@ -205,6 +230,7 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 			PublishRunID:     runID,
 			CookieCiphertext: ciphertext, StorageKeyID: d.storageKey.CurrentID(),
 			ReturnPath: attempt.ReturnPath, RedirectUrl: nextURL, Bridge: bridge, ExpiresAt: timestamptz(now.Add(time.Minute)),
+			Now: timestamptz(now),
 		}); err != nil {
 			return "", err
 		}
@@ -222,7 +248,14 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 		}
 		next = "https://" + host.CanonicalHostname + "/__tnl/team/handoff/" + ticket
 	}
-	if initialRunID == "" || attempt.PublishRunID != "" && attempt.PublishRunID != initialRunID {
+	if initialRunID != "" && attempt.PublishRunID != "" {
+		selected, err := queries.GetPublishRun(ctx, attempt.PublishRunID)
+		if err != nil || selected.PublicURLID != attempt.PublicURLID || selected.State != "ready" || selected.ClosedAt.Valid || !selected.PublisherExpiresAt.Time.After(now) {
+			return BrowserHandoff{}, ErrPreviewAccess
+		}
+		initialRunID = attempt.PublishRunID
+	}
+	if initialRunID == "" {
 		return BrowserHandoff{}, ErrPreviewAccess
 	}
 	firstToken, err := issue(attempt.PublicURLID, initialRunID, next, false)
@@ -232,7 +265,7 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	if err := tx.Commit(ctx); err != nil {
 		return BrowserHandoff{}, err
 	}
-	return BrowserHandoff{Token: firstToken, PublicURLID: attempt.PublicURLID, ReturnPath: attempt.ReturnPath}, nil
+	return BrowserHandoff{Token: firstToken, PublicURLID: attempt.PublicURLID, ReturnPath: attempt.ReturnPath, Origin: "https://" + publicURL.CanonicalHostname}, nil
 }
 
 func (d *Database) RedeemBrowserHandoff(ctx context.Context, auth PublishRunAuthentication, token string, now time.Time) (string, string, string, bool, time.Time, error) {
@@ -269,7 +302,7 @@ func (d *Database) RedeemBrowserHandoff(ctx context.Context, auth PublishRunAuth
 	if err != nil {
 		return "", "", "", false, time.Time{}, err
 	}
-	if err := queries.BindBrowserSessionHost(ctx, controlstatedb.BindBrowserSessionHostParams{SessionDigest: row.SessionDigest, PublicURLID: auth.PublicURLID, PublishRunID: auth.PublishRunID}); err != nil {
+	if err := queries.BindBrowserSessionHost(ctx, controlstatedb.BindBrowserSessionHostParams{SessionDigest: row.SessionDigest, PublicURLID: auth.PublicURLID, HandoffDigest: digest}); err != nil {
 		return "", "", "", false, time.Time{}, err
 	}
 	if _, err := d.browserPermission(ctx, queries, auth.PublicURLID, string(cookie), now); err != nil {

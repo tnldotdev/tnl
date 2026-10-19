@@ -27,25 +27,27 @@ func (q *Queries) AcceptVisitorInvitation(ctx context.Context, arg AcceptVisitor
 }
 
 const bindBrowserSessionHost = `-- name: BindBrowserSessionHost :exec
-INSERT INTO control.browser_session_run_bindings(session_digest, public_url_id, publish_run_id) VALUES ($1, $2, $3)
-ON CONFLICT (session_digest, public_url_id) DO NOTHING
+INSERT INTO control.browser_session_run_bindings(session_digest, public_url_id, publish_run_id)
+SELECT $1,$2,publish_run_id FROM control.browser_handoff_run_bindings
+WHERE handoff_digest=$3
+ON CONFLICT (session_digest, public_url_id,publish_run_id) DO NOTHING
 `
 
 type BindBrowserSessionHostParams struct {
 	SessionDigest []byte
 	PublicURLID   string
-	PublishRunID  string
+	HandoffDigest []byte
 }
 
 func (q *Queries) BindBrowserSessionHost(ctx context.Context, arg BindBrowserSessionHostParams) error {
-	_, err := q.db.Exec(ctx, bindBrowserSessionHost, arg.SessionDigest, arg.PublicURLID, arg.PublishRunID)
+	_, err := q.db.Exec(ctx, bindBrowserSessionHost, arg.SessionDigest, arg.PublicURLID, arg.HandoffDigest)
 	return err
 }
 
 const browserSessionCurrentHost = `-- name: BrowserSessionCurrentHost :one
 SELECT h.publish_run_id FROM control.browser_session_run_bindings h JOIN control.publish_runs r ON r.id = h.publish_run_id
 WHERE h.session_digest = $1 AND h.public_url_id = $2 AND r.closed_at IS NULL AND r.publisher_expires_at > $3
-  AND r.state = 'ready' AND r.public_url_id = h.public_url_id
+  AND r.state = 'ready' AND r.public_url_id = h.public_url_id ORDER BY r.publish_run_number LIMIT 1
 `
 
 type BrowserSessionCurrentHostParams struct {
@@ -309,7 +311,7 @@ func (q *Queries) GetVisitorInvitation(ctx context.Context, id string) (ControlV
 }
 
 const getVisitorParentSession = `-- name: GetVisitorParentSession :one
-SELECT id, identity_id, authentication_method, authentication_source_revision, administrator, access_token_id, access_token_digest, access_expires_at, refresh_token_id, refresh_token_digest, retry_secret_ciphertext, retry_secret_storage_key_id, refresh_expires_at, created_at, last_refreshed_at, revoked_at, revoked_by FROM control.control_sessions WHERE id = $1 FOR SHARE
+SELECT id, identity_id, access_token_id, access_token_digest, access_expires_at, refresh_token_id, refresh_token_digest, retry_secret_ciphertext, retry_secret_storage_key_id, refresh_expires_at, created_at, last_refreshed_at, revoked_at, revoked_by FROM control.control_sessions WHERE id = $1 FOR SHARE
 `
 
 func (q *Queries) GetVisitorParentSession(ctx context.Context, id string) (ControlControlSession, error) {
@@ -318,9 +320,6 @@ func (q *Queries) GetVisitorParentSession(ctx context.Context, id string) (Contr
 	err := row.Scan(
 		&i.ID,
 		&i.IdentityID,
-		&i.AuthenticationMethod,
-		&i.AuthenticationSourceRevision,
-		&i.Administrator,
 		&i.AccessTokenID,
 		&i.AccessTokenDigest,
 		&i.AccessExpiresAt,
@@ -417,7 +416,7 @@ func (q *Queries) ListVisitorIPGrants(ctx context.Context, publicUrlID string) (
 }
 
 const listVisitorInventory = `-- name: ListVisitorInventory :many
-SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol, u.public_port,
+SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol,
     permission.reason::text AS visitor_access
 FROM control.public_urls u JOIN control.teams t ON t.id = u.team_id
 CROSS JOIN LATERAL control.visitor_permission(u.id, $1::text,
@@ -425,14 +424,16 @@ CROSS JOIN LATERAL control.visitor_permission(u.id, $1::text,
       WHERE included.public_url_id = u.id AND p.team_access_enabled AND p.demo_publish_run_id IS NULL ORDER BY p.id LIMIT 1), ''),
     $2::timestamptz) permission
 WHERE u.id > $3::text AND ($4::text = '' OR u.team_id = $4)
+  AND control.company_subject_session_authorized(u.team_id,$1::text,$5::text,$2)
 ORDER BY u.id LIMIT 101
 `
 
 type ListVisitorInventoryParams struct {
-	IdentityID string
-	Now        pgtype.Timestamptz
-	Cursor     string
-	TeamID     string
+	IdentityID       string
+	Now              pgtype.Timestamptz
+	Cursor           string
+	TeamID           string
+	ControlSessionID string
 }
 
 type ListVisitorInventoryRow struct {
@@ -441,7 +442,6 @@ type ListVisitorInventoryRow struct {
 	TeamName          string
 	CanonicalHostname string
 	ServiceProtocol   string
-	PublicPort        pgtype.Int4
 	VisitorAccess     string
 }
 
@@ -451,6 +451,7 @@ func (q *Queries) ListVisitorInventory(ctx context.Context, arg ListVisitorInven
 		arg.Now,
 		arg.Cursor,
 		arg.TeamID,
+		arg.ControlSessionID,
 	)
 	if err != nil {
 		return nil, err
@@ -465,7 +466,6 @@ func (q *Queries) ListVisitorInventory(ctx context.Context, arg ListVisitorInven
 			&i.TeamName,
 			&i.CanonicalHostname,
 			&i.ServiceProtocol,
-			&i.PublicPort,
 			&i.VisitorAccess,
 		); err != nil {
 			return nil, err
@@ -517,7 +517,7 @@ func (q *Queries) ListVisitorInvitations(ctx context.Context, publicUrlID string
 }
 
 const lockVisitorControlSession = `-- name: LockVisitorControlSession :one
-SELECT id, identity_id, authentication_method, authentication_source_revision, administrator, access_token_id, access_token_digest, access_expires_at, refresh_token_id, refresh_token_digest, retry_secret_ciphertext, retry_secret_storage_key_id, refresh_expires_at, created_at, last_refreshed_at, revoked_at, revoked_by FROM control.control_sessions WHERE access_token_id = $1 FOR SHARE
+SELECT id, identity_id, access_token_id, access_token_digest, access_expires_at, refresh_token_id, refresh_token_digest, retry_secret_ciphertext, retry_secret_storage_key_id, refresh_expires_at, created_at, last_refreshed_at, revoked_at, revoked_by FROM control.control_sessions WHERE access_token_id = $1 FOR SHARE
 `
 
 func (q *Queries) LockVisitorControlSession(ctx context.Context, accessTokenID string) (ControlControlSession, error) {
@@ -526,9 +526,6 @@ func (q *Queries) LockVisitorControlSession(ctx context.Context, accessTokenID s
 	err := row.Scan(
 		&i.ID,
 		&i.IdentityID,
-		&i.AuthenticationMethod,
-		&i.AuthenticationSourceRevision,
-		&i.Administrator,
 		&i.AccessTokenID,
 		&i.AccessTokenDigest,
 		&i.AccessExpiresAt,
@@ -546,7 +543,7 @@ func (q *Queries) LockVisitorControlSession(ctx context.Context, accessTokenID s
 }
 
 const lockVisitorIdentity = `-- name: LockVisitorIdentity :one
-SELECT id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, created_at, updated_at, disabled_at FROM control.identities WHERE id = $1 AND disabled_at IS NULL FOR SHARE
+SELECT id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, initial_team_id, created_at, updated_at, disabled_at FROM control.identities WHERE id = $1 AND disabled_at IS NULL FOR SHARE
 `
 
 func (q *Queries) LockVisitorIdentity(ctx context.Context, id string) (ControlIdentity, error) {
@@ -561,6 +558,7 @@ func (q *Queries) LockVisitorIdentity(ctx context.Context, id string) (ControlId
 		&i.NormalizedEmail,
 		&i.EmailVerified,
 		&i.Administrator,
+		&i.InitialTeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DisabledAt,
@@ -603,13 +601,13 @@ func (q *Queries) MarkVisitorIPSet(ctx context.Context, publicUrlID string) erro
 }
 
 const readyBrowserHosts = `-- name: ReadyBrowserHosts :many
-SELECT u.id AS public_url_id, u.canonical_hostname, r.id AS publish_run_id
+SELECT DISTINCT ON(u.id) u.id AS public_url_id, u.canonical_hostname, r.id AS publish_run_id
 FROM control.public_urls u JOIN control.publish_runs r ON r.public_url_id = u.id
 WHERE u.lifecycle_state = 'enabled' AND u.purpose IN ('app', 'alias') AND u.service_protocol = 'http'
   AND r.state = 'ready' AND r.publisher_expires_at > $1 AND r.closed_at IS NULL
   AND (u.id = $2 OR EXISTS (SELECT 1 FROM control.preview_public_urls included
        WHERE included.preview_id = $3::text AND included.public_url_id = u.id))
-ORDER BY u.id LIMIT 32
+ORDER BY u.id,r.publish_run_number DESC LIMIT 32
 `
 
 type ReadyBrowserHostsParams struct {
@@ -780,7 +778,7 @@ func (q *Queries) SetVisitorFeedbackPolicy(ctx context.Context, arg SetVisitorFe
 }
 
 const visitorCurrentMembership = `-- name: VisitorCurrentMembership :one
-SELECT id FROM control.team_memberships WHERE team_id = $1 AND identity_id = $2 AND removed_at IS NULL
+SELECT id FROM control.team_memberships WHERE team_id = $1 AND identity_id = $2 AND control.active_membership(id,CURRENT_TIMESTAMP)
 `
 
 type VisitorCurrentMembershipParams struct {

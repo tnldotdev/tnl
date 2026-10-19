@@ -16,11 +16,41 @@ type HTTPServiceNames<Config> = Config extends { readonly services: infer Servic
   : never;
 
 type ObjectReference<Names extends string> = { readonly service: Names };
+type LocalHTTPServiceNames<Config> = Config extends { readonly services: infer Services }
+  ? Extract<
+      {
+        [Name in keyof Services]: Services[Name] extends { readonly publisher: infer Group }
+          ? Group extends "local"
+            ? Name
+            : never
+          : Name;
+      }[keyof Services],
+      HTTPServiceNames<Config>
+    >
+  : never;
+type PublisherNames<Config> =
+  | "local"
+  | (Config extends { readonly publishers: infer Groups } ? Extract<keyof Groups, string> : never);
+type PublisherReference<Config, Service> = Service extends { readonly publisher: infer Group }
+  ? {
+      readonly publisher: Group extends PublisherNames<Config> ? Group : never;
+    } & (Group extends "local"
+      ? unknown
+      : {
+          readonly target: { readonly type: "address" };
+          readonly http?: never;
+        })
+  : unknown;
 type WebhookService<Config> = Config extends { readonly services: infer Services }
-  ? keyof Services extends never
-    ? ""
-    : HTTPServiceNames<Config>
-  : "";
+  ? Extract<
+      {
+        [Name in keyof Services]: Services[Name] extends { readonly publicURL: object }
+          ? Name
+          : never;
+      }[keyof Services],
+      LocalHTTPServiceNames<Config>
+    >
+  : never;
 
 type TargetReferences<Config> = {
   [Field in keyof Config as Field extends "aliases" | "webhooks" ? Field : never]: {
@@ -30,17 +60,29 @@ type TargetReferences<Config> = {
   };
 } & {
   [Field in keyof Config as Field extends "services" ? Field : never]: {
-    [Name in keyof Config[Field]]: {
+    [Name in keyof Config[Field]]: PublisherReference<Config, Config[Field][Name]> & {
       [HTTP in keyof Config[Field][Name] as HTTP extends "http" ? HTTP : never]: {
         [Paths in keyof Config[Field][Name][HTTP] as Paths extends "paths" ? Paths : never]: {
           [
             Prefix in keyof Config[Field][Name][HTTP][Paths]
           ]: Config[Field][Name][HTTP][Paths][Prefix] extends string
-            ? Exclude<HTTPServiceNames<Config>, Name>
-            : ObjectReference<Exclude<HTTPServiceNames<Config>, Name>>;
+            ? Exclude<LocalHTTPServiceNames<Config>, Name>
+            : ObjectReference<Exclude<LocalHTTPServiceNames<Config>, Name>>;
         };
       };
     };
+  };
+} & {
+  [Field in keyof Config as Field extends "publishers" ? Field : never]: {
+    [Name in keyof Config[Field]]: Name extends "local"
+      ? never
+      : {
+          [
+            Key in keyof Config[Field][Name] as Key extends "description" | "domain" | "public"
+              ? never
+              : Key
+          ]: never;
+        };
   };
 };
 
@@ -50,20 +92,23 @@ export type TnlServiceTarget = NonNullable<Service["target"]>;
 export type TnlProtocol = NonNullable<Service["protocol"]>;
 type Alias = NonNullable<NonNullable<TnlConfig["aliases"]>[string]>;
 type Webhook = NonNullable<NonNullable<TnlConfig["webhooks"]>[string]>;
-type HTTP = NonNullable<Extract<Service, { protocol?: "http" }>["http"]>;
+type MemberHTTP<Member> = Member extends { http?: infer HTTP } ? NonNullable<HTTP> : never;
+type MemberPaths<Member, Names extends string, Name extends Names> =
+  MemberHTTP<Member> extends { paths?: infer Paths }
+    ? [NonNullable<Paths>] extends [never]
+      ? never
+      : Record<
+          string,
+          | Exclude<NoInfer<Names>, Name>
+          | { service: Exclude<NoInfer<Names>, Name>; stripPrefix?: boolean }
+        >
+    : never;
 type ServiceForNames<Names extends string, Name extends Names, Member = Service> = Member extends {
   protocol?: "http";
 }
   ? Omit<Member, "http"> & {
-      http?: Omit<HTTP, "paths"> & {
-        paths?: Record<
-          string,
-          | Exclude<NoInfer<Names>, Name>
-          | {
-              service: Exclude<NoInfer<Names>, Name>;
-              stripPrefix?: boolean;
-            }
-        >;
+      http?: Omit<MemberHTTP<Member>, "paths"> & {
+        paths?: MemberPaths<Member, Names, Name>;
       };
     }
   : Member;

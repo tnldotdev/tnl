@@ -2,6 +2,7 @@ name: tnl-split
 
 x-tnld: &tnld
   image: ${TNL_IMAGE:?set TNL_IMAGE to a verified digest-pinned image}
+  entrypoint: [/usr/local/bin/tnld]
   read_only: true
   cap_add:
     - NET_BIND_SERVICE
@@ -13,11 +14,27 @@ x-tnld: &tnld
     - /tmp:size=16m,mode=1777
 
 services:
+  control-proxy:
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    restart: unless-stopped
+    environment:
+      TNL_CONTROL_HOSTNAME: ${TNL_CONTROL_HOSTNAME:?set TNL_CONTROL_HOSTNAME}
+      TNL_CONTROL_BACKEND: control:8080
+    ports:
+      - "${TNL_CONTROL_BIND:?set TNL_CONTROL_BIND}:443:443/tcp"
+      - "${TNL_CONTROL_BIND}:80:80/tcp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - control-proxy-data:/data
+      - control-proxy-config:/config
+    networks:
+      control:
+        ipv4_address: 172.31.253.2
   migrate:
     <<: *tnld
     command: migrate
-    env_file:
-      - ${TNL_ENV_FILE:-.env}
+    environment:
+      TNLD_DATABASE_DIRECT_URL: ${TNLD_DATABASE_DIRECT_URL:?set a direct migration URL}
     restart: "no"
 
   control:
@@ -29,14 +46,24 @@ services:
     env_file:
       - ${TNL_ENV_FILE:-.env}
     environment:
-      TNLD_CONTROL_LISTEN: :8443
+      TNLD_DATABASE_DIRECT_URL: ""
+      TNLD_CONTROL_LISTEN: 172.31.253.3:8080
+      TNLD_CONTROL_TRUSTED_PROXIES: 172.31.253.2/32
+      TNLD_CONTROL_CLIENT_IP_HEADER: X-Forwarded-For
+      TNLD_SERVICE_PORT_RANGES: 20000-20015
+      TNLD_PRIVATE_CONTROL_TLS_CERTIFICATE_FILE: /etc/tnl/cluster.crt
+      TNLD_PRIVATE_CONTROL_TLS_PRIVATE_KEY_FILE: /etc/tnl/cluster.key
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
       TNLD_ROLE: control
       TNLD_PRIVATE_CONTROL_LISTEN: :9443
       TNLD_ROUTE53_SERVER_ZONE_ID: ${TNL_SERVER_ZONE_ID:?set TNL_SERVER_ZONE_ID}
-    ports:
-      - "${TNL_CONTROL_BIND:?set TNL_CONTROL_BIND}:443:8443/tcp"
-      - "${TNL_CONTROL_BIND}:9443:9443/tcp"
+    volumes:
+      - ${TNL_PRIVATE_CONTROL_CERTIFICATE_FILE:?set the internal control certificate}:/etc/tnl/cluster.crt:ro
+      - ${TNL_PRIVATE_CONTROL_KEY_FILE:?set the internal control key}:/etc/tnl/cluster.key:ro
+    networks:
+      default:
+      control:
+        ipv4_address: 172.31.253.3
     expose:
       - "9090"
 
@@ -51,17 +78,25 @@ services:
       TNLD_CLUSTER_SECRET: ${TNLD_CLUSTER_SECRET:?set TNLD_CLUSTER_SECRET}
       TNLD_CLUSTER_SECRET_PREVIOUS: ${TNLD_CLUSTER_SECRET_PREVIOUS:-}
       TNLD_INGRESS_ID: ingress-a
-      TNLD_INGRESS_LISTEN: :8443
+      TNLD_SERVICE_PORT_RANGES: 20000-20015
+      TNLD_INGRESS_LISTEN: :443
+      TNLD_INGRESS_UDP_LISTEN: :443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
       TNLD_ROLE: ingress
     ports:
-      - "${TNL_INGRESS_BIND:?set TNL_INGRESS_BIND}:443:8443/tcp"
+      - "${TNL_INGRESS_BIND:?set TNL_INGRESS_BIND}:443:443/tcp"
+      - "${TNL_INGRESS_BIND}:443:443/udp"
+      - "${TNL_INGRESS_BIND}:20000-20015:20000-20015/tcp"
+    volumes:
+      - ${TNL_CLUSTER_CA_FILE:?set the internal control issuer}:/etc/ssl/certs/tnl-cluster.pem:ro
     expose:
       - "9090"
 
   relay-a:
     <<: *tnld
     restart: unless-stopped
+    volumes:
+      - ${TNL_CLUSTER_CA_FILE:?set the internal control issuer}:/etc/ssl/certs/tnl-cluster.pem:ro
     depends_on:
       - control
     environment:
@@ -76,11 +111,11 @@ services:
       TNLD_RELAY_ADDRESS: relay-a.${TNLD_SERVER_DOMAIN}:443
       TNLD_RELAY_ID: relay-a-1
       TNLD_RELAY_SERVICE_ID: relay-a
-      TNLD_RELAY_TCP_LISTEN: :8443
-      TNLD_RELAY_UDP_LISTEN: :8443
+      TNLD_RELAY_TCP_LISTEN: :443
+      TNLD_RELAY_UDP_LISTEN: :443
     ports:
-      - "${TNL_RELAY_A_BIND:?set TNL_RELAY_A_BIND}:443:8443/tcp"
-      - "${TNL_RELAY_A_BIND}:443:8443/udp"
+      - "${TNL_RELAY_A_BIND:?set TNL_RELAY_A_BIND}:443:443/tcp"
+      - "${TNL_RELAY_A_BIND}:443:443/udp"
     expose:
       - "9090"
       - "9445"
@@ -88,6 +123,8 @@ services:
   relay-b:
     <<: *tnld
     restart: unless-stopped
+    volumes:
+      - ${TNL_CLUSTER_CA_FILE:?set the internal control issuer}:/etc/ssl/certs/tnl-cluster.pem:ro
     depends_on:
       - control
     environment:
@@ -102,11 +139,20 @@ services:
       TNLD_RELAY_ADDRESS: relay-b.${TNLD_SERVER_DOMAIN}:443
       TNLD_RELAY_ID: relay-b-1
       TNLD_RELAY_SERVICE_ID: relay-b
-      TNLD_RELAY_TCP_LISTEN: :8443
-      TNLD_RELAY_UDP_LISTEN: :8443
+      TNLD_RELAY_TCP_LISTEN: :443
+      TNLD_RELAY_UDP_LISTEN: :443
     ports:
-      - "${TNL_RELAY_B_BIND:?set TNL_RELAY_B_BIND}:443:8443/tcp"
-      - "${TNL_RELAY_B_BIND}:443:8443/udp"
+      - "${TNL_RELAY_B_BIND:?set TNL_RELAY_B_BIND}:443:443/tcp"
+      - "${TNL_RELAY_B_BIND}:443:443/udp"
     expose:
       - "9090"
       - "9445"
+
+networks:
+  control:
+    ipam:
+      config: [{ subnet: 172.31.253.0/24 }]
+
+volumes:
+  control-proxy-data:
+  control-proxy-config:

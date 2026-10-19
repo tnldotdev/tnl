@@ -88,35 +88,6 @@ func TestCredentialPublisherKeepsTargetlessPublicURLWithoutChangingPolicy(t *tes
 	}
 }
 
-func TestDatabasePublisherKeepsPrivateTargetOutOfControl(t *testing.T) {
-	control := &publisherControlStub{allowed: []string{"lookup", "create", "update"}}
-	config := Config{
-		Control: control, TeamID: "team_1", DomainID: "domain_1", Hostname: "db.example",
-		PublicURLScope: controlv1.Shared, Purpose: controlv1.App, ServiceProtocol: controlv1.Postgres,
-		Target: "db.internal:5432",
-	}
-	created, fresh, err := createOrLoadPublicURL(t.Context(), config)
-	if err != nil || !fresh || control.created == nil || control.created.Target != "" ||
-		control.created.ServiceProtocol == nil || *control.created.ServiceProtocol != controlv1.Postgres ||
-		created.PublicPort == nil || *created.PublicPort != 5432 {
-		t.Fatalf("database URL creation = %+v, fresh %t, body %+v, err %v", created, fresh, control.created, err)
-	}
-	config.Target = "other.internal:5432"
-	reused, fresh, err := createOrLoadPublicURL(t.Context(), config)
-	if err != nil || fresh || reused.Id != created.Id || control.updated != nil {
-		t.Fatalf("database URL reuse = %+v, fresh %t, update %+v, err %v", reused, fresh, control.updated, err)
-	}
-	config.AllowedIPPrefixes = []string{"192.0.2.0/24"}
-	_, fresh, err = createOrLoadPublicURL(t.Context(), config)
-	if err != nil || fresh || control.updated == nil || control.updated.Target != "" {
-		t.Fatalf("database policy update sent private target: fresh %t, update %+v, err %v", fresh, control.updated, err)
-	}
-	config.ServiceProtocol = controlv1.Mysql
-	if _, _, err := createOrLoadPublicURL(t.Context(), config); err == nil || control.lookupCalls != 4 {
-		t.Fatalf("database protocol mismatch was accepted: %v", err)
-	}
-}
-
 func TestCreateOrLoadRouteRejectsDifferentIdentityOrLifecycle(t *testing.T) {
 	control := &publisherControlStub{allowed: []string{"lookup"}, routes: []controlv1.PublicURL{{
 		Id: "public_url_existing", TeamId: "team_1", DomainId: "domain_other",
@@ -482,6 +453,8 @@ type publisherControlStub struct {
 	publishRunErr error
 }
 
+func (*publisherControlStub) PublisherID() string { return "pub_0123456789abcdefghijkl" }
+
 func (s *publisherControlStub) record(operation string) {
 	if !slices.Contains(s.allowed, operation) {
 		panic("unexpected publisher control operation: " + operation)
@@ -503,10 +476,6 @@ func (s *publisherControlStub) CreatePublicURL(_ context.Context, body controlv1
 	protocol := controlv1.Http
 	if body.ServiceProtocol != nil {
 		protocol = *body.ServiceProtocol
-		route.PublicPort = pointer(5432)
-		if protocol == controlv1.Mysql {
-			route.PublicPort = pointer(3306)
-		}
 	}
 	route.ServiceProtocol = protocol
 	s.routes = append(s.routes, route)
@@ -580,14 +549,6 @@ func (*publisherControlStub) CreateCertificateIssuance(context.Context, string, 
 
 func (*publisherControlStub) GetCertificateIssuance(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error) {
 	return controlv1.CertificateIssuance{}, errors.New("not implemented")
-}
-
-func (*publisherControlStub) MarkCertificateChallengeReady(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error) {
-	return controlv1.CertificateIssuance{}, errors.New("not implemented")
-}
-
-func (*publisherControlStub) MarkCertificateChallengeRemoved(context.Context, string, credentials.PublishRunToken) error {
-	panic("unexpected MarkCertificateChallengeRemoved")
 }
 
 func (*publisherControlStub) MarkPublishRunCertificateInstalled(context.Context, string, uint64, string, time.Time, credentials.PublishRunToken) error {

@@ -152,7 +152,7 @@ func genericInitFixture(t *testing.T, script, manager string) string {
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "tsconfig.json"), []byte(`{"include":[".tnl/project.d.ts"]}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "tsconfig.json"), []byte(`{"include":[".tnl/local/project.d.ts"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return root

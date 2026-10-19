@@ -209,8 +209,7 @@ func (d *Database) ingressRoutingTableEvent(
 	createdAt pgtype.Timestamptz,
 ) (IngressRoutingTableEvent, error) {
 	if routingTableRevision <= 0 || publishRunNumber <= 0 || entryRevision <= 0 || !createdAt.Valid ||
-		(eventKind != "public_url_upsert" && eventKind != "public_url_tombstone" &&
-			eventKind != "challenge_upsert" && eventKind != "challenge_tombstone") {
+		(eventKind != "public_url_upsert" && eventKind != "public_url_tombstone") {
 		return IngressRoutingTableEvent{}, errors.New("controlstate: invalid ingress routing-table event row")
 	}
 	var projection IngressRoutingTableProjection

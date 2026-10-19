@@ -1,6 +1,7 @@
 package controlapi
 
 import (
+	"crypto/sha256"
 	"errors"
 	"log"
 	"net/http"
@@ -80,14 +81,14 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 	}
 	storedProtocol := controlstate.PublicURLServiceProtocol(protocol)
 	accessMode := controlstate.VisitorAccessRestricted
-	if storedProtocol == controlstate.PublicURLServiceSSH || body.Purpose == controlv1.Oauth || body.Purpose == controlv1.Webhooks {
+	if body.Purpose == controlv1.Oauth || body.Purpose == controlv1.Webhooks {
 		accessMode = controlstate.VisitorAccessAnonymous
 	}
 	if body.AccessMode != nil {
 		accessMode = controlstate.VisitorAccessMode(*body.AccessMode)
 	}
 	if !accessMode.Valid() ||
-		(storedProtocol == controlstate.PublicURLServiceSSH || body.Purpose == controlv1.Oauth || body.Purpose == controlv1.Webhooks) && accessMode != controlstate.VisitorAccessAnonymous {
+		(body.Purpose == controlv1.Oauth || body.Purpose == controlv1.Webhooks) && accessMode != controlstate.VisitorAccessAnonymous {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid visitor access mode")
 		return
 	}
@@ -119,6 +120,11 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		return
 	}
 	hashProtocol := ""
+	pool := body.PublisherPool != nil && *body.PublisherPool
+	if pool && (ephemeral || decision.GuestID != "" || !(decision.ActingRole == "owner" || decision.ActingRole == "admin" || decision.ActingMembershipID != "" && decision.ActingMembershipID == decision.PublicURLMembershipID)) {
+		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "only a saved public URL's manager can enable its publisher pool")
+		return
+	}
 	if protocol != controlv1.Http {
 		hashProtocol = string(protocol)
 	}
@@ -131,6 +137,10 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 		return
+	}
+	if pool {
+		encoded := append([]byte("tnl/public-url-publisher-pool/v1\x00"), digest[:]...)
+		digest = authorization.Digest(sha256.Sum256(encoded))
 	}
 	dnsState := controlstate.PublicURLDNSUnmanaged
 	dnsAuthorityReference := ""
@@ -150,6 +160,7 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		ActingIdentityID: decision.IdentityID, IdempotencyKey: request.Header.Get("Idempotency-Key"),
 		RequestDigest: [32]byte(digest), CanonicalHostname: decision.CanonicalHostname, Target: body.Target,
 		ServiceProtocol: storedProtocol,
+		PublisherPool:   body.PublisherPool != nil && *body.PublisherPool,
 		PublicURLScope:  controlstate.PublicURLScope(decision.PublicURLScope), Purpose: controlstate.PublicURLPurpose(body.Purpose), AccessMode: accessMode, AllowedIPPrefixes: storedIPPrefixes,
 		ManagedURLMode: h.config.ManagedURLMode,
 		DNSState:       dnsState, DNSAuthorityReference: dnsAuthorityReference,
@@ -195,8 +206,11 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		return
 	}
 	httpProtocol := route.ServiceProtocol == "" || route.ServiceProtocol == controlstate.PublicURLServiceHTTP
-	if *body.Target == "" && (route.Target != "" || route.Purpose != controlstate.PublicURLPurposeApp ||
-		route.Ephemeral && httpProtocol) ||
+	storedProtocol := route.ServiceProtocol
+	if storedProtocol == "" {
+		storedProtocol = controlstate.PublicURLServiceHTTP
+	}
+	if *body.Target == "" && (route.Target != "" || !storedProtocol.ValidCreateTarget(route.Purpose, "", route.Ephemeral)) ||
 		*body.Target != "" && !httpProtocol {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid target")
 		return
@@ -385,9 +399,10 @@ func (h *handler) HeartbeatPublishRun(response http.ResponseWriter, request *htt
 		return
 	}
 	writeJSON(response, http.StatusOK, controlv1.PublishRunHeartbeat{
-		PublishRun:           publishRunResponse(setup),
-		PublisherConnections: connectionAssignmentResponses(setup.PublisherConnections),
-		PolicyDenials:        int64(setup.PolicyDenials),
+		PublishRun:            publishRunResponse(setup),
+		PublisherConnections:  connectionAssignmentResponses(setup.PublisherConnections),
+		PolicyDenials:         int64(setup.PolicyDenials),
+		VisitorPolicyRevision: setup.VisitorPolicyRevision,
 	})
 }
 

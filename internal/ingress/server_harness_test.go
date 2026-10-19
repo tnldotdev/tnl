@@ -73,16 +73,6 @@ func startIngress(t *testing.T, config Config, configure ...func(*Server)) (*Ser
 		}
 		return route, reason
 	}
-	if config.LookupPort != nil {
-		lookupPort := config.LookupPort
-		config.LookupPort = func(port uint16) (PublicURL, LookupReason) {
-			route, reason := lookupPort(port)
-			if reason == LookupCurrent && route.AccessMode == "" {
-				route.AccessMode = "anonymous"
-			}
-			return route, reason
-		}
-	}
 	server, err := New(listener, config)
 	if err != nil {
 		t.Fatal(err)
@@ -282,22 +272,14 @@ func (u *testUsageConnection) Close(at time.Time) {
 }
 
 type testMetrics struct {
-	ipAllowlistDenials, challengeUnavailable, challengeMissing atomic.Int32
-	visitorOutcomes                                            chan string
-	forwardedMu                                                sync.Mutex
-	forwardedBytes                                             map[string]int64
+	ipAllowlistDenials atomic.Int32
+	visitorOutcomes    chan string
+	forwardedMu        sync.Mutex
+	forwardedBytes     map[string]int64
 }
 
 func (*testMetrics) IncCapacityRejection(string) {}
 func (*testMetrics) IncInspectionFailure(string) {}
-func (m *testMetrics) IncChallengeRejection(reason string) {
-	if reason == "unavailable" {
-		m.challengeUnavailable.Add(1)
-	}
-	if reason == "missing" {
-		m.challengeMissing.Add(1)
-	}
-}
 func (m *testMetrics) ObserveVisitor(outcome observability.VisitorOutcome) {
 	if m.visitorOutcomes != nil {
 		m.visitorOutcomes <- string(outcome)

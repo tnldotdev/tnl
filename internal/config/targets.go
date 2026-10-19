@@ -33,12 +33,20 @@ func MatchesDockerIdentifier(identifier, id, name string) bool {
 	return identifier == strings.TrimPrefix(name, "/") || identifier == id
 }
 
+// ValidProtocol accepts project service labels. a private label selects client
+// guidance, not a public URL or a different tunnel transport.
 func ValidProtocol(protocol string) bool {
 	switch protocol {
-	case "http", "postgres", "mysql", "redis", "ssh":
+	case "http", "tcp", "mysql", "postgres":
 		return true
 	}
 	return false
+}
+
+// PrivateProtocol identifies non-HTTP labels. HTTP services can also be private;
+// use IsPublicService to decide whether a declaration enables public HTTPS.
+func PrivateProtocol(protocol string) bool {
+	return protocol == "tcp" || protocol == "mysql" || protocol == "postgres"
 }
 
 // ResolveServiceTarget turns a configured address or a discovered private
@@ -70,46 +78,73 @@ func ResolveServiceTarget(service Service, discovered string) (*Publish, error) 
 			}
 			value = scheme + value
 		}
-		normalized, err = localproxy.NormalizeTarget(value)
+		normalized, err = NormalizeHTTPServiceTarget(service, value)
 	} else {
 		normalized, err = tcptarget.Normalize(value)
 	}
 	if err != nil {
 		return nil, err
 	}
+	if protocol := Protocol(service); protocol == "http" && service.Target != nil && service.Target.TLS != nil && !strings.HasPrefix(normalized, "https://") {
+		return nil, errors.New("target.tls requires an HTTPS listener")
+	}
+	if Protocol(service) == "http" && !IsPublicService(service) && strings.HasPrefix(normalized, "https://") && (service.Target == nil || service.Target.TLS == nil) {
+		return nil, errors.New("private HTTPS listeners require target.tls")
+	}
 	target := Target(normalized)
 	result.Target = &target
 	return result, nil
 }
 
+// NormalizeHTTPServiceTarget retains listener origins for local app ownership.
+// a private host:port is an opaque dial target, represented locally as an HTTP
+// origin without selecting who, if anyone, negotiates TLS on its bytes.
+func NormalizeHTTPServiceTarget(service Service, value string) (string, error) {
+	normalized, err := localproxy.NormalizeTarget(value)
+	if err == nil || IsPublicService(service) || strings.Contains(value, "://") {
+		return normalized, err
+	}
+	address, addressErr := tcptarget.Normalize(value)
+	if addressErr != nil {
+		return "", err
+	}
+	return "http://" + address, nil
+}
+
 func validateTarget(service Service) error {
 	protocol := Protocol(service)
 	if !ValidProtocol(protocol) {
-		return errors.New("protocol must be http, postgres, mysql, redis, or ssh")
+		return errors.New("protocol must be http, tcp, mysql, or postgres; use tcp for an existing sshd")
 	}
 	target := service.Target
 	if target == nil || target.Type == "app" {
 		if protocol != "http" {
 			return errors.New("target.type app requires protocol http")
 		}
-		if target != nil && (target.Address != nil || target.Project != nil || target.File != nil || target.Service != nil || target.Port != nil || target.Container != nil || target.TLS != nil) {
-			return errors.New("target.type app accepts no address, discovery, or TLS fields")
+		if target != nil && (target.Address != nil || target.Project != nil || target.File != nil || target.Service != nil || target.Port != nil || target.Container != nil) {
+			return errors.New("target.type app accepts only optional tls")
 		}
-		return nil
+		if target == nil {
+			return nil
+		}
 	}
 	switch target.Type {
+	case "app":
 	case "address":
 		if target.Address == nil || target.Project != nil || target.File != nil || target.Service != nil || target.Port != nil || target.Container != nil {
 			return errors.New("target.type address requires only address and optional tls")
 		}
 		value := string(*target.Address)
 		if protocol == "http" {
-			normalized, err := localproxy.NormalizeTarget(value)
+			normalized, err := NormalizeHTTPServiceTarget(service, value)
 			if err != nil {
 				return fmt.Errorf("target.address: %w", err)
 			}
 			if target.TLS != nil && !strings.HasPrefix(normalized, "https://") {
 				return errors.New("target.tls requires an HTTPS address")
+			}
+			if !IsPublicService(service) && target.TLS == nil && strings.HasPrefix(normalized, "https://") {
+				return errors.New("private HTTPS addresses require target.tls")
 			}
 		} else if _, err := tcptarget.Normalize(value); err != nil {
 			return fmt.Errorf("target.address: %w", err)
@@ -148,6 +183,9 @@ func validateTarget(service Service) error {
 		}
 		if tls.CAFile != nil && (*tls.CAFile == "" || strings.TrimSpace(*tls.CAFile) != *tls.CAFile || strings.ContainsRune(*tls.CAFile, 0)) {
 			return errors.New("target.tls.ca_file must be a nonempty path without surrounding whitespace or NUL")
+		}
+		if tls.CAFile != nil && validateProjectRelativeFile(*tls.CAFile) != nil {
+			return errors.New("target.tls.ca_file must be a project-relative CA-only PEM file")
 		}
 	}
 	return nil
@@ -211,7 +249,7 @@ func validateCAURL(value string) error {
 	return nil
 }
 
-func ValidateServiceTLS(value ServiceTLS) error {
+func ValidateTrustSource(value TrustSource) error {
 	if value.Hostname != nil {
 		name := *value.Hostname
 		if !ValidTLSIdentity(name) {

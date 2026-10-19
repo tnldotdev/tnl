@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/httpsubject"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -30,6 +31,7 @@ type browserAccessClient interface {
 }
 
 type browserAccess struct {
+	subject                                   httpsubject.Subject
 	client                                    browserAccessClient
 	previewID, publicURLID, runID, controlURL string
 	version                                   uint64
@@ -52,7 +54,7 @@ func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token c
 	if !ok {
 		return nil
 	}
-	return &browserAccess{client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,
+	return &browserAccess{subject: httpsubject.Subject{Kind: httpsubject.PublicURL, ID: setup.PublicUrl.Id}, client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,
 		runID: setup.PublishRun.Id, version: uint64(setup.PublishRun.PublishRunNumber), token: token,
 		controlURL: config.ControlURL, shares: shares, decisions: &visitorDecisionCache[controlv1.HTTPVisitorResponse]{}}
 }
@@ -103,19 +105,42 @@ func (a *browserAccess) decision(request *http.Request) (controlv1.HTTPVisitorRe
 		return controlv1.HTTPVisitorResponse{}, errors.New("visitor source is invalid")
 	}
 	input := controlv1.HTTPVisitorRequest{PublishRunNumber: int64(a.version), SourceIp: source.Addr().Unmap().String()}
-	if token := request.Header.Get(shareAccessHeaderName); token != "" {
-		id, secret, valid := strings.Cut(token, ".")
-		if valid {
-			input.ShareId, input.ShareSecret = &id, &secret
+	if values, present := request.Header[http.CanonicalHeaderKey(shareAccessHeaderName)]; present {
+		if len(values) != 1 {
+			return controlv1.HTTPVisitorResponse{}, errors.New("share credential is invalid")
 		}
+		id, secret, valid := strings.Cut(values[0], ".")
+		raw, err := base64.RawURLEncoding.Strict().DecodeString(secret)
+		if !valid || id == "" || err != nil || len(raw) != 32 {
+			return controlv1.HTTPVisitorResponse{}, errors.New("share credential is invalid")
+		}
+		input.ShareId, input.ShareSecret = &id, &secret
 	}
-	if cookie, err := request.Cookie(browserAccessCookieName); err == nil {
+	if input.ShareId == nil && suppliedCookieCount(request, browserAccessCookieName) != len(request.CookiesNamed(browserAccessCookieName)) {
+		return controlv1.HTTPVisitorResponse{}, errors.New("browser credential is invalid")
+	}
+	if cookie, err := request.Cookie(browserAccessCookieName); err == nil && input.ShareId == nil {
+		if len(request.CookiesNamed(browserAccessCookieName)) != 1 {
+			return controlv1.HTTPVisitorResponse{}, errors.New("browser credential is invalid")
+		}
+		raw, err := base64.RawURLEncoding.Strict().DecodeString(cookie.Value)
+		if err != nil || len(raw) != 32 {
+			return controlv1.HTTPVisitorResponse{}, errors.New("browser credential is invalid")
+		}
 		input.BrowserCookieSecret = &cookie.Value
 	}
-	if cookie, err := request.Cookie(shareCookieName); err == nil && input.ShareId == nil {
+	if input.ShareId == nil && input.BrowserCookieSecret == nil && suppliedCookieCount(request, shareCookieName) != len(request.CookiesNamed(shareCookieName)) {
+		return controlv1.HTTPVisitorResponse{}, errors.New("share credential is invalid")
+	}
+	if cookie, err := request.Cookie(shareCookieName); err == nil && input.ShareId == nil && input.BrowserCookieSecret == nil {
+		if len(request.CookiesNamed(shareCookieName)) != 1 {
+			return controlv1.HTTPVisitorResponse{}, errors.New("share credential is invalid")
+		}
 		if id, secret, found := strings.Cut(cookie.Value, "."); found {
 			input.ShareId = &id
 			input.ShareCookieSecret = &secret
+		} else {
+			return controlv1.HTTPVisitorResponse{}, errors.New("share credential is invalid")
 		}
 	}
 	if a.decisions == nil {
@@ -171,7 +196,12 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 		if request.URL.Query().Get("switch") == "1" {
 			query.Set("switch_account", "true")
 		}
-		query.Set("public_url_id", a.publicURLID)
+		if a.subject.Kind == httpsubject.ManagedService {
+			endpoint.Path = "/v1/browser/managed-login"
+			query.Set("private_service_id", a.subject.ID)
+		} else {
+			query.Set("public_url_id", a.publicURLID)
+		}
 		query.Set("return_path", path)
 		endpoint.RawQuery = query.Encode()
 		markBrowserLoginAttempt(response)

@@ -94,69 +94,6 @@ WHERE server_origin = sqlc.arg(server_origin);
 UPDATE control_sessions SET refresh_pending = sqlc.arg(pending)
 WHERE server_origin = sqlc.arg(server_origin);
 
--- name: GetCertificateMaterial :one
-SELECT *
-FROM public_url_certificate_cache
-WHERE server_origin = sqlc.arg(server_origin)
-  AND team_id = sqlc.arg(team_id)
-  AND publisher_identity_id=sqlc.arg(publisher_identity_id)
-  AND cache_key = sqlc.arg(cache_key)
-  AND plan = sqlc.arg(plan)
-  AND phase = sqlc.arg(phase);
-
--- name: UpsertCertificateMaterial :exec
-INSERT INTO public_url_certificate_cache (
-    server_origin,
-    team_id,
-    publisher_identity_id,
-    cache_key,
-    plan,
-    phase,
-    private_key_ciphertext,
-    csr_der,
-    certificate_pem,
-    renew_at,
-    issuance_id,
-    updated_at
-) VALUES (
-    sqlc.arg(server_origin),
-    sqlc.arg(team_id),
-    sqlc.arg(publisher_identity_id),
-    sqlc.arg(cache_key),
-    sqlc.arg(plan),
-    sqlc.arg(phase),
-    sqlc.arg(private_key_ciphertext),
-    sqlc.arg(csr_der),
-    sqlc.narg(certificate_pem),
-    sqlc.narg(renew_at),
-    sqlc.arg(issuance_id),
-    sqlc.arg(updated_at)
-)
-ON CONFLICT (server_origin, team_id, publisher_identity_id, cache_key, plan, phase) DO UPDATE SET
-    private_key_ciphertext = excluded.private_key_ciphertext,
-    csr_der = excluded.csr_der,
-    certificate_pem = excluded.certificate_pem,
-    renew_at = excluded.renew_at,
-    issuance_id = excluded.issuance_id,
-    updated_at = excluded.updated_at;
-
--- name: DeleteCertificateMaterial :exec
-DELETE FROM public_url_certificate_cache
-WHERE server_origin = sqlc.arg(server_origin)
-  AND team_id = sqlc.arg(team_id)
-  AND publisher_identity_id=sqlc.arg(publisher_identity_id)
-  AND cache_key = sqlc.arg(cache_key)
-  AND plan = sqlc.arg(plan)
-  AND phase = sqlc.arg(phase);
-
--- name: StageCertificateMaterial :execrows
-UPDATE public_url_certificate_cache
-SET private_key_ciphertext=sqlc.arg(private_key_ciphertext),certificate_pem=sqlc.arg(certificate_pem),
-    renew_at=sqlc.arg(renew_at),issuance_id=sqlc.arg(issuance_id),updated_at=sqlc.arg(updated_at)
-WHERE server_origin=sqlc.arg(server_origin) AND team_id=sqlc.arg(team_id)
-    AND publisher_identity_id=sqlc.arg(publisher_identity_id) AND cache_key=sqlc.arg(cache_key) AND plan=sqlc.arg(plan)
-    AND phase='pending' AND csr_der=sqlc.arg(csr_der) AND private_key_ciphertext=sqlc.arg(previous_key_ciphertext);
-
 -- name: InsertTunnel :exec
 INSERT INTO local_tunnels (
     id,
@@ -227,7 +164,6 @@ WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
 -- name: SetTunnelReady :execrows
 UPDATE local_tunnels
 SET hostname = sqlc.arg(hostname),
-    public_port = nullif(sqlc.arg(public_port), 0),
     publish_run_number = sqlc.arg(publish_run_number),
     state = 'ready',
     updated_at = sqlc.arg(now)

@@ -42,10 +42,11 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 		"config path", "config check", "config generate", "telemetry on", "telemetry off", "telemetry status",
 		"team current", "team list", "team use", "team create", "team members", "team invite create",
 		"team invite list", "team invite revoke", "team join", "team member set-role", "team member remove",
-		"domain claim", "domain default", "domain list", "domain status", "domain release", "url list", "url inventory", "url available", "url certificate", "url delete",
+		"domain claim", "domain default", "domain list", "domain status", "domain release", "url list", "url inventory", "url available", "url delete",
 		"url access show", "url access set", "auth browser", "team feedback get", "team feedback set",
 		"share invite create", "share invite accept", "share invite list", "share invite revoke",
 		"publisher enroll", "publisher setup", "publisher provision", "publisher current", "publisher list", "publisher revoke", "publisher grant add", "publisher grant revoke",
+		"service install", "service start", "service stop", "service remove", "service list", "detached list", "detached stop",
 		"admin server status", "admin relays list", "admin relays drain", "admin maintenance list",
 		"admin maintenance allow", "admin maintenance block",
 	} {
@@ -53,8 +54,8 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 			t.Fatalf("command %q missing from help model", command)
 		}
 	}
-	// runtime commands are implementation interfaces, not public help.
-	for _, args := range [][]string{{"runtime", "serve", "--directory", t.TempDir()}, {"runtime", "owner-endpoint", "--directory", t.TempDir()}} {
+	// service serve and runtime commands are implementation interfaces, not public help.
+	for _, args := range [][]string{{"service", "serve"}, {"runtime", "serve", "--directory", t.TempDir()}, {"runtime", "owner-endpoint", "--directory", t.TempDir()}} {
 		if _, err := parser.Parse(args); err != nil {
 			t.Fatalf("hidden %v command cannot be invoked: %v", args, err)
 		}
@@ -67,6 +68,24 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	}
 	if _, err := parser.Parse([]string{"compose", "up"}); err == nil {
 		t.Fatal("compose lifecycle command was accepted")
+	}
+	if _, err := parser.Parse([]string{"publish", "3000", "--bg"}); err == nil {
+		t.Fatal("obsolete --bg flag was accepted")
+	}
+}
+
+func TestConfiguredInstallPreflightsBeforeProjectState(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "user-state")
+	service := filepath.Join(t.TempDir(), "service-state")
+	var output, diagnostics bytes.Buffer
+	err := run(t.Context(), []string{"publish", "orders", "--install", "--state-dir", state, "--system-state-dir", service}, &output, &diagnostics)
+	if reason, ok := failure.Of(err); !ok || reason.Reason() != failure.ServiceNotInstalled {
+		t.Fatalf("project state opened before service preflight: %v", err)
+	}
+	for _, path := range []string{state, service} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("install preflight created %s: %v", path, err)
+		}
 	}
 }
 
@@ -240,7 +259,6 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 		{[]string{"publisher", "revoke", "pub_0123456789abcdefghijkl"}, "publisher revoke <publisher-id>"},
 		{[]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--namespace"}, "publisher grant add <publisher-id>"},
 		{[]string{"publisher", "grant", "revoke", "pub_0123456789abcdefghijkl", "pgr_0123456789abcdefghijkl"}, "publisher grant revoke <publisher-id> <grant-id>"},
-		{[]string{"url", "certificate", "orders.example", "--directory", "/tmp/visitor"}, "url certificate <url>"},
 		{[]string{"url", "access", "show", "orders.example"}, "url access show <url>"},
 		{[]string{"url", "access", "set", "orders.example", "restricted", "--ip", "192.0.2.1"}, "url access set <url> <mode>"},
 		{[]string{"auth", "browser", "app.example"}, "auth browser <url>"},
@@ -249,6 +267,8 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 		{[]string{"share", "invite", "accept", "secret"}, "share invite accept <secret>"},
 		{[]string{"share", "invite", "list", "app.example"}, "share invite list <url>"},
 		{[]string{"share", "invite", "revoke", "app.example", "inv_1"}, "share invite revoke <url> <invitation-id>"},
+		{[]string{"service", "start", "orders"}, "service start <job>"},
+		{[]string{"service", "stop", "orders"}, "service stop <job>"},
 		{[]string{"runtime", "endpoint", "--directory", "/tmp/project", "--service", "web"}, "runtime endpoint"},
 		{[]string{"runtime", "owner-endpoint", "--directory", "/tmp/project"}, "runtime owner-endpoint"},
 	} {
@@ -335,22 +355,6 @@ func TestResolvePublishHostnameUsesNamespace(t *testing.T) {
 	label, found := strings.CutSuffix(generated, ".chase-abc.tnl.dev")
 	if !found || strings.Count(label, "-") != 1 || generatedScope != controlv1.Member {
 		t.Fatalf("generated route = %q, %q", generated, generatedScope)
-	}
-}
-
-func TestParseLoginInput(t *testing.T) {
-	token, err := credentials.NewLoginToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := parseLoginInput([]byte(token.String() + "\n"))
-	if err != nil || parsed != token {
-		t.Fatalf("token = %q, error = %v", parsed, err)
-	}
-	if _, err := parseLoginInput([]byte("invalid-token")); err == nil {
-		t.Fatal("invalid login token was accepted")
-	} else if reason, _, ok := failure.Describe(err); !ok || reason != failure.LoginTokenInvalid {
-		t.Fatalf("invalid login token reason = %q, %v", reason, err)
 	}
 }
 
@@ -564,7 +568,8 @@ func TestClientErrorFramesHaveBoundedHelpAndStableCodes(t *testing.T) {
 		var output bytes.Buffer
 		writeCommandError(&output, failure.Wrap("test client failure", entry.Code, errors.New("secret-token")))
 		text := output.String()
-		if !strings.Contains(text, failure.HelpURL(entry.Code, "")) {
+		unwrapped := strings.NewReplacer(" ", "", "\n", "", "|", "").Replace(text)
+		if !strings.Contains(unwrapped, failure.HelpURL(entry.Code, "")) {
 			// each client error must be reachable even when its internal cause is not.
 			t.Fatalf("missing help for %s: %q", entry.Code, text)
 		}

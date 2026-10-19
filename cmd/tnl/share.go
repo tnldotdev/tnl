@@ -91,18 +91,21 @@ type shareServiceResult struct {
 	PublicURL   string `json:"public_url"`
 }
 
-func shareServiceURLs(project projectConfiguration, routes []controlv1.PublicURL) map[string]shareServiceResult {
-	names := make([]string, 0, len(project.Config.Services))
+func shareServiceURLs(project projectConfiguration, routes []controlv1.PublicURL, hostnames map[string]string) map[string]shareServiceResult {
+	byHostname := make(map[string]controlv1.PublicURL, len(routes))
+	for _, route := range routes {
+		if route.ServiceProtocol == controlv1.Http {
+			byHostname[route.CanonicalHostname] = route
+		}
+	}
+	services := make(map[string]shareServiceResult, len(routes))
 	for name, service := range project.Config.Services {
-		if config.Protocol(service) != "http" {
+		if !config.IsPublicService(service) {
 			continue
 		}
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	services := make(map[string]shareServiceResult, len(routes))
-	for index, route := range routes {
-		services[names[index]] = shareServiceResult{PublicURLID: route.Id, PublicURL: "https://" + route.CanonicalHostname}
+		if route, found := byHostname[hostnames[name]]; found {
+			services[name] = shareServiceResult{PublicURLID: route.Id, PublicURL: "https://" + route.CanonicalHostname}
+		}
 	}
 	return services
 }
@@ -153,7 +156,7 @@ func selectSharePublicURL(selector string, routes []controlv1.PublicURL) (contro
 	return controlv1.PublicURL{}, controlclient.ErrNotFound
 }
 
-func previewShares(ctx context.Context, flags remoteFlags, project projectConfiguration, command string, diagnostics io.Writer) (*teamSession, controlv1.Preview, []controlv1.PublicURL, error) {
+func previewShares(ctx context.Context, flags remoteFlags, project projectConfiguration, command string, diagnostics io.Writer, services map[string]shareServiceResult) (*teamSession, controlv1.Preview, []controlv1.PublicURL, error) {
 	if !project.Found() || len(project.Config.Services) == 0 {
 		return nil, controlv1.Preview{}, nil, failure.Wrap("select share project", failure.PreviewNotSaved, errors.New("select a project with configured services, then start your app"))
 	}
@@ -195,6 +198,7 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 	}
 	slices.Sort(names)
 	routes := make([]controlv1.PublicURL, 0, len(names))
+	hostnames := make(map[string]string, len(names))
 	for _, name := range names {
 		route, routeErr := session.authenticated.Control.GetPublicURLByHostname(ctx, current.team.Id, metadata.Services[name].Hostname)
 		if routeErr == nil && route.ServiceProtocol != controlv1.Http {
@@ -208,6 +212,10 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 			return nil, controlv1.Preview{}, nil, failure.Wrap("resolve preview services", failure.PreviewStateConflict, fmt.Errorf("service %q is not yet in this preview; start it with its tnl integration", name))
 		}
 		routes = append(routes, route)
+		hostnames[name] = metadata.Services[name].Hostname
+	}
+	for name, service := range shareServiceURLs(project, routes, hostnames) {
+		services[name] = service
 	}
 	return session, preview, routes, nil
 }
@@ -241,8 +249,9 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	var session *teamSession
 	var preview controlv1.Preview
 	var routes []controlv1.PublicURL
+	services := make(map[string]shareServiceResult)
 	if flags.Preview || flags.URL == "" {
-		session, preview, routes, err = previewShares(ctx, flags.selection(), project, command, diagnostics)
+		session, preview, routes, err = previewShares(ctx, flags.selection(), project, command, diagnostics, services)
 	} else {
 		session, err = openTeamSession(ctx, flags.selection(), command, diagnostics)
 		if err == nil {
@@ -279,8 +288,7 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	}
 	ids := []string{selected.Id}
 	if flags.Preview {
-		ids = slices.Clone(preview.PublicUrlIds)
-		slices.Sort(ids)
+		ids = anonymousPreviewPublicURLIDs(routes)
 	}
 	request := controlv1.CreateShareRequest{
 		PublicUrlIds: ids, ExpiresAt: time.Now().UTC().Add(lifetime), SecretFingerprint: hex.EncodeToString(fingerprint[:]),
@@ -318,7 +326,7 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 			PublicURLIDs  []string                      `json:"public_url_ids"`
 			Services      map[string]shareServiceResult `json:"services,omitempty"`
 			ExpiresAt     time.Time                     `json:"expires_at"`
-		}{1, share.Id, share.PreviewId, entry, ids, shareServices(project, routes, flags.Preview), share.ExpiresAt}))
+		}{1, share.Id, share.PreviewId, entry, ids, shareServices(services, flags.Preview), share.ExpiresAt}))
 	}
 	if token {
 		_, err = fmt.Fprintln(output, capability)
@@ -328,11 +336,22 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	return failure.Wrap("write share URL", failure.OutputUnavailable, err)
 }
 
-func shareServices(project projectConfiguration, routes []controlv1.PublicURL, preview bool) map[string]shareServiceResult {
+func anonymousPreviewPublicURLIDs(routes []controlv1.PublicURL) []string {
+	ids := make([]string, 0, len(routes))
+	for _, route := range routes {
+		if route.ServiceProtocol == controlv1.Http {
+			ids = append(ids, route.Id)
+		}
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids)
+}
+
+func shareServices(services map[string]shareServiceResult, preview bool) map[string]shareServiceResult {
 	if !preview {
 		return nil
 	}
-	return shareServiceURLs(project, routes)
+	return services
 }
 
 func runShareList(ctx context.Context, flags shareListCommand, project projectConfiguration, output, diagnostics io.Writer) error {
@@ -464,10 +483,12 @@ func runExactShareList(ctx context.Context, flags remoteFlags, selector string, 
 		if grant.RevokedAt != nil {
 			state = "revoked"
 		}
-		blocks = append(blocks, clioutput.Section(grant.Id, clioutput.Fields(clioutput.Field{Label: "kind", Value: string(grant.Kind)}, clioutput.Field{Label: "state", Value: state}, clioutput.Field{Label: "expires", Value: expiry})))
+		fields := []clioutput.Field{{Label: "kind", Value: string(grant.Kind)}, {Label: "state", Value: state}, {Label: "expires", Value: expiry}}
+		blocks = append(blocks, clioutput.Section(grant.Id, clioutput.Fields(fields...)))
 	}
 	for _, invitation := range invitations {
-		blocks = append(blocks, clioutput.Section(invitation.Id, clioutput.Fields(clioutput.Field{Label: "email", Value: invitation.Email}, clioutput.Field{Label: "expires", Value: invitation.ExpiresAt.UTC().Format(time.RFC3339)})))
+		fields := []clioutput.Field{{Label: "email", Value: invitation.Email}, {Label: "expires", Value: invitation.ExpiresAt.UTC().Format(time.RFC3339)}}
+		blocks = append(blocks, clioutput.Section(invitation.Id, clioutput.Fields(fields...)))
 	}
 	for _, share := range shares {
 		fields := []clioutput.Field{{Label: "scope", Value: string(share.Scope)}, {Label: "expires", Value: share.ExpiresAt.UTC().Format(time.RFC3339)}}
@@ -486,7 +507,8 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 	if flags.ExpiresIn != "" {
 		return failure.Wrap("select expiring team grant", failure.ShareInputInvalid, errors.New("an expiring team grant requires an exact public URL"))
 	}
-	session, preview, routes, err := previewShares(ctx, flags.selection(), project, "tnl share team create", diagnostics)
+	services := make(map[string]shareServiceResult)
+	session, preview, routes, err := previewShares(ctx, flags.selection(), project, "tnl share team create", diagnostics, services)
 	if err != nil {
 		return err
 	}
@@ -512,7 +534,7 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 			PublicURL     string                        `json:"public_url"`
 			Services      map[string]shareServiceResult `json:"services"`
 			Enabled       bool                          `json:"enabled"`
-		}{1, preview.Id, "https://" + selected.CanonicalHostname + "/", shareServiceURLs(project, routes), true}))
+		}{1, preview.Id, "https://" + selected.CanonicalHostname + "/", services, true}))
 	}
 	return writeHumanFrame(output, "tnl share team create", "shared", "", clioutput.Fields(
 		clioutput.Field{Label: "public URL", Value: "https://" + selected.CanonicalHostname + "/"},
@@ -565,6 +587,10 @@ func runExactTeamShare(ctx context.Context, flags remoteFlags, selector, lifetim
 		return err
 	}
 	defer session.Close()
+	return exactTeamShare(ctx, session, selector, lifetime, revoke, mode, output)
+}
+
+func exactTeamShare(ctx context.Context, session *teamSession, selector, lifetime string, revoke bool, mode statusOutputMode, output io.Writer) error {
 	item, err := resolveVisitorPublicURL(ctx, session, selector)
 	if err != nil {
 		return err
@@ -610,7 +636,8 @@ func runExactTeamShare(ctx context.Context, flags remoteFlags, selector, lifetim
 			State       string                 `json:"state"`
 		}{item.Id, result, state})
 	}
-	return writeHumanFrame(output, "tnl share team", state, "", clioutput.Fields(clioutput.Field{Label: "public URL ID", Value: item.Id}, clioutput.Field{Label: "hostname", Value: item.CanonicalHostname}))
+	fields := []clioutput.Field{{Label: "public URL ID", Value: item.Id}, {Label: "hostname", Value: item.CanonicalHostname}}
+	return writeHumanFrame(output, "tnl share team", state, "", clioutput.Fields(fields...))
 }
 
 func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagnostics io.Writer) error {

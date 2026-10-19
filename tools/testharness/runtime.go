@@ -149,7 +149,7 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	services = append(services, runtimePublishers...)
 	services = append(services, "visitor-1", "visitor-2", "visitor-3", "visitor-4")
 	services = append(services, runtimeApps...)
-	services = append(services, "pebble", "coordinator")
+	services = append(services, "dns", "pebble", "coordinator")
 	if err := stack.Up(ctx, compose.RunServices(services...)); err != nil {
 		return fmt.Errorf("start runtime components: %w", err)
 	}
@@ -375,7 +375,7 @@ func (h *runtimeHarness) close() error {
 		{"visitor-1", "visitor-2", "visitor-3", "visitor-4"},
 		append(runtimeApps, runtimePublishers...),
 		{"ingress-a", "ingress-b", "relay-a", "relay-b"},
-		{"control-a", "control-b", "pebble", "coordinator", "postgres"},
+		{"control-a", "control-b", "pebble", "dns", "coordinator", "postgres"},
 	} {
 		var present []string
 		for _, name := range group {

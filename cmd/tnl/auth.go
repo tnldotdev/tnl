@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -14,8 +12,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/failure"
 	"golang.org/x/term"
 )
 
@@ -33,12 +29,12 @@ type authStatusCommand struct {
 }
 
 type loginCommand struct {
-	ServerURL  string           `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project or selected server."`
-	StateDir   string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	LoginToken bool             `name:"login-token" help:"Log in with a login token; prompt unless TNL_LOGIN_TOKEN is set."`
-	Open       bool             `name:"open" help:"Open the approval URL in a browser."`
-	Timeout    time.Duration    `name:"timeout" default:"10m" help:"Maximum wait; a device login operation can be resumed after timeout."`
-	Output     statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+	Team      string           `name:"team" help:"Team name to authenticate for; defaults to the project or saved team."`
+	ServerURL string           `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project or selected server."`
+	StateDir  string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+	Open      bool             `name:"open" help:"Open the approval URL in a browser."`
+	Timeout   time.Duration    `name:"timeout" default:"10m" help:"Maximum wait; a device login operation can be resumed after timeout."`
+	Output    statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
 type authLoginCommand struct {
@@ -61,17 +57,9 @@ type logoutCommand struct {
 }
 
 func authLoginConfig(flags loginCommand, server string, state *clientstate.Database, input io.Reader, diagnostics io.Writer) (clientauth.Config, error) {
-	loginToken := os.Getenv("TNL_LOGIN_TOKEN")
-	prompt := loginTokenPrompt(input, diagnostics)
-	if loginToken != "" {
-		token, err := parseLoginInput([]byte(loginToken))
-		if err != nil {
-			return clientauth.Config{}, err
-		}
-		prompt = func() (credentials.LoginToken, error) { return token, nil }
-	}
 	config := clientauth.Config{ServerEndpoint: server, State: state, Diagnostics: diagnostics,
-		LoginToken: prompt, ForceLoginToken: flags.LoginToken || loginToken != "", LoginTimeout: flags.Timeout,
+		Team:                 flags.Team,
+		LoginTimeout:         flags.Timeout,
 		AuthenticationPrompt: authenticationPrompt(diagnostics, "tnl auth login")}
 	config.ObserveLogin = func(op clientstate.AuthOperation) error {
 		return writeAuthOperation(diagnostics, "tnl auth login", op, flags.Output)
@@ -211,45 +199,12 @@ func writeAuthOperation(output io.Writer, command string, op clientstate.AuthOpe
 	return writeHumanFrame(output, command, strings.ReplaceAll(string(op.Phase), "_", " "), footer, clioutput.Fields(fields...))
 }
 
-func readLoginToken(input io.Reader, output io.Writer) (credentials.LoginToken, error) {
-	file, ok := input.(*os.File)
-	if !ok || !term.IsTerminal(int(file.Fd())) {
-		return "", failure.Wrap("read login token", failure.LoginTerminalRequired,
-			errors.New("login-token authentication requires an interactive terminal"))
-	}
-	if _, err := fmt.Fprint(output, "Login token: "); err != nil {
-		return "", err
-	}
-	data, err := term.ReadPassword(int(file.Fd()))
-	_, _ = fmt.Fprintln(output)
-	if err != nil {
-		return "", fmt.Errorf("read login token: %w", err)
-	}
-	return parseLoginInput(data)
-}
-
-func loginTokenPrompt(input io.Reader, output io.Writer) func() (credentials.LoginToken, error) {
-	file, ok := input.(*os.File)
-	if !ok || !term.IsTerminal(int(file.Fd())) {
-		return nil
-	}
-	return func() (credentials.LoginToken, error) { return readLoginToken(input, output) }
-}
-
 func interactiveBrowserOpener(input io.Reader) func(string) error {
 	file, ok := input.(*os.File)
 	if !ok || !term.IsTerminal(int(file.Fd())) {
 		return nil
 	}
 	return openBrowser
-}
-
-func parseLoginInput(data []byte) (credentials.LoginToken, error) {
-	token := credentials.LoginToken(strings.TrimSpace(string(data)))
-	if _, err := credentials.ParseLoginToken(token); err != nil {
-		return "", failure.Wrap("validate login token", failure.LoginTokenInvalid, err)
-	}
-	return token, nil
 }
 
 func runLogout(ctx context.Context, flags logoutCommand, output io.Writer, diagnostics ...io.Writer) error {

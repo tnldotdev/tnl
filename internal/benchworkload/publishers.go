@@ -2,6 +2,7 @@ package benchworkload
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -13,11 +14,9 @@ import (
 
 	quic "github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/qlog"
-	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -41,12 +40,12 @@ func (transport TransportChoice) Valid() bool {
 }
 
 type PublisherConfig struct {
-	Server, LoginToken, Domain, StateRoot, Target string
-	HostnamePrefix                                string
-	Ephemeral                                     bool
-	HTTPClient                                    *http.Client
-	RelayTLS                                      *tls.Config
-	AllowedIPPrefixes                             []string
+	Server, Domain, StateRoot, Target string
+	HostnamePrefix                    string
+	Ephemeral                         bool
+	HTTPClient                        *http.Client
+	RelayTLS                          *tls.Config
+	AllowedIPPrefixes                 []string
 	// mixed forces alternating QUIC/TLS-TCP cohorts; auto uses production fallback.
 	Transport                   TransportChoice
 	QUICDisablePathMTUDiscovery bool
@@ -100,26 +99,6 @@ type Publishers struct {
 	prepare     func(context.Context, publisher.Config) (publisher.Config, func(context.Context) error, error)
 }
 
-// a control session creates saved URLs, but only the URL-scoped native identity
-// may start their publish runs. the client state keeps the enrollment reusable.
-type scopedBenchmarkControl struct {
-	*controlclient.Client
-	state     *clientstate.Store
-	authority *authorityclient.Client
-}
-
-func (c scopedBenchmarkControl) CreatePublishRun(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
-	route, err := c.Client.GetPublicURL(ctx, id)
-	if err != nil {
-		return controlv1.PublishRunSetup{}, err
-	}
-	native, _, err := nativeauth.EnsureOwner(ctx, c.state, c.Client, c.authority, route)
-	if err != nil {
-		return controlv1.PublishRunSetup{}, err
-	}
-	return native.CreatePublishRun(ctx, id, retry)
-}
-
 func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers, retErr error) {
 	if config.Parallel < 1 || config.StartParallel < 0 || config.RateRequests < 0 || config.ReadyTimeout <= 0 || config.StopTimeout <= 0 || config.DrainTime < 0 {
 		return nil, errors.New("publisher concurrency and deadlines must be positive")
@@ -140,10 +119,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 		ServerEndpoint: config.Server, State: database, HTTPClient: config.HTTPClient,
 		Diagnostics: io.Discard,
 	}
-	if config.LoginToken != "" {
-		authConfig.ForceLoginToken = true
-		authConfig.LoginToken = func() (credentials.LoginToken, error) { return credentials.LoginToken(config.LoginToken), nil }
-	} else {
+	{
 		store, err := database.Server(ctx, config.Server)
 		if err != nil {
 			return nil, err
@@ -155,9 +131,6 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 		}
 	}
 	authenticate := clientauth.Authenticate
-	if config.LoginToken != "" {
-		authenticate = clientauth.Login
-	}
 	var auth *clientauth.Client
 	authCtx, cancelAuth := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancelAuth()
@@ -217,7 +190,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 		return nil, err
 	}
 	var prepare func(context.Context, publisher.Config) (publisher.Config, func(context.Context) error, error)
-	var publicationControl publisher.PublicURLControlClient = scopedBenchmarkControl{Client: auth.Control, state: store, authority: auth.Authority}
+	var publicationControl publisher.PublicURLControlClient = auth.Control
 	if config.Ephemeral {
 		namespace := membership.ManagedLabel + "." + domain.CanonicalDomain
 		native, _, err := nativeauth.EnsureNamespace(ctx, store, auth.Control, auth.Authority, team.Id, domain.Id, namespace)
@@ -256,6 +229,26 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 			return cfg, func(ctx context.Context) error { return worker.DeletePublicURL(ctx, route.Id) }, nil
 		}
 		publicationControl = native
+	} else {
+		// enroll the exact saved URL before publisher.Run acquires identity and
+		// certificate locks. certificate keys remain publisher-scoped.
+		prepare = func(ctx context.Context, cfg publisher.Config) (publisher.Config, func(context.Context) error, error) {
+			route, err := auth.Control.GetPublicURLByHostname(ctx, cfg.TeamID, cfg.Hostname)
+			if errors.Is(err, controlclient.ErrNotFound) {
+				mode := cfg.AccessMode
+				key := sha256.Sum256([]byte(cfg.Hostname))
+				route, err = auth.Control.CreatePublicURL(ctx, controlv1.CreatePublicURLRequest{TeamId: cfg.TeamID, DomainId: cfg.DomainID, MembershipId: &cfg.MembershipID, CanonicalHostname: cfg.Hostname, PublicUrlScope: cfg.PublicURLScope, Purpose: cfg.Purpose, Target: cfg.Target, AccessMode: &mode, AllowedIpPrefixes: &cfg.AllowedIPPrefixes}, fmt.Sprintf("benchmark-%x", key))
+			}
+			if err != nil {
+				return cfg, nil, err
+			}
+			native, identity, err := nativeauth.EnsureOwner(ctx, store, auth.Control, auth.Authority, route)
+			if err != nil {
+				return cfg, nil, err
+			}
+			cfg.Control, cfg.PublisherID = native, identity.ClientId
+			return cfg, nil, nil
+		}
 	}
 	groupCtx, cancel := context.WithCancel(ctx)
 	limits := publisher.ApplicationLimits{Concurrency: config.Concurrency}

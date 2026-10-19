@@ -310,6 +310,7 @@ func (q *Queries) CreateOrganizationTeam(ctx context.Context, arg CreateOrganiza
 
 const createTeamInvitation = `-- name: CreateTeamInvitation :one
 INSERT INTO control.team_invitations (
+    personal_account_exception,
     id,
     team_id,
     slug_reservation_id,
@@ -332,14 +333,16 @@ INSERT INTO control.team_invitations (
     $7,
     $8,
     $9,
-    'pending',
     $10,
-    $11
+    'pending',
+    $11,
+    $12
 )
-RETURNING id, team_id, slug_reservation_id, initial_role, invited_by_identity_id, idempotency_key, request_digest, token_digest, normalized_email_restriction, state, created_at, expires_at, accepted_at, accepted_by_identity_id, accepted_membership_id, revoked_at, revoked_by_identity_id
+RETURNING personal_account_exception, id, team_id, slug_reservation_id, initial_role, invited_by_identity_id, idempotency_key, request_digest, token_digest, normalized_email_restriction, state, created_at, expires_at, accepted_at, accepted_by_identity_id, accepted_membership_id, revoked_at, revoked_by_identity_id
 `
 
 type CreateTeamInvitationParams struct {
+	PersonalAccountException   bool
 	ID                         string
 	TeamID                     string
 	SlugReservationID          string
@@ -355,6 +358,7 @@ type CreateTeamInvitationParams struct {
 
 func (q *Queries) CreateTeamInvitation(ctx context.Context, arg CreateTeamInvitationParams) (ControlTeamInvitation, error) {
 	row := q.db.QueryRow(ctx, createTeamInvitation,
+		arg.PersonalAccountException,
 		arg.ID,
 		arg.TeamID,
 		arg.SlugReservationID,
@@ -369,6 +373,7 @@ func (q *Queries) CreateTeamInvitation(ctx context.Context, arg CreateTeamInvita
 	)
 	var i ControlTeamInvitation
 	err := row.Scan(
+		&i.PersonalAccountException,
 		&i.ID,
 		&i.TeamID,
 		&i.SlugReservationID,
@@ -563,7 +568,7 @@ FROM control.teams AS t
 JOIN control.team_memberships AS m
   ON m.team_id = t.id
  AND m.identity_id = $1
- AND m.removed_at IS NULL
+ AND control.active_membership(m.id,CURRENT_TIMESTAMP)
 WHERE t.id = $2
   AND t.deleted_at IS NULL
 `
@@ -601,7 +606,7 @@ func (q *Queries) GetIdentityTeam(ctx context.Context, arg GetIdentityTeamParams
 }
 
 const getInvitationByIdempotency = `-- name: GetInvitationByIdempotency :one
-SELECT i.id, i.team_id, i.slug_reservation_id, i.initial_role, i.invited_by_identity_id, i.idempotency_key, i.request_digest, i.token_digest, i.normalized_email_restriction, i.state, i.created_at, i.expires_at, i.accepted_at, i.accepted_by_identity_id, i.accepted_membership_id, i.revoked_at, i.revoked_by_identity_id, s.member_slug
+SELECT i.personal_account_exception, i.id, i.team_id, i.slug_reservation_id, i.initial_role, i.invited_by_identity_id, i.idempotency_key, i.request_digest, i.token_digest, i.normalized_email_restriction, i.state, i.created_at, i.expires_at, i.accepted_at, i.accepted_by_identity_id, i.accepted_membership_id, i.revoked_at, i.revoked_by_identity_id, s.member_slug
 FROM control.team_invitations AS i
 JOIN control.member_slug_reservations AS s ON s.id = i.slug_reservation_id
 WHERE i.invited_by_identity_id = $1
@@ -617,6 +622,7 @@ type GetInvitationByIdempotencyParams struct {
 }
 
 type GetInvitationByIdempotencyRow struct {
+	PersonalAccountException   bool
 	ID                         string
 	TeamID                     string
 	SlugReservationID          string
@@ -641,6 +647,7 @@ func (q *Queries) GetInvitationByIdempotency(ctx context.Context, arg GetInvitat
 	row := q.db.QueryRow(ctx, getInvitationByIdempotency, arg.IdentityID, arg.TeamID, arg.IdempotencyKey)
 	var i GetInvitationByIdempotencyRow
 	err := row.Scan(
+		&i.PersonalAccountException,
 		&i.ID,
 		&i.TeamID,
 		&i.SlugReservationID,
@@ -730,7 +737,7 @@ FROM control.teams AS t
 JOIN control.team_memberships AS actor
   ON actor.team_id = t.id
  AND actor.identity_id = $1
- AND actor.removed_at IS NULL
+ AND control.active_membership(actor.id,CURRENT_TIMESTAMP)
 WHERE t.id = $2
   AND t.deleted_at IS NULL
 `
@@ -773,6 +780,8 @@ func (q *Queries) GetTeamActorContext(ctx context.Context, arg GetTeamActorConte
 
 const getTeamMembershipContext = `-- name: GetTeamMembershipContext :one
 SELECT
+    m.identity_connection_id,m.manual_suspended_at,m.personal_account_exception,t.company_sign_in_required,
+    control.active_membership(m.id,CURRENT_TIMESTAMP)::boolean AS active,
     m.id,
     m.team_id,
     m.identity_id,
@@ -798,23 +807,33 @@ type GetTeamMembershipContextParams struct {
 }
 
 type GetTeamMembershipContextRow struct {
-	ID              string
-	TeamID          string
-	IdentityID      string
-	TeamDisplayName string
-	TeamKind        string
-	Role            string
-	MemberSlug      string
-	ManagedLabel    string
-	PolicyRevision  int64
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	IdentityConnectionID     pgtype.Text
+	ManualSuspendedAt        pgtype.Timestamptz
+	PersonalAccountException bool
+	CompanySignInRequired    bool
+	Active                   bool
+	ID                       string
+	TeamID                   string
+	IdentityID               string
+	TeamDisplayName          string
+	TeamKind                 string
+	Role                     string
+	MemberSlug               string
+	ManagedLabel             string
+	PolicyRevision           int64
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
 }
 
 func (q *Queries) GetTeamMembershipContext(ctx context.Context, arg GetTeamMembershipContextParams) (GetTeamMembershipContextRow, error) {
 	row := q.db.QueryRow(ctx, getTeamMembershipContext, arg.MembershipID, arg.TeamID)
 	var i GetTeamMembershipContextRow
 	err := row.Scan(
+		&i.IdentityConnectionID,
+		&i.ManualSuspendedAt,
+		&i.PersonalAccountException,
+		&i.CompanySignInRequired,
+		&i.Active,
 		&i.ID,
 		&i.TeamID,
 		&i.IdentityID,
@@ -883,7 +902,7 @@ WHERE d.released_at IS NULL
       FROM control.team_memberships AS m
       WHERE m.team_id = $1
         AND m.identity_id = $2
-        AND m.removed_at IS NULL
+        AND control.active_membership(m.id,CURRENT_TIMESTAMP)
   )
 ORDER BY CASE d.kind WHEN 'managed' THEN 0 ELSE 1 END, d.canonical_domain, d.id
 `
@@ -953,7 +972,7 @@ FROM control.teams AS t
 JOIN control.team_memberships AS m
   ON m.team_id = t.id
  AND m.identity_id = $1
- AND m.removed_at IS NULL
+ AND control.active_membership(m.id,CURRENT_TIMESTAMP)
 WHERE t.deleted_at IS NULL
 ORDER BY t.created_at, t.id
 `
@@ -999,7 +1018,7 @@ func (q *Queries) ListIdentityTeams(ctx context.Context, identityID string) ([]L
 }
 
 const listTeamInvitations = `-- name: ListTeamInvitations :many
-SELECT i.id, i.team_id, i.slug_reservation_id, i.initial_role, i.invited_by_identity_id, i.idempotency_key, i.request_digest, i.token_digest, i.normalized_email_restriction, i.state, i.created_at, i.expires_at, i.accepted_at, i.accepted_by_identity_id, i.accepted_membership_id, i.revoked_at, i.revoked_by_identity_id, s.member_slug
+SELECT i.personal_account_exception, i.id, i.team_id, i.slug_reservation_id, i.initial_role, i.invited_by_identity_id, i.idempotency_key, i.request_digest, i.token_digest, i.normalized_email_restriction, i.state, i.created_at, i.expires_at, i.accepted_at, i.accepted_by_identity_id, i.accepted_membership_id, i.revoked_at, i.revoked_by_identity_id, s.member_slug
 FROM control.team_invitations AS i
 JOIN control.member_slug_reservations AS s ON s.id = i.slug_reservation_id
 WHERE i.team_id = $1
@@ -1007,6 +1026,7 @@ ORDER BY i.created_at, i.id
 `
 
 type ListTeamInvitationsRow struct {
+	PersonalAccountException   bool
 	ID                         string
 	TeamID                     string
 	SlugReservationID          string
@@ -1037,6 +1057,7 @@ func (q *Queries) ListTeamInvitations(ctx context.Context, teamID string) ([]Lis
 	for rows.Next() {
 		var i ListTeamInvitationsRow
 		if err := rows.Scan(
+			&i.PersonalAccountException,
 			&i.ID,
 			&i.TeamID,
 			&i.SlugReservationID,
@@ -1068,6 +1089,8 @@ func (q *Queries) ListTeamInvitations(ctx context.Context, teamID string) ([]Lis
 
 const listTeamMembershipContexts = `-- name: ListTeamMembershipContexts :many
 SELECT
+    m.identity_connection_id,m.manual_suspended_at,m.personal_account_exception,t.company_sign_in_required,
+    control.active_membership(m.id,CURRENT_TIMESTAMP)::boolean AS active,
     m.id,
     m.team_id,
     m.identity_id,
@@ -1090,7 +1113,7 @@ WHERE m.team_id = $1
       FROM control.team_memberships AS actor
       WHERE actor.team_id = m.team_id
         AND actor.identity_id = $2
-        AND actor.removed_at IS NULL
+        AND control.active_membership(actor.id,CURRENT_TIMESTAMP)
   )
 ORDER BY m.created_at, m.id
 `
@@ -1101,17 +1124,22 @@ type ListTeamMembershipContextsParams struct {
 }
 
 type ListTeamMembershipContextsRow struct {
-	ID              string
-	TeamID          string
-	IdentityID      string
-	TeamDisplayName string
-	TeamKind        string
-	Role            string
-	MemberSlug      string
-	ManagedLabel    string
-	PolicyRevision  int64
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	IdentityConnectionID     pgtype.Text
+	ManualSuspendedAt        pgtype.Timestamptz
+	PersonalAccountException bool
+	CompanySignInRequired    bool
+	Active                   bool
+	ID                       string
+	TeamID                   string
+	IdentityID               string
+	TeamDisplayName          string
+	TeamKind                 string
+	Role                     string
+	MemberSlug               string
+	ManagedLabel             string
+	PolicyRevision           int64
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
 }
 
 func (q *Queries) ListTeamMembershipContexts(ctx context.Context, arg ListTeamMembershipContextsParams) ([]ListTeamMembershipContextsRow, error) {
@@ -1124,6 +1152,11 @@ func (q *Queries) ListTeamMembershipContexts(ctx context.Context, arg ListTeamMe
 	for rows.Next() {
 		var i ListTeamMembershipContextsRow
 		if err := rows.Scan(
+			&i.IdentityConnectionID,
+			&i.ManualSuspendedAt,
+			&i.PersonalAccountException,
+			&i.CompanySignInRequired,
+			&i.Active,
 			&i.ID,
 			&i.TeamID,
 			&i.IdentityID,
@@ -1147,7 +1180,7 @@ func (q *Queries) ListTeamMembershipContexts(ctx context.Context, arg ListTeamMe
 }
 
 const lockDomainPublicURLs = `-- name: LockDomainPublicURLs :many
-SELECT id, team_id, domain_id, ingress_pool_id, membership_id, created_by_identity_id, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target, namespace, purpose, service_protocol, public_port, public_url_scope, policy_revision, access_mode, ip_policy, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
+SELECT id, team_id, domain_id, ingress_pool_id, membership_id, created_by_identity_id, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target, namespace, purpose, service_protocol, publisher_pool, public_url_scope, policy_revision, access_mode, ip_policy, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
 FROM control.public_urls
 WHERE team_id = $1
   AND domain_id = $2
@@ -1185,7 +1218,7 @@ func (q *Queries) LockDomainPublicURLs(ctx context.Context, arg LockDomainPublic
 			&i.Namespace,
 			&i.Purpose,
 			&i.ServiceProtocol,
-			&i.PublicPort,
+			&i.PublisherPool,
 			&i.PublicURLScope,
 			&i.PolicyRevision,
 			&i.AccessMode,
@@ -1247,7 +1280,7 @@ func (q *Queries) LockIdentityForTeamCreation(ctx context.Context, identityID st
 
 const lockInvitationByTokenDigest = `-- name: LockInvitationByTokenDigest :one
 SELECT
-    i.id, i.team_id, i.slug_reservation_id, i.initial_role, i.invited_by_identity_id, i.idempotency_key, i.request_digest, i.token_digest, i.normalized_email_restriction, i.state, i.created_at, i.expires_at, i.accepted_at, i.accepted_by_identity_id, i.accepted_membership_id, i.revoked_at, i.revoked_by_identity_id,
+    i.personal_account_exception, i.id, i.team_id, i.slug_reservation_id, i.initial_role, i.invited_by_identity_id, i.idempotency_key, i.request_digest, i.token_digest, i.normalized_email_restriction, i.state, i.created_at, i.expires_at, i.accepted_at, i.accepted_by_identity_id, i.accepted_membership_id, i.revoked_at, i.revoked_by_identity_id,
     s.member_slug,
     t.kind AS team_kind,
     t.display_name AS team_display_name,
@@ -1269,6 +1302,7 @@ type LockInvitationByTokenDigestParams struct {
 }
 
 type LockInvitationByTokenDigestRow struct {
+	PersonalAccountException   bool
 	ID                         string
 	TeamID                     string
 	SlugReservationID          string
@@ -1297,6 +1331,7 @@ func (q *Queries) LockInvitationByTokenDigest(ctx context.Context, arg LockInvit
 	row := q.db.QueryRow(ctx, lockInvitationByTokenDigest, arg.IdentityID, arg.TokenDigest)
 	var i LockInvitationByTokenDigestRow
 	err := row.Scan(
+		&i.PersonalAccountException,
 		&i.ID,
 		&i.TeamID,
 		&i.SlugReservationID,
@@ -1401,7 +1436,7 @@ func (q *Queries) LockManagedDomainForClaim(ctx context.Context) (ControlDomain,
 }
 
 const lockMembershipPublicURLs = `-- name: LockMembershipPublicURLs :many
-SELECT routes.id, routes.team_id, routes.domain_id, routes.ingress_pool_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest_ciphertext, routes.request_digest_storage_key_id, routes.canonical_hostname, routes.target, routes.namespace, routes.purpose, routes.service_protocol, routes.public_port, routes.public_url_scope, routes.policy_revision, routes.access_mode, routes.ip_policy, routes.allowed_ip_policy_ciphertext, routes.allowed_ip_policy_storage_key_id, routes.allowed_ip_hashes, routes.allowed_ip_hash_key_id, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
+SELECT routes.id, routes.team_id, routes.domain_id, routes.ingress_pool_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest_ciphertext, routes.request_digest_storage_key_id, routes.canonical_hostname, routes.target, routes.namespace, routes.purpose, routes.service_protocol, routes.publisher_pool, routes.public_url_scope, routes.policy_revision, routes.access_mode, routes.ip_policy, routes.allowed_ip_policy_ciphertext, routes.allowed_ip_policy_storage_key_id, routes.allowed_ip_hashes, routes.allowed_ip_hash_key_id, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
 FROM control.public_urls AS routes
 WHERE routes.team_id = $1
   AND (
@@ -1448,7 +1483,7 @@ func (q *Queries) LockMembershipPublicURLs(ctx context.Context, arg LockMembersh
 			&i.Namespace,
 			&i.Purpose,
 			&i.ServiceProtocol,
-			&i.PublicPort,
+			&i.PublisherPool,
 			&i.PublicURLScope,
 			&i.PolicyRevision,
 			&i.AccessMode,
@@ -1504,7 +1539,7 @@ FROM control.teams AS t
 JOIN control.team_memberships AS actor
   ON actor.team_id = t.id
  AND actor.identity_id = $1
- AND actor.removed_at IS NULL
+ AND control.active_membership(actor.id,CURRENT_TIMESTAMP)
 WHERE t.id = $2
   AND t.deleted_at IS NULL
 FOR UPDATE OF t, actor
@@ -1628,7 +1663,7 @@ func (q *Queries) LockTeamForInvitationAcceptance(ctx context.Context, teamID st
 }
 
 const lockTeamInvitation = `-- name: LockTeamInvitation :one
-SELECT i.id, i.team_id, i.slug_reservation_id, i.initial_role, i.invited_by_identity_id, i.idempotency_key, i.request_digest, i.token_digest, i.normalized_email_restriction, i.state, i.created_at, i.expires_at, i.accepted_at, i.accepted_by_identity_id, i.accepted_membership_id, i.revoked_at, i.revoked_by_identity_id, s.member_slug
+SELECT i.personal_account_exception, i.id, i.team_id, i.slug_reservation_id, i.initial_role, i.invited_by_identity_id, i.idempotency_key, i.request_digest, i.token_digest, i.normalized_email_restriction, i.state, i.created_at, i.expires_at, i.accepted_at, i.accepted_by_identity_id, i.accepted_membership_id, i.revoked_at, i.revoked_by_identity_id, s.member_slug
 FROM control.team_invitations AS i
 JOIN control.member_slug_reservations AS s ON s.id = i.slug_reservation_id
 WHERE i.id = $1
@@ -1642,6 +1677,7 @@ type LockTeamInvitationParams struct {
 }
 
 type LockTeamInvitationRow struct {
+	PersonalAccountException   bool
 	ID                         string
 	TeamID                     string
 	SlugReservationID          string
@@ -1666,6 +1702,7 @@ func (q *Queries) LockTeamInvitation(ctx context.Context, arg LockTeamInvitation
 	row := q.db.QueryRow(ctx, lockTeamInvitation, arg.InvitationID, arg.TeamID)
 	var i LockTeamInvitationRow
 	err := row.Scan(
+		&i.PersonalAccountException,
 		&i.ID,
 		&i.TeamID,
 		&i.SlugReservationID,
@@ -1689,7 +1726,7 @@ func (q *Queries) LockTeamInvitation(ctx context.Context, arg LockTeamInvitation
 }
 
 const lockTeamMembership = `-- name: LockTeamMembership :one
-SELECT m.id, m.team_id, m.identity_id, m.slug_reservation_id, m.managed_label, m.role, m.authority_revision, m.created_at, m.updated_at, m.removed_at, m.removed_by_identity_id, s.member_slug
+SELECT m.id, m.team_id, m.identity_id, m.slug_reservation_id, m.managed_label, m.role, m.authority_revision, m.created_at, m.updated_at, m.removed_at, m.removed_by_identity_id, m.identity_connection_id, m.manual_suspended_at, m.personal_account_exception, s.member_slug
 FROM control.team_memberships AS m
 JOIN control.member_slug_reservations AS s ON s.id = m.slug_reservation_id
 WHERE m.id = $1
@@ -1704,18 +1741,21 @@ type LockTeamMembershipParams struct {
 }
 
 type LockTeamMembershipRow struct {
-	ID                  string
-	TeamID              string
-	IdentityID          string
-	SlugReservationID   string
-	ManagedLabel        string
-	Role                string
-	AuthorityRevision   int64
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	RemovedAt           pgtype.Timestamptz
-	RemovedByIdentityID pgtype.Text
-	MemberSlug          string
+	ID                       string
+	TeamID                   string
+	IdentityID               string
+	SlugReservationID        string
+	ManagedLabel             string
+	Role                     string
+	AuthorityRevision        int64
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	RemovedAt                pgtype.Timestamptz
+	RemovedByIdentityID      pgtype.Text
+	IdentityConnectionID     pgtype.Text
+	ManualSuspendedAt        pgtype.Timestamptz
+	PersonalAccountException bool
+	MemberSlug               string
 }
 
 func (q *Queries) LockTeamMembership(ctx context.Context, arg LockTeamMembershipParams) (LockTeamMembershipRow, error) {
@@ -1733,6 +1773,9 @@ func (q *Queries) LockTeamMembership(ctx context.Context, arg LockTeamMembership
 		&i.UpdatedAt,
 		&i.RemovedAt,
 		&i.RemovedByIdentityID,
+		&i.IdentityConnectionID,
+		&i.ManualSuspendedAt,
+		&i.PersonalAccountException,
 		&i.MemberSlug,
 	)
 	return i, err

@@ -129,8 +129,11 @@ func newAuthFixture(t *testing.T, respond func(*http.Request) (*http.Response, e
 	transport := &recordingTransport{respond: func(request *http.Request) (*http.Response, error) {
 		if request.URL.String() == testControlOrigin+"/v1/discovery" {
 			return jsonResponse(http.StatusOK, controlv1.ControlDiscovery{
-				Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{controlv1.LoginToken}},
+				Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{controlv1.Oidc}, Oidc: &controlv1.OIDCAuthenticationFacts{Issuer: "https://identity.example", LoginFlow: controlv1.DeviceCode}},
 			}), nil
+		}
+		if request.URL.Path == "/v1/auth/device" {
+			return jsonResponse(201, deviceChallenge()), nil
 		}
 		return respond(request)
 	}}
@@ -214,8 +217,8 @@ func TestAuthenticateRefreshRejectionVersusTransientFailure(t *testing.T) {
 						return nil, test.failure
 					}
 					return problemResponse(test.status, test.code), nil
-				case "/v1/auth/token":
-					return jsonResponse(200, issued), nil
+				case "/v1/auth/device/poll":
+					return jsonResponse(200, authorityv1.DeviceLoginResult{Status: authorityv1.DeviceLoginResultStatusApproved, Session: &issued}), nil
 				case "/v1/auth/logout":
 					return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
 				default:
@@ -224,7 +227,7 @@ func TestAuthenticateRefreshRejectionVersusTransientFailure(t *testing.T) {
 			})
 			f.save(t, old)
 			logins := 0
-			f.config.LoginToken = func() (credentials.LoginToken, error) { logins++; return "login-input", nil }
+			f.config.ObserveLogin = func(clientstate.AuthOperation) error { logins++; return nil }
 			client, err := Authenticate(t.Context(), f.config)
 			requests := f.transport.snapshot()
 			if test.login {
@@ -268,8 +271,8 @@ func TestAuthenticateRejectedRefreshDoesNotExchangeOrRevoke(t *testing.T) {
 		case "/v1/auth/refresh":
 			refreshes++
 			return problemResponse(http.StatusBadRequest, "invalid_request"), nil
-		case "/v1/auth/token":
-			return jsonResponse(http.StatusOK, issued), nil
+		case "/v1/auth/device/poll":
+			return jsonResponse(http.StatusOK, authorityv1.DeviceLoginResult{Status: authorityv1.DeviceLoginResultStatusApproved, Session: &issued}), nil
 		case "/v1/auth/logout":
 			if request.Header.Get("Authorization") == "Bearer "+old.AccessToken {
 				return problemResponse(http.StatusUnauthorized, "unauthenticated"), nil
@@ -281,7 +284,6 @@ func TestAuthenticateRejectedRefreshDoesNotExchangeOrRevoke(t *testing.T) {
 		}
 	})
 	f.save(t, old)
-	f.config.LoginToken = func() (credentials.LoginToken, error) { return "login-input", nil }
 	client, err := Authenticate(t.Context(), f.config)
 	if err == nil || client != nil || refreshes != 1 || issuedLogouts != 0 {
 		t.Fatalf("replacement login = %v, refreshes = %d, issued logouts = %d", err, refreshes, issuedLogouts)
@@ -407,8 +409,8 @@ func TestExplicitLoginRevocationFailureCleansUpIssuedSession(t *testing.T) {
 	issued := issuedSession(t)
 	issued.SessionId = "cs_abcdefghijkl0123456789"
 	f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
-		if request.URL.Path == "/v1/auth/token" {
-			return jsonResponse(200, issued), nil
+		if request.URL.Path == "/v1/auth/device/poll" {
+			return jsonResponse(200, authorityv1.DeviceLoginResult{Status: authorityv1.DeviceLoginResultStatusApproved, Session: &issued}), nil
 		}
 		if request.URL.Path == "/v1/auth/logout" {
 			if request.Header.Get("Authorization") == "Bearer "+old.AccessToken {
@@ -419,18 +421,17 @@ func TestExplicitLoginRevocationFailureCleansUpIssuedSession(t *testing.T) {
 		return nil, errors.New("unexpected request")
 	})
 	f.save(t, old)
-	f.config.LoginToken = func() (credentials.LoginToken, error) { return "replacement-login", nil }
 	client, err := Login(t.Context(), f.config)
 	if client != nil || !errors.Is(err, authorityclient.ErrUnavailable) {
 		t.Fatalf("Authenticate error=%v", err)
 	}
 	f.assertSession(t, old)
 	requests := f.transport.snapshot()
-	if len(requests) != 4 {
+	if len(requests) != 8 {
 		t.Fatalf("requests=%d", len(requests))
 	}
-	assertAuthRequest(t, requests[2], http.MethodPost, testControlOrigin+"/v1/auth/logout", old.AccessToken, nil)
-	assertAuthRequest(t, requests[3], http.MethodPost, testControlOrigin+"/v1/auth/logout", issued.AccessToken, nil)
+	assertAuthRequest(t, requests[len(requests)-2], http.MethodPost, testControlOrigin+"/v1/auth/logout", old.AccessToken, nil)
+	assertAuthRequest(t, requests[len(requests)-1], http.MethodPost, testControlOrigin+"/v1/auth/logout", issued.AccessToken, nil)
 }
 
 func TestIssuedSessionCleanupSurvivesParentCancellation(t *testing.T) {
@@ -445,8 +446,8 @@ func TestIssuedSessionCleanupSurvivesParentCancellation(t *testing.T) {
 	defer cancel()
 	f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
 		switch request.URL.Path {
-		case "/v1/auth/token":
-			return jsonResponse(http.StatusOK, issued), nil
+		case "/v1/auth/device/poll":
+			return jsonResponse(http.StatusOK, authorityv1.DeviceLoginResult{Status: authorityv1.DeviceLoginResultStatusApproved, Session: &issued}), nil
 		case "/v1/auth/logout":
 			switch request.Header.Get("Authorization") {
 			case "Bearer " + old.AccessToken:
@@ -464,7 +465,6 @@ func TestIssuedSessionCleanupSurvivesParentCancellation(t *testing.T) {
 		return nil, errors.New("unexpected request")
 	})
 	f.save(t, old)
-	f.config.LoginToken = func() (credentials.LoginToken, error) { return "replacement-login", nil }
 	client, err := Login(ctx, f.config)
 	if client != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("Authenticate error = %v", err)
@@ -483,8 +483,8 @@ func TestIssuedSessionCleanupFailureIsJoined(t *testing.T) {
 	cleanupFailure := errors.New("issued revocation failed")
 	f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
 		switch request.URL.Path {
-		case "/v1/auth/token":
-			return jsonResponse(http.StatusOK, issued), nil
+		case "/v1/auth/device/poll":
+			return jsonResponse(http.StatusOK, authorityv1.DeviceLoginResult{Status: authorityv1.DeviceLoginResultStatusApproved, Session: &issued}), nil
 		case "/v1/auth/logout":
 			if request.Header.Get("Authorization") == "Bearer "+old.AccessToken {
 				return nil, primaryFailure
@@ -495,7 +495,6 @@ func TestIssuedSessionCleanupFailureIsJoined(t *testing.T) {
 		}
 	})
 	f.save(t, old)
-	f.config.LoginToken = func() (credentials.LoginToken, error) { return "replacement-login", nil }
 	client, err := Login(t.Context(), f.config)
 	if client != nil || !errors.Is(err, primaryFailure) || !errors.Is(err, cleanupFailure) {
 		t.Fatalf("Authenticate error = %v", err)
@@ -591,11 +590,11 @@ func TestLoginFailurePreservesSavedSessionAndServerSelection(t *testing.T) {
 			invalid := issuedSession(t)
 			invalid.RefreshToken = "invalid"
 			f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
-				if request.URL.Path != "/v1/auth/token" {
+				if request.URL.Path != "/v1/auth/device/poll" {
 					return nil, errors.New("unexpected revocation or refresh")
 				}
 				if name == "invalid issued session" {
-					return jsonResponse(200, invalid), nil
+					return jsonResponse(200, authorityv1.DeviceLoginResult{Status: authorityv1.DeviceLoginResultStatusApproved, Session: &invalid}), nil
 				}
 				return problemResponse(401, "unauthenticated"), nil
 			})
@@ -604,11 +603,11 @@ func TestLoginFailurePreservesSavedSessionAndServerSelection(t *testing.T) {
 			if err := f.config.State.SaveServer(t.Context(), selected); err != nil {
 				t.Fatal(err)
 			}
-			f.config.LoginToken = func() (credentials.LoginToken, error) {
+			f.config.ObserveLogin = func(clientstate.AuthOperation) error {
 				if name == "prompt" {
-					return "", promptFailure
+					return promptFailure
 				}
-				return "login-input", nil
+				return nil
 			}
 			client, err := Login(t.Context(), f.config)
 			if err == nil || client != nil || name == "prompt" && !errors.Is(err, promptFailure) {
@@ -619,9 +618,9 @@ func TestLoginFailurePreservesSavedSessionAndServerSelection(t *testing.T) {
 			if err != nil || !found || got != selected {
 				t.Fatalf("selection changed: %q found=%v error=%v", got, found, err)
 			}
-			count := 2
+			count := 5
 			if name == "prompt" {
-				count = 1
+				count = 3
 			}
 			if len(f.transport.snapshot()) != count {
 				t.Fatal("failed login attempted refresh or revocation")

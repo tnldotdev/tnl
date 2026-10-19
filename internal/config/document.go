@@ -32,39 +32,67 @@ type Document struct {
 
 // TNL contains project-local client configuration.
 type TNL struct {
-	Server     *string            `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
-	Team       *string            `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
-	Feedback   *bool              `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
-	OAuth      bool               `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
-	Inspection *Inspection        `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP and supported TCP services."`
-	Tunnel     *Tunnel            `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Default public URL and tunnel settings."`
-	Publish    *Publish           `json:"-" yaml:"-"`
-	Readiness  *Readiness         `json:"-" yaml:"-"`
-	Services   Services           `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named services, private targets, and public tunnel settings."`
-	Webhooks   map[string]Webhook `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
-	Aliases    map[string]Alias   `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
+	Name       *string              `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved name for an unnamed HTTP service; named services use their service key unless overridden."`
+	Server     *string              `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
+	Team       *string              `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
+	Feedback   *bool                `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
+	OAuth      bool                 `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
+	Inspection *Inspection          `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP and supported TCP services."`
+	Tunnel     *Tunnel              `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Defaults applied only to explicit services.NAME.public_url blocks. These defaults never enable a public URL for another service."`
+	Publish    *Publish             `json:"-" yaml:"-"`
+	Readiness  *Readiness           `json:"-" yaml:"-"`
+	Publishers map[string]Publisher `json:"publishers,omitempty" yaml:"publishers,omitempty" jsonschema_description:"Named publisher groups with a durable namespace beneath a ready team domain. local is reserved for the built-in local publisher."`
+	Services   Services             `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named services. Only an explicit service public_url block enables public HTTPS; all other services are private, including HTTP."`
+	Webhooks   map[string]Webhook   `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
+	Aliases    map[string]Alias     `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
 }
 
 type Services map[string]Service
 
+type Publisher struct {
+	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Domain      *string `json:"domain,omitempty" yaml:"domain,omitempty" jsonschema_description:"Ready team domain; defaults to the team's default domain when the namespace is first allocated."`
+	Public      bool    `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Enable direct ingress access. Omitted or false uses loopback DNS and requires tnl connect. Native TLS and visitor authorization apply in either mode."`
+}
+
+// ServiceAccess declares a team grant for either a public or private service.
+type ServiceAccess struct {
+	Team bool `json:"team,omitempty" yaml:"team,omitempty"`
+}
+
 // Service contains project-local overrides for one named local service.
 type Service struct {
+	Name       *string        `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved name; defaults to the service key for both HTTP and private services."`
+	Publisher  *string        `json:"publisher,omitempty" yaml:"publisher,omitempty" jsonschema_description:"Assigned publisher group; defaults to the built-in local publisher."`
+	Access     *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Team grant intent for this service, whether public or private."`
 	Inspection *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
-	Tunnel     *Tunnel        `json:"tunnel,omitempty" yaml:"tunnel,omitempty" jsonschema_description:"Public URL and tunnel overrides for this service."`
-	Protocol   *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh"`
+	Tunnel     *Tunnel        `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Enable public HTTPS for this HTTP service. Omit this block for a private service, including private HTTP. The saved name belongs on the service."`
+	Protocol   *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=tcp,enum=mysql,enum=postgres" jsonschema_description:"Defaults to http (HTTP-aware). tcp is opaque transport; mysql and postgres are private database labels. Protocol never enables a public URL or TLS."`
 	Target     *ServiceTarget `json:"target,omitempty" yaml:"target,omitempty"`
 	HTTP       *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
 }
 
-// ServiceTarget describes exactly one private discovery mechanism. an omitted
-// target means an app-reported HTTP listener.
-// ServiceTLS describes trust for target TLS initiated by the visitor's tnl
-// process. a configured block never falls back to plaintext or unverified TLS.
-type ServiceTLS struct {
+// TrustSource is an evaluated CA source, not a service configuration setting.
+type TrustSource struct {
 	Hostname *string `json:"hostname,omitempty" yaml:"hostname,omitempty" jsonschema_description:"Certificate hostname; defaults to the target host. Set this when dialing an IP whose certificate names a DNS host."`
-	CA       string  `json:"ca" yaml:"ca" jsonschema:"required" jsonschema_description:"system uses only the visitor machine's roots. Otherwise capture a bounded candidate trust snapshot from a project-relative CA-only PEM file or verified HTTPS CA-bundle URL. A changed digest requires explicit server approval; fetching never updates that approval. No plaintext, stale, or unverified fallback. This is separate from publisher-to-HTTPS target trust."`
+	CA       string  `json:"ca" yaml:"ca"`
 }
 
+// ServiceName selects a saved name for either publication path.
+func ServiceName(serviceName string, service Service) string {
+	if service.Name != nil {
+		return *service.Name
+	}
+	return serviceName
+}
+
+// PrivateServiceName selects the saved name for a validated private service.
+func PrivateServiceName(serviceName string, service Service) string {
+	return ServiceName(serviceName, service)
+}
+
+// ServiceTarget describes exactly one private discovery mechanism. an omitted
+// target means an app-reported HTTP listener.
 type ServiceTarget struct {
 	Type      string     `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=compose,enum=docker"`
 	Address   *Target    `json:"address,omitempty" yaml:"address,omitempty"`
@@ -77,13 +105,13 @@ type ServiceTarget struct {
 }
 
 type TargetTLS struct {
-	ServerName *string `json:"server_name,omitempty" yaml:"server_name,omitempty"`
-	CAFile     *string `json:"ca_file,omitempty" yaml:"ca_file,omitempty"`
+	ServerName *string `json:"server_name,omitempty" yaml:"server_name,omitempty" jsonschema_description:"Target certificate hostname or IP; defaults to the resolved target host. Independent of the managed visitor TLS identity."`
+	CAFile     *string `json:"ca_file,omitempty" yaml:"ca_file,omitempty" jsonschema_description:"Project-relative CA-only PEM file added to system roots. Omit to use system roots. The publisher verifies target TLS; postgres and mysql use native negotiation, http and tcp use direct TLS. No unverified or plaintext fallback."`
 }
 
 type HTTPService struct {
-	Readiness *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty"`
-	Paths     map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty"`
+	Readiness *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty" jsonschema_description:"Readiness probe for a local HTTP service. Remote publisher assignments do not support readiness overrides."`
+	Paths     map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Path mounts between local HTTP services. Remote publisher assignments do not support path mounts."`
 	Open      *bool                `json:"open,omitempty" yaml:"open,omitempty"`
 }
 
@@ -108,21 +136,28 @@ func Protocol(service Service) string {
 	return *service.Protocol
 }
 
+func IsPublicService(service Service) bool { return service.Tunnel != nil }
+
+func PublisherName(service Service) string {
+	if service.Publisher == nil {
+		return "local"
+	}
+	return *service.Publisher
+}
+
 // ServicePublish resolves address targets into the native publication settings.
 // compose and docker addresses must first be discovered by the runtime.
 func ServicePublish(service Service) *Publish {
 	protocol := Protocol(service)
 	result := &Publish{Protocol: &protocol}
-	if service.Target == nil || service.Target.Type == "app" {
+	if service.Target == nil {
 		return result
 	}
 	result.Target = service.Target.Address
 	if tls := service.Target.TLS; tls != nil {
 		result.TargetTLSName, result.TargetCAFile = tls.ServerName, tls.CAFile
-		if protocol != "http" {
-			enabled := true
-			result.TargetTLS = &enabled
-		}
+		enabled := true
+		result.TargetTLS = &enabled
 	}
 	return result
 }
@@ -174,8 +209,8 @@ func (m *PathMount) UnmarshalYAML(node *yaml.Node) error {
 
 type Tunnel struct {
 	Domain    *string `json:"domain,omitempty" yaml:"domain,omitempty"`
-	Name      *string `json:"name,omitempty" yaml:"name,omitempty"`
-	PublicURL *string `json:"public_url,omitempty" yaml:"public_url,omitempty"`
+	Name      *string `json:"-" yaml:"-"`
+	PublicURL *string `json:"hostname,omitempty" yaml:"hostname,omitempty" jsonschema_description:"Exact authorized public hostname or HTTPS origin. Mutually exclusive with the service's name override."`
 	Open      *bool   `json:"-" yaml:"-"`
 	Access    *Access `json:"access,omitempty" yaml:"access,omitempty"`
 	Ephemeral *bool   `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
@@ -215,14 +250,14 @@ type TrafficLimits struct {
 }
 
 type Publish struct {
-	Protocol      *string `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=postgres,enum=mysql,enum=redis,enum=ssh" jsonschema_description:"Service protocol for the public URL; defaults to http."`
+	Protocol      *string `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=tcp,enum=mysql,enum=postgres" jsonschema_description:"Service protocol; defaults to http."`
 	Target        *Target `json:"target,omitempty" yaml:"target,omitempty" jsonschema_description:"HTTP or HTTPS origin, local port, or TCP host:port reached by the publisher."`
 	TargetTLSName *string `json:"target_tls_name,omitempty" yaml:"target_tls_name,omitempty" jsonschema_description:"Hostname expected in the target's TLS certificate; defaults to the target host."`
 	TargetTLS     *bool   `json:"target_tls,omitempty" yaml:"target_tls,omitempty" jsonschema_description:"Use verified TLS for the TCP target."`
 	TargetCAFile  *string `json:"target_ca_file,omitempty" yaml:"target_ca_file,omitempty" jsonschema_description:"Additional PEM certificate authorities for the target; relative paths are resolved from the project root."`
 }
 
-// ServiceProtocol selects the public URL's service protocol, defaulting to http.
+// ServiceProtocol selects the service protocol, defaulting to http.
 func ServiceProtocol(publish *Publish) string {
 	if publish != nil && publish.Protocol != nil {
 		return *publish.Protocol

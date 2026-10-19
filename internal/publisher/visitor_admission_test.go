@@ -3,7 +3,6 @@ package publisher
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"io"
 	"math"
@@ -17,12 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/controlclient"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/localproxy"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/tunnel"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -451,125 +447,5 @@ func TestExtremeRatePeriodRetryAfterDoesNotOverflow(t *testing.T) {
 	_, retry = a.enter(now.Add(time.Second))
 	if retry < time.Duration(math.MaxInt64)-2*time.Second {
 		t.Fatalf("overflow after partial refill: %s", retry)
-	}
-}
-
-type certificateAuthorizerFunc func(context.Context, controlclient.VisitorCertificateScope, tls.ConnectionState) error
-
-func (f certificateAuthorizerFunc) AuthorizeVisitorCertificate(ctx context.Context, scope controlclient.VisitorCertificateScope, state tls.ConnectionState) error {
-	return f(ctx, scope, state)
-}
-
-type cachedCertificateAuthorizer struct{ calls int }
-
-func (a *cachedCertificateAuthorizer) AuthorizeVisitorCertificate(ctx context.Context, scope controlclient.VisitorCertificateScope, state tls.ConnectionState) error {
-	_, err := a.AuthorizeVisitorCertificateDecision(ctx, scope, state)
-	return err
-}
-
-func (a *cachedCertificateAuthorizer) AuthorizeVisitorCertificateDecision(context.Context, controlclient.VisitorCertificateScope, tls.ConnectionState) (time.Time, error) {
-	a.calls++
-	return time.Now().Add(time.Minute), nil
-}
-
-func TestVisitorCertificateDecisionCacheBindsRunCertificateAndSource(t *testing.T) {
-	scope := controlclient.VisitorCertificateScope{PublishRunID: "run-1", PublicURLID: "url-1", PublishRunNumber: 7, PublishRunToken: credentials.PublishRunToken("private-run-token")}
-	client := &cachedCertificateAuthorizer{}
-	authorize := VisitorCertificateAuthorization(client, scope)
-	now := time.Now()
-	state := tls.ConnectionState{HandshakeComplete: true, PeerCertificates: []*x509.Certificate{{Raw: []byte("one certificate"), NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour)}}}
-	visitor := Visitor{Run: PublishRunIdentity{PublicURLID: scope.PublicURLID, PublishRunID: scope.PublishRunID, Number: scope.PublishRunNumber}, Source: netip.MustParseAddrPort("192.0.2.10:1234")}
-	for range 2 {
-		if err := authorize(t.Context(), visitor, state); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if client.calls != 1 {
-		t.Fatalf("two connections with the same proof made %d control checks", client.calls)
-	}
-	visitor.Source = netip.MustParseAddrPort("192.0.2.11:1234")
-	if err := authorize(t.Context(), visitor, state); err != nil || client.calls != 2 {
-		t.Fatalf("different source reused a certificate decision: %v, %d checks", err, client.calls)
-	}
-	visitor.Run.PublishRunID = "another-run"
-	if err := authorize(t.Context(), visitor, state); err == nil || client.calls != 2 {
-		t.Fatalf("different run reused a certificate decision: %v, %d checks", err, client.calls)
-	}
-	visitor.Run.PublishRunID = scope.PublishRunID
-	state.PeerCertificates[0].NotAfter = now.Add(-time.Second)
-	if err := authorize(t.Context(), visitor, state); err == nil || client.calls != 2 {
-		t.Fatalf("expired certificate reused a decision: %v, %d checks", err, client.calls)
-	}
-}
-
-func TestLiveCertificateAdapterBindsRunAndTrustedSource(t *testing.T) {
-	scope := controlclient.VisitorCertificateScope{PublishRunID: "run-1", PublicURLID: "url-1", PublishRunNumber: 7, PublishRunToken: credentials.PublishRunToken("private-run-token")}
-	var calls int
-	authorize := VisitorCertificateAuthorization(certificateAuthorizerFunc(func(_ context.Context, got controlclient.VisitorCertificateScope, _ tls.ConnectionState) error {
-		calls++
-		if got.PublishRunID != scope.PublishRunID || got.PublicURLID != scope.PublicURLID || got.PublishRunNumber != scope.PublishRunNumber || got.PublishRunToken != scope.PublishRunToken || got.SourceIP.String() != "192.0.2.10" {
-			t.Error("certificate authorization lost exact scope")
-		}
-		return nil
-	}), scope)
-	v := Visitor{Run: PublishRunIdentity{PublicURLID: scope.PublicURLID, PublishRunID: scope.PublishRunID, Number: scope.PublishRunNumber}, Source: netip.MustParseAddrPort("192.0.2.10:1234")}
-	if err := authorize(t.Context(), v, tls.ConnectionState{}); err != nil {
-		t.Fatal(err)
-	}
-	v.Run.PublishRunID = "other"
-	if err := authorize(t.Context(), v, tls.ConnectionState{}); err == nil || calls != 1 {
-		t.Fatal("accepted a replaced run")
-	}
-}
-
-func TestDeniedDatabaseVisitorReachesTLSAuthorization(t *testing.T) {
-	for _, protocol := range []controlv1.PublicURLServiceProtocol{controlv1.Postgres, controlv1.Mysql, controlv1.Redis} {
-		t.Run(string(protocol), func(t *testing.T) {
-			var greeting []byte
-			if protocol == controlv1.Mysql {
-				greeting = testMySQLGreeting()
-			}
-			address, received := plaintextCaptureTarget(t, greeting)
-			certificate := publicURLTestCertificate(t, "route.example")
-			var authorized, promoted atomic.Int32
-			route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", ServiceProtocol: protocol, PublicPort: 5432, Target: address, Certificate: certificate,
-				AuthorizeVisitorCertificate: func(_ context.Context, v Visitor, state tls.ConnectionState) error {
-					if !v.Header.AccessPending || !state.HandshakeComplete {
-						t.Error("missing trusted denial or TLS")
-					}
-					authorized.Add(1)
-					return errors.New("test live policy rejects visitor")
-				},
-				PromoteVisitor: func(context.Context, Visitor) error { promoted.Add(1); return nil }})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer route.Close()
-			client, engine := net.Pipe()
-			done := make(chan struct{})
-			go func() { route.handleVisitor(engine, true); close(done) }()
-			t.Cleanup(func() { _ = client.Close(); awaitPublisherTest(t, done) })
-			_ = client.SetDeadline(time.Now().Add(5 * time.Second))
-			header, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:1234"), Destination: netip.MustParseAddrPort("203.0.113.10:5432")})
-			_, _ = client.Write(header)
-			if protocol == controlv1.Postgres {
-				_, _ = client.Write(postgresSSLRequest[:])
-				readDatabaseByte(t, client, 'S')
-			}
-			if protocol == controlv1.Mysql {
-				if _, err := readMySQLPacket(client, 64<<10); err != nil {
-					t.Fatal(err)
-				}
-				_, _ = client.Write(mysqlTestSSLRequest())
-			}
-			secured := tls.Client(client, &tls.Config{ServerName: "route.example", RootCAs: rootsForCertificate(t, certificate)})
-			if err := secured.Handshake(); err != nil {
-				t.Fatal(err)
-			}
-			_, _ = io.ReadAll(secured)
-			if b := awaitPublisherTest(t, received); len(b) != 0 || authorized.Load() != 1 || promoted.Load() != 0 {
-				t.Fatalf("auth bytes=%x authorize=%d promote=%d", b, authorized.Load(), promoted.Load())
-			}
-		})
 	}
 }

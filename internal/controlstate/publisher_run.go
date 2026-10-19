@@ -75,7 +75,7 @@ func (d *Database) authorizePublisherRun(ctx context.Context, q *controlstatedb.
 	if err != nil {
 		return [32]byte{}, err
 	}
-	plan := authorization.PublicURLCertificatePlan(u.CanonicalHostname, u.Namespace, domain.Kind == "custom" && u.PublicURLScope == "shared", r.CertificateChallenge == certificateidentity.ChallengeDNS01)
+	plan := publisherCertificatePlan(p, u.CanonicalHostname, u.Namespace, domain.Kind == "custom" && u.PublicURLScope == "shared")
 	if plan == nil || plan.CacheKey != r.CertificateCacheKey || plan.Scope != r.CertificateScope || !slices.Equal(plan.Identifiers, r.CertificateIdentifiers) || plan.ChallengeMethod != r.CertificateChallenge {
 		return [32]byte{}, ErrPublisherIdentity
 	}
@@ -104,7 +104,7 @@ func (d *Database) publisherRunLive(ctx context.Context, q *controlstatedb.Queri
 	return err == nil, err
 }
 
-func (d *Database) PublisherRunPlan(ctx context.Context, p PublisherIdentity, u PublicURL, dns bool) (authorization.CertificatePlan, error) {
+func (d *Database) PublisherRunPlan(ctx context.Context, p PublisherIdentity, u PublicURL, _ bool) (authorization.CertificatePlan, error) {
 	if p.Scope.Kind != "saved_url" && p.Scope.Kind != "namespace" || u.TeamID != p.Scope.TeamID || u.LifecycleState != PublicURLLifecycleEnabled || p.Scope.Kind == "saved_url" && u.ID != p.Scope.PublicURLID || p.Scope.Kind == "namespace" && (!u.Ephemeral || u.ServiceProtocol != PublicURLServiceHTTP) {
 		return authorization.CertificatePlan{}, ErrPublisherIdentity
 	}
@@ -112,9 +112,20 @@ func (d *Database) PublisherRunPlan(ctx context.Context, p PublisherIdentity, u 
 	if err != nil {
 		return authorization.CertificatePlan{}, err
 	}
-	plan := authorization.PublicURLCertificatePlan(u.CanonicalHostname, u.Namespace, domain.Kind == "custom" && u.PublicURLScope == PublicURLScopeShared, dns)
+	plan := publisherCertificatePlan(p, u.CanonicalHostname, u.Namespace, domain.Kind == "custom" && u.PublicURLScope == PublicURLScopeShared)
 	if plan == nil || !certificateidentity.Covers(plan.Identifiers, u.CanonicalHostname) || p.Scope.Kind == "namespace" && plan.ChallengeMethod != certificateidentity.ChallengeDNS01 {
 		return authorization.CertificatePlan{}, ErrPublisherIdentity
 	}
 	return *plan, nil
+}
+
+func publisherCertificatePlan(p PublisherIdentity, hostname, namespace string, apexAllowed bool) *authorization.CertificatePlan {
+	// a saved-URL grant cannot give its publisher a key covering sibling URLs.
+	if p.Scope.Kind == "saved_url" {
+		return authorization.PublicURLCertificatePlan(hostname, hostname, false, false)
+	}
+	if p.Scope.Kind != "namespace" || p.Scope.Namespace != namespace {
+		return nil
+	}
+	return authorization.PublicURLCertificatePlan(hostname, namespace, apexAllowed, true)
 }

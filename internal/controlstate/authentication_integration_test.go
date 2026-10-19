@@ -3,6 +3,7 @@ package controlstate
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"net/netip"
@@ -10,8 +11,19 @@ import (
 	"time"
 )
 
-func TestIntegrationBuiltinAuthentication(t *testing.T) {
-	database, _ := newControlStateIntegrationDatabase(t, "builtin_authentication")
+func createTestControlSession(ctx context.Context, database *Database, domain string, access, refresh time.Duration, now time.Time) (ControlSession, error) {
+	if err := database.SeedHumanAuthentication(ctx, domain, HumanAuthenticationSeeds{Issuer: "https://identity.fixture.test", Administrators: []string{"operator"}}, now); err != nil {
+		return ControlSession{}, err
+	}
+	var digest [32]byte
+	if _, err := rand.Read(digest[:]); err != nil {
+		return ControlSession{}, err
+	}
+	return database.CreateOIDCControlSession(ctx, domain, OIDCIdentity{Issuer: "https://identity.fixture.test", Subject: "operator", DisplayName: "operator", AssertionDigest: digest, AssertionExpiry: now.Add(time.Hour)}, access, refresh, now)
+}
+
+func TestIntegrationNamedOIDCSessions(t *testing.T) {
+	database, _ := newControlStateIntegrationDatabase(t, "oidc_sessions")
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
@@ -25,7 +37,7 @@ func TestIntegrationBuiltinAuthentication(t *testing.T) {
 	results := make(chan result, callers)
 	for range callers {
 		workers.Go(func() {
-			session, err := database.CreateBuiltinControlSession(ctx, "tunnels.example.test", 7, time.Hour, 24*time.Hour, now)
+			session, err := createTestControlSession(ctx, database, "tunnels.example.test", time.Hour, 24*time.Hour, now)
 			results <- result{session, err}
 		})
 	}
@@ -36,28 +48,28 @@ func TestIntegrationBuiltinAuthentication(t *testing.T) {
 			t.Fatal(result.err)
 		}
 		if issued.SessionID != "" && result.session.Identity.Identity.ID != issued.Identity.Identity.ID {
-			t.Fatal("concurrent login created different builtin identities")
+			t.Fatal("concurrent login created different identities for one OIDC subject")
 		}
 		issued = result.session
 	}
 	if issued.Identity.Identity.ID == "" || issued.Identity.PersonalTeamID == "" || len(issued.Identity.Memberships) != 1 || issued.Identity.Memberships[0].Role != "owner" {
-		t.Fatalf("builtin identity context = %#v", issued.Identity)
+		t.Fatalf("OIDC identity context = %#v", issued.Identity)
 	}
 	teams, err := database.ListTeams(ctx, issued.Identity.Identity.ID)
 	if err != nil || len(teams) != 1 || teams[0].ID != issued.Identity.PersonalTeamID || teams[0].DefaultDomainID == "" {
-		t.Fatalf("builtin teams = %#v, %v", teams, err)
+		t.Fatalf("OIDC teams = %#v, %v", teams, err)
 	}
 	team, err := database.GetTeam(ctx, issued.Identity.Identity.ID, issued.Identity.PersonalTeamID)
 	if err != nil || team != teams[0] {
-		t.Fatalf("builtin team = %#v, %v", team, err)
+		t.Fatalf("OIDC team = %#v, %v", team, err)
 	}
 	domains, err := database.ListTeamDomains(ctx, issued.Identity.Identity.ID, team.ID)
 	if err != nil || len(domains) != 1 || domains[0].CanonicalDomain != "tunnels.example.test" || domains[0].ID != team.DefaultDomainID {
-		t.Fatalf("builtin domains = %#v, %v", domains, err)
+		t.Fatalf("OIDC team domains = %#v, %v", domains, err)
 	}
-	principal, err := database.AuthenticateAccessToken(ctx, issued.AccessToken, 7, now)
+	principal, err := database.AuthenticateAccessToken(ctx, issued.AccessToken, now)
 	if err != nil || principal.IdentityID != issued.Identity.Identity.ID || !principal.Administrator {
-		t.Fatalf("builtin principal = %#v, %v", principal, err)
+		t.Fatalf("OIDC principal = %#v, %v", principal, err)
 	}
 	retrySecret := principal.RetrySecret
 	var ciphertext []byte
@@ -67,35 +79,32 @@ func TestIntegrationBuiltinAuthentication(t *testing.T) {
 	if bytes.Contains(ciphertext, retrySecret[:]) {
 		t.Fatal("control-session retry secret persisted as plaintext")
 	}
-	if _, err := database.AuthenticateAccessToken(ctx, issued.AccessToken, 8, now); !errors.Is(err, ErrControlAuthentication) {
-		t.Fatalf("stale login source: %v", err)
-	}
-	if _, err := database.CreateBuiltinControlSession(ctx, "other.example.test", 7, time.Hour, 24*time.Hour, now); !errors.Is(err, ErrManagedDomainMismatch) {
+	if _, err := createTestControlSession(ctx, database, "other.example.test", time.Hour, 24*time.Hour, now); !errors.Is(err, ErrManagedDomainMismatch) {
 		t.Fatalf("managed domain mismatch: %v", err)
 	}
-	refreshed, err := database.RefreshControlSession(ctx, issued.RefreshToken, 7, time.Hour, now.Add(time.Minute))
+	refreshed, err := database.RefreshControlSession(ctx, issued.RefreshToken, time.Hour, now.Add(time.Minute))
 	if err != nil || refreshed.SessionID != issued.SessionID || !refreshed.RefreshExpiresAt.Equal(issued.RefreshExpiresAt) {
 		t.Fatalf("refresh changed session identity or expiry: %v", err)
 	}
-	if _, err := database.AuthenticateAccessToken(ctx, issued.AccessToken, 7, now.Add(time.Minute)); !errors.Is(err, ErrControlAuthentication) {
+	if _, err := database.AuthenticateAccessToken(ctx, issued.AccessToken, now.Add(time.Minute)); !errors.Is(err, ErrControlAuthentication) {
 		t.Fatalf("old access token: %v", err)
 	}
-	if _, err := database.RefreshControlSession(ctx, issued.RefreshToken, 7, time.Hour, now.Add(time.Minute)); !errors.Is(err, ErrControlAuthentication) {
+	if _, err := database.RefreshControlSession(ctx, issued.RefreshToken, time.Hour, now.Add(time.Minute)); !errors.Is(err, ErrControlAuthentication) {
 		t.Fatalf("old refresh token: %v", err)
 	}
-	principal, err = database.AuthenticateAccessToken(ctx, refreshed.AccessToken, 7, now.Add(time.Minute))
+	principal, err = database.AuthenticateAccessToken(ctx, refreshed.AccessToken, now.Add(time.Minute))
 	if err != nil || principal.RetrySecret == ([32]byte{}) || principal.RetrySecret != retrySecret {
 		t.Fatalf("retry secret changed on refresh: %v", err)
 	}
 	if err := database.RevokeControlSession(ctx, principal, now.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.AuthenticateAccessToken(ctx, refreshed.AccessToken, 7, now.Add(2*time.Minute)); !errors.Is(err, ErrControlAuthentication) {
+	if _, err := database.AuthenticateAccessToken(ctx, refreshed.AccessToken, now.Add(2*time.Minute)); !errors.Is(err, ErrControlAuthentication) {
 		t.Fatalf("revoked access token: %v", err)
 	}
 	var identities, personalTeams, memberships, managedDomains int
 	if err := database.pool.QueryRow(ctx, `SELECT
-		(SELECT count(*) FROM control.identities WHERE kind = 'builtin'),
+		(SELECT count(*) FROM control.identities WHERE kind = 'oidc'),
 		(SELECT count(*) FROM control.teams WHERE kind = 'personal'),
 		(SELECT count(*) FROM control.team_memberships),
 		(SELECT count(*) FROM control.domains WHERE kind = 'managed')`).Scan(&identities, &personalTeams, &memberships, &managedDomains); err != nil {
@@ -153,11 +162,11 @@ func TestIntegrationOIDCAuthentication(t *testing.T) {
 		issued.Identity.Memberships[0].TeamDisplayName == identity.DisplayName {
 		t.Fatalf("OIDC identity = %#v", issued.Identity)
 	}
-	principal, err := database.AuthenticateAccessToken(t.Context(), issued.AccessToken, 999, now)
+	principal, err := database.AuthenticateAccessToken(t.Context(), issued.AccessToken, now)
 	if err != nil || principal.IdentityID != issued.Identity.Identity.ID || principal.Administrator {
 		t.Fatalf("OIDC principal = %#v, %v", principal, err)
 	}
-	refreshed, err := database.RefreshControlSession(t.Context(), issued.RefreshToken, 999, time.Hour, now.Add(time.Minute))
+	refreshed, err := database.RefreshControlSession(t.Context(), issued.RefreshToken, time.Hour, now.Add(time.Minute))
 	if err != nil || refreshed.Identity.Identity.ID != issued.Identity.Identity.ID {
 		t.Fatalf("refreshed OIDC session = %#v, %v", refreshed, err)
 	}

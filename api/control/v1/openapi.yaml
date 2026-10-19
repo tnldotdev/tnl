@@ -9,6 +9,1085 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/browser/managed-login:
+    get:
+      operationId: beginManagedBrowserLogin
+      security: []
+      description: Start sign-in for one managed HTTP service. Uses the common browser callback and a snapshot of ready runs; the allocated service port is retained.
+      parameters:
+        - {
+            name: private_service_id,
+            in: query,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateServiceID" },
+          }
+        - {
+            name: return_path,
+            in: query,
+            required: true,
+            schema: { type: string, maxLength: 2048 },
+          }
+        - { name: switch_account, in: query, schema: { type: boolean } }
+      responses:
+        "302": { description: Redirect to the configured identity provider }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/http-grants:
+    post:
+      operationId: createManagedHTTPGrant
+      security: [{ bearerAuth: [] }]
+      description: Create a service-scoped HTTP token or share. Requires current service management permission. The secret is returned once and grants no management or feedback permission.
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateManagedHTTPGrantRequest" }
+      responses:
+        "201":
+          description: Exact managed subject and one-time secret
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ManagedHTTPGrant" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/http-grants/{grant_id}:
+    delete:
+      operationId: revokeManagedHTTPGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - { name: grant_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Grant revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs/{private_run_id}/http-authorize:
+    post:
+      operationId: authorizeManagedHTTPVisitor
+      security: [{ bearerAuth: [] }]
+      description: Check the selected HTTP credential and exact trusted ingress admission. An allowed decision cannot forward target bytes until admitted is true. Certificate authentication is optional and never grants feedback or management.
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - {
+            name: private_run_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateRunID" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ManagedHTTPVisitorRequest" }
+      responses:
+        "200":
+          description: Current request and ingress promotion decision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceClientCertificateDecision" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs/{private_run_id}/browser/handoff:
+    post:
+      operationId: redeemManagedBrowserHandoff
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - {
+            name: private_run_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateRunID" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ManagedBrowserRequest" }
+      responses:
+        "200":
+          description: Host-bound browser credential for the exact managed subject
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowserHandoffResponse" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs/{private_run_id}/browser/session:
+    post:
+      operationId: checkManagedBrowserSession
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - {
+            name: private_run_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateRunID" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ManagedBrowserRequest" }
+      responses:
+        "200":
+          description: Current browser identity and visit permission, not management permission
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowserAccessResponse" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: revokeManagedBrowserSession
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - {
+            name: private_run_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateRunID" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ManagedBrowserRequest" }
+      responses:
+        "204": { description: Host-bound browser session revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/projects/{project_key}/private-services/{service}:
+    get:
+      operationId: getProjectPrivateService
+      security: [{ bearerAuth: [] }]
+      description: Resolve an applied service by its exact Git source and configuration key using current visitor access. Does not return targets or require project-manager permission.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - {
+            name: service,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateServiceName" },
+          }
+        - {
+            name: team_id,
+            in: query,
+            required: true,
+            schema: { $ref: "#/components/schemas/TeamID" },
+          }
+        - {
+            name: source_fingerprint,
+            in: query,
+            required: true,
+            schema: { type: string, pattern: "^[0-9a-f]{64}$" },
+          }
+      responses:
+        "200":
+          description: Exact saved service from the applied configuration, including offline services
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateService" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs/{private_run_id}/start:
+    post:
+      operationId: startManagedServiceRun
+      security: [{ bearerAuth: [] }]
+      description: Start one exact prepared run using its authenticated publisher identity. Visitor TLS uses the approved service certificate, without an ephemeral stream key or custom TLS proof.
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - {
+            name: private_run_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateRunID" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [run_number]
+              properties:
+                run_number: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "200":
+          description: Run token and two independent relay assignments
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateServiceRunSetup" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/client-certificates:
+    post:
+      operationId: issueServiceClientCertificate
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IssueServiceClientCertificateRequest" }
+      responses:
+        "201":
+          description: Exact service/identity/device client certificate; the client key never leaves the client
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceClientCertificate" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs/{private_run_id}/authorize-connector:
+    post:
+      operationId: authorizeServiceConnector
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - {
+            name: private_run_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateRunID" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuthorizeServiceConnectorRequest" }
+      responses:
+        "200":
+          description: Live permission for the exact authenticated connector admission
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceClientCertificateDecision" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs/{private_run_id}/authorize-client-certificate:
+    post:
+      operationId: authorizeServiceClientCertificate
+      description: Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - {
+            name: private_run_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateRunID" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuthorizeServiceClientCertificateRequest" }
+      responses:
+        "200":
+          description: Live permission for an exact admitted connection after TLS proved client key possession
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceClientCertificateDecision" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs/{private_run_id}/certificate-issuances:
+    parameters:
+      - { $ref: "#/components/parameters/PrivateServiceID" }
+      - {
+          name: private_run_id,
+          in: path,
+          required: true,
+          schema: { $ref: "#/components/schemas/PrivateRunID" },
+        }
+    post:
+      operationId: createPrivateCertificateIssuance
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePrivateCertificateIssuanceRequest" }
+      responses:
+        "201":
+          description: DNS-01 issuance authorized for the exact private run and approved scope
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateCertificateIssuance" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs/{private_run_id}/certificate-issuances/{issuance_id}:
+    get:
+      operationId: getPrivateCertificateIssuance
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - {
+            name: private_run_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateRunID" },
+          }
+        - {
+            name: issuance_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/IssuanceID" },
+          }
+      responses:
+        "200":
+          description: Current private-run certificate issuance
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateCertificateIssuance" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs/{private_run_id}/certificate-installed:
+    post:
+      operationId: markPrivateCertificateInstalled
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - {
+            name: private_run_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateRunID" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrivateCertificateInstalledRequest" }
+      responses:
+        "204": { description: Current run acknowledged the exact publisher-owned certificate }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/visitor-ingress-assignments/{connector_session_id}:
+    delete:
+      operationId: releaseVisitorIngressAssignment
+      security: [{ bearerAuth: [] }]
+      description: Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked and its active streams fail rechecks; sibling sessions are never affected. Retrying release of an owned assignment succeeds.
+      parameters:
+        - {
+            name: connector_session_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateConnectorSessionID" },
+          }
+      responses:
+        "204": { description: Exact assignment released }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/projects/{project_key}/public-metadata:
+    get:
+      operationId: getProjectPublicMetadata
+      security: [{ bearerAuth: [] }]
+      description: Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { $ref: "#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Authorized public service metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectPublicMetadata" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/projects/{project_key}/local-services/{service}:
+    get:
+      operationId: getLocalProjectService
+      security: [{ bearerAuth: [] }]
+      description: Read the exact private service previously realized for this team, project source, service key, and worktree. Requires current ordinary private visitor access, not project management access. Returns only immutable identity and approved visitor protocol/TLS metadata, never configuration, targets, or credentials. Does not realize or adopt a service. Missing or unauthorized bindings return not found; an authorized binding with another source fingerprint returns conflict. No other team, project, worktree, or saved name is searched.
+      parameters:
+        - {
+            name: project_key,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: "^[a-z][a-z0-9-]{0,62}$" },
+          }
+        - {
+            name: service,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" },
+          }
+        - { $ref: "#/components/parameters/TeamIDQuery" }
+        - {
+            name: source_fingerprint,
+            in: query,
+            required: true,
+            schema: { type: string, pattern: "^[0-9a-f]{64}$" },
+          }
+        - {
+            name: worktree_key,
+            in: query,
+            required: true,
+            schema: { type: string, minLength: 1, maxLength: 128 },
+          }
+      responses:
+        "200":
+          description: Exact authorized local private service and approved visitor metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalProjectService" }
+        default: { $ref: "#/components/responses/Problem" }
+    put:
+      operationId: realizeLocalProjectService
+      security: [{ bearerAuth: [] }]
+      description: Realize only one source-bound local service for one worktree. Private IDs are allocated here with worktree-scoped names, never adopted by name. Public IDs must be exact caller-owned app URLs already allocated by this runtime, bound to the caller's membership or to the caller's own personal team when current namespace authorization selects shared scope. Organization shared URLs and another member's or team's URLs are rejected. Records provenance before first apply; later apply reconciles that legitimate resource. When configuration has been applied the local declaration must match it. Does not apply remote group changes.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: service, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RealizeLocalProjectServiceRequest" }
+      responses:
+        "200":
+          description: Exact local resource and approved private metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalProjectService" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/projects/{project_key}/publisher-groups/{group_name}/members/{publisher_identity_id}:
+    delete:
+      operationId: revokePublisherGroupMember
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: group_name, in: path, required: true, schema: { type: string } }
+        - { name: publisher_identity_id, in: path, required: true, schema: { type: string } }
+        - { $ref: "#/components/parameters/TeamIDQuery" }
+      responses:
+        "204":
+          { description: Exact group member identity revoked and its public/private runs closed }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/projects/{project_key}/configuration:
+    parameters:
+      - {
+          name: project_key,
+          in: path,
+          required: true,
+          schema: { type: string, pattern: "^[a-z][a-z0-9-]{0,62}$" },
+        }
+    get:
+      operationId: getProjectConfiguration
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/TeamIDQuery" }]
+      responses:
+        "200":
+          {
+            description: Manager-only normalized configuration and status,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AppliedProjectConfiguration" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments:
+    post:
+      operationId: createPublisherGroupEnrollment
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: group_name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/CreatePublisherGroupEnrollmentRequest" } },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: Bounded project/group bootstrap credential,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PublisherGroupEnrollment" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publisher-groups/enroll:
+    post:
+      operationId: redeemPublisherGroupEnrollment
+      security: []
+      description: Each replica submits its own Ed25519 public key. Retrying the same key is idempotent and consumes no additional enrollment capacity.
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/RedeemPublisherGroupEnrollmentRequest" } },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: One signed publisher identity scoped to one group,
+            content:
+              {
+                application/json: { schema: { $ref: "#/components/schemas/PublisherGroupMember" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publisher-groups/verify:
+    post:
+      operationId: verifyPublisherGroupIdentity
+      security: []
+      description: Prove the replica's signing key and read its immutable membership and current/historical selectors without replacing a running publisher's group lease. The one-use assertion audience is the control URL followed by this path.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublisherGroupLeaseRequest" }
+      responses:
+        "200":
+          description: Verified membership without a lease or service targets
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublisherGroupVerification" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publisher-groups/lease:
+    post:
+      operationId: acquirePublisherGroupLease
+      security: []
+      description: Exchange a one-use signed assertion for a short-lived group lease. The assertion audience is the control URL followed by this path; its grant claim is the group ID.
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/PublisherGroupLeaseRequest" } },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Current group lease,
+            content:
+              {
+                application/json: { schema: { $ref: "#/components/schemas/PublisherGroupLease" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publisher-groups/assignments:
+    get:
+      operationId: getPublisherGroupAssignments
+      security: [{ publisherAuth: [] }]
+      responses:
+        "200":
+          {
+            description: Exact assigned services and native publisher grants for this replica,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PublisherGroupAssignments" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publisher-groups/ack:
+    post:
+      operationId: acknowledgePublisherGroupConfiguration
+      security: [{ publisherAuth: [] }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/PublisherGroupAcknowledgement" } },
+            },
+        }
+      responses:
+        "204": { description: Exact current configuration revision acknowledged }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/teams/{team_id}/service-audit:
+    get:
+      operationId: listServiceAudit
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: team_id, in: path, required: true, schema: { type: string } }
+        - { name: service_id, in: query, schema: { type: string, maxLength: 128 } }
+        - { name: service, in: query, schema: { type: string, maxLength: 253 } }
+        - { name: after, in: query, schema: { type: integer, format: int64, minimum: 0 } }
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 256, default: 100 },
+          }
+      responses:
+        "200":
+          {
+            description: Bounded safe service audit page,
+            content:
+              { application/json: { schema: { $ref: "#/components/schemas/ServiceAuditPage" } } },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publish-runs/{run_id}/service-observations:
+    post:
+      operationId: reportPublishRunServiceObservations
+      security: [{ publishRunAuth: [] }]
+      parameters:
+        - { name: run_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/PublishRunServiceObservations" } },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Accepted and duplicate observation counters,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/ServiceObservationResult" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/visitor-ingress-assignments/{connector_session_id}/transport-trust:
+    get:
+      operationId: getVisitorIngressTransportTrust
+      security: [{ bearerAuth: [] }]
+      description: Read public transport trust for this identity's enrolled-device assignment and its exact current ingress lease. No infrastructure private key is returned.
+      parameters:
+        - name: connector_session_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
+      responses:
+        "200":
+          description: Exact-hostname, lease-bound ingress transport trust
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IngressTransportTrust" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/publisher/private-service:
+    get:
+      operationId: getPublisherPrivateService
+      security: [{ publisherAuth: [] }]
+      description: Read the exact granted private service's approved protocol and public TLS trust metadata. The publisher must declare its own matching configuration when preparing a run.
+      responses:
+        "200":
+          description: Exact granted service, without target addresses or credentials
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateService" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/visitor-devices:
+    post:
+      operationId: enrollVisitorDevice
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [public_key]
+              properties:
+                public_key: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "201":
+          description: Enrolled identity-bound Ed25519 device
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VisitorDevice" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/visitor-devices/{device_id}:
+    delete:
+      operationId: revokeVisitorDevice
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+      responses:
+        "204": { description: Device and its ingress sessions revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services:
+    get:
+      operationId: listPrivateServices
+      description: Team-owned saved services; never return target addresses or stream keys.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamIDQuery" },
+          { $ref: "#/components/parameters/PrivateServiceCursor" },
+        ]
+      responses:
+        "200":
+          {
+            description: Team inventory,
+            content:
+              { application/json: { schema: { $ref: "#/components/schemas/PrivateServicePage" } } },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createPrivateService
+      description: Create a team-scoped saved name. No DNS record, public URL, certificate or dedicated visitor port is allocated.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/CreatePrivateServiceRequest" } },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: Saved private service,
+            content:
+              { application/json: { schema: { $ref: "#/components/schemas/PrivateService" } } },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}:
+    put:
+      operationId: configurePrivateService
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrivateServiceMetadata" }
+      responses:
+        "200":
+          description: Approved protocol, publisher pool and immutable TLS trust snapshot
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateService" }
+        default: { $ref: "#/components/responses/Problem" }
+    get:
+      operationId: getPrivateService
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      responses:
+        "200":
+          {
+            description: Saved service for an authorized team administrator,
+            content:
+              { application/json: { schema: { $ref: "#/components/schemas/PrivateService" } } },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deletePrivateService
+      description: Revoke access and close any run before tombstoning its ID-keyed ingress projection.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      responses:
+        "204": { description: Service deleted }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/grants:
+    get:
+      operationId: listPrivateServiceGrants
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      responses:
+        "200":
+          {
+            description: Exact service grants,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { type: array, items: { $ref: "#/components/schemas/PrivateServiceGrant" } },
+                  },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createPrivateServiceGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/PrivateServiceID" },
+          { $ref: "#/components/parameters/IdempotencyKey" },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/CreatePrivateServiceGrantRequest" } },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: Revocable team or identity grant,
+            content:
+              {
+                application/json: { schema: { $ref: "#/components/schemas/PrivateServiceGrant" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/grants/{grant_id}:
+    delete:
+      operationId: revokePrivateServiceGrant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/PrivateServiceID" },
+          {
+            name: grant_id,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/PrivateServiceGrantID" },
+          },
+        ]
+      responses:
+        "204": { description: Grant revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/invitations:
+    get:
+      operationId: listPrivateServiceInvitations
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      responses:
+        "200":
+          description: Invitations for service administrators
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PrivateServiceInvitation" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: invitePrivateServiceVisitor
+      security: [{ bearerAuth: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/PrivateServiceID" },
+          { $ref: "#/components/parameters/IdempotencyKey" },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/CreatePrivateServiceInvitationRequest" } },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: One-use verified-email invitation,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PrivateServiceInvitation" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/invitations/{invitation_id}:
+    delete:
+      operationId: revokePrivateServiceInvitation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - name: invitation_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/PrivateServiceInvitationID" }
+      responses:
+        "204": { description: Invitation and accepted identity grant revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-service-invitations/accept:
+    post:
+      operationId: acceptPrivateServiceInvitation
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      additionalProperties: false,
+                      required: [secret],
+                      properties: { secret: { type: string, minLength: 32, maxLength: 128 } },
+                    },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Exact identity grant,
+            content:
+              {
+                application/json: { schema: { $ref: "#/components/schemas/PrivateServiceGrant" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/visitor/private-services:
+    get:
+      operationId: listAvailablePrivateServices
+      description: Authorized saved private services for tnl connect, including offline services. Initial readiness requires two ready publisher connections; after that one surviving ready connection keeps a run available during replacement. Inventory never grants a stream ticket by itself and contains no target address, DNS or key material.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceCursor" }]
+      responses:
+        "200":
+          {
+            description: Authorized visitor inventory,
+            content:
+              { application/json: { schema: { $ref: "#/components/schemas/PrivateServicePage" } } },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/ingress-assignment:
+    post:
+      operationId: createVisitorIngressAssignment
+      description: Reserve exactly one unbound ingress assignment for the current person, device, and private service grant. Retain idempotency_key across ambiguous failures; a replay returns the same session and credential only while access, device, assignment, and ingress lease remain valid. Keys bind the identity, device, service, assignment count, and excluded ingress; a changed request conflicts. Results expire with the sessions and keys are retained for another 24 hours. exclude_ingress_id keeps a healthy sibling out of placement without granting access. Release unused or trust-failed reservations before starting a new request.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [device_id, idempotency_key]
+              properties:
+                device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+                exclude_ingress_id: { type: string, maxLength: 128 }
+                idempotency_key: { $ref: "#/components/schemas/IdempotencyKey" }
+      responses:
+        "201":
+          description: One infrastructure session setup; no run key or stream ticket
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateConnectorSessionSetup" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/ingress-assignments:
+    post:
+      operationId: createVisitorIngressAssignments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [device_id, idempotency_key]
+              properties:
+                device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+                idempotency_key: { $ref: "#/components/schemas/IdempotencyKey" }
+      description: Check current visitor access and atomically reserve two distinct live ingress addresses. Retain idempotency_key across ambiguous failures; replay returns the same IDs and one-use credentials while both unbound assignments, device, access, and leases remain valid. Keys bind the identity, device, service, and assignment count; changed requests conflict. Results expire with the sessions and keys are retained for another 24 hours. The ingress-observed source is bound when each session connects. This does not authorize visitor streams.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      responses:
+        "201":
+          description: Infrastructure session setup; no service run key or stream ticket
+          content:
+            application/json:
+              schema:
+                type: array
+                minItems: 2
+                maxItems: 2
+                items: { $ref: "#/components/schemas/PrivateConnectorSessionSetup" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/select-run:
+    post:
+      operationId: selectPrivateServiceRun
+      description: For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/PrivateServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [device_id]
+              properties:
+                device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+      responses:
+        "201":
+          {
+            description: One-use connector ticket,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PrivateServiceSelection" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs:
+    post:
+      operationId: preparePrivateServiceRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrivateServiceRunDeclaration" }
+      description: Reserve a new run ID and number and capture its exact managed hostname, port, domain and certificate plan under the authenticated publisher grant. Retrying the same idempotency key returns the same preparation.
+      security: [{ publisherAuth: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/PrivateServiceID" },
+          { $ref: "#/components/parameters/IdempotencyKey" },
+        ]
+      responses:
+        "201":
+          {
+            description: Prepared run for the publisher to sign,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PrivateServiceRunPreparation" } },
+              },
+          }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/private-services/{private_service_id}/runs/{private_run_id}:
+    post:
+      operationId: heartbeatPrivateServiceRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrivateServiceRunHeartbeat" }
+      description: Renew only the current run under its exact publisher grant. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+      security: [{ privateRunAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - name: private_run_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/PrivateRunID" }
+      responses:
+        "200":
+          description: Current run and assignments
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateServiceRunState" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: closePrivateServiceRun
+      description: Close the exact run, reject stale admissions and publish a private-service tombstone. Managed certificates remain in the publisher's shared cache.
+      security: [{ privateRunAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PrivateServiceID" }
+        - name: private_run_id
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/PrivateRunID" }
+      responses:
+        "204": { description: Run closed }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/publish-runs/{publish_run_id}/visitor-access:
     post:
       operationId: authorizeHTTPVisitor
@@ -67,6 +1146,26 @@ paths:
       responses:
         "201":
           description: Exact URL grant for current team members
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VisitorGrant" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/public-urls/{public_url_id}/visitor-identity-grants:
+    post:
+      operationId: createIdentityVisitorGrant
+      summary: Create an explicit identity grant, including for the current identity
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/PublicURLID" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateIdentityVisitorGrantRequest" }
+      responses:
+        "201":
+          description: Exact URL and identity grant
           content:
             application/json:
               schema: { $ref: "#/components/schemas/VisitorGrant" }
@@ -160,61 +1259,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PublicURL" }
-        default: { $ref: "#/components/responses/Problem" }
-  /v1/public-urls/{public_url_id}/visitor-certificate:
-    post:
-      operationId: issueVisitorCertificate
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { $ref: "#/components/parameters/PublicURLID" }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [csr]
-              properties:
-                csr: { type: string, maxLength: 16384 }
-      responses:
-        "201":
-          description: URL-bound client certificate bounded by seven days and grant expiry
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/VisitorCertificate" }
-        default: { $ref: "#/components/responses/Problem" }
-  /v1/publish-runs/{publish_run_id}/visitor-certificate:
-    post:
-      operationId: authorizeVisitorCertificate
-      security: [{ publishRunAuth: [] }]
-      parameters:
-        - { $ref: "#/components/parameters/PublishRunID" }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [publish_run_number, source_ip]
-              properties:
-                publish_run_number: { type: integer, format: int64, minimum: 1 }
-                certificate: { type: string, maxLength: 16384 }
-                source_ip: { type: string, maxLength: 64 }
-      responses:
-        "200":
-          description: Current permission for this new connection
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required: [public_url_id]
-                properties:
-                  identity_id: { $ref: "#/components/schemas/IdentityID" }
-                  public_url_id: { $ref: "#/components/schemas/PublicURLID" }
-                  valid_until: { type: string, format: date-time }
         default: { $ref: "#/components/responses/Problem" }
   /v1/guest-demo/publisher:
     post:
@@ -1348,40 +2392,6 @@ paths:
                 $ref: "#/components/schemas/CertificateIssuance"
         default:
           $ref: "#/components/responses/Problem"
-  /v1/certificate-issuances/{issuance_id}/challenge-ready:
-    post:
-      operationId: markCertificateChallengeReady
-      summary: Confirm a TLS-ALPN-01 challenge is installed
-      security:
-        - publishRunAuth: []
-      parameters:
-        - $ref: "#/components/parameters/IssuanceID"
-      responses:
-        "200":
-          description: Certificate issuance
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CertificateIssuance"
-        default:
-          $ref: "#/components/responses/Problem"
-  /v1/certificate-issuances/{issuance_id}/challenge-removed:
-    post:
-      operationId: markCertificateChallengeRemoved
-      summary: Confirm a TLS-ALPN-01 challenge is removed
-      security:
-        - publishRunAuth: []
-      parameters:
-        - $ref: "#/components/parameters/IssuanceID"
-      responses:
-        "200":
-          description: Certificate issuance
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CertificateIssuance"
-        default:
-          $ref: "#/components/responses/Problem"
   /v1/admin/status:
     get:
       operationId: getAdminServerStatus
@@ -1487,11 +2497,25 @@ components:
       type: http
       scheme: bearer
       bearerFormat: tnl publish-run token
+    privateRunAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: tnl private-service run token
     publisherAuth:
       type: http
       scheme: bearer
       bearerFormat: tnl grant-scoped publisher access token
   parameters:
+    PrivateServiceID:
+      name: private_service_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/PrivateServiceID" }
+    PrivateServiceCursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { $ref: "#/components/schemas/PrivateServiceID" }
     PublisherIdentityID:
       name: publisher_identity_id
       in: path
@@ -1595,7 +2619,993 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    HTTPAuthorizationSubject:
+      type: object
+      additionalProperties: false
+      required: [kind, id]
+      properties:
+        kind: { type: string, enum: [public_url, managed_service] }
+        id: { type: string }
+      description: An explicit authorization scope. A public URL grant never applies to a managed service, even when they have related names or owners.
+    CreateManagedHTTPGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [kind, expires_at]
+      properties:
+        kind: { type: string, enum: [token, share] }
+        expires_at: { type: string, format: date-time }
+    ManagedHTTPGrant:
+      type: object
+      additionalProperties: false
+      required: [subject, id, kind, secret, expires_at]
+      properties:
+        subject: { $ref: "#/components/schemas/HTTPAuthorizationSubject" }
+        id: { type: string }
+        kind: { type: string, enum: [token, share] }
+        secret: { type: string }
+        share_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+    ManagedHTTPCredential:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [none, browser, token, share, certificate] }
+        secret: { type: string, maxLength: 256 }
+        certificate: { type: string, format: byte, maxLength: 22000 }
+      description: Exactly one selected credential. Explicit HTTP credentials take precedence over an optional TLS client certificate. Invalid supplied credentials fail closed.
+    ManagedHTTPVisitorRequest:
+      type: object
+      additionalProperties: false
+      required: [run_number, visitor_connection_id, source_ip, destination_port, credential]
+      properties:
+        run_number: { type: integer, format: int64, minimum: 1 }
+        visitor_connection_id: { type: string }
+        source_ip: { type: string }
+        destination_port: { type: integer, minimum: 1024, maximum: 65535 }
+        credential: { $ref: "#/components/schemas/ManagedHTTPCredential" }
+    ManagedBrowserRequest:
+      type: object
+      additionalProperties: false
+      required: [run_number, secret]
+      properties:
+        run_number: { type: integer, format: int64, minimum: 1 }
+        secret: { type: string, maxLength: 256 }
+    ProjectPublicMetadata:
+      type: object
+      additionalProperties: false
+      required: [source_fingerprint, services]
+      properties:
+        source_fingerprint: { type: string }
+        services:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [service, hostname, port]
+            properties:
+              service: { type: string }
+              public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+              private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+              port: { type: integer, minimum: 1, maximum: 65535 }
+              hostname: { type: string }
+    RealizeLocalProjectServiceRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, source_fingerprint, worktree_key, configuration]
+      properties:
+        team_id: { type: string }
+        source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        worktree_key: { type: string, minLength: 1, maxLength: 128 }
+        worktree_label: { type: string, minLength: 1, maxLength: 63 }
+        domain_id: { $ref: "#/components/schemas/DomainID" }
+        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        configuration: { $ref: "#/components/schemas/ProjectServiceConfiguration" }
+    LocalProjectService:
+      type: object
+      additionalProperties: false
+      required: [service, worktree_key, service_kind, service_id]
+      properties:
+        service: { type: string }
+        worktree_key: { type: string }
+        service_kind: { type: string, enum: [private_service, public_url] }
+        service_id: { type: string }
+        hostname: { type: string }
+        private_service: { $ref: "#/components/schemas/PrivateServiceMetadata" }
+    ApplyProjectConfigurationRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, source_fingerprint, expected_revision, configuration]
+      properties:
+        team_id: { type: string }
+        source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        project_label:
+          { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" }
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        configuration: { $ref: "#/components/schemas/ProjectConfiguration" }
+    ProjectConfiguration:
+      type: object
+      description: Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
+      additionalProperties: false
+      required: [publishers, services, oauth, webhooks]
+      properties:
+        oauth:
+          type: boolean
+          default: false
+          description: Desired local app-led OAuth integration URL declaration. Control stores the declaration and revision; applying it does not provision a handler on a named publisher group.
+        webhooks:
+          type: object
+          maxProperties: 32
+          additionalProperties: { $ref: "#/components/schemas/ProjectWebhook" }
+          description: Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public_url enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
+        publishers:
+          {
+            type: object,
+            maxProperties: 32,
+            additionalProperties: { $ref: "#/components/schemas/ProjectPublisherGroup" },
+          }
+        services:
+          {
+            type: object,
+            maxProperties: 128,
+            additionalProperties: { $ref: "#/components/schemas/ProjectServiceConfiguration" },
+          }
+    ProjectPublisherGroup:
+      type: object
+      additionalProperties: false
+      properties:
+        description: { type: string, maxLength: 1024 }
+        domain_id: { type: string }
+        public: { type: boolean, default: false }
+    RenamePublisherNamespaceRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, namespace_label, expected_revision, idempotency_key]
+      properties:
+        team_id: { type: string }
+        namespace_label: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" }
+        expected_revision: { type: integer, format: int64, minimum: 1 }
+        idempotency_key: { type: string, minLength: 1, maxLength: 256 }
+    RenamePublisherGroupRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, name, expected_revision]
+      properties:
+        team_id: { type: string }
+        name: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" }
+        expected_revision: { type: integer, format: int64, minimum: 1 }
+    ProjectWebhook:
+      type: object
+      additionalProperties: false
+      required: [service, path, provider]
+      properties:
+        service: { type: string, minLength: 1, maxLength: 32 }
+        path: { type: string, minLength: 1, maxLength: 2048 }
+        provider: { $ref: "#/components/schemas/WebhookProvider" }
+        delivery: { type: string, pattern: "^(fanout|selected)$" }
+        methods:
+          type: array
+          maxItems: 7
+          uniqueItems: true
+          items: { type: string, pattern: "^(POST|GET|PUT|PATCH|DELETE|HEAD|OPTIONS)$" }
+        source_ips:
+          type: array
+          minItems: 1
+          maxItems: 256
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 64 }
+    ProjectServiceConfiguration:
+      type: object
+      additionalProperties: false
+      required: [target]
+      properties:
+        publisher: { type: string, default: local }
+        name: { type: string, maxLength: 32 }
+        protocol: { $ref: "#/components/schemas/PrivateServiceProtocol" }
+        target:
+          type: string
+          minLength: 1
+          maxLength: 8192
+          description: Public targets use the runtime NormalizeTarget rules, including an explicit port and no trailing slash on HTTP/HTTPS origins. Private targets normalize to host:port; private HTTPS origins require target_tls and plaintext HTTP origins forbid it. The publisher uses the approved transport/trust snapshot independently of mandatory managed visitor TLS. Only local publishers may use deferred app (HTTP only), compose:SERVICE:PORT, or docker:CONTAINER:PORT descriptors; control never discovers or executes those targets.
+        public_url: { $ref: "#/components/schemas/ProjectServicePublicURL" }
+        target_tls: { $ref: "#/components/schemas/ProjectTargetTLS" }
+        access: { $ref: "#/components/schemas/ProjectServiceAccess" }
+        http: { $ref: "#/components/schemas/ProjectServiceHTTP" }
+    ProjectServiceHTTP:
+      type: object
+      additionalProperties: false
+      description: Local HTTP behavior. Named publisher groups reject http settings until their execution contract supports readiness and path mounts.
+      properties:
+        readiness:
+          type: object
+          additionalProperties: false
+          required: [path]
+          properties:
+            path: { type: string, minLength: 1, maxLength: 2048 }
+        paths:
+          type: object
+          maxProperties: 32
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            required: [service]
+            properties:
+              service: { type: string }
+              strip_prefix: { type: boolean }
+        open: { type: boolean }
+    ProjectServicePublicURL:
+      type: object
+      additionalProperties: false
+      properties:
+        domain_id: { type: string }
+        hostname: { type: string, maxLength: 253 }
+        access: { $ref: "#/components/schemas/ProjectPublicAccess" }
+        limits: { $ref: "#/components/schemas/ProjectPublicLimits" }
+        ephemeral:
+          type: boolean
+          default: false
+          description: Local deferred declarations may request an ephemeral worktree URL. Named publisher groups require saved pooled URLs and reject true.
+      description: Named publisher groups require domain_id. An omitted hostname uses the service name beneath that authorized domain. Local declarations defer URL allocation to their worktree runtime.
+    ProjectPublicAccess:
+      type: object
+      additionalProperties: false
+      properties:
+        mode: { $ref: "#/components/schemas/VisitorAccessMode" }
+        ip:
+          type: array
+          minItems: 1
+          maxItems: 256
+          uniqueItems: true
+          items: { type: string, maxLength: 64 }
+    ProjectPublicLimits:
+      type: object
+      additionalProperties: false
+      properties:
+        http: { $ref: "#/components/schemas/ProjectHTTPApplicationLimits" }
+        traffic: { $ref: "#/components/schemas/TrafficSelection" }
+    ProjectHTTPApplicationLimits:
+      type: object
+      additionalProperties: false
+      properties:
+        total: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        concurrency: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        rate: { $ref: "#/components/schemas/ProjectApplicationRate" }
+    ProjectApplicationRate:
+      type: object
+      additionalProperties: false
+      required: [count, per]
+      properties:
+        count: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        per: { type: string, minLength: 1, maxLength: 64 }
+        burst: { type: integer, minimum: 1, maximum: 9007199254740991 }
+    ProjectTargetTLS:
+      type: object
+      additionalProperties: false
+      required: [hostname, digest]
+      description: Publisher-to-target TLS trust for http, tcp, postgres, or mysql, independent of mandatory managed visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem. No filesystem path or remote bundle URL is accepted.
+      properties:
+        hostname: { type: string, minLength: 1, maxLength: 253 }
+        ca_pem: { type: string, maxLength: 1048576 }
+        digest: { type: string, pattern: "^[0-9a-f]{64}$" }
+    ProjectServiceAccess:
+      type: object
+      additionalProperties: false
+      required: [team]
+      properties:
+        team: { type: boolean, enum: [true] }
+    AppliedProjectConfiguration:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          team_id,
+          project_key,
+          source_fingerprint,
+          revision,
+          configuration_hash,
+          configuration,
+          services,
+          members,
+        ]
+      properties:
+        team_id: { type: string }
+        project_key: { type: string }
+        source_fingerprint: { type: string }
+        revision: { type: integer, format: int64 }
+        configuration_hash: { type: string }
+        configuration: { $ref: "#/components/schemas/ProjectConfiguration" }
+        services: { type: array, items: { $ref: "#/components/schemas/AppliedProjectService" } }
+        members: { type: array, items: { $ref: "#/components/schemas/PublisherGroupMemberStatus" } }
+        groups: { type: array, items: { $ref: "#/components/schemas/AppliedPublisherGroup" } }
+    AppliedPublisherGroup:
+      type: object
+      required: [id, name, group_names, namespace, domain_id, public]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        group_names:
+          type: array
+          description: Authoritative current and historical selectors permanently bound to this group ID.
+          items: { type: string }
+        namespace: { type: string }
+        domain_id: { type: string }
+        public: { type: boolean }
+    AppliedProjectService:
+      type: object
+      required: [service, publisher, service_kind, desired_revision, trust_revision]
+      properties:
+        service: { type: string }
+        publisher: { type: string }
+        service_kind: { type: string, enum: [public_url, private_service, local] }
+        service_id: { type: string }
+        hostname: { type: string }
+        desired_revision: { type: integer, format: int64 }
+        trust_revision: { type: integer, format: int64 }
+        port: { type: integer, minimum: 1024, maximum: 65535 }
+        public: { type: boolean }
+    CreatePublisherGroupEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, max_members, expires_in]
+      properties:
+        team_id: { type: string }
+        max_members: { type: integer, minimum: 1, maximum: 256 }
+        expires_in: { type: integer, minimum: 60, maximum: 86400 }
+    PublisherGroupEnrollment:
+      type: object
+      required: [enrollment_key, group_id, expires_at, max_members]
+      properties:
+        enrollment_key: { type: string }
+        group_id: { type: string }
+        expires_at: { type: string, format: date-time }
+        max_members: { type: integer }
+    RedeemPublisherGroupEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [enrollment_key, public_key]
+      properties:
+        enrollment_key: { type: string, maxLength: 256 }
+        public_key: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+    PublisherGroupMember:
+      type: object
+      required: [team_id, project_key, group_id, group_name, publisher_identity_id, key_id]
+      properties:
+        team_id: { type: string }
+        project_key: { type: string }
+        group_id: { type: string }
+        group_name: { type: string }
+        publisher_identity_id: { type: string }
+        key_id: { type: string }
+    PublisherGroupMemberStatus:
+      allOf:
+        - { $ref: "#/components/schemas/PublisherGroupMember" }
+        - type: object
+          required: [observed_revision, healthy]
+          properties:
+            observed_revision: { type: integer, format: int64 }
+            healthy: { type: boolean }
+            lease_expires_at: { type: string, format: date-time }
+    PublisherGroupLeaseRequest:
+      type: object
+      additionalProperties: false
+      required: [publisher_identity_id, group_id, assertion]
+      properties:
+        publisher_identity_id: { type: string }
+        group_id: { type: string }
+        assertion: { type: string, maxLength: 4096 }
+    PublisherGroupLease:
+      type: object
+      required: [access_token, expires_at]
+      properties:
+        access_token: { type: string }
+        expires_at: { type: string, format: date-time }
+    PublisherGroupVerification:
+      type: object
+      required: [member, group_names]
+      properties:
+        member: { $ref: "#/components/schemas/PublisherGroupMember" }
+        group_names:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 63 }
+    PublisherGroupAssignments:
+      type: object
+      required: [member, revision, configuration_hash, services]
+      properties:
+        certificate_state_required:
+          type: boolean
+          description: This replica has submitted certificate issuance work. Missing durable certificate state must not be replaced with fresh keys. Absence means the server does not support this recovery boundary.
+        member: { $ref: "#/components/schemas/PublisherGroupMember" }
+        revision: { type: integer, format: int64 }
+        configuration_hash: { type: string }
+        services:
+          {
+            type: array,
+            maxItems: 128,
+            items: { $ref: "#/components/schemas/PublisherGroupServiceAssignment" },
+          }
+    PublisherGroupServiceAssignment:
+      type: object
+      required: [service, service_id, service_kind, grant_id, configuration, trust_revision]
+      properties:
+        service: { type: string }
+        service_id: { type: string }
+        service_kind: { type: string, enum: [public_url, private_service] }
+        grant_id: { type: string }
+        hostname: { type: string }
+        trust_revision: { type: integer, format: int64 }
+        configuration: { $ref: "#/components/schemas/ProjectServiceConfiguration" }
+    PublisherGroupAcknowledgement:
+      type: object
+      additionalProperties: false
+      required: [revision, configuration_hash, healthy]
+      properties:
+        revision: { type: integer, format: int64, minimum: 1 }
+        configuration_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        healthy: { type: boolean }
+    ServiceAuditEvent:
+      type: object
+      additionalProperties: false
+      required: [id, cursor, team_id, service_id, service_kind, event_type, occurred_at]
+      properties:
+        id: { type: string, maxLength: 128 }
+        cursor: { type: string, pattern: "^[1-9][0-9]{0,18}$" }
+        team_id: { type: string }
+        service_id: { type: string }
+        service_kind: { type: string, enum: [public_url, private_service] }
+        event_type: { type: string, maxLength: 64 }
+        occurred_at: { type: string, format: date-time }
+        actor_identity_id: { type: string }
+        device_id: { type: string }
+        publisher_identity_id: { type: string }
+        run_id: { type: string }
+        visitor_connection_id: { type: string }
+        source_ip: { type: string }
+        outcome: { type: string, maxLength: 64 }
+        reason: { type: string, maxLength: 64 }
+        configuration_revision: { type: integer, format: int64, minimum: 1 }
+    ServiceAuditPage:
+      type: object
+      required: [events]
+      properties:
+        events:
+          { type: array, maxItems: 256, items: { $ref: "#/components/schemas/ServiceAuditEvent" } }
+        next_cursor: { type: string, pattern: "^[1-9][0-9]{0,18}$" }
+    ServiceObservation:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          event_id,
+          service_id,
+          service_kind,
+          event_type,
+          occurred_at,
+          run_id,
+          run_number,
+          visitor_connection_id,
+          outcome,
+        ]
+      properties:
+        event_id: { type: string, pattern: "^sae_([A-Za-z0-9]{22}|[A-Za-z0-9]{64})$" }
+        service_id: { type: string, maxLength: 128 }
+        service_kind: { type: string, enum: [public_url, private_service] }
+        event_type:
+          type: string
+          enum: [connection.open, connection.close, http.decision]
+          x-enum-varnames:
+            [ObservationConnectionOpen, ObservationConnectionClose, ObservationHTTPDecision]
+        occurred_at: { type: string, format: date-time }
+        run_id: { type: string }
+        run_number: { type: integer, format: int64, minimum: 0 }
+        connector_session_id: { type: string }
+        visitor_connection_id: { type: string }
+        source_ip: { type: string }
+        outcome:
+          type: string
+          enum: [allowed, denied, failed, forwarded, closed]
+          x-enum-varnames:
+            [
+              ObservationAllowed,
+              ObservationDenied,
+              ObservationFailed,
+              ObservationForwarded,
+              ObservationClosed,
+            ]
+        reason:
+          type: string
+          enum:
+            [
+              ip_policy,
+              capacity,
+              draining,
+              unavailable,
+              authorization,
+              invalid_request,
+              forwarding,
+              closed,
+              revoked,
+              expired,
+              cancelled,
+            ]
+          x-enum-varnames:
+            [
+              ObservationIPPolicy,
+              ObservationCapacity,
+              ObservationDraining,
+              ObservationUnavailable,
+              ObservationAuthorization,
+              ObservationInvalidRequest,
+              ObservationForwarding,
+              ObservationReasonClosed,
+              ObservationRevoked,
+              ObservationExpired,
+              ObservationCancelled,
+            ]
+    PublishRunServiceObservations:
+      type: object
+      additionalProperties: false
+      required: [publish_run_number, events]
+      properties:
+        publish_run_number: { type: integer, format: int64, minimum: 1 }
+        events:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 256,
+            items: { $ref: "#/components/schemas/ServiceObservation" },
+          }
+    ServiceObservationResult:
+      type: object
+      additionalProperties: false
+      required: [accepted, duplicates]
+      properties:
+        accepted: { type: integer, minimum: 0, maximum: 256 }
+        duplicates: { type: integer, minimum: 0, maximum: 256 }
+    IngressTransportTrust:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          ingress_id,
+          ingress_run_id,
+          ingress_lease_revision,
+          tls_server_name,
+          certificate_pem,
+          issuer_pem,
+          issuer_revision,
+          public_key_sha256,
+          lease_uri,
+          not_before,
+          not_after,
+          valid_until,
+        ]
+      properties:
+        ingress_id: { type: string, minLength: 1 }
+        ingress_run_id: { type: string, minLength: 1 }
+        ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
+        tls_server_name: { type: string, minLength: 1, maxLength: 253 }
+        certificate_pem: { type: string, minLength: 1, maxLength: 65536 }
+        issuer_pem: { type: string, minLength: 1, maxLength: 131072 }
+        issuer_revision: { type: integer, format: int64, minimum: 1 }
+        public_key_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        lease_uri: { type: string, format: uri }
+        not_before: { type: string, format: date-time }
+        not_after: { type: string, format: date-time }
+        valid_until: { type: string, format: date-time }
+    VisitorDevice:
+      type: object
+      additionalProperties: false
+      required: [id, identity_id, public_key, created_at]
+      properties:
+        id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+        identity_id: { $ref: "#/components/schemas/IdentityID" }
+        public_key: { type: string, pattern: "^[0-9a-f]{64}$" }
+        created_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+    PrivateServiceSelection:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          private_service_id,
+          private_run_id,
+          run_number,
+          identity_id,
+          device_id,
+          expires_at,
+          protocol,
+          trust_revision,
+        ]
+      properties:
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        identity_id: { $ref: "#/components/schemas/IdentityID" }
+        device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+        expires_at: { type: string, format: date-time }
+        protocol: { $ref: "#/components/schemas/PrivateServiceProtocol" }
+        trust_revision: { type: integer, format: int64, minimum: 1 }
+        managed_tls: { $ref: "#/components/schemas/ManagedServiceTLS" }
+    PrivateServiceID:
+      type: string
+      pattern: "^psvc_[A-Za-z0-9]{22}$"
+    VisitorConnectionID:
+      type: string
+      pattern: "^vc_[A-Za-z0-9]{22}$"
+    PrivateRunID:
+      type: string
+      pattern: "^psrun_[A-Za-z0-9]{22}$"
+    PrivateConnectorSessionID:
+      type: string
+      pattern: "^pcs_[A-Za-z0-9]{22}$"
+    PrivateServiceInvitationID:
+      type: string
+      pattern: "^psivt_[A-Za-z0-9]{22}$"
+    PrivateServiceGrantID:
+      type: string
+      pattern: "^psgr_[A-Za-z0-9]{22}$"
+    PrivateServiceName:
+      type: string
+      pattern: "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+      maxLength: 32
+    CreatePrivateServiceRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, name]
+      properties:
+        team_id: { $ref: "#/components/schemas/TeamID" }
+        name: { $ref: "#/components/schemas/PrivateServiceName" }
+        protocol: { $ref: "#/components/schemas/PrivateServiceProtocol" }
+        target_tls: { $ref: "#/components/schemas/PrivateServiceTLS" }
+        publisher_pool: { type: boolean, default: false }
+        placement: { $ref: "#/components/schemas/PrivateServicePlacement" }
+    PrivateServicePlacement:
+      type: object
+      additionalProperties: false
+      properties:
+        domain_id: { $ref: "#/components/schemas/DomainID" }
+        worktree_key: { type: string, minLength: 1, maxLength: 128 }
+        worktree_label: { type: string, minLength: 1, maxLength: 63 }
+    LocalServiceSource:
+      type: object
+      additionalProperties: false
+      required: [project_key, source_fingerprint, service, worktree_key]
+      properties:
+        project_key: { type: string }
+        source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        service: { type: string }
+        worktree_key: { type: string }
+    PrivateServiceProtocol:
+      type: string
+      enum: [http, tcp, mysql, postgres]
+      x-enum-varnames: [PrivateHttp, Tcp, Mysql, Postgres]
+    PrivateServiceTLS:
+      type: object
+      additionalProperties: false
+      required: [hostname, system, digest]
+      description: Approved publisher-to-target trust. This never selects or disables visitor TLS.
+      properties:
+        hostname: { type: string, minLength: 1, maxLength: 253 }
+        system: { type: boolean }
+        pem: { type: string, maxLength: 1048576 }
+        digest: { type: string, pattern: "^[0-9a-f]{64}$" }
+    PrivateServiceMetadata:
+      type: object
+      additionalProperties: false
+      required: [protocol, publisher_pool, trust_revision]
+      properties:
+        protocol: { $ref: "#/components/schemas/PrivateServiceProtocol" }
+        target_tls: { $ref: "#/components/schemas/PrivateServiceTLS" }
+        publisher_pool: { type: boolean }
+        trust_revision: { type: integer, format: int64, minimum: 1 }
+        managed_tls: { $ref: "#/components/schemas/ManagedServiceTLS" }
+    ManagedServiceTLS:
+      type: object
+      additionalProperties: false
+      required: [hostname, port, public]
+      description: Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+      properties:
+        hostname: { type: string, minLength: 1, maxLength: 253 }
+        port: { type: integer, minimum: 1024, maximum: 65535 }
+        public: { type: boolean }
+    IssueServiceClientCertificateRequest:
+      type: object
+      additionalProperties: false
+      required: [device_id, csr]
+      properties:
+        device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+        csr: { type: string, format: byte, maxLength: 10924 }
+    ServiceClientCertificate:
+      type: object
+      additionalProperties: false
+      required: [private_service_id, certificate_pem, issuer_pem, expires_at]
+      properties:
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        certificate_pem: { type: string, maxLength: 16384 }
+        issuer_pem: { type: string, maxLength: 16384 }
+        expires_at: { type: string, format: date-time }
+    AuthorizeServiceConnectorRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [run_number, visitor_connection_id, source_ip, connector_session_id, identity_id, device_id]
+      properties:
+        run_number: { type: integer, format: int64, minimum: 1 }
+        visitor_connection_id: { $ref: "#/components/schemas/VisitorConnectionID" }
+        source_ip: { type: string, maxLength: 64 }
+        connector_session_id: { type: string, pattern: "^pcs_[A-Za-z0-9]{22}$" }
+        identity_id: { type: string, minLength: 1, maxLength: 128 }
+        device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+    AuthorizeServiceClientCertificateRequest:
+      type: object
+      additionalProperties: false
+      required: [run_number, visitor_connection_id, source_ip, certificate]
+      properties:
+        run_number: { type: integer, format: int64, minimum: 1 }
+        visitor_connection_id: { $ref: "#/components/schemas/VisitorConnectionID" }
+        source_ip: { type: string, maxLength: 64 }
+        certificate: { type: string, format: byte, maxLength: 21848 }
+    ServiceClientCertificateDecision:
+      type: object
+      additionalProperties: false
+      required: [allowed, admitted, valid_until]
+      properties:
+        allowed: { type: boolean }
+        admitted:
+          {
+            type: boolean,
+            description: Ingress has reserved ordinary capacity. The publisher must wait for this before sending application bytes to the target.,
+          }
+        valid_until: { type: string, format: date-time }
+    PrivateServiceRunDeclaration:
+      type: object
+      additionalProperties: false
+      required: [protocol, trust_revision]
+      properties:
+        protocol: { $ref: "#/components/schemas/PrivateServiceProtocol" }
+        target_tls: { $ref: "#/components/schemas/PrivateServiceTLS" }
+        trust_revision: { type: integer, format: int64, minimum: 1 }
+    PrivateService:
+      type: object
+      additionalProperties: false
+      description: Saved private service and its approved protocol/TLS trust. private_run_id and run_number are an optional ready-publisher hint; select a run before each new connection.
+      required: [id, team_id, name, enabled, created_at, protocol, publisher_pool, trust_revision]
+      dependentRequired:
+        private_run_id: [run_number]
+        run_number: [private_run_id]
+      properties:
+        id: { $ref: "#/components/schemas/PrivateServiceID" }
+        team_id: { $ref: "#/components/schemas/TeamID" }
+        domain_id: { $ref: "#/components/schemas/DomainID" }
+        placement: { $ref: "#/components/schemas/PrivateServicePlacement" }
+        source: { $ref: "#/components/schemas/LocalServiceSource" }
+        name: { $ref: "#/components/schemas/PrivateServiceName" }
+        enabled: { type: boolean }
+        managed_tls: { $ref: "#/components/schemas/ManagedServiceTLS" }
+        http_limits:
+          $ref: "#/components/schemas/ProjectHTTPApplicationLimits"
+          description: Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
+        protocol: { $ref: "#/components/schemas/PrivateServiceProtocol" }
+        target_tls: { $ref: "#/components/schemas/PrivateServiceTLS" }
+        publisher_pool: { type: boolean }
+        trust_revision: { type: integer, format: int64, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        private_run_id:
+          {
+            $ref: "#/components/schemas/PrivateRunID",
+            description: Present for a ready run with a live publisher grant and at least one live ready publisher connection; first readiness requires two.,
+          }
+        run_number:
+          {
+            type: integer,
+            format: int64,
+            minimum: 1,
+            description: Present only alongside private_run_id.,
+          }
+    PrivateServicePage:
+      type: object
+      additionalProperties: false
+      required: [services]
+      properties:
+        services: { type: array, items: { $ref: "#/components/schemas/PrivateService" } }
+        next_cursor: { $ref: "#/components/schemas/PrivateServiceID" }
+    CreatePrivateServiceGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [team, identity] }
+        identity_id: { $ref: "#/components/schemas/IdentityID" }
+        expires_at: { type: string, format: date-time }
+    PrivateServiceGrant:
+      type: object
+      additionalProperties: false
+      required: [id, private_service_id, kind, created_at]
+      properties:
+        id: { $ref: "#/components/schemas/PrivateServiceGrantID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        kind: { type: string, enum: [team, identity] }
+        identity_id: { $ref: "#/components/schemas/IdentityID" }
+        invitation_id: { $ref: "#/components/schemas/PrivateServiceInvitationID" }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+    CreatePrivateServiceInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [email, expires_at]
+      properties:
+        email: { type: string, format: email }
+        expires_at: { type: string, format: date-time }
+    PrivateServiceInvitation:
+      type: object
+      additionalProperties: false
+      required: [id, private_service_id, email, expires_at]
+      properties:
+        id: { $ref: "#/components/schemas/PrivateServiceInvitationID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        email: { type: string, format: email }
+        expires_at: { type: string, format: date-time }
+        accepted_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        secret:
+          {
+            type: string,
+            minLength: 32,
+            maxLength: 128,
+            description: Returned only when the invitation is created; share it with the verified email recipient. Never returned by list.,
+          }
+    PrivateConnectorSessionSetup:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          connector_session_id,
+          private_service_id,
+          session_credential,
+          ingress_id,
+          ingress_address,
+          tls_server_name,
+          device_id,
+          identity_id,
+          expires_at,
+        ]
+      properties:
+        connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        session_credential: { type: string, minLength: 32, maxLength: 512 }
+        ingress_address:
+          {
+            type: string,
+            minLength: 1,
+            description: Shared ingress infrastructure TLS endpoint,
+            not a service-specific hostname.,
+          }
+        ingress_id: { type: string, minLength: 1 }
+        tls_server_name: { type: string, minLength: 1, maxLength: 253 }
+        expires_at: { type: string, format: date-time }
+        device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+        identity_id: { $ref: "#/components/schemas/IdentityID" }
+    PrivateServiceRunPreparation:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          team_id,
+          private_service_id,
+          private_run_id,
+          run_number,
+          publisher_identity_id,
+          publisher_grant_id,
+          publisher_key_id,
+          idempotency_key,
+          expires_at,
+          hostname,
+          service_port,
+          domain_id,
+        ]
+      properties:
+        team_id: { $ref: "#/components/schemas/TeamID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        publisher_identity_id: { $ref: "#/components/schemas/ResourceID" }
+        publisher_grant_id: { $ref: "#/components/schemas/ResourceID" }
+        publisher_key_id: { $ref: "#/components/schemas/ResourceID" }
+        idempotency_key: { $ref: "#/components/schemas/IdempotencyKey" }
+        expires_at: { type: string, format: date-time }
+        certificate_plan: { $ref: "#/components/schemas/CertificatePlan" }
+        hostname: { type: string, minLength: 1, maxLength: 253 }
+        service_port: { type: integer, minimum: 1024, maximum: 65535 }
+        domain_id: { $ref: "#/components/schemas/DomainID" }
+    CreatePrivateCertificateIssuanceRequest:
+      type: object
+      additionalProperties: false
+      required: [run_number, csr]
+      properties:
+        run_number: { type: integer, format: int64, minimum: 1 }
+        csr: { type: string, format: byte, maxLength: 87384 }
+    PrivateCertificateInstalledRequest:
+      type: object
+      additionalProperties: false
+      required: [run_number, issuance_id, not_after]
+      properties:
+        run_number: { type: integer, format: int64, minimum: 1 }
+        issuance_id: { $ref: "#/components/schemas/IssuanceID" }
+        not_after: { type: string, format: date-time }
+    PrivateCertificateIssuance:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          private_service_id,
+          private_run_id,
+          run_number,
+          publisher_identity_id,
+          certificate_plan,
+          state,
+        ]
+      properties:
+        id: { $ref: "#/components/schemas/IssuanceID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        certificate_plan: { $ref: "#/components/schemas/CertificatePlan" }
+        publisher_identity_id: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" }
+        state: { $ref: "#/components/schemas/CertificateIssuanceState" }
+        certificate_pem: { type: string }
+        not_before: { type: string, format: date-time }
+        not_after: { type: string, format: date-time }
+        retry_at: { type: string, format: date-time }
+    PrivateServiceRunSetup:
+      type: object
+      additionalProperties: false
+      required: [private_service_id, private_run_id, run_number, run_token, publisher_connections]
+      properties:
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        run_token: { type: string, minLength: 1, maxLength: 4096 }
+        publisher_connections:
+          {
+            type: array,
+            minItems: 2,
+            maxItems: 2,
+            items: { $ref: "#/components/schemas/ConnectionAssignment" },
+          }
+    PrivateServiceRunState:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          private_service_id,
+          private_run_id,
+          run_number,
+          state,
+          publisher_expires_at,
+          publisher_connections,
+        ]
+      properties:
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
+        state: { type: string, enum: [starting, ready, closed] }
+        publisher_expires_at: { type: string, format: date-time }
+        healthy: { type: boolean }
+        stream_capacity: { type: integer, format: int32, minimum: 1, maximum: 1048576 }
+        active_streams: { type: integer, format: int32, minimum: 0 }
+        publisher_connections:
+          {
+            type: array,
+            minItems: 2,
+            maxItems: 2,
+            items: { $ref: "#/components/schemas/ConnectionAssignment" },
+          }
     HTTPVisitorRequest:
+      description: A public URL is HTTP-only; private services use enrolled visitor devices.
       type: object
       additionalProperties: false
       required: [publish_run_number, source_ip]
@@ -1606,6 +3616,14 @@ components:
         share_id: { type: string }
         share_cookie_secret: { type: string, maxLength: 43 }
         share_secret: { type: string, maxLength: 43 }
+    PrivateServiceRunHeartbeat:
+      type: object
+      additionalProperties: false
+      required: [healthy, stream_capacity, active_streams]
+      properties:
+        healthy: { type: boolean }
+        stream_capacity: { type: integer, format: int32, minimum: 1, maximum: 1048576 }
+        active_streams: { type: integer, format: int32, minimum: 0 }
     ReplaceVisitorAccessRequest:
       type: object
       additionalProperties: false
@@ -1632,6 +3650,13 @@ components:
       type: object
       additionalProperties: false
       properties:
+        expires_at: { type: string, format: date-time }
+    CreateIdentityVisitorGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [identity_id]
+      properties:
+        identity_id: { $ref: "#/components/schemas/IdentityID" }
         expires_at: { type: string, format: date-time }
     VisitorGrant:
       type: object
@@ -1683,18 +3708,8 @@ components:
         team_id: { type: string }
         team_name: { type: string }
         canonical_hostname: { type: string }
-        service_protocol: { type: string, pattern: "^(http|postgres|mysql|redis)$" }
-        public_port: { type: integer, format: int32, minimum: 1024, maximum: 65535 }
+        service_protocol: { $ref: "#/components/schemas/PublicURLServiceProtocol" }
         visitor_access: { type: string, enum: [owner, preview_team, team_grant, identity_grant] }
-    VisitorCertificate:
-      type: object
-      additionalProperties: false
-      required: [public_url_id, certificate_pem, issuer_pem, expires_at]
-      properties:
-        public_url_id: { $ref: "#/components/schemas/PublicURLID" }
-        certificate_pem: { type: string }
-        issuer_pem: { type: string }
-        expires_at: { type: string, format: date-time }
     EnrollGuestPublisherRequest:
       type: object
       additionalProperties: false
@@ -1937,32 +3952,20 @@ components:
           uniqueItems: true
           items:
             type: string
-            enum: [login_token, oidc]
+            enum: [oidc]
         oidc:
           $ref: "#/components/schemas/OIDCAuthenticationFacts"
     OIDCAuthenticationFacts:
       type: object
       additionalProperties: false
-      required: [issuer, client_id, login_flow, scopes]
+      required: [issuer, login_flow]
       properties:
         issuer:
           type: string
           format: uri
-        client_id:
-          type: string
-          minLength: 1
-          maxLength: 128
         login_flow:
           type: string
-          enum: [device_code, authorization_code_pkce]
-        scopes:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            type: string
-            minLength: 1
-            maxLength: 128
+          enum: [device_code]
     PublicURLScope:
       type: string
       enum: [member, shared]
@@ -1974,7 +3977,7 @@ components:
       enum: [restricted, anonymous]
     PublicURLServiceProtocol:
       type: string
-      enum: [http, postgres, mysql, redis, ssh]
+      enum: [http]
     PublicURLLifecycleState:
       type: string
       enum: [enabled, suspended]
@@ -2014,14 +4017,10 @@ components:
         target:
           type: string
           pattern: "^$|^https?://"
-          description: Empty when the publisher supplies the target locally.
+          description: Empty for saved app or alias public URLs whose publisher supplies its HTTP target locally.
         service_protocol:
           $ref: "#/components/schemas/PublicURLServiceProtocol"
-        public_port:
-          type: integer
-          minimum: 1024
-          maximum: 65535
-          description: Stable visitor TCP port for a port-addressed public URL.
+        publisher_pool: { type: boolean, default: false }
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
@@ -2072,9 +4071,11 @@ components:
           $ref: "#/components/schemas/ResourceID"
         kind:
           type: string
-          enum: [saved_url, namespace]
+          enum: [saved_url, namespace, private_service]
         public_url_id:
           $ref: "#/components/schemas/PublicURLID"
+        private_service_id:
+          $ref: "#/components/schemas/PrivateServiceID"
         team_id:
           $ref: "#/components/schemas/TeamID"
         domain_id:
@@ -2104,11 +4105,18 @@ components:
     PublisherIdentity:
       type: object
       additionalProperties: false
-      required: [id, name, kind, created_at, grants]
+      required: [id, name, kind, created_at, grants, ownership]
       properties:
         id: { $ref: "#/components/schemas/ResourceID" }
         name: { type: string }
         kind: { type: string, enum: [installed, automation, run, guest] }
+        ownership:
+          {
+            type: string,
+            enum: [member, team, guest],
+            x-enum-varnames: [PublisherOwnerMember, PublisherOwnerTeam, PublisherOwnerGuest],
+          }
+        owner_membership_id: { $ref: "#/components/schemas/MembershipID" }
         created_at: { type: string, format: date-time }
         revoked_at: { type: string, format: date-time }
         grants:
@@ -2117,6 +4125,7 @@ components:
     CreatePublisherGrantRequest:
       type: object
       additionalProperties: false
+      description: Select exactly one saved public URL, HTTP namespace, or private service ID within the team.
       required: [team_id]
       properties:
         team_id:
@@ -2124,16 +4133,24 @@ components:
         domain_id:
           $ref: "#/components/schemas/DomainID"
         public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
         expires_at: { type: string, format: date-time }
     CreatePublisherEnrollmentRequest:
       type: object
       additionalProperties: false
+      description: Enroll with one exact saved public URL, HTTP namespace, or private service ID.
       required: [team_id, name, kind]
       properties:
         team_id: { $ref: "#/components/schemas/TeamID" }
         name: { type: string, minLength: 1, maxLength: 63 }
         kind: { type: string, enum: [installed, automation, run] }
+        ownership:
+          type: string
+          enum: [member, team]
+          x-enum-varnames: [EnrollmentOwnerMember, EnrollmentOwnerTeam]
+          description: Member-owned publishers stop with that membership. Team ownership requires a shared URL or private service and current team administration; the creator remains audit history only. Defaults to member for member URLs and namespaces, team for shared URLs and private services.
         public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
         domain_id: { $ref: "#/components/schemas/DomainID" }
     AllocateEphemeralPublicURLRequest:
       type: object
@@ -2184,7 +4201,7 @@ components:
           $ref: "#/components/schemas/ResourceID"
         kind:
           type: string
-          enum: [saved_url, namespace]
+          enum: [saved_url, namespace, private_service]
         team_id:
           $ref: "#/components/schemas/TeamID"
         domain_id:
@@ -2192,6 +4209,7 @@ components:
         namespace:
           type: string
         public_url_id: { $ref: "#/components/schemas/PublicURLID" }
+        private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
         expires_at:
           type: string
           format: date-time
@@ -2224,9 +4242,10 @@ components:
         target:
           type: string
           pattern: "^$|^https?://"
-          description: Leave empty when the publisher supplies the target locally.
+          description: Leave empty for a saved app or alias public URL whose publisher supplies its HTTP target locally. Ephemeral, demo, OAuth, and webhook URLs require a target.
         service_protocol:
           $ref: "#/components/schemas/PublicURLServiceProtocol"
+        publisher_pool: { type: boolean, default: false }
         public_url_scope:
           $ref: "#/components/schemas/PublicURLScope"
         purpose:
@@ -2946,7 +4965,7 @@ components:
         target:
           type: string
           pattern: "^$|^https?://"
-          description: empty only when keeping a saved app public URL targetless.
+          description: empty only when keeping a saved app or alias public URL targetless.
         allowed_ip_prefixes:
           type: array
           uniqueItems: true
@@ -2957,7 +4976,7 @@ components:
             pattern: "^\\S+$"
     CertificateChallengeMethod:
       type: string
-      enum: [dns-01, tls-alpn-01]
+      enum: [dns-01]
     CertificatePlan:
       type: object
       additionalProperties: false
@@ -3182,7 +5201,7 @@ components:
       type: object
       additionalProperties: false
       required:
-        [public_url, publish_run, publish_run_token, certificate_plan, publisher_connections]
+        [public_url, publish_run, publish_run_token, publisher_connections, certificate_plan]
       properties:
         traffic:
           $ref: "#/components/schemas/TrafficLimits"
@@ -3301,8 +5320,14 @@ components:
     PublishRunHeartbeat:
       type: object
       additionalProperties: false
-      required: [publish_run, publisher_connections, policy_denials]
+      description: Each HTTP publisher becomes ready independently after DNS, its installed public URL certificate, and two ready publisher connections.
+      required: [publish_run, publisher_connections, policy_denials, visitor_policy_revision]
       properties:
+        visitor_policy_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current team authority revision; publishers invalidate run-local visitor decisions when it advances.
         publish_run:
           $ref: "#/components/schemas/PublishRun"
         publisher_connections:
@@ -3357,22 +5382,6 @@ components:
           failed,
           canceled,
         ]
-    CertificateChallenge:
-      type: object
-      additionalProperties: false
-      required: [identifier, method, token, digest, expires_at]
-      properties:
-        identifier:
-          $ref: "#/components/schemas/CanonicalHostname"
-        method:
-          $ref: "#/components/schemas/CertificateChallengeMethod"
-        token:
-          type: string
-        digest:
-          type: string
-        expires_at:
-          type: string
-          format: date-time
     CertificateIssuance:
       type: object
       additionalProperties: false
@@ -3402,10 +5411,6 @@ components:
           $ref: "#/components/schemas/CertificatePlan"
         state:
           $ref: "#/components/schemas/CertificateIssuanceState"
-        challenges:
-          type: array
-          items:
-            $ref: "#/components/schemas/CertificateChallenge"
         certificate_pem:
           type: string
         retry_at:
@@ -3602,6 +5607,7 @@ components:
           guest_trial_exhausted,
           not_found,
           conflict,
+          project_managed,
           rate_limited,
           unavailable,
           internal,

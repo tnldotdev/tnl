@@ -31,8 +31,7 @@ type Inspection struct {
 	MaxBytes  *ByteSize       `json:"max_bytes,omitempty" yaml:"max_bytes,omitempty"`
 }
 
-// ResolveInspection supplies bounded native retention settings. SSH records no
-// summaries; other protocols default to summary mode when configuration is absent.
+// ResolveInspection supplies bounded native retention settings.
 func ResolveInspection(value *Inspection, protocol string) (inspection.Policy, error) {
 	if !ValidProtocol(protocol) {
 		return inspection.Policy{}, errors.New("unsupported service protocol")
@@ -41,9 +40,6 @@ func ResolveInspection(value *Inspection, protocol string) (inspection.Policy, e
 		return inspection.Policy{}, err
 	}
 	result := inspection.Policy{Mode: inspection.SummaryMode, Retention: inspection.DefaultRetention, MaxBytes: inspection.DefaultMaxBytes}
-	if protocol == "ssh" {
-		result.Mode = inspection.None
-	}
 	if value != nil {
 		if value.Mode != nil {
 			result.Mode = inspection.Mode(*value.Mode)
@@ -54,9 +50,6 @@ func ResolveInspection(value *Inspection, protocol string) (inspection.Policy, e
 		if value.MaxBytes != nil {
 			result.MaxBytes = value.MaxBytes.Value()
 		}
-	}
-	if protocol == "ssh" && result.Mode != inspection.None {
-		return inspection.Policy{}, errors.New("SSH inspection supports none only")
 	}
 	return result, nil
 }

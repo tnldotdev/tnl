@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -68,8 +67,6 @@ type certificateTestControl struct {
 	store          *clientstate.Store
 	signer         tls.Certificate
 	create         func([]byte, string) (controlv1.CertificateIssuance, error)
-	challengeReady func() (controlv1.CertificateIssuance, error)
-	removed        func() error
 	installed      func(string, uint64, string, time.Time) error
 	change         func(*controlv1.CertificateIssuance, *x509.Certificate)
 	ready          func() error
@@ -101,7 +98,7 @@ func newCertificateTestControl(t *testing.T, hostname string, plan controlv1.Cer
 	return &certificateTestControl{
 		publisherControlStub: publisherControlStub{allowed: []string{"lookup"}}, signer: signer,
 		setup: controlv1.PublishRunSetup{
-			PublicUrl:       controlv1.PublicURL{Id: certificateTestPublicURLID, CanonicalHostname: hostname, TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"), PublicUrlScope: controlv1.Member, Purpose: controlv1.App, LifecycleState: controlv1.Enabled},
+			PublicUrl:       controlv1.PublicURL{Id: certificateTestPublicURLID, CanonicalHostname: hostname, TeamId: "team_1", DomainId: "domain_1", MembershipId: pointer("membership_1"), PublicUrlScope: controlv1.Member, Purpose: controlv1.App, ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
 			PublishRun:      controlv1.PublishRun{Id: "publish_run_0123456789abcdef0123456789abcdef", PublicUrlId: certificateTestPublicURLID, TeamId: "team_1", PublishRunNumber: 1, ExpiresAt: time.Now().Add(time.Hour)},
 			PublishRunToken: token.String(), CertificatePlan: plan,
 		},
@@ -112,15 +109,27 @@ func namespaceCertificateTestPlan() controlv1.CertificatePlan {
 	return controlv1.CertificatePlan{CacheKey: "member.example", Scope: "member.example", Identifiers: []string{"member.example", "*.member.example"}, ChallengeMethod: controlv1.Dns01}
 }
 
+func (*certificateTestControl) EnableShareAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
+	return nil
+}
+
+func (*certificateTestControl) GetPublishRunShareState(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunShareState, error) {
+	return controlv1.PublishRunShareState{Shares: []controlv1.PublisherShare{}}, nil
+}
+
+func (*certificateTestControl) RedeemPublishRunShare(context.Context, string, controlv1.RedeemShareRequest, credentials.PublishRunToken) (controlv1.ShareRedemption, error) {
+	return controlv1.ShareRedemption{}, errors.New("no test share")
+}
+
 func publicURLCertificateTestPlan() controlv1.CertificatePlan {
-	return controlv1.CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: controlv1.TlsAlpn01}
+	return controlv1.CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: controlv1.Dns01}
 }
 
 func newCertificateTransactionTest(t *testing.T) (*certificateTestControl, *PublicURLServer, *clientstate.CertificateCache) {
 	t.Helper()
 	control := newCertificateTestControl(t, "route.example", publicURLCertificateTestPlan())
 	control.store = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
-	state, err := control.store.Certificates(control.setup.PublicUrl.TeamId, control.setup.CertificatePlan)
+	state, err := control.store.CertificatesForPublisher(control.setup.PublicUrl.TeamId, control.PublisherID(), control.setup.CertificatePlan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,11 +158,6 @@ func certificateTestPublicURL(t *testing.T, hostname string, plan controlv1.Cert
 	}
 	t.Cleanup(func() { _ = route.Close() })
 	return route
-}
-
-func certificateTestChallenge() controlv1.CertificateChallenge {
-	digest := sha256.Sum256([]byte("test TLS-ALPN key authorization"))
-	return controlv1.CertificateChallenge{Token: "challenge_1", Identifier: "route.example", Method: controlv1.TlsAlpn01, Digest: base64.RawURLEncoding.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(10 * time.Minute)}
 }
 
 // sign only the submitted key and only when the CSR matches the certificate plan.
@@ -206,26 +210,6 @@ func (c *certificateTestControl) CreateCertificateIssuance(_ context.Context, se
 		return c.create(csr, key)
 	}
 	return c.issue(csr)
-}
-
-func (c *certificateTestControl) MarkCertificateChallengeReady(_ context.Context, issuance string, token credentials.PublishRunToken) (controlv1.CertificateIssuance, error) {
-	c.mu.Lock()
-	known := c.issued[issuance]
-	c.mu.Unlock()
-	if c.challengeReady == nil || !known || token.String() != c.setup.PublishRunToken {
-		return controlv1.CertificateIssuance{}, errors.New("unexpected challenge-ready request")
-	}
-	return c.challengeReady()
-}
-
-func (c *certificateTestControl) MarkCertificateChallengeRemoved(_ context.Context, issuance string, token credentials.PublishRunToken) error {
-	c.mu.Lock()
-	known := c.issued[issuance]
-	c.mu.Unlock()
-	if c.removed == nil || !known || token.String() != c.setup.PublishRunToken {
-		return errors.New("unexpected challenge-removed request")
-	}
-	return c.removed()
 }
 
 func (c *certificateTestControl) MarkPublishRunCertificateInstalled(_ context.Context, session string, version uint64, issuance string, notAfter time.Time, token credentials.PublishRunToken) error {

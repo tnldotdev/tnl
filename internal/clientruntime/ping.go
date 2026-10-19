@@ -2,9 +2,7 @@ package clientruntime
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -70,51 +68,7 @@ func pingWithTransport(ctx context.Context, address, protocol string, transport 
 		}
 		return result
 	}
-	if protocol != "postgres" && protocol != "mysql" && protocol != "redis" && protocol != "ssh" {
-		result.State = "invalid protocol"
-		return result
-	}
-	if _, _, err := net.SplitHostPort(address); err != nil {
-		result.State = "invalid address"
-		return result
-	}
-	return pingTCP(ctx, result, nil)
-}
-
-func pingTCP(ctx context.Context, result PingResult, trust *tls.Config) PingResult {
-	address, protocol := result.Address, result.Protocol
-	if protocol == "redis" {
-		// a redis visitor probe does not send PING, credentials, or any other command.
-		host, _, _ := net.SplitHostPort(address)
-		config := &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
-		if trust != nil {
-			config = trust.Clone()
-			config.ServerName = host
-			config.MinVersion = tls.VersionTLS12
-		}
-		if config.InsecureSkipVerify {
-			result.Note = "verified TLS is required"
-			return result
-		}
-		conn, err := (&tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second}, Config: config}).DialContext(ctx, "tcp", address)
-		if err != nil {
-			result.Note = "connection or TLS verification failed"
-			return result
-		}
-		_ = conn.Close()
-	} else if err := CheckPublicTCP(ctx, TCPProbeOptions{Address: address, Protocol: protocol}); err != nil {
-		result.Note = "connection, protocol, or TLS verification failed"
-		return result
-	}
-	result.State = "responding"
-	if protocol == "redis" {
-		result.State = "tls verified"
-		result.Note = "visitor TLS verified; Redis was not contacted"
-	} else if protocol == "ssh" {
-		result.Note = "SSH banner received; host key not verified"
-	} else {
-		result.Note = "TLS verified; no login attempted"
-	}
+	result.State = "invalid protocol"
 	return result
 }
 
@@ -125,21 +79,12 @@ func PingAddress(value, protocol string) (string, string, error) {
 			return "", "", errors.New("invalid public URL")
 		}
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return "", "", errors.New("use --protocol for TCP host:port")
+			return "", "", errors.New("expected an HTTP or HTTPS public URL")
 		}
-		if protocol != "" && protocol != parsed.Scheme {
+		if protocol != "" && protocol != "http" && protocol != parsed.Scheme {
 			return "", "", errors.New("protocol does not match URL scheme")
 		}
 		return value, parsed.Scheme, nil
 	}
-	if protocol == "" {
-		return "", "", errors.New("host:port needs --protocol postgres, mysql, redis, or ssh")
-	}
-	if protocol != "postgres" && protocol != "mysql" && protocol != "redis" && protocol != "ssh" {
-		return "", "", errors.New("host:port needs a TCP protocol")
-	}
-	if _, _, err := net.SplitHostPort(value); err != nil {
-		return "", "", errors.New("expected host:port")
-	}
-	return value, protocol, nil
+	return "", "", errors.New("expected an HTTP or HTTPS public URL; use tnl connect for private services")
 }

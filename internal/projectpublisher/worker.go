@@ -2,7 +2,6 @@ package projectpublisher
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"net/http"
 	"slices"
@@ -18,6 +17,8 @@ import (
 )
 
 type Configuration struct {
+	RunPrivate       func(context.Context, func(uint64, bool) error) error
+	CheckPrivate     func(context.Context, clientruntime.Service) clientruntime.Observation
 	Publisher        publisher.Config
 	Inspection       inspection.Policy
 	PrimaryRoot      string
@@ -28,18 +29,18 @@ type Configuration struct {
 }
 
 type proofEntry struct {
-	service clientruntime.Service
-	run     publisher.PublishRunIdentity
-	proof   *publisher.ReadinessProof
-	target  *TargetBinding
-	check   sync.Mutex
+	service      clientruntime.Service
+	run          publisher.PublishRunIdentity
+	proof        *publisher.ReadinessProof
+	target       *TargetBinding
+	check        sync.Mutex
+	privateCheck func(context.Context, clientruntime.Service) clientruntime.Observation
 }
 
 type Workers struct {
 	Database      *clientstate.Database
 	Manager       *clientruntime.Manager
 	Configure     func(context.Context, clientruntime.Service) (Configuration, error)
-	VisitorTLS    func(context.Context, clientruntime.Service) (*tls.Config, error)
 	RunPublisher  func(context.Context, publisher.Config) error
 	HTTPTransport http.RoundTripper
 	mu            sync.Mutex
@@ -50,6 +51,9 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 	configuration, err := w.Configure(ctx, service)
 	if err != nil {
 		return err
+	}
+	if configuration.RunPrivate != nil {
+		return w.runPrivate(ctx, service, configuration, observe)
 	}
 	cfg := configuration.Publisher
 	var captured TargetSnapshot
@@ -164,15 +168,6 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 	}
 	// nil promotion lets the publisher use its authenticated sideband. a
 	// successful ownership check must never substitute for that decision.
-	authorize := cfg.AuthorizeVisitorCertificate
-	if authorize != nil {
-		cfg.AuthorizeVisitorCertificate = func(ctx context.Context, visitor publisher.Visitor, tlsState tls.ConnectionState) error {
-			if err := current(visitor.Run.Number); err != nil {
-				return err
-			}
-			return authorize(ctx, visitor, tlsState)
-		}
-	}
 	warning := cfg.OnWarning
 	cfg.OnWarning = func(reason string) {
 		w.Manager.RecordWarning(service.Name, service.RegistrationID, reason)
@@ -254,8 +249,8 @@ func (w *Workers) Run(ctx context.Context, service clientruntime.Service, observ
 	return run(ctx, cfg)
 }
 
-// Check probes public addresses only and accepts observations only while their
-// captured registration, target, run and readiness path are still current.
+// Check probes public URLs with visitor proofs and private runs at their local
+// targets. observations require the same registration, target, run and path.
 func (w *Workers) Check(ctx context.Context, names []string) (clientruntime.Snapshot, error) {
 	snapshot := w.Manager.Snapshot()
 	for _, name := range names {
@@ -298,7 +293,12 @@ func (w *Workers) Check(ctx context.Context, names []string) (clientruntime.Snap
 				}
 				capturedTarget = true
 			}
-			if service.ServiceProtocol == "http" || service.ServiceProtocol == "" {
+			if entry.privateCheck != nil {
+				observation = entry.privateCheck(ctx, service)
+			} else if service.ServiceProtocol == "http" || service.ServiceProtocol == "" {
+				if entry.proof == nil {
+					return
+				}
 				entry.check.Lock()
 				defer entry.check.Unlock()
 				secret, err := entry.proof.Renew()
@@ -306,16 +306,6 @@ func (w *Workers) Check(ctx context.Context, names []string) (clientruntime.Snap
 					return
 				}
 				observation = clientruntime.ProbeWithProof(ctx, service, w.HTTPTransport, secret)
-			} else {
-				options := clientruntime.TCPProbeOptions{}
-				if w.VisitorTLS != nil {
-					var err error
-					options.TLSConfig, err = w.VisitorTLS(ctx, service)
-					if err != nil {
-						return
-					}
-				}
-				observation = clientruntime.ProbeTCP(ctx, service, options)
 			}
 		}()
 	}

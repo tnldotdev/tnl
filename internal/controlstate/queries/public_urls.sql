@@ -13,6 +13,7 @@ SELECT r.*,
         FROM control.publish_runs AS s
         WHERE s.public_url_id = r.id
           AND s.closed_at IS NULL
+        ORDER BY s.publish_run_number DESC LIMIT 1
     ), '')::text AS open_publish_run_id
 FROM control.public_urls AS r
 WHERE r.created_by_identity_id = sqlc.arg(identity_id)
@@ -28,10 +29,10 @@ FOR SHARE;
 SELECT
     t.kind AS team_kind,
     t.display_name AS team_display_name,
+    t.managed_label AS team_managed_label,
     t.ingress_pool_id,
     t.created_by_identity_id AS team_creator_identity_id,
     t.policy_revision,
-    i.kind AS identity_kind,
     m.id AS actor_membership_id,
     m.role AS actor_role,
     m.managed_label AS actor_managed_label,
@@ -48,7 +49,7 @@ JOIN control.identities AS i
 JOIN control.team_memberships AS m
   ON m.team_id = t.id
  AND m.identity_id = i.id
- AND m.removed_at IS NULL
+ AND control.active_membership(m.id,CURRENT_TIMESTAMP)
 JOIN control.member_slug_reservations AS s
   ON s.id = m.slug_reservation_id
 JOIN control.domains AS d
@@ -81,6 +82,7 @@ INSERT INTO control.public_urls (
     public_url_scope,
     purpose,
     service_protocol,
+    publisher_pool,
     ingress_pool_id,
     policy_revision,
     access_mode,
@@ -112,6 +114,7 @@ INSERT INTO control.public_urls (
     sqlc.arg(public_url_scope),
     sqlc.arg(purpose),
     sqlc.arg(service_protocol),
+    sqlc.arg(publisher_pool),
     sqlc.arg(ingress_pool_id),
     sqlc.arg(policy_revision),
     sqlc.arg(access_mode),
@@ -199,6 +202,7 @@ SELECT r.*,
         FROM control.publish_runs AS s
         WHERE s.public_url_id = r.id
           AND s.closed_at IS NULL
+        ORDER BY s.publish_run_number DESC LIMIT 1
     ), '')::text AS open_publish_run_id
 FROM control.public_urls AS r
 WHERE r.team_id = sqlc.arg(team_id)
@@ -209,7 +213,7 @@ WHERE r.team_id = sqlc.arg(team_id)
       FROM control.team_memberships AS m
       WHERE m.team_id = r.team_id
         AND m.identity_id = sqlc.arg(identity_id)
-        AND m.removed_at IS NULL
+        AND control.active_membership(m.id,CURRENT_TIMESTAMP)
   )
 ORDER BY r.id
 LIMIT 101;
@@ -221,6 +225,7 @@ SELECT r.*,
         FROM control.publish_runs AS s
         WHERE s.public_url_id = r.id
           AND s.closed_at IS NULL
+        ORDER BY s.publish_run_number DESC LIMIT 1
     ), '')::text AS open_publish_run_id
 FROM control.public_urls AS r
 WHERE r.id = sqlc.arg(public_url_id)
@@ -230,7 +235,7 @@ WHERE r.id = sqlc.arg(public_url_id)
       FROM control.team_memberships AS m
       WHERE m.team_id = r.team_id
         AND m.identity_id = sqlc.arg(identity_id)
-        AND m.removed_at IS NULL
+        AND control.active_membership(m.id,CURRENT_TIMESTAMP)
   );
 
 -- name: LockIdentityPublicURLForDelete :one
@@ -239,7 +244,7 @@ FROM control.public_urls AS r
 JOIN control.team_memberships AS m
   ON m.team_id = r.team_id
  AND m.identity_id = sqlc.arg(identity_id)
- AND m.removed_at IS NULL
+ AND control.active_membership(m.id,CURRENT_TIMESTAMP)
 WHERE r.id = sqlc.arg(public_url_id)
   AND r.lifecycle_state <> 'deleted'
 FOR UPDATE OF r, m;

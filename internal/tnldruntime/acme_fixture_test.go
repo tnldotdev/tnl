@@ -165,30 +165,6 @@ func integrationPebbleRoots(ctx context.Context, client *http.Client, directoryU
 	return roots, rootPEM, true
 }
 
-func startIntegrationDNS(t *testing.T) string {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
-	handler := dns.HandlerFunc(func(response dns.ResponseWriter, request *dns.Msg) {
-		message := new(dns.Msg)
-		message.SetReply(request)
-		message.Authoritative = true
-		for _, question := range request.Question {
-			if question.Qtype == dns.TypeA {
-				message.Answer = append(message.Answer, &dns.A{
-					Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1}, A: net.IPv4(127, 0, 0, 1),
-				})
-			}
-		}
-		_ = response.WriteMsg(message)
-	})
-	startOwnedDNSServer(t, &dns.Server{Listener: listener, Handler: handler})
-	return listener.Addr().String()
-}
-
 func startOwnedDNSServer(t *testing.T, server *dns.Server) {
 	t.Helper()
 	started := make(chan struct{})

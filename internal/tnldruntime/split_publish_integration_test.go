@@ -143,7 +143,7 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 	if err := fixture.inspect.QueryRowContext(integrationOperationContext(t), `
 		SELECT orders.id, orders.order_url, orders.publish_run_id, orders.public_url_id,
 			orders.publish_run_number, accounts.account_url, orders.work_owner,
-			orders.state = 'authorizing' AND orders.challenge_method = 'tls-alpn-01'
+			orders.state = 'authorizing' AND orders.challenge_method = 'dns-01'
 			AND orders.certificate_pem IS NULL AND orders.installed_at IS NULL
 			AND sessions.certificate_installed_at IS NULL AND sessions.ready_at IS NULL
 		FROM control.acme_orders AS orders
@@ -156,7 +156,7 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !pending || orderURL == "" || accountURL == "" || newOrders.Load() != 1 {
-		t.Fatalf("expected one persisted TLS-ALPN order and registered account, with no certificate before restart: pending %v, order %q, account %q, new orders %d",
+		t.Fatalf("expected one persisted DNS order and registered account, with no certificate before restart: pending %v, order %q, account %q, new orders %d",
 			pending, orderURL, accountURL, newOrders.Load())
 	}
 	beforeLeases := []splitProcessLease{
@@ -217,7 +217,7 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 			AND sessions.certificate_issuance_id = orders.id AND sessions.certificate_installed_at IS NOT NULL
 			AND sessions.closed_at IS NULL AND accounts.account_url = $4
 			AND (SELECT count(*) FROM control.acme_authorizations
-				WHERE order_id = orders.id AND challenge_type = 'tls-alpn-01' AND state = 'complete'
+				WHERE order_id = orders.id AND challenge_type = 'dns-01' AND state = 'complete'
 				AND presented_at IS NOT NULL AND validated_at IS NOT NULL AND cleanup_completed_at IS NOT NULL) = 1
 		FROM control.acme_orders AS orders
 		JOIN control.publish_runs AS sessions ON sessions.id = orders.publish_run_id

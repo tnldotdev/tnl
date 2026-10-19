@@ -14,7 +14,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
-	"github.com/tnldotdev/tnl/internal/tlschallenge"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -126,43 +125,12 @@ func attemptCertificateTransaction(
 		return clientstate.Material{}, err
 	}
 	if err := validateCertificateAttempt(
-		ctx, server, route, state, issuance, publishRunID, publicURLID, version, publishRunToken, hostname, route.challengeIssuanceID, setup.CertificatePlan,
+		ctx, state, issuance, publishRunID, publicURLID, version, hostname, setup.CertificatePlan,
 	); err != nil {
 		return clientstate.Material{}, err
 	}
-	challenge := tlsALPNChallenge(issuance.Challenges, hostname)
-	if issuance.CertificatePem == nil && challenge == nil {
-		return clientstate.Material{}, &pendingCertificateIssuanceError{retryAt: issuance.RetryAt}
-	}
 	if issuance.CertificatePem == nil {
-		if !certificateIssuanceStateAllowsChallenge(issuance.State) {
-			return clientstate.Material{}, &pendingCertificateIssuanceError{retryAt: issuance.RetryAt}
-		}
-		installedChallenge, err := certificateChallenge(challenge, hostname)
-		if err != nil {
-			return clientstate.Material{}, err
-		}
-		if err := route.InstallChallenge(installedChallenge); err != nil {
-			return clientstate.Material{}, err
-		}
-		route.challengeIssuanceID, route.challengeID = issuance.Id, installedChallenge.ID
-		issuanceID := issuance.Id
-		issuance, err = server.MarkCertificateChallengeReady(ctx, issuanceID, publishRunToken)
-		if err != nil {
-			return clientstate.Material{}, err
-		}
-		if err := validateCertificateAttempt(
-			ctx, server, route, state, issuance, publishRunID, publicURLID, version, publishRunToken,
-			hostname, issuanceID, setup.CertificatePlan,
-		); err != nil {
-			return clientstate.Material{}, err
-		}
-		if issuance.CertificatePem == nil {
-			return clientstate.Material{}, &pendingCertificateIssuanceError{retryAt: issuance.RetryAt}
-		}
-	}
-	if err := removeCertificateChallenge(ctx, server, route, issuance, publishRunToken, hostname); err != nil {
-		return clientstate.Material{}, err
+		return clientstate.Material{}, &pendingCertificateIssuanceError{retryAt: issuance.RetryAt}
 	}
 	block, _ := pem.Decode([]byte(*issuance.CertificatePem))
 	if block == nil || block.Type != "CERTIFICATE" {
@@ -207,62 +175,24 @@ func installCertificateMaterial(
 	return route.InstallCertificate(material.Certificate)
 }
 
-func certificateChallenge(challenge *controlv1.CertificateChallenge, hostname string) (tlschallenge.TLSALPNChallenge, error) {
-	digest, err := base64.RawURLEncoding.DecodeString(challenge.Digest)
-	if err != nil || len(digest) != 32 || base64.RawURLEncoding.EncodeToString(digest) != challenge.Digest ||
-		challenge.Token == "" || challenge.Identifier != hostname || challenge.Method != controlv1.TlsAlpn01 || !challenge.ExpiresAt.After(time.Now()) {
-		return tlschallenge.TLSALPNChallenge{}, errors.New("publisher: server returned an invalid TLS-ALPN challenge digest")
-	}
-	result := tlschallenge.TLSALPNChallenge{
-		ID: challenge.Token, Hostname: challenge.Identifier, ExpiresAt: challenge.ExpiresAt,
-	}
-	copy(result.Digest[:], digest)
-	return result, nil
-}
-
 func validateCertificateAttempt(
 	ctx context.Context,
-	server PublicURLControlClient,
-	route *PublicURLServer,
 	state *clientstate.CertificateCache,
 	issuance controlv1.CertificateIssuance,
 	publishRunID, publicURLID string,
 	version uint64,
-	publishRunToken credentials.PublishRunToken,
-	hostname, expectedID string,
+	hostname string,
 	plan controlv1.CertificatePlan,
 ) error {
-	err := validateCertificateIssuance(issuance, publishRunID, publicURLID, version, hostname, expectedID, plan)
+	err := validateCertificateIssuance(issuance, publishRunID, publicURLID, version, hostname, "", plan)
 	var terminal *terminalCertificateIssuanceError
 	if !errors.As(err, &terminal) {
 		return err
-	}
-	if removeErr := removeCertificateChallenge(ctx, server, route, issuance, publishRunToken, hostname); removeErr != nil {
-		return removeErr
 	}
 	if _, rotateErr := state.NewPending(ctx, hostname); rotateErr != nil {
 		return rotateErr
 	}
 	return err
-}
-
-func removeCertificateChallenge(ctx context.Context, server PublicURLControlClient, route *PublicURLServer, issuance controlv1.CertificateIssuance, token credentials.PublishRunToken, hostname string) error {
-	id := ""
-	if challenge := tlsALPNChallenge(issuance.Challenges, hostname); challenge != nil {
-		id = challenge.Token
-	}
-	if route.challengeIssuanceID == issuance.Id {
-		id = route.challengeID
-	}
-	if id == "" {
-		return nil
-	}
-	route.RemoveChallenge(id)
-	if err := server.MarkCertificateChallengeRemoved(ctx, issuance.Id, token); err != nil {
-		return err
-	}
-	route.challengeIssuanceID, route.challengeID = "", ""
-	return nil
 }
 
 func validateCertificateIssuance(
@@ -292,48 +222,12 @@ func validateCertificateIssuance(
 	} else if issuance.State == controlv1.CertificateIssuanceStateWaitingForInstall || issuance.State == controlv1.CertificateIssuanceStateInstalled {
 		return errors.New("publisher: server returned an installed issuance without certificate material")
 	}
-	if issuance.Challenges != nil && len(*issuance.Challenges) != 0 && issuance.CertificatePem == nil {
-		if !certificateIssuanceStateAllowsChallenge(issuance.State) {
-			return errors.New("publisher: server returned a challenge in an inconsistent issuance state")
-		}
-	}
-	if challenge := tlsALPNChallenge(issuance.Challenges, hostname); challenge != nil {
-		digest, err := base64.RawURLEncoding.DecodeString(challenge.Digest)
-		if err != nil || len(digest) != 32 || base64.RawURLEncoding.EncodeToString(digest) != challenge.Digest ||
-			challenge.Token == "" || challenge.Identifier != hostname || challenge.ExpiresAt.IsZero() {
-			return errors.New("publisher: server returned invalid TLS-ALPN challenge material")
-		}
-	}
 	return nil
 }
 
 func certificateIssuanceStateError(state controlv1.CertificateIssuanceState) error {
 	if state == controlv1.CertificateIssuanceStateFailed || state == controlv1.CertificateIssuanceStateCanceled {
 		return &terminalCertificateIssuanceError{state: state}
-	}
-	return nil
-}
-
-func certificateIssuanceStateAllowsChallenge(state controlv1.CertificateIssuanceState) bool {
-	switch state {
-	case controlv1.CertificateIssuanceStateAuthorizing,
-		controlv1.CertificateIssuanceStateReadyToFinalize,
-		controlv1.CertificateIssuanceStateFinalizing:
-		return true
-	default:
-		return false
-	}
-}
-
-func tlsALPNChallenge(challenges *[]controlv1.CertificateChallenge, hostname string) *controlv1.CertificateChallenge {
-	if challenges == nil {
-		return nil
-	}
-	for index := range *challenges {
-		challenge := &(*challenges)[index]
-		if challenge.Method == controlv1.TlsAlpn01 && challenge.Identifier == hostname {
-			return challenge
-		}
 	}
 	return nil
 }

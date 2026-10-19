@@ -12,6 +12,18 @@ type generatedServer struct {
 
 var _ relayv1.ServerInterface = generatedServer{}
 
+func (s generatedServer) ClaimPrivatePublisherConnection(w http.ResponseWriter, r *http.Request, id relayv1.Identifier) {
+	s.handler.claimPrivatePublisherConnection(w, r, id)
+}
+
+func (s generatedServer) ReadyPrivatePublisherConnection(w http.ResponseWriter, r *http.Request, id relayv1.Identifier) {
+	s.handler.readyPrivatePublisherConnection(w, r, id)
+}
+
+func (s generatedServer) DisconnectPrivatePublisherConnection(w http.ResponseWriter, r *http.Request, id relayv1.Identifier) {
+	s.handler.disconnectPrivatePublisherConnection(w, r, id)
+}
+
 func (s generatedServer) ClaimPublisherConnection(
 	response http.ResponseWriter,
 	request *http.Request,

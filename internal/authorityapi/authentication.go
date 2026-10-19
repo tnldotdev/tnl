@@ -26,7 +26,7 @@ func (h *handler) authenticateControlRequest(
 		return controlstate.ControlPrincipal{}, false
 	}
 	principal, err := h.store.AuthenticateAccessToken(
-		request.Context(), credentials.AccessToken(token), h.loginSourceRevision, time.Now(),
+		request.Context(), credentials.AccessToken(token), time.Now(),
 	)
 	if errors.Is(err, controlstate.ErrControlAuthentication) {
 		writeBearerProblem(response)
@@ -35,6 +35,17 @@ func (h *handler) authenticateControlRequest(
 	if err != nil {
 		writeAuthenticationUnavailable(response, "authenticate control request", err)
 		return controlstate.ControlPrincipal{}, false
+	}
+	*request = *request.WithContext(controlstate.WithControlPrincipal(request.Context(), principal))
+	if team := request.PathValue("team_id"); team != "" {
+		if err := h.store.AuthorizeTeamSession(request.Context(), principal, team, time.Now()); err != nil {
+			if errors.Is(err, controlstate.ErrAuthorityAccess) {
+				writeProblem(response, http.StatusForbidden, authorityv1.Forbidden, "current company sign-in and active membership required")
+			} else {
+				writeAuthenticationUnavailable(response, "authorize team session", err)
+			}
+			return controlstate.ControlPrincipal{}, false
+		}
 	}
 	return principal, true
 }

@@ -246,11 +246,13 @@ components:
         server: { type: string }
         project: { type: string }
         service: { type: string }
-        service_protocol:
-          { $ref: "../../control/v1/openapi.yaml#/components/schemas/PublicURLServiceProtocol" }
+        service_protocol: { type: string, enum: [http, tcp, mysql, postgres] }
         public_url_id: { type: string }
         publish_run_number: { type: integer, format: int64, minimum: 1 }
-        public_port: { type: integer, minimum: 1, maximum: 65535 }
+        private_service_id:
+          { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateServiceID" }
+        private_run_id: { $ref: "../../control/v1/openapi.yaml#/components/schemas/PrivateRunID" }
+        run_number: { type: integer, format: int64, minimum: 1 }
         hostname: { type: string }
         public_url: { type: string }
         target: { type: string }
@@ -325,11 +327,15 @@ components:
     Lease:
       type: object
       additionalProperties: false
-      required: [service, owner, pid]
+      required: [service, owner, pid, configuration_digest]
       properties:
         service: { type: string, maxLength: 63 }
         owner: { type: string, pattern: "^[a-f0-9]{32}$" }
         pid: { type: integer, minimum: 1 }
+        configuration_digest:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+          description: Digest of the complete selected native project snapshot, including configuration provenance and resolved server/team selection. The owner rejects another snapshot before reserving a service.
     Invocation:
       type: object
       additionalProperties: false

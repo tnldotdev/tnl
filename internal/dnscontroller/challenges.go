@@ -29,7 +29,7 @@ type ChallengeStore interface {
 	ChallengeChangeStore
 	GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error)
 	GetDNSChallengeContext(context.Context, string, string) (controlstate.DNSChallengeContext, error)
-	WithDNSChallengeLock(context.Context, string, func() error) error
+	WithDNSRecordLock(context.Context, string, func() error) error
 }
 
 var ErrChallengesNotConfigured = terminalReasonf(failure.ServerDNSConfigInvalid, "DNS challenge automation is not configured")
@@ -98,7 +98,7 @@ func (m *ChallengeManager) reconcile(ctx context.Context, publicURLID, authoriza
 	}
 	recordName := "_acme-challenge." + strings.TrimPrefix(initial.Identifier, "*.")
 	verified := false
-	err = m.store.WithDNSChallengeLock(ctx, recordName, func() error {
+	err = m.store.WithDNSRecordLock(ctx, recordName, func() error {
 		challenge, record, expected, err := m.challengeRecord(ctx, publicURLID, authorizationID)
 		if err != nil {
 			return err

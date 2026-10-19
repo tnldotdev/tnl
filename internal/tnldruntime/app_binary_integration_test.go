@@ -63,7 +63,8 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		}
 	})
 	project := t.TempDir()
-	configuration := []byte(`{"version":1,"tnl":{"server":"https://control.127.0.0.1.nip.io","services":{"api":{"target":{"type":"app"},"tunnel":{"name":"app-led-binary","access":"anonymous"}}}}}`)
+	initializeIntegrationBinaryProject(t, project, "app-led")
+	configuration := []byte(`{"version":1,"tnl":{"server":"https://control.127.0.0.1.nip.io","services":{"api":{"name":"app-led-binary","target":{"type":"app"},"public_url":{"access":"anonymous"}}}}}`)
 	if err := os.WriteFile(filepath.Join(project, "tnl.json"), configuration, 0600); err != nil {
 		t.Fatal(err)
 	}

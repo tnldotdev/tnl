@@ -79,7 +79,6 @@ func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
 	ingress := New("ingress")
 	ingress.ObserveRelayAttempt("relay_address_secret", "error_secret")
 	ingress.IncInspectionFailure("challenge_token_secret")
-	ingress.IncChallengeRejection("challenge_token_secret")
 	for _, metrics := range []*Metrics{control, ingress} {
 		response := httptest.NewRecorder()
 		metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -110,7 +109,6 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	metrics.AddRelayStreams(2)
 	metrics.IncCapacityRejection("public_url_connections")
 	metrics.IncInspectionFailure("client_hello")
-	metrics.IncChallengeRejection("unavailable")
 	metrics.ObserveVisitor("policy_denied")
 	metrics.AddForwardedBytes("visitor_to_publisher", 1024)
 	metrics.ObserveAPIRequest("control", "POST /v1/public-urls", "success", 10*time.Millisecond)
@@ -141,7 +139,6 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		"tnl_relay_visitor_stream_slots_occupied":  {kind: "GAUGE", value: 2},
 		"tnl_admission_rejections_total":           {"COUNTER", map[string]string{"resource": "public_url_connections"}, 1},
 		"tnl_ingress_inspection_failures_total":    {"COUNTER", map[string]string{"stage": "client_hello"}, 1},
-		"tnl_ingress_challenge_rejections_total":   {"COUNTER", map[string]string{"reason": "unavailable"}, 1},
 		"tnl_ingress_visitor_connections_total":    {"COUNTER", map[string]string{"outcome": "policy_denied"}, 1},
 		"tnl_ingress_forwarded_bytes_total":        {"COUNTER", map[string]string{"direction": "visitor_to_publisher"}, 1024},
 		"tnl_control_api_request_duration_seconds": {"HISTOGRAM", map[string]string{"surface": "control", "operation": "POST /v1/public-urls", "outcome": "success"}, 0.01},

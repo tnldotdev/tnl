@@ -32,6 +32,7 @@ type PublisherAcceptorConfig struct {
 	CapacityRejected      func()
 	Report                func(error)
 	Observer              OperationObserver
+	Private               *PrivatePublisherAcceptor
 }
 
 // PublisherAcceptor authenticates and owns publisher connections.
@@ -44,6 +45,7 @@ type PublisherAcceptor struct {
 	capacity         func()
 	report           func(error)
 	observer         OperationObserver
+	private          *PrivatePublisherAcceptor
 }
 
 func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, error) {
@@ -68,6 +70,7 @@ func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, e
 		readyDelta: config.ReadyConnectionsDelta, connectionExited: config.ConnectionExited,
 		capacity: config.CapacityRejected, report: config.Report,
 		observer: config.Observer,
+		private:  config.Private,
 	}, nil
 }
 
@@ -77,7 +80,13 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	var connection *PublisherConnection
 	ready := false
 	control, registry := a.control, a.registry
+	var private *privateClaim
 	session, hello, err := tunnel.Accept(ctx, transport, func(authCtx context.Context, message tunnelv1.Message) error {
+		if message.PrivateConnection != nil {
+			var err error
+			private, err = a.private.claim(authCtx, message)
+			return err
+		}
 		if message.Role != tunnelv1.Publisher || message.PublisherConnection == nil {
 			return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 		}
@@ -100,6 +109,10 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		}
 		return nil
 	})
+	if private != nil {
+		finishAdmission(err)
+		return errors.Join(err, private.serve(ctx, session))
+	}
 	registered := false
 	// a successful claim must be disconnected with its exact identity, even if
 	// registration or readiness fails. remove locally before notifying control.

@@ -17,8 +17,8 @@ WHERE server_origin = sqlc.arg(server_origin) AND operation_id = sqlc.arg(operat
 
 -- name: CancelAuthOperations :exec
 UPDATE login_operations SET phase = 'cancelled', revision = revision + 1,
-    stored_private = CASE WHEN phase = 'issued' THEN stored_private ELSE X'' END, updated_at = ?
-WHERE server_origin = ? AND phase NOT IN ('cancelled', 'denied', 'expired', 'recovery_required');
+    updated_at = ?
+WHERE server_origin = ? AND phase NOT IN ('cancelled', 'denied', 'expired');
 
 -- name: ListCancelledAuthCredentials :many
 SELECT * FROM login_operations WHERE server_origin = ? AND phase = 'cancelled' AND length(stored_private) > 0;

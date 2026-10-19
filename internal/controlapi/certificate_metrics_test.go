@@ -41,7 +41,7 @@ func TestCertificateOrderMetricExcludesIdempotentRetries(t *testing.T) {
 				store := &certificateOrderStore{issuance: controlstate.CertificateIssuance{
 					NewOrder: true, DomainKind: kind, CertificatePlan: controlstate.CertificatePlan{Identifiers: identifiers},
 				}}
-				h := &handler{store: store, certificates: store, config: Config{CertificateIssuance: true, Metrics: metrics}}
+				h := &handler{store: store, certificates: store, config: Config{CertificateIssuance: true, DNSAutomation: true, Metrics: metrics}}
 				for range 2 {
 					request := httptest.NewRequest(http.MethodPost, "/v1/publish-runs/run/certificate-issuances", strings.NewReader(`{"publish_run_number":1,"csr":"Y3Ny"}`))
 					request.Header.Set("Authorization", "Bearer run-token")

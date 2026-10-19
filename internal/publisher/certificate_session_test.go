@@ -163,12 +163,11 @@ func TestRunDoesNotReuseCertificateFromIncompatibleSessionPlan(t *testing.T) {
 		{"cache_key", func(p *controlv1.CertificatePlan) { p.CacheKey = "another-cache-key" }},
 		{"same_key_scope", func(p *controlv1.CertificatePlan) { p.Scope = "another-scope" }},
 		{"same_key_identifiers", func(p *controlv1.CertificatePlan) { p.Identifiers = []string{"route.example", "*.route.example"} }},
-		{"same_key_method", func(p *controlv1.CertificatePlan) { p.ChallengeMethod = controlv1.TlsAlpn01 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			control, route, _ := newCertificateTransactionTest(t)
 			control.setup.CertificatePlan.ChallengeMethod = controlv1.Dns01
-			state, err := control.store.Certificates(control.setup.PublicUrl.TeamId, control.setup.CertificatePlan)
+			state, err := control.store.CertificatesForPublisher(control.setup.PublicUrl.TeamId, control.PublisherID(), control.setup.CertificatePlan)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -275,7 +274,7 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 					control.setup.PublishRun.PublicUrlId = control.setup.PublicUrl.Id
 					control.store = store
 					controls[slot] = control
-					cache, err := store.Certificates(control.setup.PublicUrl.TeamId, control.setup.CertificatePlan)
+					cache, err := store.CertificatesForPublisher(control.setup.PublicUrl.TeamId, control.PublisherID(), control.setup.CertificatePlan)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -405,7 +404,7 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 					wantSessionError = errCertificateExpired
 					time.Sleep(time.Until(original.Certificate.Leaf.NotAfter))
 					synctest.Wait()
-					cache, err := store.Certificates("team_1", namespaceCertificateTestPlan())
+					cache, err := store.CertificatesForPublisher("team_1", controls[0].PublisherID(), namespaceCertificateTestPlan())
 					if err != nil {
 						t.Fatal(err)
 					}

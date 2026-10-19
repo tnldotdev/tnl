@@ -14,20 +14,11 @@ func TestIntegrationConnectionAccountingIncludesDedicatedLifetimes(t *testing.T)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
 	defer workers.stop()
-	tlsStarted, dnsStarted := make(chan struct{}), make(chan struct{})
-	tlsDone, dnsDone := make(chan error, 1), make(chan error, 1)
+	dnsStarted := make(chan struct{})
+	dnsDone := make(chan error, 1)
 	releaseDNS := make(chan struct{})
-	leaderCtx, stopLeader := context.WithCancel(ctx)
-	defer stopLeader()
 	workers.Go(func() {
-		tlsDone <- database.RunControlTLSLeader(leaderCtx, func(ctx context.Context) error {
-			close(tlsStarted)
-			<-ctx.Done()
-			return nil
-		})
-	})
-	workers.Go(func() {
-		dnsDone <- database.WithDNSChallengeLock(ctx, "_acme-challenge.accounting.example.test", func() error {
+		dnsDone <- database.WithDNSRecordLock(ctx, "_acme-challenge.accounting.example.test", func() error {
 			close(dnsStarted)
 			select {
 			case <-releaseDNS:
@@ -37,13 +28,12 @@ func TestIntegrationConnectionAccountingIncludesDedicatedLifetimes(t *testing.T)
 			}
 		})
 	})
-	awaitIntegrationResult(t, ctx, tlsStarted)
 	awaitIntegrationResult(t, ctx, dnsStarted)
 	snapshot, err := database.Diagnostics(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, purpose := range []string{"tls_leadership", "dns_challenge"} {
+	for _, purpose := range []string{"dns_challenge"} {
 		if counts := snapshot.Connections[purpose]; counts.Open != 1 || counts.Opened != 1 || counts.Closed != 0 || counts.Connecting != 0 {
 			t.Fatalf("live %s counts = %+v", purpose, counts)
 		}
@@ -58,16 +48,12 @@ func TestIntegrationConnectionAccountingIncludesDedicatedLifetimes(t *testing.T)
 	if snapshot.Pooler == nil || snapshot.Pooler.Error == "" || snapshot.Pooler.Clients != nil || snapshot.Pooler.Settings != nil {
 		t.Fatalf("missing pooler reported inferred values: %+v", snapshot.Pooler)
 	}
-	stopLeader()
 	close(releaseDNS)
-	if err := awaitIntegrationResult(t, ctx, tlsDone); err != nil {
-		t.Fatal(err)
-	}
 	if err := awaitIntegrationResult(t, ctx, dnsDone); err != nil {
 		t.Fatal(err)
 	}
 	counts := database.connections.snapshot()
-	for _, purpose := range []string{"tls_leadership", "dns_challenge", "diagnostics"} {
+	for _, purpose := range []string{"dns_challenge", "diagnostics"} {
 		if got := counts[purpose]; got.Open != 0 || got.Opened != 1 || got.Closed != 1 || got.Connecting != 0 {
 			t.Fatalf("closed %s counts = %+v", purpose, got)
 		}

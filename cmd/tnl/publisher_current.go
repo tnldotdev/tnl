@@ -51,6 +51,8 @@ func runPublisherCurrent(ctx context.Context, flags publisherCurrentCommand, out
 			result.Scope = *file.Namespace
 		} else if file.PublicURLID != nil {
 			result.Scope = *file.PublicURLID
+		} else if file.PrivateServiceID != nil {
+			result.Scope = *file.PrivateServiceID
 		}
 		if flags.Check {
 			control, err := controlclient.New(file.ControlURL, nil, "")

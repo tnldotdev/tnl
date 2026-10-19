@@ -46,26 +46,6 @@ func (q *Queries) EnableIngressPool(ctx context.Context, arg EnableIngressPoolPa
 	return i, err
 }
 
-const enableIngressPoolPorts = `-- name: EnableIngressPoolPorts :execrows
-INSERT INTO control.ingress_pool_ports (ingress_pool_id, port, enabled)
-SELECT $1, listed.port, true
-FROM unnest($2::integer[]) AS listed(port)
-ON CONFLICT (ingress_pool_id, port) DO UPDATE SET enabled = true
-`
-
-type EnableIngressPoolPortsParams struct {
-	IngressPoolID string
-	Ports         []int32
-}
-
-func (q *Queries) EnableIngressPoolPorts(ctx context.Context, arg EnableIngressPoolPortsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, enableIngressPoolPorts, arg.IngressPoolID, arg.Ports)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const getIngressPool = `-- name: GetIngressPool :one
 SELECT id, ipv4_address, ipv6_address, state, created_at, updated_at FROM control.ingress_pools WHERE id = $1
 `

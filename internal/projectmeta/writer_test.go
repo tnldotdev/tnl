@@ -113,9 +113,11 @@ func TestRenderIncludesMountedServicePathsWithoutLocalTargets(t *testing.T) {
 		t.Fatalf("mount metadata = %s\n%s", jsonData, declarations)
 	}
 	invalid := metadata
-	invalid.Services = map[string]Service{"web": metadata.Services["web"]}
+	web := metadata.Services["web"]
+	web.Paths = map[string]Path{"/api": {Service: "Invalid", URL: web.URL + "/api", StripPrefix: true}}
+	invalid.Services = map[string]Service{"web": web}
 	if err := invalid.Validate(); err == nil {
-		t.Fatal("mounting an unknown service was accepted")
+		t.Fatal("an invalid mounted service name was accepted")
 	}
 }
 
@@ -219,9 +221,93 @@ func TestWriteReplacesBothGeneratedFiles(t *testing.T) {
 	}
 }
 
+func TestWriteKeepsAllOutputLocal(t *testing.T) {
+	root := t.TempDir()
+	metadata := Metadata{Version: Version, Services: map[string]Service{}}
+	if err := Write(t.Context(), root, metadata); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, ".tnl"))
+	if err != nil || len(entries) != 1 || entries[0].Name() != "local" {
+		t.Fatalf("parent entries = %v, %v", entries, err)
+	}
+	local := filepath.Join(root, ".tnl", "local")
+	entries, err = os.ReadDir(local)
+	if err != nil || len(entries) != 3 {
+		t.Fatalf("local entries = %v, %v", entries, err)
+	}
+	for _, name := range []string{JSONName, DeclarationsName, "project.lock"} {
+		if info, err := os.Lstat(filepath.Join(local, name)); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("local %s = %v, %v", name, info, err)
+		}
+	}
+	write, err := stageWrite(filepath.Join(local, JSONName), []byte("changed\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer write.cleanup()
+	if filepath.Dir(write.temporary) != local || !strings.HasPrefix(filepath.Base(write.temporary), ".project-") {
+		t.Fatalf("temporary file escaped local: %s", write.temporary)
+	}
+}
+
+func TestWriteRejectsUnsafeParentChildAndOutput(t *testing.T) {
+	for _, path := range []string{".tnl", ".tnl/local", ".tnl/local/project.json", ".tnl/local/project.d.ts", ".tnl/local/project.lock"} {
+		t.Run(path, func(t *testing.T) {
+			root, outside := t.TempDir(), t.TempDir()
+			link := filepath.Join(root, path)
+			if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, link); err != nil {
+				t.Fatal(err)
+			}
+			if err := Write(t.Context(), root, Metadata{Version: Version, Services: map[string]Service{}}); err == nil {
+				t.Fatal("accepted symlink")
+			}
+			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+				t.Fatalf("wrote outside project: %v, %v", entries, err)
+			}
+		})
+	}
+	for _, path := range []string{".tnl", ".tnl/local"} {
+		t.Run("file/"+path, func(t *testing.T) {
+			root := t.TempDir()
+			file := filepath.Join(root, path)
+			if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, []byte("preserve"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := Write(t.Context(), root, Metadata{Version: Version, Services: map[string]Service{}}); err == nil {
+				t.Fatal("accepted non-directory")
+			}
+			if data, err := os.ReadFile(file); err != nil || string(data) != "preserve" {
+				t.Fatalf("changed existing file: %q, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestWriteRequiresExistingAbsoluteProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	for _, invalid := range []string{"", ".", "relative", filepath.Join(root, "missing")} {
+		if err := Write(t.Context(), invalid, Metadata{Version: Version, Services: map[string]Service{}}); err == nil {
+			t.Fatalf("accepted root %q", invalid)
+		}
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) != 0 {
+		t.Fatalf("created missing root: %v, %v", entries, err)
+	}
+}
+
 func TestWriteLockWaitHonorsCancellation(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, DirectoryName)
+	if err := prepareDirectory(filepath.Dir(directory)); err != nil {
+		t.Fatal(err)
+	}
 	if err := prepareDirectory(directory); err != nil {
 		t.Fatal(err)
 	}

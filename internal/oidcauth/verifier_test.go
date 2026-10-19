@@ -246,7 +246,7 @@ func TestVerifierReusesKeysAfterDiscoveryContextEnds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := p.signer.Token(t, "key-1", map[string]any{"iss": p.issuer, "sub": "subject", "aud": "tnl-cli", "exp": time.Now().Add(time.Hour).Unix()})
+	raw := p.signer.Token(t, "key-1", map[string]any{"iss": p.issuer, "sub": "subject", "aud": "tnl-cli", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix()})
 	ctx, cancel := context.WithCancel(t.Context())
 	if _, err := verifier.Verify(ctx, raw); err != nil {
 		t.Fatal(err)

@@ -49,6 +49,9 @@ func PublisherEnrollmentResponse(p controlstate.PublisherIdentity) authorityv1.P
 	if p.Scope.PublicURLID != "" {
 		r.PublicUrlId = &p.Scope.PublicURLID
 	}
+	if p.Scope.PrivateServiceID != "" {
+		r.PrivateServiceId = &p.Scope.PrivateServiceID
+	}
 	if p.Scope.DomainID != "" {
 		r.DomainId = &p.Scope.DomainID
 	}

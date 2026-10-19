@@ -15,11 +15,9 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-const testLoginToken = "tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8"
-
 func TestNewHandlerRejectsInvalidCredentials(t *testing.T) {
-	if _, err := NewHandler(Config{LoginToken: "invalid"}, nil, nil, nil); err == nil {
-		t.Fatal("invalid login token accepted")
+	if _, err := NewHandler(Config{OIDCIssuer: "invalid", OIDCClientID: "server"}, nil, nil, nil); err == nil {
+		t.Fatal("invalid OIDC configuration accepted")
 	}
 }
 
@@ -225,30 +223,24 @@ func TestConnectionAssignmentResponsesExposeClosedSlotsAsReplacing(t *testing.T)
 func TestControlDiscoveryAdvertisesAuthenticationFacts(t *testing.T) {
 	result := controlDiscovery(Config{
 		ManagedDomain: "example",
-		LoginToken:    testLoginToken,
+		OIDCIssuer:    "https://identity.example", OIDCClientID: "server",
 	})
 	if result.ManagedDomain != "example" || result.DnsAutomation {
 		t.Fatalf("discovery = %#v", result)
 	}
-	if len(result.Authentication.Methods) != 1 || result.Authentication.Methods[0] != controlv1.LoginToken {
+	if len(result.Authentication.Methods) != 1 || result.Authentication.Methods[0] != controlv1.Oidc {
 		t.Fatalf("authentication facts = %#v", result.Authentication)
 	}
 }
 
-func TestControlDiscoveryPreservesOIDCLoginFlow(t *testing.T) {
-	for _, flow := range []tnldconfig.OIDCLoginFlow{
-		tnldconfig.OIDCLoginFlowDeviceCode, tnldconfig.OIDCLoginFlowAuthorizationCodePKCE,
-	} {
-		t.Run(string(flow), func(t *testing.T) {
-			result := controlDiscovery(Config{
-				Role: tnldconfig.RoleControl, OIDCIssuer: "https://issuer.example.test",
-				OIDCClientID: "client_1", OIDCLoginFlow: flow,
-			})
-			if result.Authentication.Oidc == nil ||
-				result.Authentication.Oidc.LoginFlow != controlv1.OIDCAuthenticationFactsLoginFlow(flow) {
-				t.Fatalf("discovery login flow = %#v", result.Authentication.Oidc)
-			}
-		})
+func TestControlDiscoveryUsesControlOwnedDeviceLogin(t *testing.T) {
+	result := controlDiscovery(Config{
+		Role: tnldconfig.RoleControl, OIDCIssuer: "https://issuer.example.test",
+		OIDCClientID: "client_1",
+	})
+	if result.Authentication.Oidc == nil ||
+		result.Authentication.Oidc.LoginFlow != controlv1.DeviceCode {
+		t.Fatalf("discovery login flow = %#v", result.Authentication.Oidc)
 	}
 }
 

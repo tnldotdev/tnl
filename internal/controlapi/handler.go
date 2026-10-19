@@ -3,12 +3,9 @@ package controlapi
 
 import (
 	"context"
-	"encoding/base64"
-	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
-	"slices"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorityclient"
@@ -19,7 +16,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 	"github.com/tnldotdev/tnl/internal/trafficlimits"
-	"github.com/tnldotdev/tnl/internal/visitorcert"
 	"github.com/tnldotdev/tnl/internal/webhookcatalog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -31,7 +27,6 @@ const (
 
 // Config contains the public API settings derived from tnld configuration.
 type Config struct {
-	VisitorIssuerSeed                 string
 	TrafficDefaults                   trafficlimits.Limits
 	TrafficCeiling                    trafficlimits.Limits
 	Role                              tnldconfig.Role
@@ -41,11 +36,11 @@ type Config struct {
 	ManagedDomainMaxMemberChildLabels int
 	CustomDomainsEnabled              bool
 	ControlURL                        string
-	LoginToken                        string
 	OIDCIssuer                        string
 	OIDCClientID                      string
-	BrowserOIDCClientID               string
-	OIDCLoginFlow                     tnldconfig.OIDCLoginFlow
+	OIDCClientSecret                  string
+	AccessTokenLifetime               time.Duration
+	RefreshTokenLifetime              time.Duration
 	OIDCScopes                        []string
 	CertificateIssuance               bool
 	ACMEDirectoryURL                  string
@@ -83,8 +78,6 @@ type PublicURLStore interface {
 type CertificateStore interface {
 	CreateCertificateIssuance(context.Context, controlstate.CreateCertificateIssuanceRequest, time.Time) (controlstate.CertificateIssuance, error)
 	GetCertificateIssuance(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
-	MarkCertificateChallengeReady(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
-	MarkCertificateChallengeRemoved(context.Context, string, credentials.PublishRunToken, time.Time) (controlstate.CertificateIssuance, error)
 }
 
 // AdminStore owns administrator operations.
@@ -114,7 +107,7 @@ type PreviewTeamAccessStore interface {
 }
 
 type BrowserAccessStore interface {
-	BeginBrowserLogin(context.Context, string, string, string, string, string, []byte, time.Time) (string, error)
+	BeginBrowserLogin(context.Context, string, string, string, string, string, []byte, *controlstate.CompanyLoginIntent, time.Time) (string, error)
 	ConsumeBrowserLogin(context.Context, string, []byte, time.Time) (controlstate.BrowserLoginAttempt, error)
 	IssueBrowserHandoff(context.Context, controlstate.BrowserLoginAttempt, controlstate.BrowserAccessSession, time.Time) (controlstate.BrowserHandoff, error)
 	RedeemBrowserHandoff(context.Context, controlstate.PublishRunAuthentication, string, time.Time) (string, string, string, bool, time.Time, error)
@@ -155,13 +148,13 @@ type FeedbackStore interface {
 
 // AuthorizationStore provides the identity state needed for public URL authorization.
 type AuthorizationStore interface {
-	AuthenticateAccessToken(context.Context, credentials.AccessToken, int64, time.Time) (controlstate.ControlPrincipal, error)
+	AuthenticateAccessToken(context.Context, credentials.AccessToken, time.Time) (controlstate.ControlPrincipal, error)
+	AuthorizeTeamSession(context.Context, controlstate.ControlPrincipal, string, time.Time) error
 	IdentityContext(context.Context, string) (controlstate.IdentityContext, error)
 	ListTeamDomains(context.Context, string, string) ([]controlstate.Domain, error)
 }
 
 type handler struct {
-	visitorIssuer     *visitorcert.Issuer
 	visitorState      VisitorStore
 	config            Config
 	store             PublicURLStore
@@ -170,7 +163,7 @@ type handler struct {
 	previews          PreviewStore
 	previewTeamAccess PreviewTeamAccessStore
 	browserAccess     BrowserAccessStore
-	browserVerifier   oidcauth.Verifier
+	browserOIDC       *oidcauth.Server
 	browserAuthority  *authorityclient.Client
 	shares            ShareStore
 	shareAccess       ShareAccessStore
@@ -212,16 +205,6 @@ func NewHandler(
 	if visitorState, ok := store.(VisitorStore); ok {
 		h.visitorState = visitorState
 	}
-	if cfg.VisitorIssuerSeed != "" {
-		seed, err := base64.RawURLEncoding.Strict().DecodeString(cfg.VisitorIssuerSeed)
-		if err != nil {
-			return nil, fmt.Errorf("controlapi: invalid visitor issuer seed")
-		}
-		h.visitorIssuer, err = visitorcert.New(seed)
-		if err != nil {
-			return nil, err
-		}
-	}
 	h.webhookCatalog = cfg.WebhookCatalog
 	if h.webhookCatalog == nil {
 		h.webhookCatalog = webhookcatalog.New(cfg.HTTPClient)
@@ -257,24 +240,16 @@ func NewHandler(
 	if h.config.StartedAt.IsZero() {
 		h.config.StartedAt = time.Now().UTC()
 	}
-	loginSourceRevision := int64(0)
-	if cfg.LoginToken != "" {
-		verifier, err := credentials.ParseLoginToken(credentials.LoginToken(cfg.LoginToken))
-		if err != nil {
-			return nil, fmt.Errorf("controlapi: configure login token: %w", err)
-		}
-		loginSourceRevision = verifier.SourceRevision()
-	}
 	if authorizationStore != nil {
 		h.authorizer = localAuthorizer{
-			store: authorizationStore, sourceRevision: loginSourceRevision, dnsAutomation: cfg.DNSAutomation,
+			store: authorizationStore, dnsAutomation: cfg.DNSAutomation,
 			managedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels, managedURLMode: cfg.ManagedURLMode,
 		}
 	}
-	if cfg.BrowserOIDCClientID != "" {
+	if cfg.OIDCClientID != "" {
 		var err error
-		h.browserVerifier, err = oidcauth.NewVerifier(oidcauth.VerifierConfig{
-			Issuer: cfg.OIDCIssuer, ClientID: cfg.BrowserOIDCClientID, HTTPClient: cfg.HTTPClient,
+		h.browserOIDC, err = oidcauth.NewServer(oidcauth.ServerConfig{
+			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret, Scopes: cfg.OIDCScopes, RedirectURL: cfg.ControlURL + browserCallbackPath, HTTPClient: cfg.HTTPClient,
 		})
 		if err != nil {
 			return nil, err
@@ -380,18 +355,13 @@ func controlDiscovery(cfg Config) controlv1.ControlDiscovery {
 		CustomDomainsEnabled:              cfg.CustomDomainsEnabled,
 		DnsAutomation:                     cfg.DNSAutomation,
 		GuestDemo:                         cfg.GuestDemoEnabled,
-		BrowserLoginAvailable:             new(cfg.BrowserOIDCClientID != ""),
+		BrowserLoginAvailable:             new(cfg.OIDCClientID != ""),
 		Authentication:                    controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{}},
-	}
-	if cfg.LoginToken != "" {
-		result.Authentication.Methods = append(result.Authentication.Methods, controlv1.LoginToken)
 	}
 	if cfg.OIDCIssuer != "" {
 		result.Authentication.Methods = append(result.Authentication.Methods, controlv1.Oidc)
 		result.Authentication.Oidc = &controlv1.OIDCAuthenticationFacts{
-			Issuer: cfg.OIDCIssuer, ClientId: cfg.OIDCClientID,
-			LoginFlow: controlv1.OIDCAuthenticationFactsLoginFlow(cfg.OIDCLoginFlow),
-			Scopes:    slices.Clone(cfg.OIDCScopes),
+			Issuer: cfg.OIDCIssuer, LoginFlow: controlv1.DeviceCode,
 		}
 	}
 	return result

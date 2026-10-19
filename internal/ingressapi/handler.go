@@ -176,6 +176,12 @@ func (h *handler) observeRecovery(
 }
 
 func (h *handler) writeServiceError(response http.ResponseWriter, request *http.Request, err error) bool {
+	if err != nil {
+		var problem *serviceapi.ProblemError
+		if !errors.As(err, &problem) {
+			err = h.service.privateStateError(request.Context(), err)
+		}
+	}
 	return serviceapi.WriteServiceError(response, request, err, h.service.report, "The ingress service request failed")
 }
 
@@ -187,6 +193,8 @@ func storeProblem(err error, report func(error)) (status int, kind, detail strin
 		return http.StatusConflict, "ingress_already_running", "Another process run holds the ingress lease"
 	case errors.Is(err, controlstate.ErrIngressLeaseStale):
 		return http.StatusConflict, "ingress_lease_stale", "The ingress lease is no longer current"
+	case errors.Is(err, controlstate.ErrIngressTransportCertificate):
+		return http.StatusServiceUnavailable, "unavailable", "ingress transport certificate is unavailable"
 	case errors.Is(err, controlstate.ErrPublicURLRecoveryEpisodeStale):
 		return http.StatusConflict, "recovery_episode_stale", "The public URL recovery episode is no longer current"
 	case errors.Is(err, controlstate.ErrIngressUsageReportInvalid):
@@ -329,7 +337,8 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 			RelayServiceId:               connection.RelayServiceID, RelayId: connection.RelayID,
 			RelayRunId: connection.RelayRunID, RelayLeaseRevision: int64(connection.RelayLeaseRevision),
 			InternalRelayAddress: connection.InternalRelayAddress, TlsServerName: connection.TLSServerName,
-			LeaseExpiresAt: connection.LeaseExpiresAt,
+			LeaseExpiresAt:   connection.LeaseExpiresAt,
+			AvailableStreams: connection.AvailableStreams,
 		}
 	}
 	var recoveryEpisodeID *int64
@@ -347,15 +356,10 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		value := ingressv1.IngressRoutingTableEntryServiceProtocol(projection.ServiceProtocol)
 		protocol = &value
 	}
-	var publicPort *int
-	if projection.PublicPort != nil {
-		value := int(*projection.PublicPort)
-		publicPort = &value
-	}
 	return ingressv1.IngressRoutingTableEntry{
 		PublishRunId: projection.PublishRunID, PublicUrlId: projection.PublicURLID,
 		PublishRunNumber: int64(projection.PublishRunNumber), CanonicalHostname: projection.CanonicalHostname,
-		IngressPoolId: poolID, ServiceProtocol: protocol, PublicPort: publicPort,
+		IngressPoolId: poolID, ServiceProtocol: protocol,
 		PolicyRevision:  int64(projection.PolicyRevision),
 		AccessMode:      ingressv1.IngressRoutingTableEntryAccessMode(projection.AccessMode),
 		IpPolicy:        ingressv1.IngressRoutingTableEntryIpPolicy(projection.IPPolicy),

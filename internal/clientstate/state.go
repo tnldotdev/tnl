@@ -45,6 +45,7 @@ type Store struct {
 	controlEndpoint string
 	locksDir        string
 	secrets         secretProtector
+	identityDir     string
 }
 
 // SelectedTeam returns the stable team selection for this server origin.
@@ -209,7 +210,8 @@ func (d *Database) Server(ctx context.Context, serverOrigin string) (*Store, err
 	}
 	return &Store{
 		database: d, controlEndpoint: serverOrigin, locksDir: locksDir,
-		secrets: scopedProtector{protector: d.secrets, scope: serverOrigin},
+		secrets:     scopedProtector{protector: d.secrets, scope: serverOrigin},
+		identityDir: filepath.Join(d.root, "identities"),
 	}, nil
 }
 

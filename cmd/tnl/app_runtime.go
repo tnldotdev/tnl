@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,6 +19,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientruntime"
+	"github.com/tnldotdev/tnl/internal/clientserver"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -39,8 +40,9 @@ type runtimeCommand struct {
 	Serve         runtimeOptions         `cmd:"" hidden:""`
 }
 type runtimeOptions struct {
-	Directory string `name:"directory" required:"" type:"path"`
-	StateDir  string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	Directory     string `name:"directory" required:"" type:"path"`
+	StateDir      string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	SnapshotStdin bool   `name:"snapshot-stdin" hidden:""`
 }
 type runtimeEndpointOptions struct {
 	runtimeOptions `embed:""`
@@ -52,7 +54,6 @@ type runtimeEndpointOptions struct {
 var runtimeTargetResolver projectpublisher.TargetResolver
 
 var runtimeConfigurePublication func(context.Context, *clientstate.Database, projectconfig.Project, clientruntime.Service, *publisher.Config) error
-var runtimeVisitorTLS func(context.Context, *clientstate.Database, projectconfig.Project, clientruntime.Service) (*tls.Config, error)
 var runtimeAttachIntegrations func(context.Context, *clientstate.Database, projectconfig.Project, clientruntime.Service, *clientstate.Tunnel, *publisher.Config) (func(), error)
 
 func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfiguration, string, error) {
@@ -67,6 +68,19 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 	directory, err = filepath.EvalSymlinks(directory)
 	if err != nil {
 		return projectConfiguration{}, "", err
+	}
+	if options.SnapshotStdin {
+		project, err := projectconfig.ReadSnapshot(os.Stdin)
+		if err != nil {
+			return projectConfiguration{}, "", err
+		}
+		if project.Root != directory || project.Selection.Path != "" && filepath.Dir(project.Selection.Path) != directory {
+			return projectConfiguration{}, "", errors.New("selected project snapshot belongs to another directory")
+		}
+		if err := config.ValidateTNL(project.Config); err != nil {
+			return projectConfiguration{}, "", err
+		}
+		return projectConfiguration{Project: project}, root, nil
 	}
 	state, err := clientstate.Open(ctx, root)
 	if err != nil {
@@ -92,6 +106,13 @@ func runtimeProject(ctx context.Context, options runtimeOptions) (projectConfigu
 		}
 		project.Config.Server = &canonical
 	}
+	if project.Config.Server == nil {
+		server, err := clientserver.Select(ctx, state, "")
+		if err != nil {
+			return projectConfiguration{}, "", err
+		}
+		project.Config.Server = &server
+	}
 	return projectConfiguration{Project: project}, state.Root(), nil
 }
 
@@ -111,11 +132,17 @@ func ensureRuntimeOwner(ctx context.Context, project projectConfiguration, root 
 	if err != nil {
 		return privateprotocol.Endpoint{}, err
 	}
-	command := exec.Command(executable, "runtime", "serve", "--directory", project.Root, "--state-dir", root)
+	snapshot, _, err := project.Snapshot()
+	if err != nil {
+		return privateprotocol.Endpoint{}, err
+	}
+	command := exec.Command(executable, "runtime", "serve", "--directory", project.Root, "--state-dir", root, "--snapshot-stdin")
+	command.Stdin = bytes.NewReader(snapshot)
 	if err := command.Start(); err != nil {
 		return privateprotocol.Endpoint{}, err
 	}
-	go func() { _ = command.Wait() }()
+	childDone := make(chan error, 1)
+	go func() { childDone <- command.Wait() }()
 	timer := time.NewTimer(15 * time.Second)
 	defer timer.Stop()
 	ticker := time.NewTicker(50 * time.Millisecond)
@@ -125,6 +152,11 @@ func ensureRuntimeOwner(ctx context.Context, project projectConfiguration, root 
 			return endpoint, nil
 		}
 		select {
+		case err := <-childDone:
+			if err != nil {
+				return privateprotocol.Endpoint{}, failure.Wrap("start project owner", failure.ClientStateUnavailable, err)
+			}
+			childDone = nil
 		case <-ctx.Done():
 			return privateprotocol.Endpoint{}, ctx.Err()
 		case <-timer.C:
@@ -207,6 +239,9 @@ func authenticateRuntime(ctx context.Context, state *clientstate.Database, serve
 func configuredRuntimeServices(project projectConfiguration) []clientruntime.Service {
 	services := make([]clientruntime.Service, 0, len(project.Config.Services))
 	for name, definition := range project.Config.Services {
+		if config.PublisherName(definition) != "local" {
+			continue
+		}
 		readiness := clientruntime.Readiness{Path: "/"}
 		if definition.HTTP != nil && definition.HTTP.Readiness != nil {
 			readiness.Path = definition.HTTP.Readiness.Path
@@ -255,11 +290,6 @@ func runRuntimeServe(ctx context.Context, options runtimeOptions) error {
 		}
 	}
 	a.workers = &projectpublisher.Workers{Database: state, Configure: a.workerConfiguration}
-	if runtimeVisitorTLS != nil {
-		a.workers.VisitorTLS = func(ctx context.Context, service clientruntime.Service) (*tls.Config, error) {
-			return runtimeVisitorTLS(ctx, state, project.Project, service)
-		}
-	}
 	a.manager, err = clientruntime.New(ctx, project.Root, state, configuredRuntimeServices(project), a.workers.Run)
 	if err != nil {
 		return err
@@ -360,28 +390,35 @@ func (a *appRuntime) prepare(ctx context.Context, request privateprotocol.Prepar
 }
 
 func (a *appRuntime) acquire(ctx context.Context, request privateprotocol.Lease) (privateprotocol.Registration, error) {
+	_, digest, err := a.project.Snapshot()
+	if err != nil {
+		return privateprotocol.Registration{}, err
+	}
+	if request.ConfigurationDigest != digest {
+		return privateprotocol.Registration{}, clientruntime.ErrOwnerConflict
+	}
 	a.prepareMu.Lock()
 	defer a.prepareMu.Unlock()
 	finish := a.manager.BeginPreparation()
 	defer finish()
 	resolved, err := projectpublisher.ResolveTarget(ctx, a.project.Project, request.Service, runtimeTargetResolver)
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return privateprotocol.Registration{}, failure.Wrap("resolve named service target", failure.InvalidTunnelFlags, err)
 	}
 	resolver := newProjectMetadataResolver(a.state, a.project, strings.NewReader(""), io.Discard, "named publish")
 	resolver.silent = true
 	metadata, err := resolver.Generate(ctx)
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		if _, classified := failure.ReasonOf(err); classified {
+			return privateprotocol.Registration{}, err
+		}
+		return privateprotocol.Registration{}, failure.Wrap("resolve named service metadata", failure.ProjectConfigInvalid, err)
 	}
 	selected := metadata.Services[request.Service]
 	address := selected.URL
-	if selected.Protocol != "http" {
-		address = selected.Address
-	}
 	id, err := a.manager.Reserve(request.Service, request.Owner, request.Pid, address)
 	if err != nil {
-		return privateprotocol.Registration{}, err
+		return privateprotocol.Registration{}, failure.Wrap("reserve named service", failure.ClientStateUnavailable, err)
 	}
 	a.mu.Lock()
 	a.prepared[id] = appPreparation{project: a.project}
@@ -400,6 +437,9 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 	a.mu.Unlock()
 	if !found {
 		return projectpublisher.Configuration{}, clientruntime.ErrRegistrationStale
+	}
+	if definition, configured := preparation.project.Config.Services[service.Name]; configured && !config.IsPublicService(definition) {
+		return a.privateWorkerConfiguration(ctx, preparation.project, service)
 	}
 	if preparation.configuration.Publisher.Control != nil {
 		return preparation.configuration, nil
@@ -470,9 +510,6 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 	cfg.ServiceProtocol = protocolForService(project.Config.Services[service.Name])
 	cfg.PreserveSavedURLTarget = true
 	resolved := config.ServicePublish(project.Config.Services[service.Name])
-	if resolved.TargetTLS != nil {
-		cfg.TargetTLS = *resolved.TargetTLS
-	}
 	if resolved.TargetTLSName != nil {
 		cfg.TargetTLSName = *resolved.TargetTLSName
 	}
@@ -486,6 +523,17 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 	if err != nil {
 		return projectpublisher.Configuration{}, err
 	}
+	route, err := native.SavedURL(ctx)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	realized, err := realizeLocalService(ctx, services.authenticated.Control, project, current, service.Name, route.Id)
+	if err != nil {
+		return projectpublisher.Configuration{}, err
+	}
+	if realized.Hostname == nil || *realized.Hostname != cfg.Hostname {
+		return projectpublisher.Configuration{}, failure.Wrap("realize local public URL", failure.ServerResponseInvalid, errors.New("control returned another public hostname"))
+	}
 	traffic, err := config.ResolveTrafficSelection(effectiveTunnelLimits(effective))
 	if err != nil {
 		return projectpublisher.Configuration{}, err
@@ -495,6 +543,7 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service clientrunt
 		return projectpublisher.Configuration{}, err
 	}
 	cfg.Control = native
+	cfg.PublisherID = native.PublisherID()
 	if a.AttachPublication != nil {
 		if err := a.AttachPublication(ctx, service, &cfg); err != nil {
 			return projectpublisher.Configuration{}, err

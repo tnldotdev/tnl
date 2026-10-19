@@ -1,4 +1,4 @@
-// package privatetrust captures public CA material for visitor-side database TLS.
+// package privatetrust captures public CA material for publisher-to-target TLS.
 // no publisher private key or database credential is included in a snapshot.
 package privatetrust
 
@@ -91,14 +91,14 @@ func NewCache(client *http.Client) *Cache {
 
 // Capture resolves a service's configured trust once. an omitted TLS block is
 // handled by the caller as opaque pass-through, never as a snapshot.
-func (c *Cache) Capture(ctx context.Context, root, target string, setting config.ServiceTLS) (Snapshot, error) {
+func (c *Cache) Capture(ctx context.Context, root, target string, setting config.TrustSource) (Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
 	if c == nil || c.client == nil || setting.CA == "" {
 		return Snapshot{}, ErrInvalidBundle
 	}
-	if err := config.ValidateServiceTLS(setting); err != nil {
+	if err := config.ValidateTrustSource(setting); err != nil {
 		return Snapshot{}, &SourceError{reason: ErrInvalidBundle, cause: err}
 	}
 	host, err := tcptarget.Host(target)
@@ -149,7 +149,7 @@ func (s Snapshot) digest() string {
 }
 
 func readProjectBundle(root, name string) ([]byte, error) {
-	if config.ValidateServiceTLS(config.ServiceTLS{CA: name}) != nil || name == "system" || strings.Contains(name, "://") {
+	if config.ValidateTrustSource(config.TrustSource{CA: name}) != nil || name == "system" || strings.Contains(name, "://") {
 		return nil, ErrInvalidBundle
 	}
 	project, err := os.OpenRoot(root)
@@ -177,7 +177,7 @@ func (c *Cache) fetch(ctx context.Context, location string) ([]byte, error) {
 	if !strings.HasPrefix(location, "https://") {
 		return nil, ErrInvalidBundle
 	}
-	if err := config.ValidateServiceTLS(config.ServiceTLS{CA: location}); err != nil {
+	if err := config.ValidateTrustSource(config.TrustSource{CA: location}); err != nil {
 		return nil, &SourceError{reason: ErrInvalidBundle, cause: err}
 	}
 	c.mu.Lock()
@@ -296,24 +296,26 @@ func canonicalHostname(host string) string {
 	return strings.ToLower(host)
 }
 
-// Verifier builds the visitor's verified database TLS configuration. custom
-// bundles replace system roots; neither selection permits plaintext fallback.
+// Verifier builds publisher-to-target trust. custom CA-only bundles add to
+// system roots; neither selection permits plaintext or unverified fallback.
 func (s Snapshot) Verifier() (*tls.Config, error) {
 	if !config.ValidTLSIdentity(s.Hostname) || s.Hostname != canonicalHostname(s.Hostname) || s.Digest != s.digest() || s.System == (len(s.PEM) != 0) {
 		return nil, ErrInvalidBundle
 	}
-	var roots *x509.CertPool
-	var err error
-	if s.System {
-		roots, err = x509.SystemCertPool()
-	} else {
-		roots, err = parseBundle(s.PEM)
-	}
+	roots, err := x509.SystemCertPool()
 	if err != nil {
 		return nil, &SourceError{reason: ErrInvalidBundle, cause: err}
 	}
 	if roots == nil {
 		return nil, ErrInvalidBundle
+	}
+	if !s.System {
+		if _, err := parseBundle(s.PEM); err != nil {
+			return nil, err
+		}
+		if !roots.AppendCertsFromPEM(s.PEM) {
+			return nil, ErrInvalidBundle
+		}
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS12, ServerName: s.Hostname, RootCAs: roots}, nil
 }

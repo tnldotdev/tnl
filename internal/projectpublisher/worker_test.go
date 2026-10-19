@@ -134,7 +134,7 @@ func TestOwnerProofIsFreshExactAndStaleReadinessCannotCrossReplacement(t *testin
 func TestOneJournalContainsDirectNamedAndReadinessTransitions(t *testing.T) {
 	w, ready := testWorkers(t)
 	cursor := w.Manager.Snapshot().Cursor
-	direct, err := w.Database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: "https://control.example", Target: "127.0.0.1:5432", Project: w.Manager.Snapshot().Project, ServiceProtocol: "postgres"})
+	direct, err := w.Database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: "https://control.example", Target: "3000", Project: w.Manager.Snapshot().Project})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestOneJournalContainsDirectNamedAndReadinessTransitions(t *testing.T) {
 }
 
 func TestTargetResolutionDelegatesDiscoveryAndRejectsApps(t *testing.T) {
-	protocol := "redis"
+	protocol := "tcp"
 	port := 6379
 	container := "redis-worktree"
 	project := projectconfig.Project{Root: "/project", Config: config.TNL{Services: config.Services{"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "docker", Container: &container, Port: &port}}, "web": {}}}}

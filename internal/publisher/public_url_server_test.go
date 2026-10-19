@@ -7,7 +7,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -28,11 +27,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
-	"github.com/tnldotdev/tnl/internal/tlschallenge"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
-	"golang.org/x/crypto/acme"
 )
 
 // testVisitorControl simulates a current control decision for transport tests;
@@ -545,7 +542,7 @@ func awaitPublisherTest[T any](t *testing.T, result <-chan T) T {
 	}
 }
 
-func TestRouteServerSelectsChallengeAndInstalledCertificate(t *testing.T) {
+func TestRouteServerSelectsOnlyInstalledCertificate(t *testing.T) {
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Hostname: "route.example", Target: "http://127.0.0.1:3000",
 	})
@@ -558,27 +555,11 @@ func TestRouteServerSelectsChallengeAndInstalledCertificate(t *testing.T) {
 	}); err == nil {
 		t.Fatal("ordinary certificate was available before installation")
 	}
-	digest := sha256.Sum256([]byte("key authorization"))
-	challenge := tlschallenge.TLSALPNChallenge{
-		ID: "challenge", Hostname: "route.example", Digest: digest, ExpiresAt: time.Now().Add(time.Hour),
-	}
-	if err := route.InstallChallenge(challenge); err != nil {
-		t.Fatal(err)
-	}
-	selected, err := route.getCertificate(&tls.ClientHelloInfo{
-		ServerName: "route.example", SupportedProtos: []string{acme.ALPNProto},
-	})
-	if err != nil || selected.Leaf == nil || selected.Leaf.DNSNames[0] != "route.example" {
-		t.Fatalf("challenge certificate = %#v, %v", selected, err)
-	}
-	if !route.RemoveChallenge(challenge.ID) {
-		t.Fatal("challenge was not removed")
-	}
 	application := publicURLTestCertificate(t, "route.example")
 	if err := route.InstallCertificate(application); err != nil {
 		t.Fatal(err)
 	}
-	selected, err = route.getCertificate(&tls.ClientHelloInfo{
+	selected, err := route.getCertificate(&tls.ClientHelloInfo{
 		ServerName: "route.example", SupportedProtos: []string{"http/1.1"},
 	})
 	if err != nil || selected.Leaf == nil || selected.Leaf.SerialNumber.Cmp(application.Leaf.SerialNumber) != 0 {

@@ -1,4 +1,6 @@
-// package visitorcert owns the private, control-only database visitor issuer.
+// package visitorcert owns control's client-certificate issuer. publishers prove
+// key possession in native TLS; control checks the exact service, identity and
+// device against current state before permitting application authentication.
 package visitorcert
 
 import (
@@ -22,25 +24,23 @@ import (
 
 const MaxLifetime = 7 * 24 * time.Hour
 
-var ErrInvalidCertificate = errors.New("invalid visitor certificate")
+var ErrInvalidCertificate = errors.New("invalid service client certificate")
 
 type Issuer struct {
 	root *x509.Certificate
 	key  ed25519.PrivateKey
 }
 
-// New derives the same private issuer on each control replica from its separate
-// seed. neither publishers nor ingress/relays receive this seed.
 func New(seed []byte) (*Issuer, error) {
 	if len(seed) != ed25519.SeedSize {
-		return nil, errors.New("visitor issuer seed must contain 32 bytes")
+		return nil, ErrInvalidCertificate
 	}
 	key := ed25519.NewKeyFromSeed(seed)
-	hash := sha256.Sum256(append([]byte("tnl private visitor issuer v1\x00"), key.Public().(ed25519.PublicKey)...))
-	hash[0] &= 0x7f
-	template := &x509.Certificate{SerialNumber: new(big.Int).SetBytes(hash[:]), Subject: pkix.Name{CommonName: "tnl private visitor issuer"},
-		NotBefore: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), NotAfter: time.Date(2044, 1, 1, 0, 0, 0, 0, time.UTC), IsCA: true,
-		BasicConstraintsValid: true, MaxPathLenZero: true, KeyUsage: x509.KeyUsageCertSign}
+	digest := sha256.Sum256(append([]byte("tnl service client issuer v1\x00"), key.Public().(ed25519.PublicKey)...))
+	digest[0] &= 0x7f
+	template := &x509.Certificate{SerialNumber: new(big.Int).SetBytes(digest[:]), Subject: pkix.Name{CommonName: "tnl service client issuer"},
+		NotBefore: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), NotAfter: time.Date(2044, 1, 1, 0, 0, 0, 0, time.UTC),
+		IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true, KeyUsage: x509.KeyUsageCertSign}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
 	if err != nil {
 		return nil, err
@@ -51,6 +51,7 @@ func New(seed []byte) (*Issuer, error) {
 	}
 	return &Issuer{root: root, key: key}, nil
 }
+
 func (i *Issuer) CertificatePEM() []byte {
 	if i == nil {
 		return nil
@@ -81,18 +82,18 @@ func ValidateCSR(der []byte) (*x509.CertificateRequest, error) {
 	return csr, nil
 }
 
-// Issue copies only the proven public key, never CSR subjects or extensions.
-func (i *Issuer) Issue(der []byte, urlID, identityID string, expires, now time.Time) ([]byte, error) {
-	if i == nil || !opaqueid.Valid(urlID, opaqueid.PublicURLPrefix) || !opaqueid.Valid(identityID, opaqueid.IdentityPrefix) || !expires.After(now) {
+// Issue copies only the CSR's proven public key. caller-provided subjects, SANs,
+// extensions and CA constraints never become authenticated identity claims.
+func (i *Issuer) Issue(der []byte, service, identity, device string, expires, now time.Time) ([]byte, error) {
+	if i == nil || !opaqueid.Valid(service, opaqueid.PrivateServicePrefix) || !opaqueid.Valid(identity, opaqueid.IdentityPrefix) || !opaqueid.Valid(device, opaqueid.VisitorDevicePrefix) || !expires.After(now) {
 		return nil, ErrInvalidCertificate
 	}
 	csr, err := ValidateCSR(der)
 	if err != nil {
 		return nil, err
 	}
-	notBefore := now.Add(-time.Minute)
-	if expires.After(notBefore.Add(MaxLifetime)) {
-		expires = notBefore.Add(MaxLifetime)
+	if expires.After(now.Add(MaxLifetime)) {
+		expires = now.Add(MaxLifetime)
 	}
 	if expires.After(i.root.NotAfter) {
 		expires = i.root.NotAfter
@@ -107,34 +108,29 @@ func (i *Issuer) Issue(der []byte, urlID, identityID string, expires, now time.T
 	if serial.Sign() == 0 {
 		serial.SetInt64(1)
 	}
-	scope := &url.URL{Scheme: "tnl", Host: "visitor", Path: "/" + urlID + "/" + identityID}
-	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "tnl visitor"}, NotBefore: notBefore, NotAfter: expires,
+	scope := &url.URL{Scheme: "tnl", Host: "service-client", Path: "/" + service + "/" + identity + "/" + device}
+	leaf := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "tnl service client"}, NotBefore: now.Add(-time.Minute), NotAfter: expires,
 		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, URIs: []*url.URL{scope}}
-	signed, err := x509.CreateCertificate(rand.Reader, template, i.root, csr.PublicKey, i.key)
+	signed, err := x509.CreateCertificate(rand.Reader, leaf, i.root, csr.PublicKey, i.key)
 	if err != nil {
 		return nil, err
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: signed}), nil
 }
 
-// Identity verifies both issuer and exact control-selected URL scope. TLS must
-// already have proved possession of the peer certificate's private key.
-func (i *Issuer) Identity(leaf *x509.Certificate, urlID string, now time.Time) (string, error) {
-	if i == nil || leaf == nil || !opaqueid.Valid(urlID, opaqueid.PublicURLPrefix) || leaf.IsCA || len(leaf.URIs) != 1 || leaf.NotAfter.Sub(leaf.NotBefore) > MaxLifetime {
-		return "", ErrInvalidCertificate
+func (i *Issuer) Identity(leaf *x509.Certificate, service string, now time.Time) (identity, device string, err error) {
+	if i == nil || leaf == nil || !opaqueid.Valid(service, opaqueid.PrivateServicePrefix) || leaf.IsCA || len(leaf.URIs) != 1 || leaf.NotAfter.Sub(leaf.NotBefore) > MaxLifetime+time.Minute {
+		return "", "", ErrInvalidCertificate
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(i.root)
 	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
-		return "", ErrInvalidCertificate
+		return "", "", ErrInvalidCertificate
 	}
 	scope := leaf.URIs[0]
-	if scope.Scheme != "tnl" || scope.Host != "visitor" || scope.User != nil || scope.RawQuery != "" || scope.Fragment != "" || scope.RawPath != "" || scope.Opaque != "" {
-		return "", ErrInvalidCertificate
+	parts := strings.Split(strings.TrimPrefix(scope.Path, "/"), "/")
+	if scope.Scheme != "tnl" || scope.Host != "service-client" || scope.User != nil || scope.RawQuery != "" || scope.Fragment != "" || scope.RawPath != "" || scope.Opaque != "" || len(parts) != 3 || parts[0] != service || !opaqueid.Valid(parts[1], opaqueid.IdentityPrefix) || !opaqueid.Valid(parts[2], opaqueid.VisitorDevicePrefix) {
+		return "", "", ErrInvalidCertificate
 	}
-	identity, found := strings.CutPrefix(scope.Path, "/"+urlID+"/")
-	if !found || !opaqueid.Valid(identity, opaqueid.IdentityPrefix) {
-		return "", ErrInvalidCertificate
-	}
-	return identity, nil
+	return parts[1], parts[2], nil
 }

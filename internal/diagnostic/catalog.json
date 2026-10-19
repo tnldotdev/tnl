@@ -453,7 +453,7 @@
       "slug": "authentication-required",
       "category": "authentication",
       "title": "authentication required",
-      "summary": "tnl could not authenticate this request. log in again or check the supplied access token.",
+      "summary": "tnl could not authenticate this request. run tnl auth login again for the selected team, or check the supplied access token.",
       "description": "the control API or authority API did not accept the current credential.",
       "diagram_label": "the server rejected authentication",
       "surfaces": ["cli"],

@@ -16,7 +16,7 @@ func (h *handler) CreateCertificateIssuance(
 	publishRunID controlv1.PublishRunID,
 	_ controlv1.CreateCertificateIssuanceParams,
 ) {
-	if !h.config.CertificateIssuance {
+	if !h.config.CertificateIssuance || !h.config.DNSAutomation {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "certificate issuance is unavailable")
 		return
 	}
@@ -62,38 +62,6 @@ func (h *handler) GetCertificateIssuance(response http.ResponseWriter, request *
 	)
 	if err != nil {
 		writeControlStateProblem(response, "get certificate issuance", err)
-		return
-	}
-	writeJSON(response, http.StatusOK, certificateIssuanceResponse(issuance))
-}
-
-func (h *handler) MarkCertificateChallengeReady(response http.ResponseWriter, request *http.Request, issuanceID controlv1.IssuanceID) {
-	token, ok := requestBearerToken(request)
-	if !ok || h.store == nil {
-		writeBearerProblem(response)
-		return
-	}
-	issuance, err := h.certificates.MarkCertificateChallengeReady(
-		request.Context(), string(issuanceID), credentials.PublishRunToken(token), time.Now(),
-	)
-	if err != nil {
-		writeControlStateProblem(response, "mark certificate challenge ready", err)
-		return
-	}
-	writeJSON(response, http.StatusOK, certificateIssuanceResponse(issuance))
-}
-
-func (h *handler) MarkCertificateChallengeRemoved(response http.ResponseWriter, request *http.Request, issuanceID controlv1.IssuanceID) {
-	token, ok := requestBearerToken(request)
-	if !ok || h.store == nil {
-		writeBearerProblem(response)
-		return
-	}
-	issuance, err := h.certificates.MarkCertificateChallengeRemoved(
-		request.Context(), string(issuanceID), credentials.PublishRunToken(token), time.Now(),
-	)
-	if err != nil {
-		writeControlStateProblem(response, "mark certificate challenge removed", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, certificateIssuanceResponse(issuance))

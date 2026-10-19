@@ -178,7 +178,7 @@ func TestSummaryRecorderKeepsHTTPAndDatabaseResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 2 || items[0].Protocol != controlv1.Mysql || items[0].MySQLErrorCode != 1045 || items[0].ResultSets != 2 || items[0].Result != inspection.ResultError || items[1].Protocol != controlv1.Http || items[1].Origin != "local_service" || items[1].Method != "GET" || items[1].Path != "/orders" || items[1].Status != 503 || items[1].Result != "" {
+	if len(items) != 2 || items[0].Protocol != "mysql" || items[0].MySQLErrorCode != 1045 || items[0].ResultSets != 2 || items[0].Result != inspection.ResultError || items[1].Protocol != controlv1.Http || items[1].Origin != "local_service" || items[1].Method != "GET" || items[1].Path != "/orders" || items[1].Status != 503 || items[1].Result != "" {
 		t.Fatalf("recorded summaries = %+v", items)
 	}
 }

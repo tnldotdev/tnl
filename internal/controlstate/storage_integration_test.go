@@ -15,24 +15,16 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	defer cancel()
 	// seed every recoverable secret kind using the old key. no read through a
 	// dual-key database may lazily rotate a row before the batch assertions.
-	session, err := database.CreateBuiltinControlSession(ctx, "routes.example.test", 1, time.Hour, 24*time.Hour, now)
+	session, err := createTestControlSession(ctx, database, "routes.example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := database.AuthenticateAccessToken(ctx, session.AccessToken, 1, now)
+	principal, err := database.AuthenticateAccessToken(ctx, session.AccessToken, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	account, err := database.EnsureACMEAccount(ctx, "https://acme.example.test/rotation", "operator@example.test", now)
 	if err != nil {
-		t.Fatal(err)
-	}
-	cache, err := database.ControlTLSCache(account.DirectoryURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cacheData := []byte("rotation state")
-	if err := cache.Put(ctx, "rotation.example.test", cacheData); err != nil {
 		t.Fatal(err)
 	}
 	lease, err := database.RegisterRelay(ctx, relayLifecycleRegistration("relay-rotation"), now, time.Hour)
@@ -83,7 +75,6 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	}{
 		{"control_sessions", "retry_secret_ciphertext", "retry_secret_storage_key_id", principal.RetrySecret[:]},
 		{"acme_accounts", "account_key_ciphertext", "account_key_storage_key_id", account.AccountKeyDER},
-		{"control_tls_certificate_cache", "cache_ciphertext", "cache_storage_key_id", cacheData},
 		{"relay_services", "transport_private_key_ciphertext", "transport_private_key_storage_key_id", privateKey},
 		{"relay_certificate_orders", "private_key_ciphertext", "private_key_storage_key_id", order.PrivateKeyPEM},
 		{"guest_retry_keys", "guest_retry_master_key_ciphertext", "guest_retry_master_key_storage_key_id", masterKey[:]},
@@ -123,7 +114,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 			t.Fatalf("bounded batch left %d old-key rows, want %d: %v", count, remaining-1, err)
 		}
 	}
-	// Complete must drain the other five kinds. the earlier size-limited calls
+	// Complete must drain the other kinds. the earlier size-limited calls
 	// must not have already done all the work.
 	if err := rotating.CompleteStorageKeyRotation(ctx); err != nil {
 		t.Fatal(err)
@@ -157,21 +148,13 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 			t.Fatalf("%s retained its old ciphertext or key ID", store.table)
 		}
 	}
-	recoveredPrincipal, err := reopened.AuthenticateAccessToken(ctx, session.AccessToken, 1, now)
+	recoveredPrincipal, err := reopened.AuthenticateAccessToken(ctx, session.AccessToken, now)
 	if err != nil || recoveredPrincipal.RetrySecret != principal.RetrySecret {
 		t.Fatalf("recover control-session retry secret: %v", err)
 	}
 	recoveredAccount, err := reopened.EnsureACMEAccount(ctx, account.DirectoryURL, account.ContactEmail, now)
 	if err != nil || recoveredAccount.ID != account.ID || !bytes.Equal(recoveredAccount.AccountKeyDER, account.AccountKeyDER) {
 		t.Fatalf("recover ACME account key: %v", err)
-	}
-	recoveredCache, err := reopened.ControlTLSCache(account.DirectoryURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := recoveredCache.Get(ctx, "rotation.example.test")
-	if err != nil || !bytes.Equal(data, cacheData) {
-		t.Fatalf("recover control TLS cache: %v", err)
 	}
 	recoveredCertificate, err := reopened.GetRelayTransportCertificate(ctx, lease.RelayLeaseIdentity, now)
 	if err != nil || recoveredCertificate.CertificatePEM != string(certificate) || recoveredCertificate.PrivateKeyPEM != string(privateKey) {

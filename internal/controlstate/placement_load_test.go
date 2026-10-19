@@ -27,26 +27,16 @@ func TestLoadPlacement(t *testing.T) {
 
 // RunPlacementLoad also lets the external test attach the real control API
 // without creating a controlstate -> controlapi import cycle.
-func RunPlacementLoad(t *testing.T, newHandler func(*Database, credentials.LoginToken, *observability.Metrics) http.Handler) {
+func RunPlacementLoad(t *testing.T, newHandler func(*Database, *observability.Metrics) http.Handler) {
 	t.Helper()
 	f := newControlLoadFixture(t)
 	database, now, request := f.database, f.now, f.base
 	routes, controls, leases := f.routes, f.controls, f.leases
 	const parallel = 64
 	var accessToken credentials.AccessToken
-	var loginToken credentials.LoginToken
 	if newHandler != nil {
-		var err error
-		loginToken, err = credentials.NewLoginToken()
-		if err != nil {
-			t.Fatal(err)
-		}
-		verifier, err := credentials.ParseLoginToken(loginToken)
-		if err != nil {
-			t.Fatal(err)
-		}
 		session, err := database.createControlSession(t.Context(), controlstatedb.New(database.pool), request.ActingIdentityID,
-			false, "login_token", verifier.SourceRevision(), time.Hour, time.Hour, time.Now())
+			time.Hour, time.Hour, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,7 +45,7 @@ func RunPlacementLoad(t *testing.T, newHandler func(*Database, credentials.Login
 	var handlers []http.Handler
 	for index, control := range controls {
 		if newHandler != nil {
-			handlers = append(handlers, newHandler(control, loginToken, f.metrics[index]))
+			handlers = append(handlers, newHandler(control, f.metrics[index]))
 		}
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)

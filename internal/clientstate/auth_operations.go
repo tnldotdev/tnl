@@ -36,6 +36,8 @@ var (
 // AuthOperation contains only browser-safe operation information. private
 // checkpoints are sealed separately and never serialized by output adapters.
 type AuthOperation struct {
+	Team            string        `json:"team,omitempty"`
+	SelectedTeamID  string        `json:"selected_team_id,omitempty"`
 	ID              string        `json:"operation_id"`
 	Server          string        `json:"server"`
 	Method          string        `json:"method"`
@@ -253,6 +255,11 @@ func (s *Store) InstallAuthSession(ctx context.Context, op *AuthOperation, sessi
 	}
 	if err := q.SetSelectedServer(ctx, sql.NullString{String: s.controlEndpoint, Valid: true}); err != nil {
 		return err
+	}
+	if op.SelectedTeamID != "" {
+		if err := q.SetSelectedTeam(ctx, clientstatedb.SetSelectedTeamParams{TeamID: sql.NullString{String: op.SelectedTeamID, Valid: true}, Now: s.database.now().UTC().UnixNano(), Origin: s.controlEndpoint}); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err

@@ -6,11 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+
+	"github.com/tnldotdev/tnl/internal/projectmeta"
 )
 
 func projectTypeIncludeActions(project projectConfiguration) ([]string, error) {
 	path := filepath.Join(project.Root, "tsconfig.json")
-	relative := ".tnl/project.d.ts"
+	relative := filepath.ToSlash(filepath.Join(projectmeta.DirectoryName, projectmeta.DeclarationsName))
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return []string{fmt.Sprintf("Add %q to the include array in %s when creating it.", relative, path)}, nil

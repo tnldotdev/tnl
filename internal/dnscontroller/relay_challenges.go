@@ -12,7 +12,7 @@ import (
 type RelayChallengeStore interface {
 	ChallengeChangeStore
 	GetRelayDNSChallengeContext(context.Context, string) (controlstate.RelayDNSChallengeContext, error)
-	WithDNSChallengeLock(context.Context, string, func() error) error
+	WithDNSRecordLock(context.Context, string, func() error) error
 }
 
 type RelayChallengeManager struct {
@@ -68,7 +68,7 @@ func (m *RelayChallengeManager) reconcile(ctx context.Context, orderID string, s
 	}
 	recordName := "_acme-challenge." + initial.TLSServerName
 	verified := false
-	err = m.store.WithDNSChallengeLock(ctx, recordName, func() error {
+	err = m.store.WithDNSRecordLock(ctx, recordName, func() error {
 		challenge, record, expected, err := m.challengeRecord(ctx, orderID)
 		if err != nil {
 			return err

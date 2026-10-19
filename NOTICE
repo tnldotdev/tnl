@@ -5,5 +5,8 @@ This product includes software developed for the tnl project.
 
 Third-party license terms and notices are provided in THIRD_PARTY_LICENSES.txt.
 
+DNS automation uses the AWS SDK for Go v2 and Smithy
+for Go (Apache-2.0), developed by Amazon Web Services and contributors.
+
 The Python ASGI binding directly depends on HTTPX, Starlette, Uvicorn, and
 websockets (BSD-3-Clause). Their distributions provide their license texts.

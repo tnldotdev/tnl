@@ -14,7 +14,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/tnldotdev/tnl/internal/controlstate"
-	"github.com/tnldotdev/tnl/internal/controltls"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
@@ -23,6 +22,7 @@ import (
 type daemon struct {
 	startedAt              time.Time
 	database               *controlstate.Database
+	dnsBackend             dnsBackend
 	metricsServer          *observability.Server
 	controlServer          *http.Server
 	controlListener        net.Listener
@@ -31,7 +31,6 @@ type daemon struct {
 	ingresses              []*ingressRuntime
 	relays                 []*relayRuntime
 	controlTLS             *tls.Config
-	controlTLSManager      *controltls.Source
 	route53Credentials     aws.CredentialsProvider
 	serviceHTTP            *http.Client
 	clusterSecret          string
@@ -63,6 +62,10 @@ func serveWithRelayClientTLS(
 	acmeHTTPClient, serviceHTTPClient *http.Client,
 	relayClientTLS *tls.Config,
 ) (retErr error) {
+	return serveWithDNSBackend(ctx, cfg, acmeHTTPClient, serviceHTTPClient, relayClientTLS, nil)
+}
+
+func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPClient, serviceHTTPClient *http.Client, relayClientTLS *tls.Config, dns dnsBackend) (retErr error) {
 	if acmeHTTPClient == nil || serviceHTTPClient == nil {
 		return errors.New("ACME and service HTTP clients are required")
 	}
@@ -82,6 +85,7 @@ func serveWithRelayClientTLS(
 	// admitted work drains or the shutdown deadline expires.
 	lifetime, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	d := &daemon{
+		dnsBackend:  dns,
 		serviceHTTP: serviceHTTPClient, clusterSecret: clusterSecret, clusterSecrets: clusterSecrets,
 		relayClientTLS: relayClientTLS, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now().UTC(),
 	}
@@ -90,8 +94,6 @@ func serveWithRelayClientTLS(
 	metrics := observability.New(string(cfg.Role))
 	if cfg.Role.RunsIngress() {
 		metrics.SetCapacityLimit("client_hello_connections", int64(cfg.ClientHelloConnectionLimit))
-		metrics.SetCapacityLimit("challenge_connections", int64(cfg.ChallengeConnectionLimit))
-		metrics.SetCapacityLimit("challenge_hostname_connections", int64(cfg.ChallengeHostnameConnectionLimit))
 		metrics.SetCapacityLimit("public_connections", cfg.VisitorConnectionLimit)
 		metrics.SetCapacityLimit("public_url_connections", int64(cfg.TrafficDefaults().Connections))
 		pending, err := cfg.IngressPending().Resolve()
@@ -127,7 +129,7 @@ func serveWithRelayClientTLS(
 		if d.route53Credentials != nil {
 			route53Readiness = d.checkRoute53Credentials
 		}
-		controlHandler, err = newPublicAPIHandler(cfg, d.startedAt, d.serviceHTTP, d.database, metrics, d, route53Readiness, cfg.VisitorIssuerSeed)
+		controlHandler, err = newPublicAPIHandler(cfg, d.startedAt, d.serviceHTTP, d.database, metrics, d, route53Readiness)
 		if err != nil {
 			return err
 		}
@@ -163,11 +165,7 @@ func serveWithRelayClientTLS(
 		}
 	case tnldconfig.RoleStandalone:
 		settings := standaloneSettingsFrom(cfg)
-		var automaticTLS *tls.Config
-		if d.controlTLSManager != nil && !cfg.RelayCertificateAutomationEnabled() {
-			automaticTLS = d.controlTLS
-		}
-		settings.relayTransportTLS, err = relayTLSConfig(cfg, automaticTLS)
+		settings.relayTransportTLS, err = relayTLSConfig(cfg, nil)
 		if err != nil {
 			return err
 		}
@@ -175,17 +173,12 @@ func serveWithRelayClientTLS(
 			return err
 		}
 	case tnldconfig.RoleControl:
-		if err := d.startControl(cfg.ControlListen, cfg.RequireProxyHeader, controlHandler); err != nil {
+		if err := d.startControl(cfg.ControlListen, controlProxyConfig(cfg), controlHandler); err != nil {
 			return err
 		}
 		if err := d.startPrivateControlAPIs(lifetime, privateControlSettingsFrom(cfg), metrics); err != nil {
 			return err
 		}
-	}
-	if d.controlTLSManager != nil {
-		d.start("manage public control certificate", func() error {
-			return d.controlTLSManager.Run(lifetime)
-		})
 	}
 	if metricsListener != nil {
 		handler := observability.ProcessHandler(metrics.Handler(), func() bool {
@@ -241,19 +234,27 @@ func (d *daemon) readyControl(role tnldconfig.Role, now time.Time) error {
 	if role == tnldconfig.RoleControl && (d.privateControlServer == nil || d.privateControlListener == nil) {
 		return errors.New("private control listener is not ready")
 	}
-	if d.controlTLSManager != nil && !d.controlTLSManager.Ready(now) {
-		return errors.New("public control certificate is not ready")
-	}
 	return nil
 }
 
 func (d *daemon) readyIngress(now time.Time) error {
-	if len(d.ingresses) != 1 {
+	if len(d.ingresses) < 1 || len(d.ingresses) > 2 {
 		return errors.New("ingress runtime is not ready")
 	}
-	runtime := d.ingresses[0]
-	if runtime.controller == nil || !runtime.controller.Ready(now) || runtime.server == nil || !runtime.server.Ready() {
-		return errors.New("ingress lease, routing table, certificate, or listener is not ready")
+	public := 0
+	for _, runtime := range d.ingresses {
+		if runtime.controller == nil || !runtime.controller.Ready(now) || !runtime.privateOnly && (runtime.server == nil || !runtime.server.Ready()) {
+			return errors.New("ingress lease, routing table, certificate, or listener is not ready")
+		}
+		if runtime.privateCertificate != nil && !runtime.privateCertificate.ready(now) {
+			return errors.New("private ingress transport certificate is not ready")
+		}
+		if !runtime.privateOnly {
+			public++
+		}
+	}
+	if public != 1 {
+		return errors.New("public ingress listener is not ready")
 	}
 	return nil
 }

@@ -77,7 +77,7 @@ describe("root runtime", () => {
     expect(Object.isFrozen(runtime?.services.web?.paths)).toBe(true);
     expect(Object.isFrozen(runtime?.services.web?.paths?.["/api"])).toBe(true);
     for (const invalid of [
-      { "/api": { ...web.paths["/api"], service: "missing" } },
+      { "/api": { ...web.paths["/api"], service: "Invalid" } },
       { "/api": { ...web.paths["/api"], url: "https://api.member.example/api" } },
       { "/__tnl/share": web.paths["/api"] },
     ]) {
@@ -189,8 +189,8 @@ describe("root runtime", () => {
     }
   });
 
-  test.each(["postgres", "mysql", "redis", "ssh"])(
-    "exposes only saved public %s addresses",
+  test.each(["tcp", "postgres", "mysql", "redis", "ssh"])(
+    "rejects private or removed %s addresses in browser metadata",
     (protocol) => {
       const db = {
         protocol,
@@ -200,9 +200,7 @@ describe("root runtime", () => {
         address: "db.member.example:15432",
       };
       const payload = { ...project, services: { ...project.services, db }, dev: true };
-      const parsed = parseRuntimePayload(JSON.stringify(payload));
-      expect(parsed?.services.db).toEqual(db);
-      expect(Object.isFrozen(parsed?.services.db)).toBe(true);
+      expect(() => parseRuntimePayload(JSON.stringify(payload))).toThrow();
       for (const extra of [
         { target: "db.internal:5432" },
         { accessToken: "secret" },
@@ -253,7 +251,7 @@ describe("root runtime", () => {
     expect(fixture.cases.length).toBeGreaterThan(0);
     for (const entry of fixture.cases.filter((item) => item.context === "hostname")) {
       const payload = JSON.stringify({ namespace: entry.input, services: {}, dev: false });
-      if (entry.canonical === entry.input) {
+      if (entry.canonical === entry.input || entry.input === "") {
         expect(parseRuntimePayload(payload)?.namespace, entry.input).toBe(entry.input);
       } else {
         expect(() => parseRuntimePayload(payload), entry.input).toThrow();

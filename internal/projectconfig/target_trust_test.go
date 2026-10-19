@@ -30,7 +30,7 @@ func targetTrustCA(t *testing.T) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
-func TestPortableTargetTrustOutlivesItsSourceFile(t *testing.T) {
+func TestApplyCapturesPortableTargetTrustSeparateFromVisitorTrust(t *testing.T) {
 	root := t.TempDir()
 	ca := targetTrustCA(t)
 	file := filepath.Join(root, "target-ca.pem")
@@ -39,13 +39,17 @@ func TestPortableTargetTrustOutlivesItsSourceFile(t *testing.T) {
 	}
 	address := config.Target("https://127.0.0.1:8443")
 	hostname := "target.internal"
-	project := Project{Root: root, Config: config.TNL{Services: config.Services{"api": {Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{ServerName: &hostname, CAFile: &file}}}}}}
+	source := "target-ca.pem"
+	project := Project{Root: root, Config: config.TNL{Services: config.Services{"api": {Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{ServerName: &hostname, CAFile: &source}}}}}}
 	snapshot, err := project.CaptureTargetTrust(t.Context(), privatetrust.NewCache(nil), "api", "")
 	if err != nil || snapshot.Hostname != hostname || len(snapshot.CAPEM) == 0 || snapshot.Validate() != nil {
 		t.Fatalf("captured target trust: %+v: %v", snapshot, err)
 	}
 	if snapshot.Digest == "" || len(snapshot.Digest) != 64 {
 		t.Fatalf("target trust digest=%q", snapshot.Digest)
+	}
+	if _, err := project.CaptureServiceTrust(t.Context(), privatetrust.NewCache(nil), "api", ""); err == nil {
+		t.Fatal("public target trust entered private visitor metadata")
 	}
 	if err := os.Remove(file); err != nil {
 		t.Fatal(err)

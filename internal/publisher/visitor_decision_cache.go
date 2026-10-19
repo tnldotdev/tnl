@@ -31,9 +31,21 @@ type visitorDecisionCall[T any] struct {
 // visitorDecisionCache keeps only positive, run-local decisions. errors may
 // reuse a previously checked result until its hard deadline, never beyond it.
 type visitorDecisionCache[T any] struct {
-	mu      sync.Mutex
-	entries map[[sha256.Size]byte]cachedVisitorDecision[T]
-	active  map[[sha256.Size]byte]*visitorDecisionCall[T]
+	mu       sync.Mutex
+	revision int64
+	entries  map[[sha256.Size]byte]cachedVisitorDecision[T]
+	active   map[[sha256.Size]byte]*visitorDecisionCall[T]
+}
+
+// invalidate also fences in-flight decisions checked under the old policy.
+func (c *visitorDecisionCache[T]) invalidate(revision int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if revision <= c.revision {
+		return
+	}
+	c.revision = revision
+	clear(c.entries)
 }
 
 func (c *visitorDecisionCache[T]) check(ctx context.Context, key [sha256.Size]byte,
@@ -44,6 +56,7 @@ func (c *visitorDecisionCache[T]) check(ctx context.Context, key [sha256.Size]by
 	}
 	now := time.Now()
 	c.mu.Lock()
+	revision := c.revision
 	entry, found := c.entries[key]
 	usable := found && now.Before(entry.validUntil)
 	if usable && now.Before(entry.refreshAfter) {
@@ -73,7 +86,10 @@ func (c *visitorDecisionCache[T]) check(ctx context.Context, key [sha256.Size]by
 	value, expires, allowed, err := load(requestCtx)
 	cancel()
 	c.mu.Lock()
-	if err == nil {
+	if revision != c.revision {
+		// the old result and outage fallback must not restore revoked access.
+		value, err = zero, errors.New("publisher: visitor authority changed; retry the request")
+	} else if err == nil {
 		delete(c.entries, key)
 		if allowed && !expires.IsZero() {
 			until := now.Add(visitorDecisionLifetime)

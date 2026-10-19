@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type projectConfiguration struct {
@@ -76,8 +77,10 @@ func projectRoot(ctx context.Context, flags cli) (string, error) {
 }
 
 func (c projectConfiguration) applyPublish(flags *publishCommand) error {
+	flags.namedOverrides = flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Ephemeral ||
+		flags.TargetTLS != nil || flags.TargetTLSName != "" || flags.TargetCAFile != "" || flags.Requests != nil || flags.Concurrency != nil || flags.RateRequests != nil || flags.RatePer != "" || flags.RateBurst != nil || flags.inspectionModeFromCLI
 	service := ""
-	enrolled := flags.EnrollmentKey != "" || flags.PublisherID != ""
+	enrolled := flags.EnrollmentKey != "" || flags.PublisherID != "" || flags.PublisherFile != ""
 	if _, found := c.Config.Services[flags.Target]; found && flags.Target != "" {
 		service, flags.Target = flags.Target, ""
 	} else if flags.Target == "" && !enrolled {
@@ -92,6 +95,9 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		return err
 	}
 	flags.Service = service
+	if service != "" && config.PublisherName(c.Config.Services[service]) != "local" {
+		return publisherCLIError("this service belongs to a remote publisher group; run tnl apply and tnl publisher serve --group NAME")
+	}
 	flags.project = c
 	flags.projectRoot = c.Root
 	credential := flags.AccessToken
@@ -112,6 +118,28 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	}
 	usingConfiguredTarget := flags.Target == ""
 	local := config.ServicePublish(c.Config.Services[service])
+	if usingConfiguredTarget {
+		if err := validateConfiguredTargetTrust(*flags, local); err != nil {
+			return err
+		}
+	}
+	if flags.TargetTLS != nil && !*flags.TargetTLS && (local.TargetTLS != nil && *local.TargetTLS || flags.TargetTLSName != "" || flags.TargetCAFile != "") {
+		return publisherCLIError("target TLS cannot be disabled while target trust is configured")
+	}
+	if usingConfiguredTarget && flags.TargetTLS == nil {
+		flags.TargetTLS = local.TargetTLS
+	}
+	private := service != "" && !config.IsPublicService(c.Config.Services[service])
+	flags.privateService = private
+	if private && (flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" || flags.Ephemeral || flags.Open) {
+		return publisherCLIError("this configured service is private; add an explicit publicURL block to enable public HTTPS")
+	}
+	if private && flags.Protocol != "" && flags.Protocol != config.Protocol(c.Config.Services[service]) {
+		return publisherCLIError("--protocol differs from the configured private service")
+	}
+	if service != "" && flags.Protocol != "" && flags.Protocol != config.Protocol(c.Config.Services[service]) {
+		return publisherCLIError("--protocol differs from the configured service")
+	}
 	if flags.Protocol == "" && service != "" {
 		flags.Protocol = config.Protocol(c.Config.Services[service])
 	}
@@ -124,17 +152,18 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	if usingConfiguredTarget && flags.TargetTLSName == "" && local.TargetTLSName != nil {
 		flags.TargetTLSName = *local.TargetTLSName
 	}
-	if usingConfiguredTarget && !flags.TargetTLS && local.TargetTLS != nil {
-		flags.TargetTLS = *local.TargetTLS
-	}
 	if !enrolled {
-		applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
-	} else if effective.Tunnel != nil {
+		if !private && !config.PrivateProtocol(flags.Protocol) {
+			applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
+		}
+	} else if service != "" && config.IsPublicService(c.Config.Services[service]) && effective.Tunnel != nil {
 		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
 	}
 	applyInspection(&flags.tunnelFlags, effective)
-	applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
-	if !enrolled {
+	if !private && !config.PrivateProtocol(flags.Protocol) {
+		applyOpenConfiguration(&flags.openOptions, effective.Tunnel)
+	}
+	if !private && !enrolled && !config.PrivateProtocol(flags.Protocol) {
 		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
 	}
 	if flags.Target == "" && service == "" && !enrolled {
@@ -154,6 +183,99 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	}
 	if err := selectPublishInspection(flags, protocol); err != nil {
 		return err
+	}
+	return nil
+}
+
+// applyInstalledService snapshots only local target settings. installed jobs
+// reuse their saved URL policy and never create a URL from project settings.
+func (c projectConfiguration) applyInstalledService(flags *publishCommand) error {
+	service := flags.Target
+	definition, found := c.Config.Services[service]
+	if !found || service == "" {
+		return nil
+	}
+	effective, err := c.EffectiveService(service)
+	if err != nil {
+		return err
+	}
+	if flags.ServiceName != "" && flags.ServiceName != service {
+		return publisherCLIError("--service-name must match the configured service; use its name with tnl service start, stop, and remove")
+	}
+	flags.Service, flags.project, flags.projectRoot = service, c, c.Root
+	if !flags.inspectionModeFromCLI {
+		flags.InspectionMode = config.InspectionNone
+	}
+	if config.PublisherName(definition) != "local" {
+		return publisherCLIError("install the assigned publisher group with tnl publisher serve --group NAME --install")
+	}
+	flags.privateService = !config.IsPublicService(definition)
+	flags.ServiceName = service
+	flags.Target = ""
+	selected, _, err := resolveProjectServer(flags.ServerURL, effective.Server, "")
+	if err != nil {
+		return err
+	}
+	flags.ServerURL = selected
+	local := config.ServicePublish(definition)
+	if err := validateConfiguredTargetTrust(*flags, local); err != nil {
+		return err
+	}
+	if flags.TargetTLS != nil && !*flags.TargetTLS && (local.TargetTLS != nil && *local.TargetTLS || flags.TargetTLSName != "" || flags.TargetCAFile != "") {
+		return publisherCLIError("target TLS cannot be disabled while target trust is configured")
+	}
+	if flags.TargetTLS == nil {
+		flags.TargetTLS = local.TargetTLS
+	}
+	if flags.Protocol == "" {
+		flags.Protocol = config.Protocol(definition)
+	}
+	if local.Target != nil {
+		flags.Target = string(*local.Target)
+	}
+	if flags.TargetCAFile == "" && local.TargetCAFile != nil {
+		flags.TargetCAFile = *local.TargetCAFile
+	}
+	if flags.TargetTLSName == "" && local.TargetTLSName != nil {
+		flags.TargetTLSName = *local.TargetTLSName
+	}
+	if flags.privateService || config.PrivateProtocol(flags.Protocol) {
+		if config.TargetType(definition) == "app" {
+			return failure.Wrap("select installed target", failure.InstalledTargetMissing, errors.New("private service requires an address, Docker, or Compose target"))
+		}
+		return nil
+	}
+	if flags.Target == "" {
+		return failure.Wrap("select installed target", failure.InstalledTargetMissing, errors.New("configured service has no stable target"))
+	}
+	if flags.TargetCAFile == "" && local.TargetCAFile != nil {
+		flags.TargetCAFile = *local.TargetCAFile
+	}
+	if flags.TargetTLSName == "" && local.TargetTLSName != nil {
+		flags.TargetTLSName = *local.TargetTLSName
+	}
+	if effective.Tunnel != nil {
+		applyTunnelLimits(&flags.tunnelFlags, effective.Tunnel.Limits)
+		if effective.Tunnel.Ephemeral != nil && *effective.Tunnel.Ephemeral {
+			return publisherCLIError("installed publications require a saved public URL")
+		}
+	}
+	if err := applyProtocolLimits(&flags.tunnelFlags, flags.Protocol); err != nil {
+		return err
+	}
+	flags.Target, err = normalizePublishTarget(flags.Target, controlv1.PublicURLServiceProtocol(flags.Protocol))
+	return err
+}
+
+func validateConfiguredTargetTrust(flags publishCommand, local *config.Publish) error {
+	if local.TargetTLS == nil {
+		if flags.TargetTLS != nil && *flags.TargetTLS || flags.TargetTLSName != "" || flags.TargetCAFile != "" {
+			return publisherCLIError("configure the named service's target trust under target.tls")
+		}
+		return nil
+	}
+	if flags.TargetTLS != nil && !*flags.TargetTLS || flags.TargetTLSName != "" && (local.TargetTLSName == nil || flags.TargetTLSName != *local.TargetTLSName) || flags.TargetCAFile != "" && (local.TargetCAFile == nil || flags.TargetCAFile != *local.TargetCAFile) {
+		return publisherCLIError("target TLS flags differ from the configured target.tls")
 	}
 	return nil
 }
@@ -306,7 +428,8 @@ func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
 }
 
 func projectSensitiveCommand(command string) bool {
-	return strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "admin ") ||
+	return command == "apply" || command == "audit list" || strings.HasPrefix(command, "auth ") || strings.HasPrefix(command, "admin ") ||
+		command == "connect available" ||
 		strings.HasPrefix(command, "publisher ") ||
 		strings.HasPrefix(command, "team ") || strings.HasPrefix(command, "domain ") || strings.HasPrefix(command, "url ") || strings.HasPrefix(command, "share ") || strings.HasPrefix(command, "feedback ") || strings.HasPrefix(command, "webhook ") || strings.HasPrefix(command, "alias ")
 }
@@ -355,6 +478,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		}
 	}
 	switch command {
+	case "connect available":
+		apply(&flags.Connect.Available.remoteFlags, false)
 	case "webhook use <endpoint>":
 		apply(&flags.Webhook.Use.remoteFlags, false)
 	case "webhook release <endpoint>":
@@ -366,7 +491,10 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 	case "auth status":
 		apply(&flags.Auth.Status.remoteFlags, false)
 	case "auth login", "auth login run", "auth login start":
-		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, os.Getenv("TNL_LOGIN_TOKEN"))
+		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, "")
+		if flags.Auth.Login.Team == "" && project.Config.Team != nil {
+			flags.Auth.Login.Team = *project.Config.Team
+		}
 	case "auth login wait <operation-id>", "auth login inspect <operation-id>", "auth login cancel <operation-id>":
 		flags.Auth.Login.ServerURL, _, contextErr = resolveProjectServer(flags.Auth.Login.ServerURL, project.Config.Server, "")
 	case "auth logout":
@@ -417,10 +545,10 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.URL.Inventory.remoteFlags, true)
 	case "url available":
 		apply(&flags.URL.Available.remoteFlags, false)
-	case "url certificate <url>":
-		apply(&flags.URL.Certificate.remoteFlags, false)
 	case "publisher enroll", "publisher enroll <public-url-id>":
 		apply(&flags.Publisher.Enroll.remoteFlags, true)
+	case "publisher provision":
+		apply(&flags.Publisher.Provision.remoteFlags, true)
 	case "publisher list":
 		apply(&flags.Publisher.List.remoteFlags, true)
 	case "publisher revoke <publisher-id>":

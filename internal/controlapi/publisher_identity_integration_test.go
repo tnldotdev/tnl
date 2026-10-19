@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisheridentity"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -33,16 +34,8 @@ func TestIntegrationPublisherIdentityHTTPContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
-	login, err := credentials.NewLoginToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	verifier, err := credentials.ParseLoginToken(login)
-	if err != nil {
-		t.Fatal(err)
-	}
 	now := time.Now().UTC()
-	session, err := d.CreateBuiltinControlSession(t.Context(), "example.test", verifier.SourceRevision(), time.Hour, 24*time.Hour, now)
+	session, err := controltest.Session(t.Context(), d, "example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +48,7 @@ func TestIntegrationPublisherIdentityHTTPContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := NewHandler(Config{LoginToken: login.String()}, d, d, nil)
+	control, err := NewHandler(Config{DNSAutomation: true}, d, d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

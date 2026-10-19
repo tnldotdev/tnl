@@ -246,13 +246,23 @@ func separatedConfig(t *testing.T, component string) tnldconfig.Config {
 	switch role {
 	case tnldconfig.RoleControl:
 		cfg.DatabaseURL = testutil.PostgresURL(t)
-		cfg.ControlListen, cfg.PrivateControlListen = "0.0.0.0:443", "0.0.0.0:9443"
+		cfg.ControlListen, cfg.PrivateControlListen = "127.0.0.1:8080", "0.0.0.0:9443"
 		cfg.ServerDomain, cfg.ManagedDomain = separatedDomain, "routes."+separatedDomain
 		cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile = "/load/control.pem", "/load/control.key"
 		cfg.ACMEDirectoryURL, cfg.ACMEEmail = "https://pebble:14000/dir", "integration@example.test"
 		cfg.ACMEAcceptTerms, cfg.ACMEProfile = true, "tlsserver"
-		cfg.LoginToken, cfg.StorageKey = testLoginToken, testStorageKey
+		cfg.OIDCIssuer, cfg.OIDCClientID, cfg.StorageKey = testOIDCIssuer, "server", testStorageKey
 		cfg.AccessTokenLifetime, cfg.RefreshTokenLifetime = 5*time.Minute, time.Hour
+		cfg.Route53ManagedZoneID, cfg.Route53Region, cfg.DNSServer = "local", "us-east-1", "dns:53"
+		addresses, err := net.LookupIP("ingress")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, address := range addresses {
+			if address.To4() != nil {
+				cfg.IngressIPv4Addresses = append(cfg.IngressIPv4Addresses, address.String())
+			}
+		}
 	case tnldconfig.RoleIngress:
 		cfg.ControlHostname, cfg.IngressID = "control."+separatedDomain, component+"-separated"
 		cfg.IngressListen = "0.0.0.0:443"

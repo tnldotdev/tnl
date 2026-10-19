@@ -18,12 +18,12 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
+func TestLocalPublishRunCertificatePlan(t *testing.T) {
 	for _, test := range []struct {
 		name, kind, scope string
 		dnsAutomation     bool
 		nested            bool
-		simpleDirect      bool
+		simpleTeamShared  bool
 		maxChildLabels    int
 		expectDepthDenied bool
 	}{
@@ -32,7 +32,8 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 		{name: "managed_member_no_dns", kind: "managed", scope: "member"},
 		{name: "custom_member_no_dns", kind: "custom", scope: "member"},
 		{name: "shared_dns", kind: "custom", scope: "shared", dnsAutomation: true, maxChildLabels: 1},
-		{name: "simple_direct_dns", kind: "managed", scope: "shared", dnsAutomation: true, simpleDirect: true},
+		{name: "simple_team_shared_dns", kind: "managed", scope: "shared", dnsAutomation: true, simpleTeamShared: true},
+		{name: "generated_team_shared_dns", kind: "managed", scope: "shared", dnsAutomation: true},
 		{name: "shared_no_dns", kind: "custom", scope: "shared"},
 		{name: "nested_managed_dns", kind: "managed", scope: "member", dnsAutomation: true, nested: true},
 		{name: "nested_managed_manual_dns", kind: "managed", scope: "member", nested: true},
@@ -44,6 +45,12 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 			if test.kind == "managed" {
 				namespace = "member-unique.routes.example.test"
 			}
+			if test.kind == "managed" && test.scope == "shared" {
+				namespace = "team-generated.routes.example.test"
+				if test.simpleTeamShared {
+					namespace = "studio.routes.example.test"
+				}
+			}
 			hostname := "api." + namespace
 			if test.nested {
 				hostname = "api.shop." + namespace
@@ -51,10 +58,13 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 			membershipID := "membership_1"
 			if test.scope == "shared" {
 				hostname, membershipID = "shared.routes.example.test", ""
+				if test.kind == "managed" {
+					hostname = "shared." + namespace
+				}
 			}
 			teamKind := controlstate.TeamKindOrganization
 			mode := naming.ManagedURLModeGenerated
-			if test.simpleDirect {
+			if test.simpleTeamShared {
 				teamKind, mode = controlstate.TeamKindPersonal, naming.ManagedURLModeSimple
 			}
 			store := &certificatePlanStoreStub{
@@ -67,10 +77,10 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 					sessionSetup: controlstate.PublishRunSetup{PublishRunID: "session_1", PublicURLID: "public_url_1", PublishRunNumber: 1},
 				},
 				auth: localAuthorizationStoreStub{
-					principal: controlstate.ControlPrincipal{IdentityID: "identity_1", Administrator: test.simpleDirect, RetrySecret: [32]byte{1}},
+					principal: controlstate.ControlPrincipal{IdentityID: "identity_1", RetrySecret: [32]byte{1}},
 					identity: controlstate.IdentityContext{Memberships: []controlstate.Membership{{
 						ID: "membership_1", TeamID: "team_1", TeamKind: teamKind, TeamDisplayName: "studio", Role: "owner", PolicyRevision: 1,
-						MemberSlug: "member", ManagedLabel: "member-unique",
+						MemberSlug: "member", ManagedLabel: "member-unique", TeamManagedLabel: "team-generated",
 					}}},
 					domains: []controlstate.Domain{{ID: "domain_1", Kind: controlstate.DomainKind(test.kind), State: controlstate.DomainReady,
 						CanonicalDomain: "routes.example.test", DNSAuthorityReference: "dns_authority_1"}},
@@ -92,8 +102,8 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 				wantScope = namespace
 				if test.scope == "shared" {
 					wantScope, wantIDs = "routes.example.test", []string{"routes.example.test", "*.routes.example.test"}
-					if test.simpleDirect {
-						wantIDs = []string{"*.routes.example.test"}
+					if test.kind == "managed" {
+						wantScope, wantIDs = namespace, []string{"*." + namespace}
 					}
 				} else {
 					if test.nested {
@@ -110,8 +120,8 @@ func TestBuiltinPublishRunCertificatePlan(t *testing.T) {
 			if test.dnsAutomation && string(plan.ChallengeMethod) != "dns-01" {
 				t.Errorf("DNS challenge method = %q; want dns-01", plan.ChallengeMethod)
 			}
-			if !test.dnsAutomation && string(plan.ChallengeMethod) != "tls-alpn-01" {
-				t.Errorf("no-DNS challenge method = %q; want tls-alpn-01", plan.ChallengeMethod)
+			if !test.dnsAutomation && string(plan.ChallengeMethod) != "dns-01" {
+				t.Errorf("exact-host challenge method = %q; want dns-01", plan.ChallengeMethod)
 			}
 		})
 	}
@@ -152,8 +162,12 @@ type certificatePlanStoreStub struct {
 	sessionRequest controlstate.PublishRunRequest
 }
 
-func (s *certificatePlanStoreStub) AuthenticateAccessToken(ctx context.Context, token credentials.AccessToken, revision int64, now time.Time) (controlstate.ControlPrincipal, error) {
-	return s.auth.AuthenticateAccessToken(ctx, token, revision, now)
+func (s *certificatePlanStoreStub) AuthorizeTeamSession(ctx context.Context, p controlstate.ControlPrincipal, team string, now time.Time) error {
+	return s.auth.AuthorizeTeamSession(ctx, p, team, now)
+}
+
+func (s *certificatePlanStoreStub) AuthenticateAccessToken(ctx context.Context, token credentials.AccessToken, now time.Time) (controlstate.ControlPrincipal, error) {
+	return s.auth.AuthenticateAccessToken(ctx, token, now)
 }
 
 func (s *certificatePlanStoreStub) IdentityContext(ctx context.Context, identityID string) (controlstate.IdentityContext, error) {

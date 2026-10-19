@@ -1,8 +1,6 @@
 package tnldconfig
 
 import (
-	"encoding/base64"
-	"strings"
 	"testing"
 	"time"
 
@@ -75,27 +73,5 @@ func TestOperatorTrafficValidation(t *testing.T) {
 				t.Fatal("accepted unsafe traffic settings")
 			}
 		})
-	}
-}
-
-func TestVisitorIssuerSeedValidationAndRoles(t *testing.T) {
-	valid := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("s", 32)))
-	for _, role := range []Role{RoleControl, RoleStandalone, RoleIngress, RoleRelay} {
-		c := validCertificateConfig(t, role)
-		c.VisitorIssuerSeed = valid
-		if err := c.Validate(); (err == nil) != role.RunsControl() {
-			t.Fatalf("role %s: %v", role, err)
-		}
-	}
-	for _, seed := range []string{"invalid", valid + "=", valid + "\n", base64.RawURLEncoding.EncodeToString(make([]byte, 31))} {
-		c := validCertificateConfig(t, RoleControl)
-		c.VisitorIssuerSeed = seed
-		if err := c.Validate(); err == nil {
-			t.Fatal("accepted invalid issuer seed")
-		}
-	}
-	t.Setenv("TNLD_VISITOR_ISSUER_SEED", valid)
-	if c := validCertificateConfig(t, RoleControl); c.VisitorIssuerSeed != valid {
-		t.Fatal("issuer seed environment was not parsed")
 	}
 }

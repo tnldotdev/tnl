@@ -19,6 +19,13 @@ import (
 	"github.com/tnldotdev/tnl/internal/tnldconfig"
 )
 
+type dnsBackend interface {
+	dnscontroller.Provider
+	dnscontroller.ChallengeProvider
+	dnscontroller.DNSVerifier
+	dnscontroller.ChallengeVerifier
+}
+
 // startControlWorkers opens control's durable state and starts its background
 // work. all started workers are joined by daemon.shutdown, including when a
 // later initialization step fails.
@@ -33,32 +40,20 @@ func (d *daemon) startControlWorkers(
 		return err
 	}
 	d.database = database
-	database.Instrument(metrics)
-	metrics.RegisterDatabase(database.PrometheusMetrics)
-	ports, err := cfg.ConfiguredTCPPorts()
+	ports, err := cfg.ServicePortInventory()
 	if err != nil {
 		return err
 	}
-	if len(ports) != 0 {
-		ipv4, ipv6 := "", ""
-		if len(cfg.IngressIPv4Addresses) != 0 {
-			ipv4 = cfg.IngressIPv4Addresses[0]
-		}
-		if len(cfg.IngressIPv6Addresses) != 0 {
-			ipv6 = cfg.IngressIPv6Addresses[0]
-		}
-		if err := database.EnsurePrimaryIngressPool(ctx, ipv4, ipv6, ports, time.Now()); err != nil {
-			return fmt.Errorf("configure ingress-a TCP ports: %w", err)
-		}
+	if err = database.ConfigureIngressServicePorts(ctx, controlstate.PrimaryIngressPoolID, ports); err != nil {
+		return fmt.Errorf("configure service port inventory: %w", err)
 	}
+	database.Instrument(metrics)
+	metrics.RegisterDatabase(database.PrometheusMetrics)
 	d.start("expire saved publish runs", func() error {
 		return runExpiredPublishRunCleanup(lifetime, database, metrics)
 	})
 	d.start("clean up ephemeral public URLs", func() error {
 		return runEphemeralPublicURLCleanup(lifetime, database, metrics)
-	})
-	d.start("release quarantined TCP ports", func() error {
-		return runTCPPortClaimCleanup(lifetime, database, metrics)
 	})
 	d.start("forget expired guest credentials", func() error {
 		return runGuestPrivateStateCleanup(lifetime, database, metrics)
@@ -66,14 +61,21 @@ func (d *daemon) startControlWorkers(
 	d.start("clean up routing history", func() error {
 		return runRoutingHistoryCleanup(lifetime, database, metrics)
 	})
+	d.start("clean up service audit", func() error { return runServiceAuditCleanup(lifetime, database) })
 	if err := database.CompleteStorageKeyRotation(ctx); err != nil {
 		return fmt.Errorf("rotate stored secrets: %w", err)
 	}
 	if cfg.StorageKeyPrevious != "" {
 		log.Printf("stored secrets re-encrypted with the current storage key")
 	}
-	var dnsProvider *dnscontroller.Route53Provider
-	var dnsVerifier *dnscontroller.AuthoritativeVerifier
+	var dnsProvider interface {
+		dnscontroller.Provider
+		dnscontroller.ChallengeProvider
+	}
+	var dnsVerifier interface {
+		dnscontroller.DNSVerifier
+		dnscontroller.ChallengeVerifier
+	}
 	var routeDNSChallenges certificates.PublicURLDNSChallenges
 	var relayDNSChallenges certificates.RelayDNSChallenges
 	dnsConfig := dnscontroller.Config{
@@ -82,18 +84,22 @@ func (d *daemon) startControlWorkers(
 		Observer: metrics,
 	}
 	if cfg.DNSProviderEnabled() {
-		awsConfig, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Route53Region))
-		if err != nil {
-			return fmt.Errorf("load Route 53 configuration: %w", err)
-		}
-		d.route53Credentials = awsConfig.Credentials
-		dnsProvider, err = dnscontroller.NewRoute53Provider(route53.NewFromConfig(awsConfig))
-		if err != nil {
-			return err
-		}
-		dnsVerifier, err = dnscontroller.NewAuthoritativeVerifier(cfg.DNSServer)
-		if err != nil {
-			return err
+		if d.dnsBackend != nil {
+			dnsProvider, dnsVerifier = d.dnsBackend, d.dnsBackend
+		} else {
+			awsConfig, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Route53Region))
+			if err != nil {
+				return fmt.Errorf("load Route 53 configuration: %w", err)
+			}
+			d.route53Credentials = awsConfig.Credentials
+			dnsProvider, err = dnscontroller.NewRoute53Provider(route53.NewFromConfig(awsConfig))
+			if err != nil {
+				return err
+			}
+			dnsVerifier, err = dnscontroller.NewAuthoritativeVerifier(cfg.DNSServer)
+			if err != nil {
+				return err
+			}
 		}
 		if cfg.DNSAutomationEnabled() {
 			routeDNSChallenges, err = dnscontroller.NewChallengeManager(database, dnsProvider, dnsVerifier, dnsConfig)
@@ -153,7 +159,9 @@ func (d *daemon) startControlWorkers(
 			}
 			d.start("run relay certificate worker", func() error { return relayWorker.Run(lifetime) })
 		}
-		d.controlTLS, d.controlTLSManager, err = controlTLSConfig(controlTLSSettingsFrom(cfg), database, account, acmeHTTPClient)
+	}
+	if cfg.Role == tnldconfig.RoleControl {
+		d.controlTLS, err = staticServerTLS(cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile)
 		if err != nil {
 			return err
 		}
@@ -196,10 +204,6 @@ func (d *daemon) startControlWorkers(
 }
 
 func (d *daemon) registerControlCertificateMetrics(metrics *observability.Metrics) {
-	if d.controlTLSManager != nil {
-		metrics.RegisterControlCertificate(d.controlTLSManager.EarliestCertificateExpiry)
-		return
-	}
 	if expires, found := firstCertificateExpiry(d.controlTLS); found {
 		metrics.RegisterControlCertificate(func() time.Time { return expires })
 	}

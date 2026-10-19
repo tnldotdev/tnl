@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorization"
@@ -20,7 +18,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/tcpport"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -38,60 +35,57 @@ type PublicURLControlClient interface {
 	HeartbeatPublishRun(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error)
 	CreateCertificateIssuance(context.Context, string, uint64, credentials.PublishRunToken, []byte, string) (controlv1.CertificateIssuance, error)
 	GetCertificateIssuance(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error)
-	MarkCertificateChallengeReady(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error)
-	MarkCertificateChallengeRemoved(context.Context, string, credentials.PublishRunToken) error
 	MarkPublishRunCertificateInstalled(context.Context, string, uint64, string, time.Time, credentials.PublishRunToken) error
 }
 
 type Config struct {
-	Control                     PublicURLControlClient
-	VisitorControl              *controlclient.Client
-	ControlURL                  string
-	BrowserLoginAvailable       bool
-	TeamID                      string
-	DomainID                    string
-	MembershipID                string
-	PolicyRevision              uint64
-	PublicURLScope              controlv1.PublicURLScope
-	Purpose                     controlv1.PublicURLPurpose
-	Hostname                    string
-	PreviewID                   string
-	Feedback                    bool
-	Demo                        bool
-	ProjectRoot                 string
-	Service                     string
-	Target                      string
-	ResolveTarget               func(context.Context) (string, string, error)
-	ServiceProtocol             controlv1.PublicURLServiceProtocol
-	AccessMode                  controlv1.VisitorAccessMode
-	TargetTLSName               string
-	TargetTLS                   bool
-	PreserveSavedURLTarget      bool
-	TargetOptions               localproxy.TargetOptions
-	Handler                     http.Handler // integration URL handler; no local target is dialed.
-	AdmitRequest                func(*http.Request, PublishRunIdentity) error
-	ObserveResponse             ResponseObserver
-	Mounts                      []localproxy.Mount
-	Limits                      ApplicationLimits
-	ObserveSummary              inspection.Observer
-	PromoteVisitor              PromoteVisitor
-	AdmitVisitor                AdmitVisitor
-	AuthorizeVisitorCertificate AuthorizeVisitorCertificate
-	ReadinessProof              func(PublishRunIdentity) *ReadinessProof
-	OnWarning                   func(string)
-	InspectionMode              inspection.Mode
-	AllowedIPPrefixes           []string
-	Ephemeral                   bool
-	AllocatedPublicURL          *controlv1.PublicURL
-	State                       *clientstate.Store
-	QUICConnector               muxsession.Connector
-	TCPConnector                muxsession.Connector
-	FallbackDelay               time.Duration
-	DrainTime                   time.Duration
-	ProvisioningStalledDelay    time.Duration
-	Logf                        func(string, ...any)
-	Observe                     func(Event) error
-	heartbeatInterval           time.Duration
+	PublisherID              string
+	Control                  PublicURLControlClient
+	VisitorControl           *controlclient.Client
+	ControlURL               string
+	BrowserLoginAvailable    bool
+	TeamID                   string
+	DomainID                 string
+	MembershipID             string
+	PolicyRevision           uint64
+	PublicURLScope           controlv1.PublicURLScope
+	Purpose                  controlv1.PublicURLPurpose
+	Hostname                 string
+	PreviewID                string
+	Feedback                 bool
+	Demo                     bool
+	ProjectRoot              string
+	Service                  string
+	Target                   string
+	ResolveTarget            func(context.Context) (string, string, error)
+	ServiceProtocol          controlv1.PublicURLServiceProtocol
+	AccessMode               controlv1.VisitorAccessMode
+	TargetTLSName            string
+	PreserveSavedURLTarget   bool
+	TargetOptions            localproxy.TargetOptions
+	Handler                  http.Handler // integration URL handler; no local target is dialed.
+	AdmitRequest             func(*http.Request, PublishRunIdentity) error
+	ObserveResponse          ResponseObserver
+	Mounts                   []localproxy.Mount
+	Limits                   ApplicationLimits
+	ObserveSummary           inspection.Observer
+	PromoteVisitor           PromoteVisitor
+	AdmitVisitor             AdmitVisitor
+	ReadinessProof           func(PublishRunIdentity) *ReadinessProof
+	OnWarning                func(string)
+	InspectionMode           inspection.Mode
+	AllowedIPPrefixes        []string
+	Ephemeral                bool
+	AllocatedPublicURL       *controlv1.PublicURL
+	State                    *clientstate.Store
+	QUICConnector            muxsession.Connector
+	TCPConnector             muxsession.Connector
+	FallbackDelay            time.Duration
+	DrainTime                time.Duration
+	ProvisioningStalledDelay time.Duration
+	Logf                     func(string, ...any)
+	Observe                  func(Event) error
+	heartbeatInterval        time.Duration
 }
 
 type EventType string
@@ -168,10 +162,10 @@ func Run(ctx context.Context, config Config) (result error) {
 	if config.ServiceProtocol == "" {
 		config.ServiceProtocol = controlv1.Http
 	}
+	if config.ServiceProtocol != controlv1.Http {
+		return errors.New("publisher: only HTTP uses public URL runs; use a private service for TCP")
+	}
 	if config.ServiceProtocol == controlv1.Http {
-		if config.TargetTLS {
-			return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target TLS settings require a TCP service protocol"))
-		}
 		if config.TargetTLSName != "" {
 			config.TargetOptions.ServerName = config.TargetTLSName
 		}
@@ -182,27 +176,15 @@ func Run(ctx context.Context, config Config) (result error) {
 		if config.Handler == nil {
 			err = localproxy.PreflightWithOptions(ctx, config.Target, config.TargetOptions)
 		}
-	} else {
-		_, err = validateTCPForwarding(PublicURLServerConfig{
-			Hostname: config.Hostname, ServiceProtocol: config.ServiceProtocol,
-			Target: config.Target, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS,
-			TargetOptions: config.TargetOptions,
-			Handler:       config.Handler, Mounts: config.Mounts,
-		})
-		if err == nil {
-			var connection net.Conn
-			connection, err = (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", config.Target)
-			if err == nil {
-				err = connection.Close()
-			} else {
-				err = diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("connect TCP target: %w", err))
-			}
-		}
 	}
 	if err != nil {
 		return err
 	}
-	hostLock, err := clientstate.LockHostnameContext(ctx, config.State, hostname)
+	config.PublisherID, err = configuredPublisherID(config)
+	if err != nil {
+		return err
+	}
+	hostLock, err := clientstate.LockPublisherHostnameContext(ctx, config.State, hostname, config.PublisherID)
 	if err != nil {
 		return err
 	}
@@ -232,9 +214,6 @@ func Run(ctx context.Context, config Config) (result error) {
 		}
 		err = runPublishRun(ctx, config, setup, func() error {
 			publicAddress := "https://" + setup.PublicUrl.CanonicalHostname
-			if setup.PublicUrl.PublicPort != nil {
-				publicAddress = net.JoinHostPort(setup.PublicUrl.CanonicalHostname, strconv.Itoa(*setup.PublicUrl.PublicPort))
-			}
 			return observe(config, Event{
 				Type: EventReady, PublicURLID: publicURLID, Hostname: setup.PublicUrl.CanonicalHostname,
 				PublicURL: publicAddress, PublishRunNumber: uint64(setup.PublishRun.PublishRunNumber),
@@ -248,6 +227,23 @@ func Run(ctx context.Context, config Config) (result error) {
 		}
 		route.NextPublishRunNumber = setup.PublishRun.PublishRunNumber + 1
 	}
+}
+
+// configuredPublisherID binds local locks and certificate material to the
+// enrolled identity. an explicit caller ID cannot override its signed adapter.
+func configuredPublisherID(config Config) (string, error) {
+	id := config.PublisherID
+	if source, ok := config.Control.(interface{ PublisherID() string }); ok {
+		selected := source.PublisherID()
+		if id != "" && id != selected {
+			return "", errors.New("public publisher identity differs from the selected grant")
+		}
+		id = selected
+	}
+	if !opaqueid.Valid(id, opaqueid.PublisherIdentityPrefix) {
+		return "", errors.New("public publisher requires an enrolled publisher identity")
+	}
+	return id, nil
 }
 
 func runPublishRun(ctx context.Context, config Config, setup controlv1.PublishRunSetup, ready func() error) (result error) {
@@ -318,12 +314,7 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 		mode := config.AccessMode
 		body.AccessMode = &mode
 	}
-	if config.ServiceProtocol == controlv1.Http {
-		body.Target = config.Target
-	} else {
-		protocol := config.ServiceProtocol
-		body.ServiceProtocol = &protocol
-	}
+	body.Target = config.Target
 	if config.PublicURLScope == controlv1.Member && config.MembershipID != "" {
 		body.MembershipId = &config.MembershipID
 	}
@@ -343,12 +334,8 @@ func validateRouteIdentity(route controlv1.PublicURL, config Config) error {
 		route.Ephemeral != config.Ephemeral {
 		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested public URL"))
 	}
-	if supportsTCPForwarding(config.ServiceProtocol) {
-		if route.ServiceProtocol != config.ServiceProtocol || route.PublicPort == nil || !tcpport.Valid(*route.PublicPort) || route.Target != "" {
-			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested TCP endpoint"))
-		}
-	} else if route.ServiceProtocol != "" && route.ServiceProtocol != controlv1.Http || route.PublicPort != nil {
-		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol does not match the requested TCP endpoint"))
+	if route.ServiceProtocol != "" && route.ServiceProtocol != controlv1.Http {
+		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol is not HTTP"))
 	}
 	if config.PublicURLScope == controlv1.Member {
 		if route.MembershipId == nil || *route.MembershipId != config.MembershipID {
@@ -394,15 +381,6 @@ func reconcilePublicURL(ctx context.Context, config Config, route controlv1.Publ
 		route = updated
 		currentPolicy = slices.Clone(config.AllowedIPPrefixes)
 		desiredPolicy = slices.Clone(currentPolicy)
-	}
-	if supportsTCPForwarding(config.ServiceProtocol) {
-		if slices.Equal(currentPolicy, desiredPolicy) {
-			return route, nil
-		}
-		updated, err := config.Control.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{
-			Target: route.Target, AllowedIpPrefixes: slices.Clone(desiredPolicy),
-		})
-		return updated, classifyPublicURLConflict(err)
 	}
 	if !slices.Equal(currentPolicy, desiredPolicy) {
 		updated, err := config.Control.UpdatePublicURL(ctx, route.Id, controlv1.UpdatePublicURLRequest{

@@ -16,14 +16,14 @@ func TestServicesShareOneModelAndInheritRootDefaults(t *testing.T) {
 tnl:
   server: https://root.example
   team: Root Team
-  tunnel:
+  public_url:
     domain: routes.example.test
     access: {ip: [192.0.2.0/24]}
     ephemeral: true
   services:
     web:
-      tunnel:
-        name: web
+      name: website
+      public_url:
         access: anonymous
       target: {type: address, address: 4000}
       http:
@@ -44,7 +44,7 @@ tnl:
 	}
 	if effective.Server == nil || *effective.Server != "https://root.example" ||
 		effective.Team == nil || *effective.Team != "Root Team" ||
-		effective.Tunnel == nil || effective.Tunnel.Name == nil || *effective.Tunnel.Name != "web" ||
+		effective.Tunnel == nil || effective.Tunnel.Name == nil || *effective.Tunnel.Name != "website" ||
 		effective.Tunnel.Domain == nil || *effective.Tunnel.Domain != "routes.example.test" ||
 		effective.Tunnel.Open == nil || !*effective.Tunnel.Open ||
 		effective.Tunnel.Access == nil || effective.Tunnel.Access.VisitorMode() != "anonymous" || len(effective.Tunnel.Access.IP) != 0 ||
@@ -80,6 +80,74 @@ func TestServiceAccessPolicyReplacesProjectDefault(t *testing.T) {
 		if err != nil || effective.Tunnel == nil || effective.Tunnel.Access == nil || !slices.Equal(effective.Tunnel.Access.IP, test.want) ||
 			effective.Tunnel.Access.VisitorMode() != test.mode {
 			t.Fatalf("service %s: tunnel = %#v, error = %v", test.name, effective.Tunnel, err)
+		}
+	}
+}
+
+func TestPublicDefaultsNeverReachPrivateTCPService(t *testing.T) {
+	ephemeral := true
+	domain, dbTarget := "member.example", config.Target("db.internal:5432")
+	tcp := "tcp"
+	none := config.InspectionNone
+	connections := 4
+	project := Project{Config: config.TNL{
+		Feedback: &ephemeral, OAuth: true, Inspection: &config.Inspection{Mode: &none},
+		Tunnel: &config.Tunnel{Domain: &domain, Access: &config.Access{Mode: "anonymous"}, Ephemeral: &ephemeral,
+			Limits: &config.Limits{Traffic: &config.TrafficLimits{Connections: &connections}}},
+		Services: config.Services{
+			"web":          {Tunnel: &config.Tunnel{}},
+			"private-http": {},
+			"orders":       {Protocol: &tcp, Target: &config.ServiceTarget{Type: "address", Address: &dbTarget}},
+		},
+	}}
+	if err := config.ValidateTNL(project.Config); err != nil {
+		t.Fatalf("mixed HTTP and private TCP project: %v", err)
+	}
+	for _, name := range []string{"web"} {
+		service, err := project.EffectiveService(name)
+		if err != nil || service.Tunnel == nil || service.Tunnel.Access == nil || service.Tunnel.Access.VisitorMode() != "anonymous" ||
+			service.Tunnel.Domain == nil || *service.Tunnel.Domain != domain || service.Tunnel.Limits == nil ||
+			service.Tunnel.Limits.Traffic == nil || service.Tunnel.Limits.Traffic.Connections == nil ||
+			*service.Tunnel.Limits.Traffic.Connections != connections {
+			t.Fatalf("public %s lost root defaults: %+v: %v", name, service.Tunnel, err)
+		}
+	}
+	private, err := project.EffectiveService("orders")
+	if err != nil || private.Tunnel != nil || private.Feedback != nil || private.OAuth || private.Inspection != nil || private.Publish == nil || config.ServiceProtocol(private.Publish) != "tcp" ||
+		private.Publish.Target != &dbTarget || config.PrivateServiceName("orders", project.Config.Services["orders"]) != "orders" {
+		t.Fatalf("private orders inherited public access or lost target: %+v: %v", private, err)
+	}
+	if project.Config.Tunnel.Access == nil || project.Config.Tunnel.Access.VisitorMode() != "anonymous" {
+		t.Fatal("resolving private service mutated public defaults")
+	}
+	privateHTTP, err := project.EffectiveService("private-http")
+	if err != nil || privateHTTP.Tunnel != nil || privateHTTP.OAuth || privateHTTP.Feedback != nil {
+		t.Fatalf("private HTTP inherited public defaults: %+v: %v", privateHTTP, err)
+	}
+	orders := project.Config.Services["orders"]
+	orders.Tunnel = &config.Tunnel{Access: &config.Access{Mode: "anonymous"}}
+	project.Config.Services["orders"] = orders
+	if _, err := project.EffectiveService("orders"); err == nil {
+		t.Fatal("private TCP service accepted per-service public access")
+	}
+}
+
+func TestPublisherGroupIsExplicitAndDefaultsToLocal(t *testing.T) {
+	group, protocol := "cloud", "postgres"
+	target := config.Target("db.internal:5432")
+	project := Project{Config: config.TNL{
+		Publishers: map[string]config.Publisher{"cloud": {}},
+		Services: config.Services{
+			"default": {},
+			"db":      {Publisher: &group, Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}},
+		},
+	}}
+	for _, test := range []struct {
+		name     string
+		expected string
+	}{{"default", "local"}, {"db", "cloud"}} {
+		if actual := config.PublisherName(project.Config.Services[test.name]); actual != test.expected {
+			t.Fatalf("service %q group=%s", test.name, actual)
 		}
 	}
 }

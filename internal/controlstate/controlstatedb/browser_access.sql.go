@@ -44,7 +44,7 @@ UPDATE control.browser_access_handoffs AS handoff
 SET consumed_at = $1
 FROM control.browser_access_sessions AS session
 WHERE handoff.token_digest = $2 AND handoff.public_url_id = $3
-   AND handoff.publish_run_id = $4
+   AND EXISTS(SELECT 1 FROM control.browser_handoff_run_bindings bound WHERE bound.handoff_digest=handoff.token_digest AND bound.publish_run_id=$4)
   AND handoff.consumed_at IS NULL AND handoff.expires_at > $1
   AND session.token_digest = handoff.session_digest AND session.revoked_at IS NULL AND session.expires_at > $1
 RETURNING handoff.session_digest, handoff.cookie_ciphertext, handoff.storage_key_id, handoff.return_path,
@@ -91,11 +91,15 @@ func (q *Queries) ConsumeBrowserAccessHandoff(ctx context.Context, arg ConsumeBr
 }
 
 const consumeBrowserLoginAttempt = `-- name: ConsumeBrowserLoginAttempt :one
-UPDATE control.browser_login_attempts
-SET consumed_at = $1
-WHERE state_digest = $2 AND binding_digest = $3
-  AND consumed_at IS NULL AND expires_at > $1
-RETURNING preview_id, public_url_id, publish_run_id, return_path, nonce, verifier_ciphertext, verifier_storage_key_id
+UPDATE control.browser_login_attempts attempt
+SET consumed_at = $1,publish_run_id=(SELECT run.id FROM control.browser_login_run_bindings bound JOIN control.publish_runs run ON run.id=bound.publish_run_id
+    WHERE bound.state_digest=attempt.state_digest AND run.public_url_id=attempt.public_url_id AND run.state='ready' AND run.closed_at IS NULL AND run.publisher_expires_at>$1
+    ORDER BY run.publish_run_number LIMIT 1)
+WHERE attempt.state_digest = $2 AND attempt.binding_digest = $3
+  AND attempt.consumed_at IS NULL AND attempt.expires_at > $1
+  AND EXISTS(SELECT 1 FROM control.browser_login_run_bindings bound JOIN control.publish_runs run ON run.id=bound.publish_run_id
+    WHERE bound.state_digest=attempt.state_digest AND run.public_url_id=attempt.public_url_id AND run.state='ready' AND run.closed_at IS NULL AND run.publisher_expires_at>$1)
+RETURNING attempt.preview_id, attempt.public_url_id, attempt.publish_run_id, attempt.return_path, attempt.nonce, attempt.verifier_ciphertext, attempt.verifier_storage_key_id
 `
 
 type ConsumeBrowserLoginAttemptParams struct {
@@ -156,9 +160,14 @@ func (q *Queries) GetBrowserAccessSession(ctx context.Context, tokenDigest []byt
 }
 
 const insertBrowserAccessHandoff = `-- name: InsertBrowserAccessHandoff :exec
+WITH inserted AS (
 INSERT INTO control.browser_access_handoffs
     (token_digest, session_digest, public_url_id, publish_run_id, cookie_ciphertext, storage_key_id, return_path, redirect_url, bridge, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING token_digest,public_url_id
+)
+INSERT INTO control.browser_handoff_run_bindings(handoff_digest,publish_run_id)
+SELECT inserted.token_digest,run.id FROM inserted JOIN control.publish_runs run ON run.public_url_id=inserted.public_url_id
+WHERE run.state='ready' AND run.closed_at IS NULL AND run.publisher_expires_at>$11
 `
 
 type InsertBrowserAccessHandoffParams struct {
@@ -172,6 +181,7 @@ type InsertBrowserAccessHandoffParams struct {
 	RedirectUrl      string
 	Bridge           bool
 	ExpiresAt        pgtype.Timestamptz
+	Now              pgtype.Timestamptz
 }
 
 func (q *Queries) InsertBrowserAccessHandoff(ctx context.Context, arg InsertBrowserAccessHandoffParams) error {
@@ -186,6 +196,7 @@ func (q *Queries) InsertBrowserAccessHandoff(ctx context.Context, arg InsertBrow
 		arg.RedirectUrl,
 		arg.Bridge,
 		arg.ExpiresAt,
+		arg.Now,
 	)
 	return err
 }
@@ -228,9 +239,14 @@ func (q *Queries) InsertBrowserAccessSession(ctx context.Context, arg InsertBrow
 }
 
 const insertBrowserLoginAttempt = `-- name: InsertBrowserLoginAttempt :exec
+WITH inserted AS (
 INSERT INTO control.browser_login_attempts
     (state_digest, binding_digest, preview_id, public_url_id, publish_run_id, return_path, nonce, verifier_ciphertext, verifier_storage_key_id, expires_at)
-VALUES ($1, $2, $10, $3, $4, $5, $6, $7, $8, $9)
+VALUES ($1, $2, $11, $3, $4, $5, $6, $7, $8, $9) RETURNING state_digest,public_url_id
+)
+INSERT INTO control.browser_login_run_bindings(state_digest,publish_run_id)
+SELECT inserted.state_digest,run.id FROM inserted JOIN control.publish_runs run ON run.public_url_id=inserted.public_url_id
+WHERE run.state='ready' AND run.closed_at IS NULL AND run.publisher_expires_at>$10
 `
 
 type InsertBrowserLoginAttemptParams struct {
@@ -243,6 +259,7 @@ type InsertBrowserLoginAttemptParams struct {
 	VerifierCiphertext   []byte
 	VerifierStorageKeyID string
 	ExpiresAt            pgtype.Timestamptz
+	Now                  pgtype.Timestamptz
 	PreviewID            pgtype.Text
 }
 
@@ -257,13 +274,14 @@ func (q *Queries) InsertBrowserLoginAttempt(ctx context.Context, arg InsertBrows
 		arg.VerifierCiphertext,
 		arg.VerifierStorageKeyID,
 		arg.ExpiresAt,
+		arg.Now,
 		arg.PreviewID,
 	)
 	return err
 }
 
 const listReadyPreviewBrowserHostnames = `-- name: ListReadyPreviewBrowserHostnames :many
-SELECT url.id AS public_url_id, url.canonical_hostname
+SELECT DISTINCT url.id AS public_url_id, url.canonical_hostname
 FROM control.preview_public_urls AS included
 JOIN control.public_urls AS url ON url.id = included.public_url_id
 JOIN control.publish_runs AS run ON run.public_url_id = url.id

@@ -18,10 +18,6 @@ SET state = CASE
         ELSE 'canceled'
     END,
     authorization_revision = authorization_revision + 1,
-    cleanup_completed_at = CASE
-        WHEN challenge_type = 'tls-alpn-01' THEN COALESCE(cleanup_completed_at, $1)
-        ELSE cleanup_completed_at
-    END,
     available_at = $1,
     updated_at = GREATEST(authorizations.updated_at, $1)
 FROM control.acme_orders AS orders
@@ -63,58 +59,6 @@ func (q *Queries) CancelPublishRunACMEOrders(ctx context.Context, arg CancelPubl
 	return err
 }
 
-const checkACMEChallengeRoutingReady = `-- name: CheckACMEChallengeRoutingReady :one
-SELECT coalesce(
-    events.event_kind = 'challenge_upsert'
-    AND events.public_url_expires_at > $1
-    AND EXISTS (
-        SELECT 1 FROM control.acme_authorizations AS authorizations
-        WHERE authorizations.order_id = orders.id
-          AND authorizations.challenge_type = 'tls-alpn-01'
-          AND authorizations.state = 'presented'
-    )
-    AND EXISTS (
-        SELECT 1 FROM jsonb_to_recordset(
-            (convert_from(events.projection, 'UTF8')::jsonb)->'publisher_connections'
-        ) AS connections(lease_expires_at timestamptz)
-        WHERE connections.lease_expires_at > $1
-    )
-    AND EXISTS (
-        SELECT 1 FROM control.ingress_leases AS ingresses
-        WHERE ingresses.lease_expires_at > $1
-          AND NOT ingresses.draining
-    )
-    AND NOT EXISTS (
-        SELECT 1 FROM control.ingress_leases AS ingresses
-        WHERE ingresses.lease_expires_at > $1
-          AND NOT ingresses.draining
-           AND ingresses.routing_table_revision < events.id
-    ), false
-)::boolean AS ready
-FROM control.acme_orders AS orders
-JOIN control.ingress_routing_table_events AS events
-  ON events.public_url_id = orders.public_url_id AND events.publish_run_number = orders.publish_run_number
-WHERE orders.id = $2
-  AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
-ORDER BY events.id DESC
-LIMIT 1
-`
-
-type CheckACMEChallengeRoutingReadyParams struct {
-	CheckedAt  pgtype.Timestamptz
-	IssuanceID string
-}
-
-// claim-time checks can precede a publisher's challenge-ready transition.
-// recheck the current projection and every live ingress immediately before
-// asking the CA to validate, while the authorization is still presented.
-func (q *Queries) CheckACMEChallengeRoutingReady(ctx context.Context, arg CheckACMEChallengeRoutingReadyParams) (bool, error) {
-	row := q.db.QueryRow(ctx, checkACMEChallengeRoutingReady, arg.CheckedAt, arg.IssuanceID)
-	var ready bool
-	err := row.Scan(&ready)
-	return ready, err
-}
-
 const claimACMEOrderWork = `-- name: ClaimACMEOrderWork :one
 WITH candidate AS (
     SELECT orders.id
@@ -128,70 +72,17 @@ WITH candidate AS (
                 AND authorizations.challenge_type = 'dns-01'
                 AND authorizations.state IN ('valid', 'cleaning')
           )
-          OR orders.state IN ('failed', 'canceled') AND EXISTS (
+          OR orders.state IN ('failed', 'canceled') AND (orders.finalization_possible AND orders.not_after IS NULL OR EXISTS (
               SELECT 1
               FROM control.acme_authorizations AS authorizations
               WHERE authorizations.order_id = orders.id
                 AND authorizations.challenge_type = 'dns-01'
                 AND authorizations.state = 'cleaning'
-          )
+          ))
       )
       AND orders.available_at <= $3
+      AND (orders.retry_not_before IS NULL OR orders.retry_not_before<=$3)
       AND (orders.work_owner IS NULL OR orders.work_expires_at <= $3)
-      -- an unexpired presented challenge waits for its current forwarding
-      -- projection, not unrelated publications. an expired authorization skips
-      -- this barrier so its worker can retire it without ingress. select the
-      -- latest event before testing kind/expiry so an older upsert cannot revive.
-      AND (
-          NOT EXISTS (
-              SELECT 1
-              FROM control.acme_authorizations AS authorizations
-              WHERE authorizations.order_id = orders.id
-                AND authorizations.challenge_type = 'tls-alpn-01'
-                AND authorizations.state = 'presented'
-          )
-          OR EXISTS (
-              SELECT 1
-              FROM control.acme_authorizations AS expired
-              WHERE expired.order_id = orders.id
-                AND expired.challenge_type = 'tls-alpn-01'
-                AND expired.state = 'presented'
-                AND expired.expires_at <= $3
-          )
-          OR EXISTS (
-              SELECT 1
-              FROM (
-                   SELECT events.id AS routing_table_revision, events.event_kind, events.projection, events.public_url_expires_at
-                  FROM control.ingress_routing_table_events AS events
-                  WHERE events.public_url_id = orders.public_url_id
-                    AND events.publish_run_number = orders.publish_run_number
-                    AND events.event_kind IN ('challenge_upsert', 'challenge_tombstone')
-                   ORDER BY events.id DESC
-                  LIMIT 1
-              ) AS challenge
-              WHERE challenge.event_kind = 'challenge_upsert'
-                AND challenge.public_url_expires_at > $3
-                AND EXISTS (
-                    SELECT 1
-                    FROM jsonb_to_recordset(
-                        (convert_from(challenge.projection, 'UTF8')::jsonb)->'publisher_connections'
-                    ) AS connections(lease_expires_at timestamptz)
-                    WHERE connections.lease_expires_at > $3
-                )
-                AND EXISTS (
-                    SELECT 1
-                    FROM control.ingress_leases AS ingresses
-                    WHERE ingresses.lease_expires_at > $3
-                      AND NOT ingresses.draining
-                ) AND NOT EXISTS (
-                    SELECT 1
-                    FROM control.ingress_leases AS ingresses
-                    WHERE ingresses.lease_expires_at > $3
-                      AND NOT ingresses.draining
-                      AND ingresses.routing_table_revision < challenge.routing_table_revision
-                )
-          )
-      )
     ORDER BY orders.available_at, orders.id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -204,7 +95,7 @@ SET work_owner = $1,
     updated_at = GREATEST(orders.updated_at, $3)
 FROM candidate
 WHERE orders.id = candidate.id
-RETURNING orders.id, orders.account_id, orders.publish_run_id, orders.public_url_id, orders.publish_run_number, orders.idempotency_key, orders.request_digest, orders.certificate_cache_key, orders.certificate_scope, orders.certificate_identifiers, orders.challenge_method, orders.csr_der, orders.csr_digest, orders.state, orders.order_revision, orders.order_url, orders.finalize_url, orders.certificate_url, orders.certificate_pem, orders.not_before, orders.not_after, orders.renew_at, orders.installed_at, orders.work_owner, orders.work_epoch, orders.work_expires_at, orders.attempts, orders.available_at, orders.last_error, orders.created_at, orders.updated_at
+RETURNING orders.id, orders.created_revision, orders.account_id, orders.publish_run_id, orders.public_url_id, orders.publish_run_number, orders.private_run_id, orders.private_service_id, orders.private_run_number, orders.public_run_parent, orders.public_url_parent, orders.private_run_parent, orders.private_service_parent, orders.idempotency_key, orders.request_digest, orders.certificate_cache_key, orders.certificate_scope, orders.certificate_domain_id, orders.certificate_identifiers, orders.challenge_method, orders.csr_der, orders.csr_digest, orders.state, orders.order_revision, orders.order_url, orders.finalize_url, orders.finalization_possible, orders.certificate_url, orders.certificate_pem, orders.not_before, orders.not_after, orders.renew_at, orders.installed_at, orders.work_owner, orders.work_epoch, orders.work_expires_at, orders.attempts, orders.available_at, orders.retry_not_before, orders.last_error, orders.created_at, orders.updated_at
 `
 
 type ClaimACMEOrderWorkParams struct {
@@ -218,14 +109,23 @@ func (q *Queries) ClaimACMEOrderWork(ctx context.Context, arg ClaimACMEOrderWork
 	var i ControlAcmeOrder
 	err := row.Scan(
 		&i.ID,
+		&i.CreatedRevision,
 		&i.AccountID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
+		&i.PrivateRunID,
+		&i.PrivateServiceID,
+		&i.PrivateRunNumber,
+		&i.PublicRunParent,
+		&i.PublicUrlParent,
+		&i.PrivateRunParent,
+		&i.PrivateServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
+		&i.CertificateDomainID,
 		&i.CertificateIdentifiers,
 		&i.ChallengeMethod,
 		&i.CsrDer,
@@ -234,6 +134,7 @@ func (q *Queries) ClaimACMEOrderWork(ctx context.Context, arg ClaimACMEOrderWork
 		&i.OrderRevision,
 		&i.OrderUrl,
 		&i.FinalizeUrl,
+		&i.FinalizationPossible,
 		&i.CertificateUrl,
 		&i.CertificatePem,
 		&i.NotBefore,
@@ -245,51 +146,12 @@ func (q *Queries) ClaimACMEOrderWork(ctx context.Context, arg ClaimACMEOrderWork
 		&i.WorkExpiresAt,
 		&i.Attempts,
 		&i.AvailableAt,
+		&i.RetryNotBefore,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const completeACMEAuthorizationCleanup = `-- name: CompleteACMEAuthorizationCleanup :execrows
-UPDATE control.acme_authorizations
-SET state = 'complete',
-    authorization_revision = authorization_revision + 1,
-    cleanup_completed_at = COALESCE(cleanup_completed_at, $1),
-    updated_at = GREATEST(updated_at, $1)
-WHERE order_id = $2
-  AND challenge_type = 'tls-alpn-01'
-  AND state IN ('presenting', 'presented', 'validating', 'valid', 'cleaning', 'failed')
-`
-
-type CompleteACMEAuthorizationCleanupParams struct {
-	CompletedAt pgtype.Timestamptz
-	IssuanceID  string
-}
-
-func (q *Queries) CompleteACMEAuthorizationCleanup(ctx context.Context, arg CompleteACMEAuthorizationCleanupParams) (int64, error) {
-	result, err := q.db.Exec(ctx, completeACMEAuthorizationCleanup, arg.CompletedAt, arg.IssuanceID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const deleteControlTLSCacheEntry = `-- name: DeleteControlTLSCacheEntry :exec
-DELETE FROM control.control_tls_certificate_cache
-WHERE directory_url = $1
-  AND cache_key = $2
-`
-
-type DeleteControlTLSCacheEntryParams struct {
-	DirectoryUrl string
-	CacheKey     string
-}
-
-func (q *Queries) DeleteControlTLSCacheEntry(ctx context.Context, arg DeleteControlTLSCacheEntryParams) error {
-	_, err := q.db.Exec(ctx, deleteControlTLSCacheEntry, arg.DirectoryUrl, arg.CacheKey)
-	return err
 }
 
 const ensureACMEAccount = `-- name: EnsureACMEAccount :one
@@ -373,7 +235,7 @@ func (q *Queries) GetACMEAccountByDirectory(ctx context.Context, directoryUrl st
 }
 
 const getACMEOrder = `-- name: GetACMEOrder :one
-SELECT id, account_id, publish_run_id, public_url_id, publish_run_number, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+SELECT id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, private_run_id, private_service_id, private_run_number, public_run_parent, public_url_parent, private_run_parent, private_service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 FROM control.acme_orders
 WHERE id = $1
 `
@@ -383,14 +245,23 @@ func (q *Queries) GetACMEOrder(ctx context.Context, issuanceID string) (ControlA
 	var i ControlAcmeOrder
 	err := row.Scan(
 		&i.ID,
+		&i.CreatedRevision,
 		&i.AccountID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
+		&i.PrivateRunID,
+		&i.PrivateServiceID,
+		&i.PrivateRunNumber,
+		&i.PublicRunParent,
+		&i.PublicUrlParent,
+		&i.PrivateRunParent,
+		&i.PrivateServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
+		&i.CertificateDomainID,
 		&i.CertificateIdentifiers,
 		&i.ChallengeMethod,
 		&i.CsrDer,
@@ -399,6 +270,7 @@ func (q *Queries) GetACMEOrder(ctx context.Context, issuanceID string) (ControlA
 		&i.OrderRevision,
 		&i.OrderUrl,
 		&i.FinalizeUrl,
+		&i.FinalizationPossible,
 		&i.CertificateUrl,
 		&i.CertificatePem,
 		&i.NotBefore,
@@ -410,6 +282,7 @@ func (q *Queries) GetACMEOrder(ctx context.Context, issuanceID string) (ControlA
 		&i.WorkExpiresAt,
 		&i.Attempts,
 		&i.AvailableAt,
+		&i.RetryNotBefore,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -418,7 +291,7 @@ func (q *Queries) GetACMEOrder(ctx context.Context, issuanceID string) (ControlA
 }
 
 const getACMEOrderByIdempotency = `-- name: GetACMEOrderByIdempotency :one
-SELECT id, account_id, publish_run_id, public_url_id, publish_run_number, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+SELECT id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, private_run_id, private_service_id, private_run_number, public_run_parent, public_url_parent, private_run_parent, private_service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 FROM control.acme_orders
 WHERE publish_run_id = $1
   AND idempotency_key = $2
@@ -434,14 +307,23 @@ func (q *Queries) GetACMEOrderByIdempotency(ctx context.Context, arg GetACMEOrde
 	var i ControlAcmeOrder
 	err := row.Scan(
 		&i.ID,
+		&i.CreatedRevision,
 		&i.AccountID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
+		&i.PrivateRunID,
+		&i.PrivateServiceID,
+		&i.PrivateRunNumber,
+		&i.PublicRunParent,
+		&i.PublicUrlParent,
+		&i.PrivateRunParent,
+		&i.PrivateServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
+		&i.CertificateDomainID,
 		&i.CertificateIdentifiers,
 		&i.ChallengeMethod,
 		&i.CsrDer,
@@ -450,6 +332,7 @@ func (q *Queries) GetACMEOrderByIdempotency(ctx context.Context, arg GetACMEOrde
 		&i.OrderRevision,
 		&i.OrderUrl,
 		&i.FinalizeUrl,
+		&i.FinalizationPossible,
 		&i.CertificateUrl,
 		&i.CertificatePem,
 		&i.NotBefore,
@@ -461,33 +344,12 @@ func (q *Queries) GetACMEOrderByIdempotency(ctx context.Context, arg GetACMEOrde
 		&i.WorkExpiresAt,
 		&i.Attempts,
 		&i.AvailableAt,
+		&i.RetryNotBefore,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const getActivePublishRunChallengeExpiry = `-- name: GetActivePublishRunChallengeExpiry :one
-SELECT MIN(authorizations.expires_at)::timestamptz AS expires_at
-FROM control.acme_authorizations AS authorizations
-JOIN control.acme_orders AS orders ON orders.id = authorizations.order_id
-WHERE orders.publish_run_id = $1
-  AND authorizations.challenge_type = 'tls-alpn-01'
-  AND authorizations.state IN ('presenting', 'presented', 'validating', 'valid', 'cleaning')
-  AND authorizations.expires_at > $2
-`
-
-type GetActivePublishRunChallengeExpiryParams struct {
-	PublishRunID string
-	Now          pgtype.Timestamptz
-}
-
-func (q *Queries) GetActivePublishRunChallengeExpiry(ctx context.Context, arg GetActivePublishRunChallengeExpiryParams) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, getActivePublishRunChallengeExpiry, arg.PublishRunID, arg.Now)
-	var expires_at pgtype.Timestamptz
-	err := row.Scan(&expires_at)
-	return expires_at, err
 }
 
 const getCertificateOrderDomainKind = `-- name: GetCertificateOrderDomainKind :one
@@ -504,32 +366,8 @@ func (q *Queries) GetCertificateOrderDomainKind(ctx context.Context, publicUrlID
 	return kind, err
 }
 
-const getControlTLSCacheEntry = `-- name: GetControlTLSCacheEntry :one
-SELECT cache_ciphertext, cache_storage_key_id
-FROM control.control_tls_certificate_cache
-WHERE directory_url = $1
-  AND cache_key = $2
-`
-
-type GetControlTLSCacheEntryParams struct {
-	DirectoryUrl string
-	CacheKey     string
-}
-
-type GetControlTLSCacheEntryRow struct {
-	CacheCiphertext   []byte
-	CacheStorageKeyID string
-}
-
-func (q *Queries) GetControlTLSCacheEntry(ctx context.Context, arg GetControlTLSCacheEntryParams) (GetControlTLSCacheEntryRow, error) {
-	row := q.db.QueryRow(ctx, getControlTLSCacheEntry, arg.DirectoryUrl, arg.CacheKey)
-	var i GetControlTLSCacheEntryRow
-	err := row.Scan(&i.CacheCiphertext, &i.CacheStorageKeyID)
-	return i, err
-}
-
 const getPublishRunByTokenID = `-- name: GetPublishRunByTokenID :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE publish_run_token_id = $1
 `
@@ -543,6 +381,8 @@ func (q *Queries) GetPublishRunByTokenID(ctx context.Context, publishRunTokenID 
 		&i.TeamID,
 		&i.MembershipID,
 		&i.ActingIdentityID,
+		&i.PublisherIdentityID,
+		&i.PublisherGrantID,
 		&i.PublishRunNumber,
 		&i.IdempotencyKey,
 		&i.RequestDigestCiphertext,
@@ -591,7 +431,7 @@ INSERT INTO control.acme_orders (
     available_at,
     created_at,
     updated_at
-) VALUES (
+) SELECT
     $1,
     $2,
     $3,
@@ -609,8 +449,12 @@ INSERT INTO control.acme_orders (
     $14,
     $14,
     $14
-)
-RETURNING id, account_id, publish_run_id, public_url_id, publish_run_number, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+FROM control.publish_runs AS run
+JOIN control.public_urls AS url ON url.id = run.public_url_id
+WHERE run.id = $3 AND run.public_url_id = $4
+  AND run.publish_run_number = $5 AND run.closed_at IS NULL
+  AND run.certificate_cache_key IS NOT NULL AND url.service_protocol = 'http'
+RETURNING id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, private_run_id, private_service_id, private_run_number, public_run_parent, public_url_parent, private_run_parent, private_service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 `
 
 type InsertACMEOrderParams struct {
@@ -650,14 +494,23 @@ func (q *Queries) InsertACMEOrder(ctx context.Context, arg InsertACMEOrderParams
 	var i ControlAcmeOrder
 	err := row.Scan(
 		&i.ID,
+		&i.CreatedRevision,
 		&i.AccountID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
+		&i.PrivateRunID,
+		&i.PrivateServiceID,
+		&i.PrivateRunNumber,
+		&i.PublicRunParent,
+		&i.PublicUrlParent,
+		&i.PrivateRunParent,
+		&i.PrivateServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
+		&i.CertificateDomainID,
 		&i.CertificateIdentifiers,
 		&i.ChallengeMethod,
 		&i.CsrDer,
@@ -666,6 +519,7 @@ func (q *Queries) InsertACMEOrder(ctx context.Context, arg InsertACMEOrderParams
 		&i.OrderRevision,
 		&i.OrderUrl,
 		&i.FinalizeUrl,
+		&i.FinalizationPossible,
 		&i.CertificateUrl,
 		&i.CertificatePem,
 		&i.NotBefore,
@@ -677,6 +531,7 @@ func (q *Queries) InsertACMEOrder(ctx context.Context, arg InsertACMEOrderParams
 		&i.WorkExpiresAt,
 		&i.Attempts,
 		&i.AvailableAt,
+		&i.RetryNotBefore,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -773,7 +628,7 @@ func (q *Queries) ListACMEOrderAuthorizations(ctx context.Context, issuanceID st
 }
 
 const lockACMEOrder = `-- name: LockACMEOrder :one
-SELECT id, account_id, publish_run_id, public_url_id, publish_run_number, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+SELECT id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, private_run_id, private_service_id, private_run_number, public_run_parent, public_url_parent, private_run_parent, private_service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 FROM control.acme_orders
 WHERE id = $1
 FOR UPDATE
@@ -784,14 +639,23 @@ func (q *Queries) LockACMEOrder(ctx context.Context, issuanceID string) (Control
 	var i ControlAcmeOrder
 	err := row.Scan(
 		&i.ID,
+		&i.CreatedRevision,
 		&i.AccountID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
+		&i.PrivateRunID,
+		&i.PrivateServiceID,
+		&i.PrivateRunNumber,
+		&i.PublicRunParent,
+		&i.PublicUrlParent,
+		&i.PrivateRunParent,
+		&i.PrivateServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
+		&i.CertificateDomainID,
 		&i.CertificateIdentifiers,
 		&i.ChallengeMethod,
 		&i.CsrDer,
@@ -800,6 +664,7 @@ func (q *Queries) LockACMEOrder(ctx context.Context, issuanceID string) (Control
 		&i.OrderRevision,
 		&i.OrderUrl,
 		&i.FinalizeUrl,
+		&i.FinalizationPossible,
 		&i.CertificateUrl,
 		&i.CertificatePem,
 		&i.NotBefore,
@@ -811,6 +676,7 @@ func (q *Queries) LockACMEOrder(ctx context.Context, issuanceID string) (Control
 		&i.WorkExpiresAt,
 		&i.Attempts,
 		&i.AvailableAt,
+		&i.RetryNotBefore,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -819,7 +685,7 @@ func (q *Queries) LockACMEOrder(ctx context.Context, issuanceID string) (Control
 }
 
 const lockACMEOrderForInstall = `-- name: LockACMEOrderForInstall :one
-SELECT orders.id, orders.account_id, orders.publish_run_id, orders.public_url_id, orders.publish_run_number, orders.idempotency_key, orders.request_digest, orders.certificate_cache_key, orders.certificate_scope, orders.certificate_identifiers, orders.challenge_method, orders.csr_der, orders.csr_digest, orders.state, orders.order_revision, orders.order_url, orders.finalize_url, orders.certificate_url, orders.certificate_pem, orders.not_before, orders.not_after, orders.renew_at, orders.installed_at, orders.work_owner, orders.work_epoch, orders.work_expires_at, orders.attempts, orders.available_at, orders.last_error, orders.created_at, orders.updated_at
+SELECT orders.id, orders.created_revision, orders.account_id, orders.publish_run_id, orders.public_url_id, orders.publish_run_number, orders.private_run_id, orders.private_service_id, orders.private_run_number, orders.public_run_parent, orders.public_url_parent, orders.private_run_parent, orders.private_service_parent, orders.idempotency_key, orders.request_digest, orders.certificate_cache_key, orders.certificate_scope, orders.certificate_domain_id, orders.certificate_identifiers, orders.challenge_method, orders.csr_der, orders.csr_digest, orders.state, orders.order_revision, orders.order_url, orders.finalize_url, orders.finalization_possible, orders.certificate_url, orders.certificate_pem, orders.not_before, orders.not_after, orders.renew_at, orders.installed_at, orders.work_owner, orders.work_epoch, orders.work_expires_at, orders.attempts, orders.available_at, orders.retry_not_before, orders.last_error, orders.created_at, orders.updated_at
 FROM control.acme_orders AS orders
 JOIN control.publish_runs AS issued_session
   ON issued_session.id = orders.publish_run_id
@@ -864,14 +730,23 @@ func (q *Queries) LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrder
 	var i ControlAcmeOrder
 	err := row.Scan(
 		&i.ID,
+		&i.CreatedRevision,
 		&i.AccountID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
+		&i.PrivateRunID,
+		&i.PrivateServiceID,
+		&i.PrivateRunNumber,
+		&i.PublicRunParent,
+		&i.PublicUrlParent,
+		&i.PrivateRunParent,
+		&i.PrivateServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
+		&i.CertificateDomainID,
 		&i.CertificateIdentifiers,
 		&i.ChallengeMethod,
 		&i.CsrDer,
@@ -880,6 +755,7 @@ func (q *Queries) LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrder
 		&i.OrderRevision,
 		&i.OrderUrl,
 		&i.FinalizeUrl,
+		&i.FinalizationPossible,
 		&i.CertificateUrl,
 		&i.CertificatePem,
 		&i.NotBefore,
@@ -891,6 +767,7 @@ func (q *Queries) LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrder
 		&i.WorkExpiresAt,
 		&i.Attempts,
 		&i.AvailableAt,
+		&i.RetryNotBefore,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -912,31 +789,6 @@ func (q *Queries) LockCertificateIssuanceControl(ctx context.Context) (bool, err
 	return allowed, err
 }
 
-const markACMEAuthorizationsPresented = `-- name: MarkACMEAuthorizationsPresented :execrows
-UPDATE control.acme_authorizations
-SET state = 'presented',
-    authorization_revision = authorization_revision + 1,
-    presented_at = COALESCE(presented_at, $1),
-    available_at = $1,
-    updated_at = GREATEST(updated_at, $1)
-WHERE order_id = $2
-  AND challenge_type = 'tls-alpn-01'
-  AND state = 'presenting'
-`
-
-type MarkACMEAuthorizationsPresentedParams struct {
-	PresentedAt pgtype.Timestamptz
-	IssuanceID  string
-}
-
-func (q *Queries) MarkACMEAuthorizationsPresented(ctx context.Context, arg MarkACMEAuthorizationsPresentedParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markACMEAuthorizationsPresented, arg.PresentedAt, arg.IssuanceID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const markACMEOrderInstalled = `-- name: MarkACMEOrderInstalled :one
 UPDATE control.acme_orders
 SET state = 'installed',
@@ -945,7 +797,7 @@ SET state = 'installed',
     updated_at = GREATEST(updated_at, $1)
 WHERE id = $2
   AND state IN ('waiting_for_install', 'installed')
-RETURNING id, account_id, publish_run_id, public_url_id, publish_run_number, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+RETURNING id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, private_run_id, private_service_id, private_run_number, public_run_parent, public_url_parent, private_run_parent, private_service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 `
 
 type MarkACMEOrderInstalledParams struct {
@@ -958,14 +810,23 @@ func (q *Queries) MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderI
 	var i ControlAcmeOrder
 	err := row.Scan(
 		&i.ID,
+		&i.CreatedRevision,
 		&i.AccountID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
+		&i.PrivateRunID,
+		&i.PrivateServiceID,
+		&i.PrivateRunNumber,
+		&i.PublicRunParent,
+		&i.PublicUrlParent,
+		&i.PrivateRunParent,
+		&i.PrivateServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
+		&i.CertificateDomainID,
 		&i.CertificateIdentifiers,
 		&i.ChallengeMethod,
 		&i.CsrDer,
@@ -974,6 +835,7 @@ func (q *Queries) MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderI
 		&i.OrderRevision,
 		&i.OrderUrl,
 		&i.FinalizeUrl,
+		&i.FinalizationPossible,
 		&i.CertificateUrl,
 		&i.CertificatePem,
 		&i.NotBefore,
@@ -985,50 +847,12 @@ func (q *Queries) MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderI
 		&i.WorkExpiresAt,
 		&i.Attempts,
 		&i.AvailableAt,
+		&i.RetryNotBefore,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const putControlTLSCacheEntry = `-- name: PutControlTLSCacheEntry :exec
-INSERT INTO control.control_tls_certificate_cache (
-    directory_url,
-    cache_key,
-    cache_ciphertext,
-    cache_storage_key_id,
-    updated_at
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5
-)
-ON CONFLICT (directory_url, cache_key) DO UPDATE SET
-    cache_ciphertext = EXCLUDED.cache_ciphertext,
-    cache_storage_key_id = EXCLUDED.cache_storage_key_id,
-    updated_at = EXCLUDED.updated_at
-`
-
-type PutControlTLSCacheEntryParams struct {
-	DirectoryUrl      string
-	CacheKey          string
-	CacheCiphertext   []byte
-	CacheStorageKeyID string
-	UpdatedAt         pgtype.Timestamptz
-}
-
-func (q *Queries) PutControlTLSCacheEntry(ctx context.Context, arg PutControlTLSCacheEntryParams) error {
-	_, err := q.db.Exec(ctx, putControlTLSCacheEntry,
-		arg.DirectoryUrl,
-		arg.CacheKey,
-		arg.CacheCiphertext,
-		arg.CacheStorageKeyID,
-		arg.UpdatedAt,
-	)
-	return err
 }
 
 const rotateACMEAccountKey = `-- name: RotateACMEAccountKey :exec
@@ -1056,40 +880,6 @@ func (q *Queries) RotateACMEAccountKey(ctx context.Context, arg RotateACMEAccoun
 		arg.AccountKeyStorageKeyID,
 		arg.UpdatedAt,
 		arg.AccountID,
-		arg.PreviousKeyID,
-		arg.PreviousCiphertext,
-	)
-	return err
-}
-
-const rotateControlTLSCacheEntry = `-- name: RotateControlTLSCacheEntry :exec
-UPDATE control.control_tls_certificate_cache
-SET cache_ciphertext = $1,
-    cache_storage_key_id = $2,
-    updated_at = $3
-WHERE directory_url = $4
-  AND cache_key = $5
-  AND cache_storage_key_id = $6
-  AND cache_ciphertext = $7
-`
-
-type RotateControlTLSCacheEntryParams struct {
-	CacheCiphertext    []byte
-	CacheStorageKeyID  string
-	UpdatedAt          pgtype.Timestamptz
-	DirectoryUrl       string
-	CacheKey           string
-	PreviousKeyID      string
-	PreviousCiphertext []byte
-}
-
-func (q *Queries) RotateControlTLSCacheEntry(ctx context.Context, arg RotateControlTLSCacheEntryParams) error {
-	_, err := q.db.Exec(ctx, rotateControlTLSCacheEntry,
-		arg.CacheCiphertext,
-		arg.CacheStorageKeyID,
-		arg.UpdatedAt,
-		arg.DirectoryUrl,
-		arg.CacheKey,
 		arg.PreviousKeyID,
 		arg.PreviousCiphertext,
 	)
@@ -1244,28 +1034,32 @@ SET state = $1,
     order_revision = order_revision + 1,
     order_url = $2,
     finalize_url = $3,
-    certificate_url = $4,
-    certificate_pem = $5,
-    not_before = $6,
-    not_after = $7,
-    renew_at = $8,
-    available_at = $9,
-    last_error = $10,
+    finalization_possible = $4 OR $1::text IN ('ready_to_finalize','finalizing'),
+    certificate_url = $5,
+    certificate_pem = $6,
+    not_before = $7,
+    not_after = $8,
+    renew_at = $9,
+    available_at = $10,
+    last_error = $11,
+    retry_not_before=CASE WHEN $11::text IS NOT NULL AND $10::timestamptz>$12::timestamptz
+        THEN $10::timestamptz ELSE NULL END,
     work_owner = NULL,
     work_expires_at = NULL,
-    updated_at = $11
-WHERE id = $12
-  AND work_owner = $13
-  AND work_epoch = $14
-  AND work_expires_at > $11
-  AND order_revision = $15
-RETURNING id, account_id, publish_run_id, public_url_id, publish_run_number, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+    updated_at = $12
+WHERE id = $13
+  AND work_owner = $14
+  AND work_epoch = $15
+  AND work_expires_at > $12
+  AND order_revision = $16
+RETURNING id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, private_run_id, private_service_id, private_run_number, public_run_parent, public_url_parent, private_run_parent, private_service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 `
 
 type SaveACMEOrderWorkParams struct {
 	State                 string
 	OrderUrl              pgtype.Text
 	FinalizeUrl           pgtype.Text
+	FinalizationPossible  bool
 	CertificateUrl        pgtype.Text
 	CertificatePem        []byte
 	NotBefore             pgtype.Timestamptz
@@ -1285,6 +1079,7 @@ func (q *Queries) SaveACMEOrderWork(ctx context.Context, arg SaveACMEOrderWorkPa
 		arg.State,
 		arg.OrderUrl,
 		arg.FinalizeUrl,
+		arg.FinalizationPossible,
 		arg.CertificateUrl,
 		arg.CertificatePem,
 		arg.NotBefore,
@@ -1301,14 +1096,23 @@ func (q *Queries) SaveACMEOrderWork(ctx context.Context, arg SaveACMEOrderWorkPa
 	var i ControlAcmeOrder
 	err := row.Scan(
 		&i.ID,
+		&i.CreatedRevision,
 		&i.AccountID,
 		&i.PublishRunID,
 		&i.PublicURLID,
 		&i.PublishRunNumber,
+		&i.PrivateRunID,
+		&i.PrivateServiceID,
+		&i.PrivateRunNumber,
+		&i.PublicRunParent,
+		&i.PublicUrlParent,
+		&i.PrivateRunParent,
+		&i.PrivateServiceParent,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
+		&i.CertificateDomainID,
 		&i.CertificateIdentifiers,
 		&i.ChallengeMethod,
 		&i.CsrDer,
@@ -1317,6 +1121,7 @@ func (q *Queries) SaveACMEOrderWork(ctx context.Context, arg SaveACMEOrderWorkPa
 		&i.OrderRevision,
 		&i.OrderUrl,
 		&i.FinalizeUrl,
+		&i.FinalizationPossible,
 		&i.CertificateUrl,
 		&i.CertificatePem,
 		&i.NotBefore,
@@ -1328,6 +1133,7 @@ func (q *Queries) SaveACMEOrderWork(ctx context.Context, arg SaveACMEOrderWorkPa
 		&i.WorkExpiresAt,
 		&i.Attempts,
 		&i.AvailableAt,
+		&i.RetryNotBefore,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -1374,26 +1180,4 @@ func (q *Queries) UpdateACMEAccountRegistration(ctx context.Context, arg UpdateA
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const wakeACMEOrder = `-- name: WakeACMEOrder :exec
-UPDATE control.acme_orders
-SET available_at = LEAST(available_at, $1),
-    work_owner = NULL,
-    work_expires_at = NULL,
-    updated_at = GREATEST(updated_at, $1)
-WHERE id = $2
-  AND state IN ('authorizing', 'ready_to_finalize', 'finalizing')
-`
-
-type WakeACMEOrderParams struct {
-	AvailableAt pgtype.Timestamptz
-	IssuanceID  string
-}
-
-// a publisher transition invalidates the worker's authorization snapshot.
-// call only after changing authorizations while holding the order lock.
-func (q *Queries) WakeACMEOrder(ctx context.Context, arg WakeACMEOrderParams) error {
-	_, err := q.db.Exec(ctx, wakeACMEOrder, arg.AvailableAt, arg.IssuanceID)
-	return err
 }

@@ -34,6 +34,55 @@ func fixture(t *testing.T) File {
 	return f
 }
 
+func TestPrivateServiceGrantRoundTripsOnlyExactBinding(t *testing.T) {
+	base := fixture(t)
+	id, err := opaqueid.New(opaqueid.PrivateServicePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Kind, base.PublicURLID, base.PrivateServiceID = "private_service", nil, &id
+	identity, key, err := base.Validate()
+	if err != nil || identity.PrivateServiceId == nil || *identity.PrivateServiceId != id {
+		t.Fatalf("private binding: %v", err)
+	}
+	portable, err := New(base.ControlURL, identity, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "publisher.json")
+	if err := Write(path, portable); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Read(path)
+	if err != nil || loaded.PrivateServiceID == nil || *loaded.PrivateServiceID != id || loaded.PublicURLID != nil || loaded.DomainID != nil || loaded.Namespace != nil {
+		t.Fatalf("private file round trip: %v", err)
+	}
+	url, domain, namespace := "url_invalid", "dom_invalid", "member.example"
+	for _, change := range []func(*File){
+		func(f *File) { f.PrivateServiceID = nil },
+		func(f *File) { f.PrivateServiceID = &url },
+		func(f *File) { f.PublicURLID = &url },
+		func(f *File) { f.DomainID = &domain },
+		func(f *File) { f.Namespace = &namespace },
+		func(f *File) { f.Kind = "namespace" },
+		func(f *File) { f.Kind = "saved_url" },
+	} {
+		invalid := base
+		change(&invalid)
+		if _, _, err := invalid.Validate(); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("invalid private binding accepted: %v", err)
+		}
+	}
+	for _, body := range []string{`{"version":1,"version":1}`, `{"version":1,"private_service_id":null}`} {
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Read(path); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("ambiguous file accepted: %v", err)
+		}
+	}
+}
+
 func TestPortableFileRejectsReplacementSymlinkAndPermissiveModes(t *testing.T) {
 	f := fixture(t)
 	path := filepath.Join(t.TempDir(), "publisher.json")

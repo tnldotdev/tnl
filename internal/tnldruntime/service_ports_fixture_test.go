@@ -1,0 +1,29 @@
+package tnldruntime
+
+import (
+	"net"
+	"strconv"
+	"testing"
+)
+
+// each topology declares its own inventory so independent test processes never
+// compete for the deployment's default ports on the host.
+func integrationServicePorts(t *testing.T) []string {
+	t.Helper()
+	var listeners []net.Listener
+	defer func() {
+		for _, listener := range listeners {
+			_ = listener.Close()
+		}
+	}()
+	var ports []string
+	for range 8 {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		listeners = append(listeners, listener)
+		ports = append(ports, strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
+	}
+	return ports
+}

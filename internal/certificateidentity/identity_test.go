@@ -62,7 +62,7 @@ func TestCanonicalPlanAndExactBindings(t *testing.T) {
 		{"empty_scope", func(p *controlv1.CertificatePlan) { p.Scope = "" }, false},
 		{"empty_key", func(p *controlv1.CertificatePlan) { p.CacheKey = "" }, false},
 		{"unknown_method", func(p *controlv1.CertificatePlan) { p.ChallengeMethod = "unknown" }, false},
-		{"wildcard_TLS_ALPN", func(p *controlv1.CertificatePlan) { p.ChallengeMethod = controlv1.TlsAlpn01 }, false},
+		{"unknown_method", func(p *controlv1.CertificatePlan) { p.ChallengeMethod = "unsupported" }, false},
 		{"empty_identifiers", func(p *controlv1.CertificatePlan) { p.Identifiers = nil }, false},
 		{"too_many_identifiers", func(p *controlv1.CertificatePlan) {
 			p.Identifiers = []string{"member.example", "*.member.example", "other.example"}

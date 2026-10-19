@@ -152,7 +152,7 @@ func TestEncryptedSessionCertificateIdentityAndSystemStateReopen(t *testing.T) {
 	}
 	for _, query := range []string{
 		"SELECT access_token_ciphertext FROM control_sessions", "SELECT refresh_token_ciphertext FROM control_sessions",
-		"SELECT private_key_ciphertext FROM public_url_certificate_cache", "SELECT signing_key_ciphertext FROM publisher_identities", "SELECT jobs_ciphertext FROM publisher_job_registry",
+		"SELECT signing_key_ciphertext FROM publisher_identities", "SELECT jobs_ciphertext FROM publisher_job_registry",
 	} {
 		var value []byte
 		if err := database.db.QueryRowContext(t.Context(), query).Scan(&value); err != nil {

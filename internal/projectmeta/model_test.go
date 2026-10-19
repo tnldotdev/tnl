@@ -38,42 +38,57 @@ func TestProjectMetadataConformance(t *testing.T) {
 
 func TestSavedAddressesRenderWithoutPrivateData(t *testing.T) {
 	port := 15432
-	for _, protocol := range []string{"postgres", "mysql", "redis", "ssh"} {
-		service, err := NewService("member.example", "db.member.example", protocol, &port)
-		if err != nil {
-			t.Fatal(err)
+	for _, protocol := range []string{"tcp", "mysql", "postgres", "ssh"} {
+		if _, err := NewService("member.example", "db.member.example", protocol, &port); err == nil {
+			t.Fatalf("private %s received browser metadata", protocol)
 		}
-		metadata := Metadata{Version: Version, Namespace: "member.example", Services: map[string]Service{"db": service}}
-		file, declarations, err := Render(metadata)
-		if err != nil {
-			t.Fatal(err)
+	}
+	service, err := NewService("member.example", "web.member.example", "http", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := Metadata{Version: Version, Namespace: "member.example", Services: map[string]Service{"web": service}}
+	file, declarations, err := Render(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, data := range []string{string(file), string(declarations)} {
+		if strings.Contains(data, "address") || strings.Contains(data, "port:") || strings.Contains(data, "target") || !strings.Contains(data, "https://web.member.example") {
+			t.Fatalf("unsafe HTTP metadata: %s", data)
 		}
-		if !strings.Contains(string(file), `"address": "db.member.example:15432"`) || !strings.Contains(string(declarations), `readonly port: 15432`) || strings.Contains(string(declarations), "readonly url:") {
-			t.Fatalf("TCP declarations=%s", declarations)
-		}
-		public, err := json.Marshal(metadata.Public(true))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(public), "private/source") || strings.Contains(string(public), "serviceDirectories") {
-			t.Fatal("browser metadata contains source directories")
-		}
-		metadata.Aliases = map[string]Alias{"review": {Hostname: "review.member.example", URL: "https://review.member.example", Service: "db"}}
-		if err := metadata.Validate(); err == nil {
-			t.Fatal("TCP alias was accepted")
-		}
-		metadata.Aliases = nil
-		http, _ := NewService("member.example", "web.member.example", "http", nil)
-		http.Paths = map[string]Path{"/db": {Service: "db", URL: "https://web.member.example/db"}}
-		metadata.Services["web"] = http
-		if err := metadata.Validate(); err == nil {
-			t.Fatal("HTTP mount into TCP service was accepted")
-		}
+	}
+	if _, err := NewService("member.example", "db.member.example", "tcp", nil); err == nil {
+		t.Fatal("private TCP service received a public hostname and shared port")
+	}
+	if _, err := NewService("member.example", "db.member.example", "tcp", &port); err == nil {
+		t.Fatal("private TCP service received a public port")
+	}
+	if _, err := NewService("member.example", "db.member.example", "ssh", nil); err == nil {
+		t.Fatal("ssh metadata was built before port assignment")
 	}
 	if _, err := NewService("member.example", "db.member.example", "postgres", nil); err == nil {
-		t.Fatal("TCP metadata was built before reservation")
+		t.Fatal("old public URL protocol was accepted")
 	}
-	if _, err := NewService("member.example", "web.member.example", "http", &port); err == nil {
-		t.Fatal("HTTP metadata accepted a public TCP port")
+	if service, err := NewService("member.example", "web.member.example", "http", &port); err != nil || service.URL != "https://web.member.example:15432" {
+		t.Fatal("managed HTTP lost its allocated port", err)
+	}
+}
+
+func TestPublicPathMountDoesNotNeedPrivateTargetMetadata(t *testing.T) {
+	service, err := NewService("member.example", "web.member.example", "http", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.Paths = map[string]Path{"/api": {Service: "private-api", URL: service.URL + "/api", StripPrefix: true}}
+	metadata := Metadata{Version: Version, Namespace: "member.example", Services: map[string]Service{"web": service}}
+	file, _, err := Render(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse(file); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(file), "target") || strings.Contains(string(file), "private.internal") {
+		t.Fatalf("private target leaked: %s", file)
 	}
 }

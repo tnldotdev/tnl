@@ -77,7 +77,7 @@ func TestAuthorizationDecodesChallengeProblem(t *testing.T) {
 		"status":"invalid",
 		"identifier":{"type":"dns","value":"route.example.test"},
 		"challenges":[{
-			"type":"tls-alpn-01",
+			"type":"dns-01",
 			"url":"https://acme.example.test/challenge/1",
 			"status":"invalid",
 			"token":"token-1",

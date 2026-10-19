@@ -9,7 +9,7 @@ interface ServiceAddress {
   readonly hostname: string;
 }
 
-export type ServiceProtocol = "http" | "postgres" | "mysql" | "redis" | "ssh";
+export type ServiceProtocol = "http";
 
 export interface HTTPServiceMetadata extends ServiceAddress {
   readonly protocol: "http";
@@ -19,15 +19,7 @@ export interface HTTPServiceMetadata extends ServiceAddress {
   readonly port?: never;
 }
 
-export interface TCPServiceMetadata extends ServiceAddress {
-  readonly protocol: Exclude<ServiceProtocol, "http">;
-  readonly port: number;
-  readonly address: `${string}:${number}`;
-  readonly url?: never;
-  readonly paths?: never;
-}
-
-export type ProjectServiceMetadata = HTTPServiceMetadata | TCPServiceMetadata;
+export type ProjectServiceMetadata = HTTPServiceMetadata;
 
 export interface ProjectPathMetadata {
   readonly service: string;
@@ -69,11 +61,11 @@ export interface ProjectRuntime extends ProjectMetadata {
 
 /** returns the public hostnames that can reach this service. */
 export function serviceHostnames(assignment: {
-  readonly hostname: string;
+  readonly hostname: string | undefined;
   readonly service: string;
   readonly project: ProjectRuntime;
 }): string[] {
-  const hostnames = new Set([assignment.hostname]);
+  const hostnames = new Set(assignment.hostname === undefined ? [] : [assignment.hostname]);
   for (const alias of Object.values(assignment.project.aliases ?? {})) {
     if (
       alias !== undefined &&
@@ -93,9 +85,16 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
   const object = record(value, description);
   exactKeys(object, ["namespace", "services", ...optionalProjectKeys(object)], description);
   const worktree = object.worktree === undefined ? undefined : parseWorktree(object.worktree);
-  const projectNamespace = requiredHostname(object.namespace, `${description} namespace`);
   const servicesObject = record(object.services, `${description} services`);
   const entries = Object.entries(servicesObject);
+  const projectNamespace =
+    object.namespace === "" &&
+    entries.length === 0 &&
+    object.oauth === undefined &&
+    object.webhooks === undefined &&
+    object.aliases === undefined
+      ? ""
+      : requiredHostname(object.namespace, `${description} namespace`);
   if (entries.length > maximumServices) {
     throw new TnlError("sdk.runtime_invalid");
   }
@@ -109,22 +108,16 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     const service = record(value, `${description} service ${JSON.stringify(name)}`);
     exactKeys(
       service,
-      service.protocol === "http"
-        ? [
-            "protocol",
-            "hostname",
-            "namespace",
-            "url",
-            ...["paths"].filter((key) => Object.hasOwn(service, key)),
-          ]
-        : ["protocol", "hostname", "namespace", "port", "address"],
+      [
+        "protocol",
+        "hostname",
+        "namespace",
+        "url",
+        ...["paths"].filter((key) => Object.hasOwn(service, key)),
+      ],
       `${description} service ${JSON.stringify(name)}`,
     );
-    if (
-      service.protocol !== undefined &&
-      (typeof service.protocol !== "string" ||
-        !["", "http", "postgres", "mysql", "redis", "ssh"].includes(service.protocol))
-    ) {
+    if (service.protocol !== "http") {
       throw new TnlError("sdk.runtime_invalid");
     }
     const serviceNamespace = requiredHostname(
@@ -139,27 +132,21 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       throw new TnlError("sdk.runtime_invalid");
     }
     hostnames.add(hostname);
-    if (service.protocol !== "http") {
-      if (
-        !isTCPProtocol(service.protocol) ||
-        typeof service.port !== "number" ||
-        !Number.isInteger(service.port) ||
-        service.port < 1024 ||
-        service.port > 65535 ||
-        service.address !== `${hostname}:${service.port}`
-      )
-        throw new TnlError("sdk.runtime_invalid");
-      services[name] = Object.freeze({
-        protocol: service.protocol,
-        namespace: serviceNamespace,
-        hostname,
-        port: service.port,
-        address: `${hostname}:${service.port}`,
-      });
-      continue;
+    if (typeof service.url !== "string") throw new TnlError("sdk.runtime_invalid");
+    let endpoint: URL;
+    try {
+      endpoint = new URL(service.url);
+    } catch {
+      throw new TnlError("sdk.runtime_invalid");
     }
-    const url: `https://${string}` = `https://${hostname}`;
-    if (service.url !== url) throw new TnlError("sdk.runtime_invalid");
+    const port = endpoint.port === "" ? 443 : Number(endpoint.port);
+    const url: `https://${string}` = `https://${hostname}${port === 443 ? "" : `:${port}`}`;
+    if (
+      !Number.isInteger(port) ||
+      (port !== 443 && (port < 1024 || port > 65535)) ||
+      service.url !== url
+    )
+      throw new TnlError("sdk.runtime_invalid");
     let paths: Readonly<Record<string, ProjectPathMetadata | undefined>> | undefined;
     if (service.paths !== undefined) {
       const pathsObject = record(
@@ -204,14 +191,6 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       ...(paths === undefined ? {} : { paths }),
     });
   }
-  for (const service of Object.values(services)) {
-    for (const mount of Object.values(service.paths ?? {})) {
-      if (mount !== undefined && services[mount.service]?.protocol !== "http") {
-        throw new TnlError("sdk.runtime_invalid");
-      }
-    }
-  }
-
   let oauth: IntegrationOrigin | undefined;
   if (object.oauth !== undefined) {
     oauth = parseIntegrationOrigin(object.oauth, `${description} oauth`);
@@ -307,10 +286,6 @@ function isWebhookMethod(value: unknown): value is WebhookMethod {
     value === "PATCH" ||
     value === "DELETE"
   );
-}
-
-function isTCPProtocol(value: unknown): value is Exclude<ServiceProtocol, "http"> {
-  return value === "postgres" || value === "mysql" || value === "redis" || value === "ssh";
 }
 
 function optionalProjectKeys(value: Record<string, unknown>): string[] {

@@ -52,6 +52,8 @@ type publishEvent struct {
 }
 
 type publishOutput struct {
+	delegatedLifecycle    bool
+	detachedCtx           context.Context
 	mode                  publishOutputMode
 	stdout                io.Writer
 	stderr                io.Writer
@@ -185,6 +187,9 @@ func (o *publishOutput) starting(tunnelID, target string) error {
 	defer o.mu.Unlock()
 	o.tunnelID = tunnelID
 	o.target = target
+	if o.detachedCtx != nil {
+		detachedPublicationStarting(o.detachedCtx)
+	}
 	if o.mode == publishOutputHuman {
 		return nil
 	}
@@ -222,8 +227,12 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			if o.fallbackPublicURL == publishRunNumber {
 				fields = append(fields, clioutput.Field{Label: "transport", Value: "TLS/TCP fallback"})
 			}
+			label := url
+			if label == "" {
+				label = "private service"
+			}
 			blocks := []clioutput.Block{clioutput.Flow(
-				clioutput.FlowNode{Label: url},
+				clioutput.FlowNode{Label: label},
 				clioutput.FlowNode{Label: "tnl"},
 				clioutput.FlowNode{Label: o.target},
 			)}
@@ -269,6 +278,9 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 				),
 			)
 		}
+	}
+	if o.detachedCtx != nil {
+		detachedPublicationReady(o.detachedCtx)
 	}
 	return nil
 }
@@ -340,6 +352,9 @@ func (o *publishOutput) failed(err error) error {
 }
 
 func (o *publishOutput) finish(ctx context.Context, result error) error {
+	if o.delegatedLifecycle {
+		return result
+	}
 	cause := context.Cause(ctx)
 	if result == nil {
 		result = cause

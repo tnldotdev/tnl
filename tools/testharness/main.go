@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,18 +13,15 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
 	tclog "github.com/testcontainers/testcontainers-go/log"
 	"github.com/testcontainers/testcontainers-go/modules/compose"
-	"github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -34,11 +30,10 @@ const (
 	postgresImage = "mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
 	mysqlImage    = "mirror.gcr.io/library/mysql:8.4@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242"
 	redisImage    = "mirror.gcr.io/library/redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
-	sshImage      = "ghcr.io/linuxserver/openssh-server:latest@sha256:46f115de7c251558297e7e87566fc3fc08544b63e55502b5cf294454db5d29d1"
 )
 
 type harnessArguments struct {
-	Service string   `arg:"" enum:"postgres,mysql,redis,ssh,dns,runtime" help:"Disposable service for the test command."`
+	Service string   `arg:"" enum:"postgres,mysql,postgres-tls,mysql-tls,redis,dns,runtime" help:"Disposable service for the test command."`
 	Command []string `arg:"" optional:"" passthrough:"" sep:"none" help:"Test command and arguments after --."`
 }
 
@@ -56,7 +51,7 @@ func parseHarnessArguments(arguments []string) (harnessArguments, error) {
 			return parsed, errors.New("dns and runtime do not take a test command")
 		}
 	} else if len(arguments) < 3 || arguments[1] != "--" || len(parsed.Command) == 0 {
-		return parsed, errors.New("usage: testharness postgres|mysql|redis|ssh -- go test [arguments...], or testharness dns|runtime")
+		return parsed, errors.New("usage: testharness postgres|postgres-tls|mysql|mysql-tls|redis -- go test [arguments...], or testharness dns|runtime")
 	} else {
 		// kong's passthrough includes the separator; only the child command
 		// and its arguments belong in the process we launch.
@@ -92,6 +87,13 @@ func run() error {
 	}
 	command := arguments.Command
 	switch arguments.Service {
+	case "postgres-tls", "mysql", "mysql-tls":
+		fixture, err := startDatabaseTLS(ctx, arguments.Service)
+		if err != nil {
+			return err
+		}
+		defer fixture.Close()
+		command = append(command, fixture.Flags...)
 	case "postgres":
 		container, err := postgres.Run(ctx, postgresImage, postgres.BasicWaitStrategies(), loopbackPort("5432"))
 		if err != nil {
@@ -103,52 +105,6 @@ func run() error {
 			return fmt.Errorf("read disposable PostgreSQL address: %w", err)
 		}
 		command = append(command, "-tnl-test-postgres-url="+address)
-	case "mysql":
-		var container *mysql.MySQLContainer
-		for range 3 {
-			container, err = mysql.Run(ctx, mysqlImage,
-				mysql.WithUsername("root"), mysql.WithPassword("testpass"), mysql.WithDatabase("mysql"),
-				testcontainers.WithEnv(map[string]string{"MYSQL_ROOT_HOST": "%"}),
-				testcontainers.WithCmdArgs("--require_secure_transport=OFF", "--auto_generate_certs=OFF"),
-				reservedLoopbackPort("3306"),
-				testcontainers.WithAdditionalWaitStrategy(wait.ForListeningPort("3306/tcp")),
-			)
-			if err == nil {
-				break
-			}
-			if container == nil {
-				return fmt.Errorf("start disposable MySQL: %w", err)
-			}
-			// docker can create the container but fail to bind its chosen host
-			// port. remove that failed attempt before asking docker to choose again.
-			canRetry := !container.IsRunning() && ctx.Err() == nil
-			terminate(container)
-			if !canRetry {
-				return fmt.Errorf("start disposable MySQL: %w", err)
-			}
-		}
-		if err != nil {
-			return fmt.Errorf("start disposable MySQL after 3 attempts: %w", err)
-		}
-		defer terminate(container)
-		code, output, err := container.Exec(ctx, []string{"mysql", "--protocol=socket", "--user=root", "--password=testpass",
-			"--execute=CREATE USER 'tnl_client'@'%' IDENTIFIED WITH caching_sha2_password BY 'testpass'; GRANT SELECT ON mysql.* TO 'tnl_client'@'%';"})
-		if err != nil || code != 0 {
-			var message []byte
-			if output != nil {
-				message, _ = io.ReadAll(io.LimitReader(output, 4096))
-			}
-			return fmt.Errorf("configure disposable MySQL client: exit %d: %s: %v", code, strings.TrimSpace(string(message)), err)
-		}
-		host, err := container.Host(ctx)
-		if err != nil {
-			return fmt.Errorf("read disposable MySQL host: %w", err)
-		}
-		port, err := container.MappedPort(ctx, "3306/tcp")
-		if err != nil {
-			return fmt.Errorf("read disposable MySQL port: %w", err)
-		}
-		command = append(command, "-tnl-test-mysql-address="+net.JoinHostPort(host, port.Port()))
 	case "redis":
 		container, err := testcontainers.Run(ctx, redisImage,
 			testcontainers.WithExposedPorts("6379/tcp"), loopbackPort("6379"),
@@ -168,56 +124,8 @@ func run() error {
 			return fmt.Errorf("read disposable Redis port: %w", err)
 		}
 		command = append(command, "-tnl-test-redis-address="+net.JoinHostPort(host, port.Port()))
-	case "ssh":
-		container, err := testcontainers.Run(ctx, sshImage,
-			testcontainers.WithExposedPorts("2222/tcp"), loopbackPort("2222"),
-			testcontainers.WithEnv(map[string]string{
-				"PUID": "1000", "PGID": "1000", "USER_NAME": "tnl_test",
-				"PASSWORD_ACCESS": "true", "USER_PASSWORD": "testpass",
-			}),
-			testcontainers.WithWaitStrategy(wait.ForListeningPort("2222/tcp")),
-		)
-		if err != nil {
-			return fmt.Errorf("start disposable SSH server: %w", err)
-		}
-		defer terminate(container)
-		host, err := container.Host(ctx)
-		if err != nil {
-			return fmt.Errorf("read disposable SSH host: %w", err)
-		}
-		port, err := container.MappedPort(ctx, "2222/tcp")
-		if err != nil {
-			return fmt.Errorf("read disposable SSH port: %w", err)
-		}
-		code, output, err := container.Exec(ctx, []string{"ssh-keyscan", "-T", "5", "-p", "2222", "-t", "ed25519", "127.0.0.1"})
-		var key bytes.Buffer
-		var readErr error
-		if output != nil {
-			_, readErr = stdcopy.StdCopy(&key, &key, io.LimitReader(output, 4096))
-		}
-		if err != nil || code != 0 {
-			return fmt.Errorf("read disposable SSH host key: exit %d: %v: %s", code, err, strings.TrimSpace(key.String()))
-		}
-		if readErr != nil {
-			return fmt.Errorf("read disposable SSH host key: %w", readErr)
-		}
-		hostKey := ""
-		for line := range strings.SplitSeq(key.String(), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 && fields[0] == "[127.0.0.1]:2222" && fields[1] == "ssh-ed25519" {
-				hostKey = fields[1] + " " + fields[2]
-			}
-		}
-		if hostKey == "" {
-			return errors.New("disposable SSH host key is missing")
-		}
-		// the go test runs on the host, so it connects to docker's mapped port.
-		// pass the fixture sshd's public key separately for the visiting SSH
-		// client to pin; tnl forwards SSH bytes without checking the host key.
-		command = append(command, "-tnl-test-ssh-address="+net.JoinHostPort(host, port.Port()),
-			"-tnl-test-ssh-host-key="+hostKey)
 	default:
-		return errors.New("test service must be postgres, mysql, redis, or ssh")
+		return errors.New("test service must be postgres, mysql, or redis")
 	}
 	child := exec.CommandContext(ctx, command[0], command[1:]...)
 	child.Dir = root

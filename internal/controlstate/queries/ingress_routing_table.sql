@@ -11,18 +11,17 @@ FOR UPDATE;
 
 -- name: ListIngressRoutingTableSnapshot :many
 -- select the latest revision for each entry before filtering kind or expiry;
--- filtering first could revive a superseded public URL or challenge.
+-- filtering first could revive a superseded public URL.
 WITH latest AS (
     SELECT max(history.id) AS routing_table_revision
     FROM control.ingress_routing_table_events AS history
     WHERE history.id <= sqlc.arg(through_revision)
-    GROUP BY history.canonical_hostname,
-        CASE WHEN history.event_kind IN ('public_url_upsert', 'public_url_tombstone') THEN 'public_url' ELSE 'challenge' END
+    GROUP BY history.canonical_hostname, history.public_url_id, history.publish_run_number
 )
 SELECT events.*
 FROM latest
 JOIN control.ingress_routing_table_events AS events ON events.id = latest.routing_table_revision
-WHERE events.event_kind IN ('public_url_upsert', 'challenge_upsert')
+WHERE events.event_kind = 'public_url_upsert'
   AND events.public_url_expires_at > sqlc.arg(now)
 ORDER BY events.canonical_hostname;
 

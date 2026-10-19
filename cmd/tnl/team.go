@@ -139,12 +139,12 @@ func runTeamList(ctx context.Context, command teamListCommand, output, diagnosti
 	}
 	for _, membership := range session.identity.Memberships {
 		title := membership.TeamDisplayName
-		if membership.TeamId == selected || selected == "" && membership.TeamId == session.identity.PersonalTeamId {
+		if membership.TeamId == selected || selected == "" && membership.TeamId == session.initialTeam() {
 			title = "* " + title
 		}
 		if membership.TeamId == projectID {
 			title = "> " + title
-			if membership.TeamId == selected || selected == "" && membership.TeamId == session.identity.PersonalTeamId {
+			if membership.TeamId == selected || selected == "" && membership.TeamId == session.initialTeam() {
 				title = "* > " + membership.TeamDisplayName
 			}
 		}
@@ -249,7 +249,6 @@ func runTeamMembers(ctx context.Context, command teamMembersCommand, output, dia
 			Domain: session.authenticated.Discovery.ManagedDomain, Managed: true,
 			Mode:     naming.ManagedURLMode(session.authenticated.Discovery.ManagedUrlMode),
 			Personal: value.TeamKind == authorityv1.Personal,
-			Builtin:  session.identity.Identity.Administrator && value.TeamId == session.identity.PersonalTeamId,
 			TeamName: value.TeamDisplayName, MemberSlug: value.MemberSlug, ManagedLabel: value.ManagedLabel,
 		})
 		blocks = append(blocks, clioutput.Section(value.MemberSlug, clioutput.Fields(

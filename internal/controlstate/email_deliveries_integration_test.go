@@ -11,7 +11,7 @@ import (
 
 func TestIntegrationInvitationEmailIsEncryptedLeasedRetriedAndScrubbed(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "invitation_email")
-	admin, err := database.CreateBuiltinControlSession(t.Context(), "routes.example.test", 1, time.Hour, 24*time.Hour, now)
+	admin, err := createTestControlSession(t.Context(), database, "routes.example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}

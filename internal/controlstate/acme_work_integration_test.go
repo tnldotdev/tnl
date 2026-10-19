@@ -110,7 +110,7 @@ func TestIntegrationACMEWorkLeaseRecovery(t *testing.T) {
 	expires := now.Add(time.Hour)
 	recovered.State, recovered.AvailableAt = "authorizing", now
 	recovered.Authorizations = []ACMEAuthorizationWork{{Identifier: f.request.CertificateIdentifiers[0], AuthorizationURL: "https://acme.example.test/authz/1",
-		ChallengeType: "tls-alpn-01", ChallengeURL: "https://acme.example.test/challenge/1", ChallengeToken: "token", ChallengeDigest: sha256.Sum256([]byte("token")),
+		ChallengeType: "dns-01", ChallengeURL: "https://acme.example.test/challenge/1", ChallengeToken: "token", ChallengeDigest: sha256.Sum256([]byte("token")),
 		State: "presenting", AvailableAt: now, ExpiresAt: &expires, CreatedAt: now, UpdatedAt: now}}
 	saved, err := database.SaveACMEOrderWork(t.Context(), recovered, now.Add(time.Second))
 	if err != nil || saved.OrderRevision != recovered.OrderRevision+1 || len(saved.Authorizations) != 1 ||
@@ -207,49 +207,6 @@ func TestIntegrationACMEWorkRejectsStaleState(t *testing.T) {
 				t.Fatalf("%s stale save = %v", kind, err)
 			}
 		})
-	}
-}
-
-func TestIntegrationTLSChallengeRoutingAndFailedCleanup(t *testing.T) {
-	f := newPublishRunFixture(t)
-	database, now := f.database, f.now
-	ingress := registerTestIngress(t, database, now)
-	claimTestConnection(t, f, 0, now)
-	work := createPlanIssuanceWork(t, database, now, f.authentication(), f.certificatePlan(), false, nil)
-	for range 2 {
-		presented, err := database.MarkCertificateChallengeReady(t.Context(), work.ID, f.setup.PublishRunToken, now)
-		if err != nil || len(presented.Challenges) != 1 || presented.Challenges[0].Token != work.Authorizations[0].ChallengeToken {
-			t.Fatalf("presented challenge = %#v, %v", presented, err)
-		}
-	}
-	if _, found, err := database.ClaimACMEOrderWork(t.Context(), "before-ingress", now, time.Minute); err != nil || found {
-		t.Fatalf("work before ingress applied = %t, %v", found, err)
-	}
-	var revision uint64
-	if err := database.pool.QueryRow(t.Context(), `SELECT current_revision FROM control.ingress_routing_table_clock WHERE id = 1`).Scan(&revision); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: ingress.IngressLeaseIdentity, RoutingTableRevision: revision}, now, time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	claimed, found, err := database.ClaimACMEOrderWork(t.Context(), "after-ingress", now, time.Minute)
-	if err != nil || !found || claimed.ID != work.ID {
-		t.Fatalf("work after ingress applied = %#v, %t, %v", claimed, found, err)
-	}
-	claimed.State, claimed.AvailableAt = "failed", now
-	claimed.Authorizations[0].State = "failed"
-	if _, err := database.SaveACMEOrderWork(t.Context(), claimed, now); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		removed, err := database.MarkCertificateChallengeRemoved(t.Context(), work.ID, f.setup.PublishRunToken, now)
-		if err != nil || len(removed.Challenges) != 0 {
-			t.Fatalf("failed challenge cleanup = %#v, %v", removed, err)
-		}
-	}
-	page, err := database.ReadIngressRoutingTableEvents(t.Context(), ingress.IngressLeaseIdentity, 0, 10, now)
-	if err != nil || len(page.Events) != 2 || page.Events[0].Kind != "challenge_upsert" || page.Events[1].Kind != "challenge_tombstone" {
-		t.Fatalf("challenge events = %#v, %v", page, err)
 	}
 }
 

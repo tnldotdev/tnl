@@ -90,7 +90,6 @@ func authenticatePublisher(
 		AccessToken:          accessToken,
 		Diagnostics:          diagnostics,
 		OpenURL:              interactiveBrowserOpener(stdin),
-		LoginToken:           loginTokenPrompt(stdin, diagnostics),
 		AuthenticationPrompt: authenticationPrompt(diagnostics, command),
 	})
 }
@@ -262,7 +261,7 @@ func readyDomainForHostname(domains []authorityv1.Domain, hostname string) (auth
 func (current teamContext) namespace(domain authorityv1.Domain) (string, bool) {
 	return naming.PublicURLNamespace(naming.NamespaceFacts{
 		Domain: domain.CanonicalDomain, Managed: domain.Kind == authorityv1.Managed,
-		Mode: current.mode, Personal: current.team.Kind == authorityv1.Personal, Builtin: current.builtin,
+		Mode: current.mode, Personal: current.team.Kind == authorityv1.Personal,
 		TeamName: current.team.DisplayName, MemberSlug: current.membership.MemberSlug,
 		ManagedLabel: current.membership.ManagedLabel,
 	})
@@ -301,6 +300,7 @@ func (p publisherServices) config(target string, allowedIPPrefixes []string, lim
 		Hostname:          p.hostname,
 		PublicURLScope:    p.publicURLScope,
 		Purpose:           controlv1.App,
+		ServiceProtocol:   controlv1.Http,
 		PolicyRevision:    p.policyRevision,
 		Target:            target,
 		Limits:            limits,

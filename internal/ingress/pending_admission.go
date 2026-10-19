@@ -16,8 +16,6 @@ type visitorAdmission struct {
 	key                         trafficKey
 	source                      netip.Addr
 	runID, hostname             string
-	port                        uint16
-	byPort                      bool
 	ordinary, closed, attempted bool
 	deadline                    time.Time
 	upload, download            int64
@@ -172,8 +170,18 @@ func (s *Server) PromotePendingAdmission(ctx context.Context, h tunnelv1.Admissi
 	v.attempted = true
 	var current PublicURL
 	var reason LookupReason
-	if v.byPort {
-		current, reason = s.config.LookupPort(v.port)
+	if s.config.LookupPool != nil {
+		var candidates []PublicURL
+		candidates, reason = s.config.LookupPool(v.hostname)
+		if reason == LookupCurrent {
+			reason = LookupNotFound
+			for _, candidate := range candidates {
+				if candidate.PublishRunID == v.runID {
+					current, reason = candidate, LookupCurrent
+					break
+				}
+			}
+		}
 	} else {
 		current, reason = s.config.Lookup(v.hostname)
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/privateprotocol"
 	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
@@ -246,6 +247,11 @@ func Problem(w http.ResponseWriter, err error) {
 		status, code, message = 409, "runtime.publisher_setup_required", "run tnl publisher setup --namespace, then start the app again"
 	case errors.Is(err, credentialfile.ErrInvalid):
 		status, code, message = 400, "runtime.publisher_file_invalid", "check the publisher file, its permissions, and its control URL"
+	default:
+		if reason, ok := failure.ReasonOf(err); ok {
+			definition, _ := failure.DefinitionFor(reason)
+			code, message = string(reason), definition.Message
+		}
 	}
 	privateprotocol.Write(w, status, privateprotocol.Problem{Code: code, Message: message})
 }

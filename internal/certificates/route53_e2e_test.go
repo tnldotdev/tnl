@@ -24,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/dnscontroller"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 )
 
 const route53ACMEStagingDirectory = "https://acme-staging-v02.api.letsencrypt.org/directory"
@@ -73,12 +74,12 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	session, err := database.CreateBuiltinControlSession(ctx, "test.tnl.wtf", 1, time.Hour, 24*time.Hour, now)
+	session, err := controltest.Session(ctx, database, "test.tnl.wtf", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	member := session.Identity.Memberships[0]
-	principal, err := database.AuthenticateAccessToken(ctx, session.AccessToken, 1, now)
+	principal, err := database.AuthenticateAccessToken(ctx, session.AccessToken, now)
 	if err != nil {
 		t.Fatal(err)
 	}

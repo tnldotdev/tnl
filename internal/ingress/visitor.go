@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/routebackend"
 	"github.com/tnldotdev/tnl/internal/router"
+	"github.com/tnldotdev/tnl/internal/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 )
 
@@ -25,62 +26,45 @@ type committedVisitorStream struct {
 	setupErr   error
 }
 
-type visitorSelection uint8
-
-const (
-	hostnameSelection visitorSelection = iota
-	portSelection
-	challengeSelection
-)
-
 var errBackendTrackingClosed = errors.New("ingress: backend tracking closed")
 
 // forward resolves policy and admission before attempting a publisher stream.
-// challenges use their own lookup and capacity; denied visitors retain their
-// bounded publisher path for an HTTPS 403.
 func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, hello router.ClientHello) error {
-	selection := hostnameSelection
-	if hello.ACMETLSALPN {
-		selection = challengeSelection
-	}
-	return s.forwardSelected(public, source, destination, hello, selection)
-}
-
-func (s *Server) forwardPort(public net.Conn, source, destination netip.AddrPort, reader io.Reader) error {
-	return s.forwardSelected(public, source, destination, router.ClientHello{Remainder: reader}, portSelection)
-}
-
-func (s *Server) forwardSelected(public net.Conn, source, destination netip.AddrPort, hello router.ClientHello, selection visitorSelection) error {
 	var route PublicURL
 	var backends []routebackend.Backend
 	var ok bool
-	var challengeReason LookupReason
-	challenge, byPort := selection == challengeSelection, selection == portSelection
 	visitorOutcome := observability.VisitorLookupMissing
 	visitorStarted := time.Now()
-	if !challenge && s.config.Metrics != nil {
+	visitorID := ""
+	auditReason, auditOutcome := "unavailable", "denied"
+	auditOpened := false
+	defer func() {
+		if route.ID != "" && visitorID != "" && !auditOpened {
+			serviceaudit.Emit(s.config.AuditSink, serviceaudit.Observation{ServiceID: route.ID, ServiceKind: "public_url", RunID: route.PublishRunID, RunNumber: int64(route.PublishRunNumber), VisitorConnectionID: visitorID, SourceIP: source.Addr().Unmap().String(), EventType: "connection.open", Outcome: auditOutcome, Reason: auditReason})
+		}
+	}()
+	if s.config.Metrics != nil {
 		defer func() { s.config.Metrics.ObserveVisitor(visitorOutcome) }()
 	}
-	// an ALPN claim alone cannot authorize challenge forwarding. require an
-	// exact, currently live challenge from control; never fall back to a public URL.
-	if challenge {
-		if s.config.LookupChallenge == nil {
-			if s.config.Metrics != nil {
-				s.config.Metrics.IncChallengeRejection("unconfigured")
-			}
-			return nil
-		}
-		backends, challengeReason = s.config.LookupChallenge(hello.ServerName)
-	} else {
+	{
 		var reason LookupReason
-		if byPort {
-			route, reason = s.config.LookupPort(destination.Port())
+		if s.config.LookupPool != nil {
+			var candidates []PublicURL
+			candidates, reason = s.config.LookupPool(hello.ServerName)
+			if reason == LookupCurrent {
+				var release func()
+				route, release, reason = s.selectPoolRun(candidates)
+				if release != nil {
+					defer release()
+				}
+				if reason != LookupCurrent && len(candidates) > 0 {
+					// no run was selected. retain only the service identity so a
+					// full/unavailable pool does not disappear from its audit.
+					route = PublicURL{ID: candidates[0].ID}
+				}
+			}
 		} else {
 			route, reason = s.config.Lookup(hello.ServerName)
-		}
-		if reason == LookupCurrent && (byPort && (route.PublicPort == nil || *route.PublicPort != destination.Port()) ||
-			!byPort && route.PublicPort != nil) {
-			reason = LookupInvalidProjection
 		}
 		ok = reason == LookupCurrent
 		switch reason {
@@ -91,26 +75,28 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 		}
 		backends = route.Backends
 	}
-	if challengeReason != LookupCurrent || (!challenge && !ok) || len(backends) == 0 {
-		if !challenge && ok {
-			visitorOutcome = observability.VisitorLookupUnavailable
+	if route.ID != "" {
+		var err error
+		visitorID, err = opaqueid.New(visitorConnectionIDPrefix)
+		if err != nil {
+			return err
 		}
-		if challenge && s.config.Metrics != nil {
-			if challengeReason == LookupCurrent {
-				challengeReason = LookupNoBackends
-			}
-			s.config.Metrics.IncChallengeRejection(string(challengeReason))
+	}
+	if !ok || len(backends) == 0 {
+		if ok {
+			visitorOutcome = observability.VisitorLookupUnavailable
 		}
 		return nil
 	}
 	var usage UsageConnection
-	if !challenge && s.config.OpenUsage != nil {
+	if s.config.OpenUsage != nil {
 		usage = s.config.OpenUsage(route.ID, route.PublishRunNumber, source.Addr(), time.Now().UTC())
 		if usage != nil {
 			defer func() { usage.Close(time.Now().UTC()) }()
 		}
 	}
-	if !challenge && !route.allowsIP(source.Addr()) {
+	if !route.allowsIP(source.Addr()) {
+		auditReason = "ip_policy"
 		visitorOutcome = observability.VisitorPolicyDenied
 		if usage != nil {
 			usage.PolicyDenied(time.Now().UTC())
@@ -118,28 +104,29 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 		return nil
 	}
 	// ingress cannot inspect a visitor credential inside TLS. restricted
-	// HTTP and database connections remain bounded until the publisher checks it.
-	denied := !challenge && route.AccessMode != "anonymous" && route.ServiceProtocol != "ssh"
-	kind, key := visitorConnection, route.ID
-	if challenge {
-		kind, key = challengeConnection, hello.ServerName
-	} else if denied {
+	// HTTP connections remain bounded until the
+	// publisher checks it.
+	denied := route.AccessMode != "anonymous"
+	kind := visitorConnection
+	if denied {
 		kind = pendingConnection
 	}
 	var admission *visitorAdmission
 	var release func()
 	var rejected string
-	if challenge {
-		release, rejected = s.admitClass(kind, key)
-	} else {
+	{
 		admission, rejected = s.admitVisitor(route, source.Addr(), denied)
 		if admission != nil {
 			release = admission.close
 		}
 	}
 	if release == nil {
+		auditReason = "capacity"
+		if rejected == "draining" {
+			auditReason = "draining"
+		}
 		s.rejectCapacity(rejected)
-		if !challenge && !denied {
+		if !denied {
 			visitorOutcome = observability.VisitorCapacityDenied
 			if rejected == "draining" {
 				visitorOutcome = observability.VisitorDraining
@@ -151,13 +138,6 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 		return nil
 	}
 	defer release()
-	var challengeDeadline time.Time
-	if challenge {
-		challengeDeadline = time.Now().Add(challengeConnectionTimeout)
-		if err := public.SetDeadline(challengeDeadline); err != nil {
-			return err
-		}
-	}
 
 	if usage != nil {
 		usage.VisitorStreamOpening(time.Now().UTC())
@@ -174,14 +154,14 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 	if err != nil {
 		return fmt.Errorf("ingress: encode proxy header: %w", err)
 	}
-	visitorID, err := opaqueid.New(visitorConnectionIDPrefix)
-	if err != nil {
-		return fmt.Errorf("ingress: create visitor connection ID: %w", err)
+	if visitorID == "" {
+		visitorID, err = opaqueid.New(visitorConnectionIDPrefix)
+		if err != nil {
+			return fmt.Errorf("ingress: create visitor connection ID: %w", err)
+		}
 	}
 	if admission != nil && denied {
 		admission.hostname = hello.ServerName
-		admission.byPort = byPort
-		admission.port = destination.Port()
 		remove := s.registerPendingVisitor(visitorID, admission, public)
 		defer remove()
 	}
@@ -191,9 +171,7 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 		}
 	}
 	openTimeout := s.config.OpenTimeout
-	if challenge {
-		openTimeout = min(openTimeout, time.Until(challengeDeadline))
-	} else if denied {
+	if denied {
 		openTimeout = min(openTimeout, 2*time.Second, time.Until(admission.deadline))
 	}
 	openCtx, cancel := context.WithTimeout(s.openContext, openTimeout)
@@ -202,14 +180,15 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 	if errors.Is(openErr, errBackendTrackingClosed) {
 		return net.ErrClosed
 	}
-	if !challenge && s.config.Metrics != nil {
+	if s.config.Metrics != nil {
 		s.config.Metrics.ObserveVisitorOpen(opened.connection != nil && opened.setupErr == nil, time.Since(visitorStarted))
 	}
 	if openErr != nil {
+		auditOutcome, auditReason = "failed", "forwarding"
 		if !denied {
 			visitorOutcome = observability.VisitorOpenFailed
 		}
-		s.reportForwardingFailure(challenge, route, visitorID, ForwardingNoBackend, len(backends))
+		s.reportForwardingFailure(route, visitorID, ForwardingNoBackend, len(backends))
 		return openErr
 	}
 	defer s.releaseBackend(opened.connection)
@@ -227,16 +206,12 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", opened.bytes)
 	}
 	if opened.setupErr != nil {
+		auditOutcome, auditReason = "failed", "forwarding"
 		if !denied {
 			visitorOutcome = observability.VisitorCommittedFailed
 		}
-		s.reportForwardingFailure(challenge, route, visitorID, ForwardingCommittedWrite, len(backends))
+		s.reportForwardingFailure(route, visitorID, ForwardingCommittedWrite, len(backends))
 		return fmt.Errorf("ingress: write visitor setup after %d bytes: %w", opened.bytes, opened.setupErr)
-	}
-	if challenge {
-		if err := opened.connection.SetDeadline(challengeDeadline); err != nil {
-			return err
-		}
 	}
 	upstream := opened.connection
 	if admission != nil {
@@ -245,7 +220,18 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 		public = &budgetConn{Conn: public, beforeWrite: func(n int) error { return admission.beforeWrite(ctx, false, n) }}
 		upstream = &budgetConn{Conn: upstream, beforeWrite: func(n int) error { return admission.beforeWrite(ctx, true, n) }}
 	}
+	{
+		auditOpened = true
+		serviceaudit.Emit(s.config.AuditSink, serviceaudit.Observation{ServiceID: route.ID, ServiceKind: "public_url", RunID: route.PublishRunID, RunNumber: int64(route.PublishRunNumber), VisitorConnectionID: visitorID, SourceIP: source.Addr().Unmap().String(), EventType: "connection.open", Outcome: "forwarded"})
+	}
 	err = s.copyVisitor(public, upstream, hello.Remainder, route, denied, usage)
+	{
+		outcome, reason := "closed", "closed"
+		if err != nil {
+			outcome, reason = "failed", "forwarding"
+		}
+		serviceaudit.Emit(s.config.AuditSink, serviceaudit.Observation{ServiceID: route.ID, ServiceKind: "public_url", RunID: route.PublishRunID, RunNumber: int64(route.PublishRunNumber), VisitorConnectionID: visitorID, SourceIP: source.Addr().Unmap().String(), EventType: "connection.close", Outcome: outcome, Reason: reason})
+	}
 	if !denied {
 		visitorOutcome = observability.VisitorForwarded
 		if err != nil {
@@ -255,14 +241,61 @@ func (s *Server) forwardSelected(public net.Conn, source, destination netip.Addr
 	return err
 }
 
+// reserve the selected run before opening a relay stream. only new connections
+// enter this selection; releasing capacity never migrates an established one.
+func (s *Server) selectPoolRun(candidates []PublicURL) (PublicURL, func(), LookupReason) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return PublicURL{}, nil, LookupIngressUnavailable
+	}
+	if s.poolRuns == nil {
+		s.poolRuns = map[string]int{}
+	}
+	selected := -1
+	var load, capacity int64
+	start := 0
+	if len(candidates) > 0 {
+		start = int(s.nextBackend.Add(1) % uint64(len(candidates)))
+	}
+	for offset := range candidates {
+		index := (start + offset) % len(candidates)
+		candidate := candidates[index]
+		limits, valid := s.selectedTraffic(candidate)
+		if !valid || len(candidate.Backends) == 0 || candidate.PublishRunID == "" {
+			continue
+		}
+		used := int64(s.poolRuns[candidate.PublishRunID])
+		limit := int64(limits.Connections)
+		if used >= limit {
+			continue
+		}
+		if selected < 0 || used*capacity < load*limit {
+			selected, load, capacity = index, used, limit
+		}
+	}
+	if selected < 0 {
+		return PublicURL{}, nil, LookupNoBackends
+	}
+	route := candidates[selected]
+	s.poolRuns[route.PublishRunID]++
+	return route, sync.OnceFunc(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.poolRuns[route.PublishRunID]--
+		if s.poolRuns[route.PublishRunID] == 0 {
+			delete(s.poolRuns, route.PublishRunID)
+		}
+	}), LookupCurrent
+}
+
 // openVisitorStream retries only before a visitor byte reaches a relay. the
 // returned connection is owned by the caller even when its setup write failed.
 func (s *Server) openVisitorStream(ctx context.Context, backends []routebackend.Backend, visitorID string, kind connectionKind, header, prefix []byte, usage UsageConnection) (committedVisitorStream, error) {
 	opened := false
-	// rotate ordinary visitors across connected relays. challenge forwarding
-	// keeps control's order and uses the same bounded retry path.
+	// rotate visitors across connected relays before committing bytes.
 	firstBackend := 0
-	if kind != challengeConnection && len(backends) > 1 {
+	if len(backends) > 1 {
 		firstBackend = int((s.nextBackend.Add(1) - 1) % uint64(len(backends)))
 	}
 	var lastErr error
@@ -366,8 +399,8 @@ func (s *Server) observeRelayAttempt(backend routebackend.Backend, outcome obser
 	s.config.Metrics.ObserveRelayAttempt(slot, outcome)
 }
 
-func (s *Server) reportForwardingFailure(challenge bool, route PublicURL, visitorID string, reason ForwardingFailureReason, attempts int) {
-	if !challenge && s.config.OnForwardingFailure != nil {
+func (s *Server) reportForwardingFailure(route PublicURL, visitorID string, reason ForwardingFailureReason, attempts int) {
+	if s.config.OnForwardingFailure != nil {
 		s.config.OnForwardingFailure(route.ID, route.PublishRunNumber, visitorID, reason, attempts)
 	}
 }

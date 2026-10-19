@@ -22,7 +22,7 @@ func TestIntegrationGuestReservesNamespaceAndBootstrapsDomain(t *testing.T) {
 	if err != nil || stored.DomainID != domainID || stored.DNSAuthorityReference != "" {
 		t.Fatalf("stored managed guest: %+v, %v", stored, err)
 	}
-	admin, err := database.CreateBuiltinControlSession(t.Context(), "routes.example.test", 1, time.Hour, 24*time.Hour, now)
+	admin, err := createTestControlSession(t.Context(), database, "routes.example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}

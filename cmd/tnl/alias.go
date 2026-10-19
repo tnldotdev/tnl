@@ -216,16 +216,9 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 				continue
 			}
 		}
-		config := services.config(base.Target, slices.Clone(policy.prefixes), base.Limits)
-		config.AccessMode = policy.access
-		config.Purpose = controlv1.Alias
-		config.ControlURL = services.authenticated.ServerEndpoint
-		config.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
-		config.Mounts, config.ObserveResponse = base.Mounts, base.ObserveResponse
-		config.AdmitRequest = base.AdmitRequest
 		var mu sync.Mutex
 		lastReport := time.Time{}
-		worker := integrationurls.AliasPublisher(state, services.state, selection, tunnel.ID(), config, func(event publisher.Event, err error) {
+		worker := projectAliasPublisher(state, services, selection, tunnel.ID(), base, policy, func(event publisher.Event, err error) {
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -249,4 +242,32 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 		workers.Go(func() { worker.Maintain(ctx) })
 	}
 	return func() { cancel(); workers.Wait() }
+}
+
+func projectAliasPublisher(state *clientstate.Database, services publisherServices, selection clientstate.AliasSelection, tunnelID string, base publisher.Config, policy resolvedVisitorAccess, report func(publisher.Event, error)) integrationurls.Publisher {
+	cfg := services.config(base.Target, slices.Clone(policy.prefixes), base.Limits)
+	cfg.AccessMode, cfg.Purpose, cfg.ServiceProtocol = policy.access, controlv1.Alias, controlv1.Http
+	cfg.ControlURL = services.authenticated.ServerEndpoint
+	cfg.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
+	cfg.TargetOptions, cfg.TargetTLSName, cfg.ResolveTarget = base.TargetOptions, base.TargetTLSName, base.ResolveTarget
+	cfg.Mounts, cfg.ObserveResponse, cfg.AdmitRequest = base.Mounts, base.ObserveResponse, base.AdmitRequest
+	worker := integrationurls.AliasPublisher(state, services.state, selection, tunnelID, cfg, report)
+	prepare := worker.Prepare
+	worker.Prepare = func(ctx context.Context) (integrationurls.Snapshot, error) {
+		snapshot, err := prepare(ctx)
+		if err != nil {
+			return integrationurls.Snapshot{}, err
+		}
+		// the elected, selected worker prepares saved state before handing the
+		// run to an exact grant. targets and app hooks remain local to this run.
+		native, err := selectNativeProjectPublisher(ctx, services, snapshot.Config)
+		if err != nil {
+			return integrationurls.Snapshot{}, err
+		}
+		snapshot.Config.Control = nativePublicationControl(native, services.routes)
+		snapshot.Config.PublisherID = native.PublisherID()
+		snapshot.Config.PreserveSavedURLTarget = true
+		return snapshot, nil
+	}
+	return worker
 }

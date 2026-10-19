@@ -2,17 +2,67 @@ package publisher
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/applicationlimits"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 // ApplicationLimits bounds application requests after visitor access is resolved.
 // zero requests means no lifetime cap; zero rate and concurrency select defaults.
 type ApplicationLimits = applicationlimits.Limits
+
+// ManagedHTTPRequestLimits shares one run's application budget across all
+// visitor connections. private and public HTTP use the same admission counter.
+type ManagedHTTPRequestLimits struct{ admission *applicationAdmission }
+
+func NewManagedHTTPRequestLimits(input *controlv1.ProjectHTTPApplicationLimits) (*ManagedHTTPRequestLimits, error) {
+	var limits ApplicationLimits
+	if input != nil {
+		if input.Total != nil {
+			limits.Requests = *input.Total
+		}
+		if input.Concurrency != nil {
+			limits.Concurrency = *input.Concurrency
+		}
+		if input.Rate != nil {
+			period, err := time.ParseDuration(input.Rate.Per)
+			if err != nil {
+				return nil, err
+			}
+			limits.RateRequests, limits.RatePer = input.Rate.Count, period
+			if input.Rate.Burst != nil {
+				limits.RateBurst = *input.Rate.Burst
+			}
+		}
+	}
+	admission, err := newApplicationAdmission(limits)
+	if err != nil {
+		return nil, err
+	}
+	return &ManagedHTTPRequestLimits{admission: admission}, nil
+}
+
+func (l *ManagedHTTPRequestLimits) admit(w http.ResponseWriter, r *http.Request) (func(), bool) {
+	if l == nil {
+		return func() {}, true
+	}
+	release, status, retry := l.admission.acquire(r.Context())
+	if status != 0 {
+		if retry > 0 {
+			w.Header().Set("Retry-After", fmt.Sprint(retryAfterSeconds(retry)))
+		}
+		w.Header().Set("Connection", "close")
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
+		http.Error(w, "HTTP request limit reached", status)
+		return nil, false
+	}
+	return release, true
+}
 
 type applicationAdmission struct {
 	mu        sync.Mutex

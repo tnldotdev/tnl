@@ -101,6 +101,7 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if err != nil {
 		return err
 	}
+	plan.actions = append(plan.actions, projectGitignoreActions(ctx, plan.root)...)
 	if plan.generatedService || packageTypeConfigExists(plan.root) {
 		typeActions, err := projectTypeIncludeActions(projectConfiguration{
 			Project: projectconfig.Project{Root: plan.root},
@@ -135,7 +136,7 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if gitignoreUpdated {
 		fields = append(fields, clioutput.Field{Label: "updated", Value: filepath.Join(plan.root, ".gitignore")})
 	}
-	fields = append(fields, clioutput.Field{Label: "ignored", Value: ".tnl/"})
+	fields = append(fields, clioutput.Field{Label: "ignore", Value: tnlLocalIgnoreRule})
 	blocks := []clioutput.Block{clioutput.Fields(fields...)}
 	for _, action := range plan.actions {
 		blocks = append(blocks, clioutput.Section("action", clioutput.Text(action)))
@@ -232,6 +233,7 @@ export default defineConfig({
   feedback: true,
   services: {
     %s: {
+      publicURL: {},
       target: { type: "app" },
     },
   },

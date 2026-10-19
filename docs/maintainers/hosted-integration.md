@@ -3,7 +3,7 @@
 control owns tnl identities, teams, invitations, and publishing policy. the hosted
 website supplies sign-in identity facts from its server-validated OIDC session.
 
-configure `TNLD_WEB_SERVICE_SECRET` only on control and the website. the three
+configure `TNLD_WEB_SERVICE_SECRET` only on control and the website. the identity
 authority operations below accept that credential and bind every subject to
 `TNLD_OIDC_ISSUER`; callers cannot supply an issuer, administrator flag, or role.
 the credential cannot authenticate ordinary user or administrator operations.
@@ -22,6 +22,15 @@ browser form fields. an absent verified email clears previously saved email fact
 the website remembers a selected team as a preference. before returning usage,
 it reads current identity context and checks the selected team against those
 memberships. control does not store the selected team or website billing state.
+
+identity context is membership metadata, not company-sign-in provenance. required
+company operations use a control session carrying verified company context.
+the website's directory integration can call `POST /v1/service/company-eligibility`
+only with both its website credential and an exact-connection provisioning
+credential issued after current owner authorization. that operation may create
+eligible member access or change connection-owned eligibility; it cannot assign
+roles or clear manual decisions. provider consent and directory clients belong
+to tnl.dev. see [company access boundaries](company-access.md).
 
 the OpenAPI source is `api/authority/v1/openapi.yaml`. keep hosted consumers on
 the generated types from that source.

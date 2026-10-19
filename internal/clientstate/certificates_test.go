@@ -265,5 +265,5 @@ func signedCertificate(t *testing.T, key *ecdsa.PrivateKey, hostnames ...string)
 }
 
 func exactCertificateTestPlan() controlv1.CertificatePlan {
-	return controlv1.CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: controlv1.TlsAlpn01}
+	return controlv1.CertificatePlan{CacheKey: "route.example", Scope: "route.example", Identifiers: []string{"route.example"}, ChallengeMethod: controlv1.Dns01}
 }

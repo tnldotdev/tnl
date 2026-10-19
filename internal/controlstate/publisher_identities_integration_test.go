@@ -20,13 +20,13 @@ const publisherTestAudience = "https://control.example/v1/publisher-token"
 
 func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 	d, _ := newControlStateIntegrationDatabase(t, "publisher_baseline")
-	for _, name := range []string{"public_url_publish_credentials", "publish_run_publish_credentials", "ephemeral_public_url_allocations", "authority_revision_states"} {
+	for _, name := range []string{"public_url_publish_credentials", "publish_run_publish_credentials", "ephemeral_public_url_allocations", "authority_revision_states", "tcp_port_claims", "ingress_pool_ports", "private_service_tickets"} {
 		var absent bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NULL`, name).Scan(&absent); err != nil || !absent {
 			t.Fatalf("legacy table %s exists: %v", name, err)
 		}
 	}
-	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publish_run_publisher_grants", "previews", "shares", "feedback_threads", "browser_access_sessions", "tcp_port_claims"} {
+	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publish_run_publisher_grants", "previews", "shares", "feedback_threads", "browser_access_sessions", "publisher_service_runs", "publisher_service_connection_slots", "visitor_devices", "private_visitor_streams"} {
 		var present bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NOT NULL`, name).Scan(&present); err != nil || !present {
 			t.Fatalf("final table %s missing: %v", name, err)
@@ -74,7 +74,7 @@ func publisherAccess(t *testing.T, d *Database, p PublisherIdentity, private ed2
 
 func TestIntegrationPublisherEnrollmentConcurrency(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_enrollment")
-	request := builtinRouteRequest(t, d, now)
+	request := oidcRouteRequest(t, d, now)
 	u := createTestPublicURL(t, d, request, now)
 	e := publisherEnrollment(t, d, request, PublisherScope{TeamID: u.TeamID, Kind: "saved_url", PublicURLID: u.ID}, now)
 	keys := make([]ed25519.PublicKey, 2)
@@ -125,7 +125,7 @@ func TestIntegrationPublisherEnrollmentConcurrency(t *testing.T) {
 
 func TestIntegrationPublisherReplayRotationAndIndependentRevocation(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_replay")
-	request := builtinRouteRequest(t, d, now)
+	request := oidcRouteRequest(t, d, now)
 	u := createTestPublicURL(t, d, request, now)
 	e := publisherEnrollment(t, d, request, PublisherScope{TeamID: u.TeamID, Kind: "saved_url", PublicURLID: u.ID}, now)
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
@@ -209,9 +209,9 @@ func TestIntegrationPublisherReplayRotationAndIndependentRevocation(t *testing.T
 	}
 }
 
-func TestIntegrationPublisherNamespaceOwnershipAndDurableIssuance(t *testing.T) {
+func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_namespace")
-	r := builtinRouteRequest(t, d, now)
+	r := oidcRouteRequest(t, d, now)
 	e := publisherEnrollment(t, d, r, PublisherScope{TeamID: r.TeamID, Kind: "namespace", DomainID: r.DomainID}, now)
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
 	p, err := d.RedeemPublisherEnrollment(t.Context(), e.Key, public, now)
@@ -246,17 +246,23 @@ func TestIntegrationPublisherNamespaceOwnershipAndDurableIssuance(t *testing.T) 
 	if err := d.DeleteAuthorizedPublicURL(t.Context(), wrong, now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("foreign allocation cleanup = %v", err)
 	}
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET removed_at=$2, removed_by_identity_id=identity_id WHERE id=$1`, r.MembershipID, now); err != nil {
-		t.Fatal(err)
-	}
-	_ = publisherAccess(t, d, p, private, "", now)
-	invocation2, _ := opaqueid.New(opaqueid.InvocationPrefix)
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation2, "http://app.internal:3000", []string{}, nil, now); err != nil {
-		t.Fatalf("explicit grant was erased when issuer left: %v", err)
-	}
 	wrong.PublisherIdentityID, wrong.PublisherGrantID = p.ID, p.GrantID
 	if err := d.DeleteAuthorizedPublicURL(t.Context(), wrong, now); err != nil {
 		t.Fatalf("exact allocation cleanup = %v", err)
+	}
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET removed_at=$2, removed_by_identity_id=identity_id WHERE id=$1`, r.MembershipID, now); err != nil {
+		t.Fatal(err)
+	}
+	assertion, err := publisheridentity.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = d.ExchangePublisherAssertion(t.Context(), p.ID, p.GrantID, publisherTestAudience, assertion, "", now); !errors.Is(err, ErrPublisherIdentity) {
+		t.Fatalf("member-owned credential survived removal: %v", err)
+	}
+	invocation2, _ := opaqueid.New(opaqueid.InvocationPrefix)
+	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation2, "http://app.internal:3000", []string{}, nil, now); !errors.Is(err, ErrPublisherIdentity) {
+		t.Fatalf("removed member allocated another URL: %v", err)
 	}
 }
 
@@ -313,7 +319,7 @@ func TestIntegrationPublisherRunRetryAndHeartbeatRevocation(t *testing.T) {
 	if err := d.RevokePublisherGrant(t.Context(), r.TeamID, p.ID, p.GrantID, r.ActingIdentityID, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.HeartbeatPublishRun(t.Context(), auth, now.Add(3*time.Second), time.Minute, time.Minute); !errors.Is(err, ErrPublisherIdentity) {
+	if _, err := d.HeartbeatPublishRun(t.Context(), auth, now.Add(3*time.Second), time.Minute, time.Minute); !errors.Is(err, ErrPublisherIdentity) && !errors.Is(err, ErrPublishRunStale) {
 		t.Fatalf("revoked heartbeat = %v", err)
 	}
 	var closed bool
@@ -324,7 +330,7 @@ func TestIntegrationPublisherRunRetryAndHeartbeatRevocation(t *testing.T) {
 
 func TestIntegrationPublisherReplayRecordsAreBounded(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_replay_bound")
-	r := builtinRouteRequest(t, d, now)
+	r := oidcRouteRequest(t, d, now)
 	u := createTestPublicURL(t, d, r, now)
 	e := publisherEnrollment(t, d, r, PublisherScope{TeamID: u.TeamID, Kind: "saved_url", PublicURLID: u.ID}, now)
 	public, private, _ := ed25519.GenerateKey(rand.Reader)

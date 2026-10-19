@@ -16,8 +16,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func runConfigGenerate(
@@ -98,6 +98,17 @@ func (r *projectMetadataResolver) LoadFallbackServer(ctx context.Context) error 
 }
 
 func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Metadata, error) {
+	hasPublic := r.project.Config.OAuth || len(r.project.Config.Webhooks) != 0 || len(r.project.Config.Aliases) != 0
+	for _, service := range r.project.Config.Services {
+		hasPublic = hasPublic || config.IsPublicService(service)
+	}
+	if !hasPublic {
+		metadata := projectmeta.Metadata{Version: projectmeta.Version, Services: map[string]projectmeta.Service{}}
+		if r.project.Worktree.Label.FullLabel != "" {
+			metadata.Worktree = &projectmeta.Worktree{Label: r.project.Worktree.Label}
+		}
+		return metadata, metadata.Validate()
+	}
 	root, err := r.project.EffectiveService("")
 	if err != nil {
 		return projectmeta.Metadata{}, err
@@ -134,9 +145,13 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 	}
 	names := make([]string, 0, len(r.project.Config.Services))
 	for name := range r.project.Config.Services {
+		if !config.IsPublicService(r.project.Config.Services[name]) {
+			continue
+		}
 		names = append(names, name)
 	}
 	slices.Sort(names)
+	appliedProjects := map[string]controlv1.ProjectPublicMetadata{}
 	for _, name := range names {
 		effective, err := r.project.EffectiveService(name)
 		if err != nil {
@@ -146,15 +161,53 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 		if err != nil {
 			return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
 		}
-		serviceMetadata, err := configuredProjectService(name, r.project.Worktree, effective, serviceContext)
+		var serviceMetadata projectmeta.Service
+		if config.PublisherName(r.project.Config.Services[name]) != "local" {
+			serviceServer, serverErr := r.server(ctx, effective.Server)
+			if serverErr != nil {
+				return projectmeta.Metadata{}, serverErr
+			}
+			source, sourceErr := r.project.SourceIdentity(ctx)
+			if sourceErr != nil {
+				return projectmeta.Metadata{}, sourceErr
+			}
+			key := serviceServer + "\x00" + serviceContext.team.Id
+			applied, found := appliedProjects[key]
+			if !found {
+				client, clientErr := r.client(ctx, serviceServer)
+				if clientErr != nil {
+					return projectmeta.Metadata{}, clientErr
+				}
+				applied, err = client.Control.GetProjectPublicMetadata(ctx, serviceContext.team.Id, source.Key)
+				if err != nil {
+					return projectmeta.Metadata{}, fmt.Errorf("read applied remote service %q; run tnl apply: %w", name, err)
+				}
+				if applied.SourceFingerprint != source.Fingerprint {
+					return projectmeta.Metadata{}, errors.New("applied configuration belongs to another project source")
+				}
+				appliedProjects[key] = applied
+			}
+			hostname := ""
+			var port *int
+			for _, assigned := range applied.Services {
+				if assigned.Service == name {
+					hostname = assigned.Hostname
+					port = &assigned.Port
+				}
+			}
+			if hostname == "" {
+				return projectmeta.Metadata{}, fmt.Errorf("remote service %q has no applied public URL; run tnl apply", name)
+			}
+			domain, domainErr := readyDomainForHostname(serviceContext.domains, hostname)
+			if domainErr != nil {
+				return projectmeta.Metadata{}, domainErr
+			}
+			serviceMetadata, err = projectmeta.NewService(domain.CanonicalDomain, hostname, "http", port)
+		} else {
+			serviceMetadata, err = configuredProjectService(name, r.project.Worktree, effective, serviceContext)
+		}
 		if err != nil {
 			return projectmeta.Metadata{}, fmt.Errorf("service %q: %w", name, err)
-		}
-		if serviceMetadata.Protocol != "http" {
-			serviceMetadata, err = r.reserveTCPMetadata(ctx, name, effective, serviceMetadata)
-			if err != nil {
-				return projectmeta.Metadata{}, err
-			}
 		}
 		if paths := config.ServicePaths(r.project.Config.Services[name]); len(paths) > 0 {
 			serviceMetadata.Paths = make(map[string]projectmeta.Path, len(paths))
@@ -267,41 +320,7 @@ func configuredProjectService(
 		return projectmeta.Service{}, err
 	}
 	protocol := config.ServiceProtocol(effective.Publish)
-	if protocol != "http" {
-		return projectmeta.Service{Namespace: namespaceForMembership(current, domain), Hostname: hostname, Protocol: protocol}, nil
-	}
 	return projectmeta.NewService(namespaceForMembership(current, domain), hostname, protocol, nil)
-}
-
-func (r *projectMetadataResolver) reserveTCPMetadata(ctx context.Context, name string, effective config.TNL, selected projectmeta.Service) (projectmeta.Service, error) {
-	server, err := r.server(ctx, effective.Server)
-	if err != nil {
-		return projectmeta.Service{}, err
-	}
-	authenticated, err := r.client(ctx, server)
-	if err != nil {
-		return projectmeta.Service{}, err
-	}
-	services, err := preparePublisherServices(ctx, r.state, server, "https://"+selected.Hostname, "", "", valueOrEmpty(effective.Team), false, authenticated)
-	if err != nil {
-		return projectmeta.Service{}, err
-	}
-	flags := tunnelFlags{}
-	applyTunnelConfiguration(&flags, effective.Tunnel)
-	policy, err := resolveVisitorAccess(ctx, authenticated.Control, flags.access, flags.Anonymous, flags.IP)
-	if err != nil {
-		return projectmeta.Service{}, err
-	}
-	cfg := services.config("", policy.prefixes, publisher.ApplicationLimits{})
-	if policy.explicit {
-		cfg.AccessMode = policy.access
-	}
-	cfg.ServiceProtocol = protocolForService(r.project.Config.Services[name])
-	route, err := reserveConfiguredURL(ctx, services, cfg)
-	if err != nil {
-		return projectmeta.Service{}, err
-	}
-	return projectmeta.NewService(selected.Namespace, selected.Hostname, selected.Protocol, route.PublicPort)
 }
 
 func (r *projectMetadataResolver) resolveContext(

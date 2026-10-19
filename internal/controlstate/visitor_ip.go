@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"strconv"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -83,23 +83,19 @@ func (d *Database) refreshVisitorIPPolicy(ctx context.Context, q *controlstatedb
 	if err != nil {
 		return err
 	}
-	run, err := q.GetOpenPublishRun(ctx, urlID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if _, err = q.LockPublishRun(ctx, run.ID); err != nil {
-		return err
-	}
-	connections, err := validReadyPublisherConnections(ctx, q, run.ID, now)
+	runs, err := q.ListOpenPublishRuns(ctx, urlID)
 	if err != nil {
 		return err
 	}
 	pending := pendingIngressRoutingTableEvents{}
-	if err = pending.addPublisherConnectionChanges(ctx, q, url, run, connections, now); err != nil {
-		return err
+	for _, run := range runs {
+		connections, err := validReadyPublisherConnections(ctx, q, run.ID, now)
+		if err != nil {
+			return err
+		}
+		if err = pending.addPublisherConnectionChanges(ctx, q, url, run, connections, now); err != nil {
+			return err
+		}
 	}
 	return pending.publish(ctx, q)
 }
@@ -131,10 +127,10 @@ func (d *Database) ReplaceVisitorAccess(ctx context.Context, urlID, actorID stri
 	if url.Purpose != "app" && url.Purpose != "alias" {
 		return result, ErrPublicURLInvalid
 	}
-	if url.ServiceProtocol == "ssh" && mode != VisitorAccessAnonymous {
-		return result, ErrPublicURLInvalid
-	}
 	if err = visitorManager(ctx, q, url, actorID); err != nil {
+		return result, err
+	}
+	if err = rejectProjectManagedDefinition(ctx, tx, urlID); err != nil {
 		return result, err
 	}
 	changed, err := q.SetPublicURLAccessMode(ctx, controlstatedb.SetPublicURLAccessModeParams{
@@ -176,6 +172,9 @@ func (d *Database) ReplaceVisitorAccess(ctx context.Context, urlID, actorID stri
 	}
 	result = publicURLFromModel(updated, "")
 	result.AllowedIPPrefixes = prefixes
+	if err = auditPublicMutation(ctx, tx, urlID, actorID, "service.update", "access/"+strconv.FormatInt(updated.MutationRevision, 10), now); err != nil {
+		return result, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return PublicURL{}, err
 	}
@@ -204,6 +203,11 @@ func (d *Database) MutateVisitorIPs(ctx context.Context, urlID, actorID, operati
 	}
 	if err = visitorManager(ctx, q, url, actorID); err != nil {
 		return nil, err
+	}
+	if operation != "list" {
+		if err = rejectProjectManagedDefinition(ctx, tx, urlID); err != nil {
+			return nil, err
+		}
 	}
 	initialized, err := q.HasVisitorIPSet(ctx, urlID)
 	if err != nil {
@@ -264,6 +268,15 @@ func (d *Database) MutateVisitorIPs(ctx context.Context, urlID, actorID, operati
 	if len(result) > 256 {
 		return nil, ErrPublicURLInvalid
 	}
+	if operation != "list" {
+		updated, err := q.LockPublicURLForRun(ctx, urlID)
+		if err != nil {
+			return nil, err
+		}
+		if err = auditPublicMutation(ctx, tx, urlID, actorID, "service.update", "ip/"+strconv.FormatInt(updated.MutationRevision, 10), now); err != nil {
+			return nil, err
+		}
+	}
 	return result, tx.Commit(ctx)
 }
 
@@ -308,7 +321,13 @@ func (d *Database) ExpireVisitorPermissions(ctx context.Context, now time.Time) 
 	if err := q.CleanupVisitorHandoffs(ctx, timestamptz(now)); err != nil {
 		return err
 	}
-	return q.CleanupVisitorLogins(ctx, timestamptz(now))
+	if err := q.CleanupVisitorLogins(ctx, timestamptz(now)); err != nil {
+		return err
+	}
+	if err := q.CleanupManagedHTTPLogins(ctx, timestamptz(now)); err != nil {
+		return err
+	}
+	return q.CleanupManagedHTTPSessions(ctx, timestamptz(now))
 }
 
 func (d *Database) visitorIPAllowed(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, source string, now time.Time) (bool, *time.Time, error) {

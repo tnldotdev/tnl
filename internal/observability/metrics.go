@@ -15,6 +15,7 @@ import (
 
 // Metrics owns a process-local Prometheus registry.
 type Metrics struct {
+	serviceAudit            *prometheus.CounterVec
 	registry                *prometheus.Registry
 	relayLeaseMu            sync.Mutex
 	relayLeaseExpiry        map[string]time.Time
@@ -33,7 +34,6 @@ type Metrics struct {
 	drainingRejections      prometheus.Counter
 	capacityLimits          *prometheus.GaugeVec
 	inspectionFailures      *prometheus.CounterVec
-	challengeRejections     *prometheus.CounterVec
 	forwardedBytes          *prometheus.CounterVec
 	trafficAdmissions       *prometheus.CounterVec
 	relayAttempts           *prometheus.CounterVec
@@ -86,6 +86,7 @@ func New(role string) *Metrics {
 	})
 	info.Set(1)
 	metrics := &Metrics{
+		serviceAudit:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_service_audit_events_total", Help: "Process-local service audit queue and ingestion counts by fixed result; queued observations can be lost on a crash."}, []string{"result"}),
 		registry:               registry,
 		relayLeaseExpiry:       make(map[string]time.Time),
 		relayCertificateExpiry: make(map[string]time.Time),
@@ -113,9 +114,6 @@ func New(role string) *Metrics {
 		inspectionFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_ingress_inspection_failures_total", Help: "Ingress connections rejected before classification by fixed failure stage.",
 		}, []string{"stage"}),
-		challengeRejections: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tnl_ingress_challenge_rejections_total", Help: "ACME TLS-ALPN connections rejected before relay forwarding by fixed reason.",
-		}, []string{"reason"}),
 		forwardedBytes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tnl_ingress_forwarded_bytes_total", Help: "Bytes forwarded through ingress, recorded after a copy finishes.",
 		}, []string{"direction"}),
@@ -191,7 +189,10 @@ func New(role string) *Metrics {
 		assignmentReplacements:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tnl_control_connection_assignments_replaced_total", Help: "Committed replacement of connection assignments by fixed reason."}, []string{"reason"}),
 	}
 	registered := []prometheus.Collector{
-		info, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		info, metrics.serviceAudit, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	}
+	for _, result := range []string{"queued", "delivered", "retry", "dropped", "accepted", "duplicate"} {
+		metrics.serviceAudit.WithLabelValues(result).Add(0)
 	}
 	if role == "control" || role == "standalone" {
 		registered = append(registered, metrics.routingHistoryRows, metrics.routingHistorySkipped,
@@ -220,10 +221,10 @@ func New(role string) *Metrics {
 			metrics.ingressStreams, metrics.ingressConnections, metrics.visitorConnections, metrics.visitorOpenDuration,
 			metrics.capacityRejections, metrics.drainingRejections, metrics.forwardedBytes, metrics.relayAttempts,
 			metrics.trafficAdmissions,
-			metrics.inspectionFailures, metrics.challengeRejections, metrics.ingressOperations,
+			metrics.inspectionFailures, metrics.ingressOperations,
 			metrics.recoveryPending, metrics.recoveryAttempts, metrics.usageRetained,
 		)
-		for _, class := range []string{"client_hello", "public", "denied", "challenge", "control", "relay_tcp"} {
+		for _, class := range []string{"client_hello", "public", "denied", "control", "relay_tcp"} {
 			metrics.ingressConnections.WithLabelValues(class).Set(0)
 		}
 	}
@@ -292,7 +293,7 @@ func (m *Metrics) RegisterIngressLease(source func() time.Time) {
 // RegisterControlCertificate reads certificate material already in this process.
 func (m *Metrics) RegisterControlCertificate(source func() time.Time) {
 	m.registry.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "tnl_control_tls_certificate_expiration_timestamp_seconds", Help: "Earliest locally loaded public control certificate expiry; zero when any configured hostname is not yet loaded.",
+		Name: "tnl_control_tls_certificate_expiration_timestamp_seconds", Help: "Locally loaded internal control certificate expiry. Public control TLS belongs to the deployment proxy.",
 	}, func() float64 { return routingTimestamp(source()) }))
 }
 
@@ -368,8 +369,7 @@ func (m *Metrics) SetCapacityLimit(resource string, limit int64) {
 func admissionResource(resource string) bool {
 	switch resource {
 	case "client_hello_connections", "public_connections", "public_url_connections",
-		"denied_connections", "denied_public_url_connections", "challenge_connections",
-		"challenge_hostname_connections", "control_connections", "relay_tcp_connections",
+		"denied_connections", "denied_public_url_connections", "control_connections", "relay_tcp_connections",
 		"publisher_connections", "relay_streams":
 		return true
 	case "process_connection_rate", "source_connection_rate", "source_connections", "public_url_connection_rate", "public_url_connection_total",
@@ -383,14 +383,6 @@ func (m *Metrics) IncInspectionFailure(stage string) {
 	switch stage {
 	case "deadline", "metadata", "client_hello", "hostname":
 		m.inspectionFailures.WithLabelValues(stage).Inc()
-	}
-}
-
-func (m *Metrics) IncChallengeRejection(reason string) {
-	switch reason {
-	case "unconfigured", "unavailable", "invalid_hostname", "uninitialized", "missing", "tombstone",
-		"public_url_expired", "backend_expired", "ingress_unavailable", "invalid_projection":
-		m.challengeRejections.WithLabelValues(reason).Inc()
 	}
 }
 

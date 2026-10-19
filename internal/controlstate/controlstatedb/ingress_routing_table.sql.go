@@ -224,13 +224,12 @@ WITH latest AS (
     SELECT max(history.id) AS routing_table_revision
     FROM control.ingress_routing_table_events AS history
     WHERE history.id <= $2
-    GROUP BY history.canonical_hostname,
-        CASE WHEN history.event_kind IN ('public_url_upsert', 'public_url_tombstone') THEN 'public_url' ELSE 'challenge' END
+    GROUP BY history.canonical_hostname, history.public_url_id, history.publish_run_number
 )
 SELECT events.id, events.event_kind, events.public_url_id, events.publish_run_number, events.canonical_hostname, events.entry_revision, events.projection, events.policy_ciphertext, events.policy_storage_key_id, events.public_url_expires_at, events.created_at
 FROM latest
 JOIN control.ingress_routing_table_events AS events ON events.id = latest.routing_table_revision
-WHERE events.event_kind IN ('public_url_upsert', 'challenge_upsert')
+WHERE events.event_kind = 'public_url_upsert'
   AND events.public_url_expires_at > $1
 ORDER BY events.canonical_hostname
 `
@@ -241,7 +240,7 @@ type ListIngressRoutingTableSnapshotParams struct {
 }
 
 // select the latest revision for each entry before filtering kind or expiry;
-// filtering first could revive a superseded public URL or challenge.
+// filtering first could revive a superseded public URL.
 func (q *Queries) ListIngressRoutingTableSnapshot(ctx context.Context, arg ListIngressRoutingTableSnapshotParams) ([]ControlIngressRoutingTableEvent, error) {
 	rows, err := q.db.Query(ctx, listIngressRoutingTableSnapshot, arg.Now, arg.ThroughRevision)
 	if err != nil {

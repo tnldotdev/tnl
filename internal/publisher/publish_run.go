@@ -12,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/tcpport"
+	"github.com/tnldotdev/tnl/internal/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -56,19 +56,19 @@ func runSession(
 		setup.PublishRun.TeamId != setup.PublicUrl.TeamId {
 		return errors.New("publisher: server returned a different publish run")
 	}
-	var publicPort uint16
-	if setup.PublicUrl.PublicPort != nil {
-		if !tcpport.Valid(*setup.PublicUrl.PublicPort) {
-			return errors.New("publisher: server returned invalid TCP public port")
-		}
-		publicPort = uint16(*setup.PublicUrl.PublicPort)
+	if setup.PublicUrl.ServiceProtocol != controlv1.Http {
+		return errors.New("publisher: public HTTPS requires a certificate plan; private services use private publisher runs")
 	}
 	plan, err := certificateidentity.CanonicalPlan(setup.CertificatePlan)
 	if err != nil || !certificateidentity.Covers(plan.Identifiers, setup.PublicUrl.CanonicalHostname) {
 		return errors.New("publisher: server returned an invalid certificate plan")
 	}
 	setup.CertificatePlan = plan
-	state, err := config.State.Certificates(setup.PublicUrl.TeamId, plan)
+	config.PublisherID, err = configuredPublisherID(config)
+	if err != nil {
+		return err
+	}
+	state, err := config.State.CertificatesForPublisher(setup.PublicUrl.TeamId, config.PublisherID, plan)
 	if err != nil {
 		return err
 	}
@@ -77,6 +77,32 @@ func runSession(
 		return errors.New("publisher: server returned invalid publish run token")
 	}
 	version := uint64(setup.PublishRun.PublishRunNumber)
+	var auditSink serviceaudit.Sink
+	if reporter, ok := config.Control.(interface {
+		ReportPublisherServiceObservations(context.Context, string, uint64, credentials.PublishRunToken, serviceaudit.Batch) error
+	}); ok {
+		queue, err := serviceaudit.NewQueue(context.WithoutCancel(ctx), serviceaudit.QueueConfig{
+			Report: func(ctx context.Context, batch serviceaudit.Batch) error {
+				return reporter.ReportPublisherServiceObservations(ctx, setup.PublishRun.Id, version, publishRunToken, batch)
+			},
+			Dropped: func(count uint64) {
+				if config.Logf != nil {
+					config.Logf("publisher: service audit dropped %d observations", count)
+				}
+			},
+		})
+		if err != nil {
+			return err
+		}
+		auditSink = queue
+		defer func() {
+			flush, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			if queue.Close(flush) != nil && config.Logf != nil {
+				config.Logf("publisher: service audit flush incomplete")
+			}
+		}()
+	}
 	progress := func(stage string) error {
 		return observe(config, Event{Type: EventProvisioningStep, PublicURLID: setup.PublicUrl.Id,
 			Hostname: setup.PublicUrl.CanonicalHostname, PublishRunNumber: version, ProvisioningStage: stage})
@@ -183,18 +209,6 @@ func runSession(
 	}
 	var material clientstate.Material
 	identity := PublishRunIdentity{Hostname: setup.PublicUrl.CanonicalHostname, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, Number: version}
-	authorizeVisitor := config.AuthorizeVisitorCertificate
-	if authorizeVisitor == nil {
-		var candidate any = config.Control
-		if config.VisitorControl != nil {
-			candidate = config.VisitorControl
-		}
-		if client, ok := candidate.(VisitorCertificateAuthorizer); ok {
-			authorizeVisitor = VisitorCertificateAuthorization(client, controlclient.VisitorCertificateScope{
-				PublishRunID: setup.PublishRun.Id, PublicURLID: setup.PublicUrl.Id, PublishRunNumber: version, PublishRunToken: publishRunToken,
-			})
-		}
-	}
 	var readiness *ReadinessProof
 	if config.ReadinessProof != nil {
 		readiness = config.ReadinessProof(identity)
@@ -203,27 +217,32 @@ func runSession(
 	if err != nil {
 		return err
 	}
+	browser := browserAccessForRun(config, setup, publishRunToken, shareRuntime)
+	observeVisitorPolicy := func(revision int64) {
+		if browser != nil && browser.decisions != nil {
+			browser.decisions.invalidate(revision)
+		}
+	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
-		BrowserAccess:         browserAccessForRun(config, setup, publishRunToken, shareRuntime),
+		AuditSink:             auditSink,
+		BrowserAccess:         browser,
 		BrowserLoginAvailable: config.BrowserLoginAvailable,
 		PreviewID:             config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, PublishRunNumber: version,
 		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, ResolveTarget: config.ResolveTarget, TargetOptions: config.TargetOptions, CertificatePlan: plan,
-		ServiceProtocol: setup.PublicUrl.ServiceProtocol, TargetTLSName: config.TargetTLSName, TargetTLS: config.TargetTLS,
-		Purpose:                     setup.PublicUrl.Purpose,
-		AccessMode:                  setup.PublicUrl.AccessMode,
-		PromoteVisitor:              config.PromoteVisitor,
-		AdmitVisitor:                config.AdmitVisitor,
-		AuthorizeVisitorCertificate: authorizeVisitor,
-		ReadinessProof:              readiness,
-		OnWarning:                   config.OnWarning,
-		PublicPort:                  publicPort,
-		Mounts:                      config.Mounts,
-		ShareAccess:                 shareRuntime,
-		Feedback:                    feedback,
-		Limits:                      config.Limits,
-		ObserveSummary:              config.ObserveSummary,
-		InspectionMode:              config.InspectionMode,
-		Handler:                     config.Handler,
+		ServiceProtocol: setup.PublicUrl.ServiceProtocol, TargetTLSName: config.TargetTLSName,
+		Purpose:        setup.PublicUrl.Purpose,
+		AccessMode:     setup.PublicUrl.AccessMode,
+		PromoteVisitor: config.PromoteVisitor,
+		AdmitVisitor:   config.AdmitVisitor,
+		ReadinessProof: readiness,
+		OnWarning:      config.OnWarning,
+		Mounts:         config.Mounts,
+		ShareAccess:    shareRuntime,
+		Feedback:       feedback,
+		Limits:         config.Limits,
+		ObserveSummary: config.ObserveSummary,
+		InspectionMode: config.InspectionMode,
+		Handler:        config.Handler,
 		AdmitRequest: func(request *http.Request) error {
 			if config.AdmitRequest == nil {
 				return nil
@@ -243,6 +262,10 @@ func runSession(
 	})
 	if err != nil {
 		return err
+	}
+	observePolicy := func(revision int64) { observeVisitorPolicy(revision); route.invalidateVisitorPolicy(revision) }
+	if observedHeartbeat {
+		observePolicy(heartbeat.VisitorPolicyRevision)
 	}
 	defer route.Close()
 	if err := route.Start(); err != nil {
@@ -317,6 +340,7 @@ func runSession(
 		err := heartbeatSessionAfterUpdate(
 			sessionCtx, config.Control, setup.PublishRun.Id, version, publishRunToken, heartbeat.PublishRun.ExpiresAt,
 			connections.Update, observePolicyDenials, config.heartbeatInterval,
+			observePolicy,
 		)
 		if err != nil && parentCanceledSession(parentCtx, sessionCtx) {
 			err = nil

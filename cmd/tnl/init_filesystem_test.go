@@ -56,7 +56,7 @@ func TestProjectTypeIncludeActionsPreserveConfiguration(t *testing.T) {
 		wantAction   bool
 	}{
 		{"missing_include", "{\n  \"include\": [\"src/**/*.ts\"]\n}\n", true},
-		{"included", "{\n  \"include\": [\"src/**/*.ts\", \".tnl/project.d.ts\"]\n}\n", false},
+		{"included", "{\n  \"include\": [\"src/**/*.ts\", \".tnl/local/project.d.ts\"]\n}\n", false},
 		{"jsonc", "{\n  // preserve this JSONC file\n  \"include\": [\"src\"]\n}\n", true},
 		{"duplicate_keys", "{\n  \"include\": [\"src\"],\n  \"include\": [\"generated\"]\n}\n", true},
 	} {
@@ -68,7 +68,7 @@ func TestProjectTypeIncludeActionsPreserveConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if test.wantAction && (len(actions) != 1 || !strings.Contains(actions[0], `".tnl/project.d.ts"`) || !strings.Contains(actions[0], path)) || !test.wantAction && len(actions) != 0 {
+			if test.wantAction && (len(actions) != 1 || !strings.Contains(actions[0], `".tnl/local/project.d.ts"`) || !strings.Contains(actions[0], path)) || !test.wantAction && len(actions) != 0 {
 				t.Fatalf("actions = %v", actions)
 			}
 			after, err := os.ReadFile(path)
@@ -93,7 +93,7 @@ func TestProjectTypeIncludeActionUsesRootWithoutNamedServices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 1 || !strings.Contains(actions[0], `".tnl/project.d.ts"`) {
+	if len(actions) != 1 || !strings.Contains(actions[0], `".tnl/local/project.d.ts"`) {
 		t.Fatalf("actions = %v", actions)
 	}
 	data, err := os.ReadFile(path)
@@ -118,7 +118,7 @@ func TestProjectTypeIncludeActionDoesNotInferNestedServiceDirectory(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 1 || !strings.Contains(actions[0], filepath.Join(root, "tsconfig.json")) || !strings.Contains(actions[0], `".tnl/project.d.ts"`) || strings.Contains(actions[0], nestedPath) {
+	if len(actions) != 1 || !strings.Contains(actions[0], filepath.Join(root, "tsconfig.json")) || !strings.Contains(actions[0], `".tnl/local/project.d.ts"`) || strings.Contains(actions[0], nestedPath) {
 		t.Fatalf("actions = %v", actions)
 	}
 	if got, err := os.ReadFile(nestedPath); err != nil || !bytes.Equal(got, source) {
@@ -131,9 +131,17 @@ func TestInitGitignoreGroupsNewRuleAndPreservesExistingRules(t *testing.T) {
 		name, before, want string
 		updated            bool
 	}{
-		{"new", "", "# tnl\n.tnl/\n", true},
-		{"existing", "node_modules/", "node_modules/\n# tnl\n.tnl/\n", true},
-		{"already ignored", "node_modules/\n.tnl/\n", "node_modules/\n.tnl/\n", false},
+		{"new", "", "# tnl\n/.tnl/local/\n", true},
+		{"existing", "node_modules/", "node_modules/\n# tnl\n/.tnl/local/\n", true},
+		{"already ignored", "node_modules/\n/.tnl/local/\n", "node_modules/\n/.tnl/local/\n", false},
+		{"generated broad", "# tnl\n.tnl/\n", "# tnl\n/.tnl/local/\n", true},
+		{"generated anchored", "# tnl\n/.tnl/\n", "# tnl\n/.tnl/local/\n", true},
+		{"custom broad", "# custom\n.tnl/\n", "# custom\n.tnl/\n# tnl\n/.tnl/local/\n", true},
+		{"custom block", "# tnl\n# custom\n.tnl/\n", "# tnl\n# custom\n.tnl/\n# tnl\n/.tnl/local/\n", true},
+		{"crlf", "# keep\r\nnode_modules/\r\n# tnl\r\n.tnl/\r\n# end\r\n", "# keep\r\nnode_modules/\r\n# tnl\r\n/.tnl/local/\r\n# end\r\n", true},
+		{"append crlf", "# keep\r\nnode_modules/", "# keep\r\nnode_modules/\r\n# tnl\r\n/.tnl/local/\r\n", true},
+		{"no final newline", "# tnl\n.tnl/", "# tnl\n/.tnl/local/", true},
+		{"mixed endings", "# keep\r\n# tnl\n.tnl/\r\n# end", "# keep\r\n# tnl\n/.tnl/local/\r\n# end", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -173,7 +181,7 @@ func TestInitReportsTypeIncludeForExistingProjectConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(got, source) || !strings.Contains(output.String(), `.tnl/project.d.ts`) || !strings.Contains(output.String(), "ignored") {
+	if err != nil || !bytes.Equal(got, source) || !strings.Contains(output.String(), `.tnl/local/project.d.ts`) || !strings.Contains(output.String(), "ignore") {
 		t.Fatalf("tsconfig = %s, output = %s, err = %v", got, output.String(), err)
 	}
 }

@@ -375,7 +375,7 @@ func relayServiceProgressSessionsWithSharedTeam(t *testing.T, sharedTeam bool) (
 			MembershipID: "membership_" + suffix,
 			RetrySecret:  bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
 			PolicyRevision: 1, ExpectedMutationRevision: 1, CertificateCacheKey: suffix, CertificateScope: "route",
-			CertificateIdentifiers: []string{"route-" + suffix + ".example.test"}, CertificateChallenge: "tls-alpn-01",
+			CertificateIdentifiers: []string{"route-" + suffix + ".example.test"}, CertificateChallenge: "dns-01",
 		}
 		if sharedTeam && index == 1 {
 			request.TeamID = "team_relayprogress0"

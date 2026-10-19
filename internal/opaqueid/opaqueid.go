@@ -58,6 +58,7 @@ const (
 	VisitorConnectionPrefix          = "vc_"
 	PreviewPrefix                    = "pv_"
 	PrivateServicePrefix             = "psvc_"
+	VisitorDevicePrefix              = "vdev_"
 	PrivateRunPrefix                 = "psrun_"
 	PrivateConnectorSessionPrefix    = "pcs_"
 	PrivateServiceInvitationPrefix   = "psivt_"

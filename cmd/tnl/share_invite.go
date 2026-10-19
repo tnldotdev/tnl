@@ -51,6 +51,10 @@ func runShareInviteCreate(ctx context.Context, f shareInviteCreateCommand, o, d 
 		return err
 	}
 	defer s.Close()
+	return createShareInvitation(ctx, s, f, duration, o)
+}
+
+func createShareInvitation(ctx context.Context, s *teamSession, f shareInviteCreateCommand, duration time.Duration, o io.Writer) error {
 	item, err := resolveVisitorPublicURL(ctx, s, f.URL)
 	if err != nil {
 		return err
@@ -82,7 +86,8 @@ func runShareInviteAccept(ctx context.Context, f shareInviteAcceptCommand, o, d 
 	if err != nil {
 		return err
 	}
-	return writeHumanFrame(o, "tnl share invite accept", "accepted", "", clioutput.Fields(clioutput.Field{Label: "public URL ID", Value: grant.PublicUrlId}, clioutput.Field{Label: "grant ID", Value: grant.Id}))
+	fields := []clioutput.Field{{Label: "public URL ID", Value: grant.PublicUrlId}, {Label: "grant ID", Value: grant.Id}}
+	return writeHumanFrame(o, "tnl share invite accept", "accepted", "", clioutput.Fields(fields...))
 }
 func runShareInviteList(ctx context.Context, f shareInviteListCommand, o, d io.Writer) error {
 	s, err := openTeamSession(ctx, f.remoteFlags, "tnl share invite list", d)
@@ -103,7 +108,8 @@ func runShareInviteList(ctx context.Context, f shareInviteListCommand, o, d io.W
 	}
 	blocks := []clioutput.Block{}
 	for _, invite := range invites {
-		blocks = append(blocks, clioutput.Section(invite.Id, clioutput.Fields(clioutput.Field{Label: "email", Value: invite.Email}, clioutput.Field{Label: "expires", Value: invite.ExpiresAt.UTC().Format(time.RFC3339)})))
+		fields := []clioutput.Field{{Label: "email", Value: invite.Email}, {Label: "expires", Value: invite.ExpiresAt.UTC().Format(time.RFC3339)}}
+		blocks = append(blocks, clioutput.Section(invite.Id, clioutput.Fields(fields...)))
 	}
 	return writeHumanFrame(o, "tnl share invite list", countState(len(invites), "invitation", "invitations"), "", blocks...)
 }

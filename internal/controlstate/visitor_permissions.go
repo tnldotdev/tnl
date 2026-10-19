@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -32,13 +31,9 @@ func (d *Database) httpVisitorDecision(ctx context.Context, q *controlstatedb.Qu
 			if ipExpires != nil {
 				result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, *ipExpires)
 			}
-		} else if !errors.Is(verifyErr, ErrVisitorSignIn) {
+		} else {
 			return result, verifyErr
 		}
-	}
-	if url.AccessMode == string(VisitorAccessAnonymous) {
-		result.VisitAllowed, result.Reason = true, "anonymous"
-		return result, nil
 	}
 	if result.VisitAllowed {
 		return result, nil
@@ -72,10 +67,18 @@ func (d *Database) httpVisitorDecision(ctx context.Context, q *controlstatedb.Qu
 			result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, expires.Time)
 		}
 	}
+	if input.ShareID == "" && len(input.ShareSecret) == 0 && len(input.ShareCookieSecret) == 0 && (input.BrowserCookieSecret == "" || result.Authenticated) && url.AccessMode == string(VisitorAccessAnonymous) {
+		result.VisitAllowed, result.Reason = true, "anonymous"
+	}
 	return result, nil
 }
 
 func (d *Database) HTTPVisitorPermission(ctx context.Context, auth PublishRunAuthentication, input HTTPVisitorRequest, now time.Time) (result VisitorPermission, retErr error) {
+	// HTTP chooses one credential before authorization. feedback may separately
+	// verify an author and a URL-scoped share; it retains its own actor boundary.
+	if input.BrowserCookieSecret != "" && (input.ShareID != "" || len(input.ShareSecret) != 0 || len(input.ShareCookieSecret) != 0) || len(input.ShareSecret) != 0 && len(input.ShareCookieSecret) != 0 {
+		return result, ErrVisitorSignIn
+	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -115,12 +118,13 @@ var ErrVisitorSignIn = errors.New("visitor sign-in required")
 
 // VisitorPermission is a current decision, not a reusable authorization token.
 type VisitorPermission struct {
-	IdentityID   string
-	DisplayName  string
-	TeamMember   bool
-	VisitAllowed bool
-	Reason       string
-	ExpiresAt    *time.Time
+	Authenticated bool
+	IdentityID    string
+	DisplayName   string
+	TeamMember    bool
+	VisitAllowed  bool
+	Reason        string
+	ExpiresAt     *time.Time
 }
 
 // lockVisitorURL follows team -> URL -> run -> session -> identity lock order.
@@ -173,6 +177,21 @@ func identityPermission(ctx context.Context, q *controlstatedb.Queries, urlID, i
 	if err != nil {
 		return result, err
 	}
+	allowed, err := q.CompanySubjectSessionAuthorized(ctx, controlstatedb.CompanySubjectSessionAuthorizedParams{TeamID: url.TeamID, IdentityID: identityID, SessionID: companySessionID(ctx, identityID), Now: timestamptz(now)})
+	if err != nil {
+		return result, err
+	}
+	if !allowed {
+		active, err := q.ActiveTeamSubject(ctx, controlstatedb.ActiveTeamSubjectParams{TeamID: url.TeamID, IdentityID: identityID, Now: timestamptz(now)})
+		if err != nil {
+			return result, err
+		}
+		if !active {
+			return result, nil
+		}
+		return result, ErrVisitorSignIn
+	}
+	result.Authenticated = true
 	_, err = q.VisitorCurrentMembership(ctx, controlstatedb.VisitorCurrentMembershipParams{TeamID: url.TeamID, IdentityID: identityID})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
@@ -186,6 +205,13 @@ func identityPermission(ctx context.Context, q *controlstatedb.Queries, urlID, i
 		return result, err
 	}
 	result.VisitAllowed, result.Reason, result.ExpiresAt = true, row.Reason, optionalTime(row.ExpiresAt)
+	deadline, err := q.CompanySubjectDeadline(ctx, controlstatedb.CompanySubjectDeadlineParams{TeamID: url.TeamID, IdentityID: identityID, SessionID: companySessionID(ctx, identityID), Now: timestamptz(now)})
+	if err != nil {
+		return VisitorPermission{}, err
+	}
+	if deadline.InfinityModifier == 0 {
+		result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, deadline.Time)
+	}
 	return result, nil
 }
 
@@ -251,6 +277,15 @@ func (d *Database) browserPermission(ctx context.Context, q *controlstatedb.Quer
 	if err != nil {
 		return VisitorPermission{}, err
 	}
+	accessID, _, err := credentials.ParseAccessToken(credentials.AccessToken(access))
+	if err != nil {
+		return VisitorPermission{}, ErrVisitorSignIn
+	}
+	controlSession, err := q.LockVisitorControlSession(ctx, accessID.String())
+	if err != nil {
+		return VisitorPermission{}, err
+	}
+	ctx = WithControlPrincipal(ctx, ControlPrincipal{SessionID: controlSession.ID, IdentityID: row.IdentityID})
 	result, err := identityPermission(ctx, q, urlID, row.IdentityID, row.PreviewID.String, now)
 	if err != nil {
 		return result, err
@@ -320,106 +355,4 @@ func (d *Database) lockAuthenticatedRun(ctx context.Context, q *controlstatedb.Q
 		return run, ErrPublishRunStale
 	}
 	return run, nil
-}
-
-// DatabaseVisitorPermission rechecks live identity and grants on every new
-// connection. certificate validity is checked by control before this method.
-func (d *Database) DatabaseVisitorPermission(ctx context.Context, auth PublishRunAuthentication, identityID, sourceIP string, now time.Time) (result VisitorPermission, retErr error) {
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		return result, err
-	}
-	defer rollback(ctx, tx, "authorize database visitor", &retErr)()
-	q := controlstatedb.New(tx)
-	url, err := lockVisitorURL(ctx, q, auth.PublicURLID)
-	if err != nil {
-		return result, err
-	}
-	if url.Purpose != "app" || !databaseProtocol(url.ServiceProtocol) {
-		return result, ErrPreviewAccess
-	}
-	run, err := d.lockAuthenticatedRun(ctx, q, auth, now)
-	if err != nil {
-		return result, err
-	}
-	ip, ipExpires, err := d.visitorIPAllowed(ctx, q, url, sourceIP, now)
-	if err != nil || !ip {
-		return result, err
-	}
-	if url.AccessMode == string(VisitorAccessAnonymous) {
-		result.VisitAllowed, result.Reason = true, "anonymous"
-	} else if identityID != "" {
-		result, err = identityPermission(ctx, q, url.ID, identityID, "", now)
-	}
-	if err != nil {
-		return result, err
-	}
-	if result.VisitAllowed {
-		if ipExpires != nil {
-			result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, *ipExpires)
-		}
-		result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, run.PublisherExpiresAt.Time)
-		result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, now.Add(2*time.Minute))
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return VisitorPermission{}, err
-	}
-	return result, nil
-}
-
-func databaseProtocol(protocol string) bool {
-	return protocol == "postgres" || protocol == "mysql" || protocol == "redis"
-}
-
-// IssueVisitorCertificateScope keeps issuance authorization and signing in one
-// transaction. the callback receives only control-selected identity and URL IDs.
-func (d *Database) IssueVisitorCertificateScope(ctx context.Context, access credentials.AccessToken, urlID string, now time.Time,
-	sign func(string, string, time.Time) ([]byte, error)) (certificate []byte, expires time.Time, retErr error) {
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		return nil, expires, err
-	}
-	defer rollback(ctx, tx, "issue visitor certificate", &retErr)()
-	q := controlstatedb.New(tx)
-	url, err := lockVisitorURL(ctx, q, urlID)
-	if err != nil {
-		return nil, expires, err
-	}
-	if url.Purpose != "app" || !databaseProtocol(url.ServiceProtocol) {
-		return nil, expires, ErrPreviewAccess
-	}
-	id, _, err := credentials.ParseAccessToken(access)
-	if err != nil {
-		return nil, expires, ErrVisitorSignIn
-	}
-	session, err := q.LockVisitorControlSession(ctx, id.String())
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, expires, ErrVisitorSignIn
-		}
-		return nil, expires, err
-	}
-	if _, err = currentVisitorSession(ctx, q, access.String(), session.IdentityID, "", now); err != nil {
-		return nil, expires, err
-	}
-	permission, err := identityPermission(ctx, q, urlID, session.IdentityID, "", now)
-	if err != nil {
-		return nil, expires, err
-	}
-	if !permission.VisitAllowed {
-		return nil, expires, ErrPreviewAccess
-	}
-	expires = now.Add(7*24*time.Hour - time.Minute)
-	if permission.ExpiresAt != nil && permission.ExpiresAt.Before(expires) {
-		expires = *permission.ExpiresAt
-	}
-	expires = expires.UTC().Truncate(time.Second)
-	certificate, err = sign(urlID, permission.IdentityID, expires)
-	if err != nil {
-		return nil, expires, fmt.Errorf("sign visitor certificate: %w", err)
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return nil, expires, err
-	}
-	return certificate, expires, nil
 }

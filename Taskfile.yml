@@ -26,7 +26,7 @@ tasks:
     cmds:
       - docker compose --file deploy/local/compose.yaml up --build --detach
       - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert deploy/local/pebble.minica.crt --output .local/certs/pebble-root.pem https://127.0.0.1:15000/roots/0
-      - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert .local/certs/local-root.pem https://control.127.0.0.1.nip.io/v1/ready
+      - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert .local/certs/local-root.pem https://control.127.0.0.1.nip.io:8445/v1/ready
 
   local:trust:
     desc: Trust the local control and Pebble issuance roots on macOS
@@ -64,19 +64,18 @@ tasks:
         done
 
   local:login:
-    desc: Authenticate the isolated local client with the daemon login token
+    desc: Authenticate the isolated local client through local OIDC browser approval
     cmds:
       - |
-        TNL_LOGIN_TOKEN="${TNLD_LOGIN_TOKEN:-tnl_login_AAECAwQFBgcICQoLDA0ODw.EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8}" \
-          TNL_SERVER=https://control.127.0.0.1.nip.io TNL_STATE_DIR=.local/client-state \
-          go run ./cmd/tnl auth login --login-token
+        TNL_SERVER=https://control.127.0.0.1.nip.io:8445 TNL_STATE_DIR=.local/client-state \
+          go run ./cmd/tnl auth login --team local --open
 
   local:tnl:
     desc: Run the isolated local client; pass arguments after --
     requires:
       vars: [CLI_ARGS]
     cmds:
-      - TNL_SERVER=https://control.127.0.0.1.nip.io TNL_STATE_DIR=.local/client-state go run ./cmd/tnl {{.CLI_ARGS}}
+      - TNL_SERVER=https://control.127.0.0.1.nip.io:8445 TNL_STATE_DIR=.local/client-state go run ./cmd/tnl {{.CLI_ARGS}}
 
   local:down:
     desc: Stop the local services without removing state
@@ -217,6 +216,16 @@ tasks:
     cmds:
       - go test ./...
 
+  go:test:auth:
+    desc: Check OIDC verification, control sessions, and durable CLI authentication
+    cmds:
+      - go test -race ./internal/oidcauth ./internal/authorityapi ./internal/authorityclient ./internal/clientauth ./internal/clientstate ./internal/credentials ./internal/tnldconfig
+
+  go:test:integration:auth:
+    desc: Check control-owned OIDC browser approval and device polling in disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/authorityapi -run='^TestIntegrationControlOwnedDeviceLogin$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
   go:test:coverage:
     desc: Produce a diagnostic Go coverage report
     cmds:
@@ -235,29 +244,79 @@ tasks:
     vars:
       RUN: '{{default "^TestIntegration" .RUN}}'
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime ./internal/publisher -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/authorityapi ./internal/controlapi ./internal/controlstate ./internal/controlstate/controlstatedb ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
+
+  go:test:integration:private-services:
+    desc: Check private services, applied publisher groups, and audit in disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlapi ./internal/controlstate ./internal/controlstate/controlstatedb -run='^TestIntegration(Private|AppliedProject|PublisherGroup|ServiceAudit|Infrastructure)' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  go:test:integration:private-topology:
+    desc: Verify private visitor lifecycle through separated and standalone roles
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegration(SeparatedPrivateTwoIngressTwoRelayLifecycle|StandalonePrivateTwoIngressTwoRelayLifecycle|PrivateHTTPProductionControl|PrivateDefaultLeaseCycles|ServiceAuditRuntimePrivate|ManagedTLSProductionPath|ManagedHTTPAuthentication)$' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  go:test:integration:runtime:
+    desc: Verify split and standalone runtime boundaries with disposable PostgreSQL and Pebble
+    vars:
+      RUN: '{{default "^TestIntegration" .RUN}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=integration
 
   go:test:integration:tcp-clients:
-    desc: Verify real TCP clients with disposable targets
+    desc: Verify psql, mysql, and native drivers through both admissions with disposable TLS providers
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientPostgresLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
-      - go -C tools/testharness run . mysql -- go test -race -v ./internal/publisher -run='^TestIntegrationDatabaseClientMySQLLogin$' -count=1 -timeout=5m -args -tnl-test-tier=integration
-      - go -C tools/testharness run . redis -- go test -race -v ./internal/publisher -run='^TestIntegrationRedisClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
-      - go -C tools/testharness run . ssh -- go test -race -v ./internal/publisher -run='^TestIntegrationSSHClient$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='^TestIntegrationManagedDatabaseProviders/postgres' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . mysql-tls -- go test -race -v ./internal/publisher -run='^TestIntegrationManagedDatabaseProviders/mysql' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  go:test:integration:tcp-lifecycle:
+    desc: Check private connector capacity, refresh, and lost publisher responses in disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tcpconnect -run='^TestIntegration(PrivateConnectorReleasesLowCapacityReservations|PrivateConnectorRecoversCommittedAssignments|PrivatePublisherRecoversCommittedLostResponses)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  go:test:integration:cli:
+    desc: Check Linux CLI apply, publishing, native instructions, and OpenSSH stdio through both access paths
+    vars:
+      RUN: '{{default "^TestIntegrationCLI" .RUN}}'
+    preconditions:
+      - sh: test "$(uname -s)" = Linux
+        msg: CLI integration tests require Linux for isolated credential protection
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
 
   go:test:integration:binary:
     desc: Run Linux binary integration tests
     deps: [js:build]
+    vars:
+      RUN: '{{default "^TestBinaryIntegration" .RUN}}'
+      COMPOSE_HOST_ADDRESS: '{{default "host-gateway" .COMPOSE_HOST_ADDRESS}}'
     preconditions:
       - sh: test "$(uname -s)" = Linux
         msg: Binary integration tests require Linux
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestBinaryIntegration' -count=1 -timeout=15m -args -tnl-test-tier=binary
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=binary -tnl-test-compose-host-address='{{.COMPOSE_HOST_ADDRESS}}'
+
+  go:test:integration:private-sshd:
+    desc: Verify an existing OpenSSH daemon through private QUIC and TLS/TCP streams
+    cmds:
+      - go test -race -v ./internal/tcpconnect -run='^TestIntegrationExistingOpenSSHOverPrivateTCP$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   go:test:integration:compose:
     desc: Check disposable host-side Compose HTTP and TCP targets
     cmds:
       - go test -race -v ./internal/publishertarget -run='^TestComposeIntegrationHostTargets$' -count=1 -timeout=8m -args -tnl-compose-integration
+
+  go:test:publisher-identity:
+    desc: Check the portable group identity file and injected-secret contract
+    cmds:
+      - go test -race ./internal/publisheridentity/credentialfile -run='^TestGroupIdentity' -count=1
+
+  go:test:publisher-state:
+    desc: Verify durable filesystem identity, certificate lifecycle, and cross-runtime ownership
+    cmds:
+      - go test -race ./internal/clientstate -run='^Test(Certificate|PublisherCertificate|PublisherHostname|DurablePublisher|PrivateDirectory)' -count=1
+      - go test -race ./internal/publisheridentity/credentialfile -count=1
+      - go test -race ./internal/publisherjob -run='^TestInstalledGroup' -count=1
 
   go:test:integration:dns:
     desc: Run the authoritative DNS integration test in disposable Linux containers
@@ -318,8 +377,6 @@ tasks:
       BANDWIDTH_STREAMS: '{{default "" .BANDWIDTH_STREAMS}}'
       BANDWIDTH_MEASURE: '{{default "" .BANDWIDTH_MEASURE}}'
       CLIENT_HELLO_CONNECTION_LIMIT: '{{default "" .CLIENT_HELLO_CONNECTION_LIMIT}}'
-      CHALLENGE_CONNECTION_LIMIT: '{{default "" .CHALLENGE_CONNECTION_LIMIT}}'
-      CHALLENGE_HOSTNAME_CONNECTION_LIMIT: '{{default "" .CHALLENGE_HOSTNAME_CONNECTION_LIMIT}}'
       VISITOR_CONNECTION_LIMIT: '{{default "" .VISITOR_CONNECTION_LIMIT}}'
       PUBLISHER_CONNECTION_LIMIT: '{{default "" .PUBLISHER_CONNECTION_LIMIT}}'
       PUBLISHER_CONCURRENCY: '{{default "" .PUBLISHER_CONCURRENCY}}'

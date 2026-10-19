@@ -1,11 +1,7 @@
 package clientruntime
 
 import (
-	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -38,55 +34,29 @@ func TestPingHTTPVisitorBoundary(t *testing.T) {
 	}
 }
 
-func TestPingAddressRequiresExplicitTCPProtocolAndNoCredentials(t *testing.T) {
-	for _, address := range []string{"db.example:5432", "https://user:pass@site.example", "https://site.example/#token"} {
+func TestPingAddressRequiresPublicHTTPAndNoCredentials(t *testing.T) {
+	for _, address := range []string{"db.example:5432", "postgres://db.example:5432", "https://user:pass@site.example", "https://site.example/#token"} {
 		if _, _, err := PingAddress(address, ""); err == nil {
 			t.Fatalf("accepted %q", address)
 		}
 	}
-	if address, protocol, err := PingAddress("db.example:5432", "postgres"); err != nil || address != "db.example:5432" || protocol != "postgres" {
+	if address, protocol, err := PingAddress("https://site.example/health", "http"); err != nil || address != "https://site.example/health" || protocol != "https" {
 		t.Fatalf("address=%s protocol=%s err=%v", address, protocol, err)
 	}
 }
 
-func TestRedisPingStopsAtVerifiedTLSWithoutSendingCommands(t *testing.T) {
-	fixture := httptest.NewTLSServer(http.NotFoundHandler())
-	certificate := fixture.TLS.Certificates[0]
-	pool := x509.NewCertPool()
-	pool.AddCert(fixture.Certificate())
-	fixture.Close()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+func TestPingRequiresVerifiedPublicTLS(t *testing.T) {
+	server := httptest.NewTLSServer(http.NotFoundHandler())
+	defer server.Close()
+	if result := Ping(t.Context(), server.URL, "https"); result.State != "unavailable" || result.Note != "connection or TLS verification failed" {
+		t.Fatalf("untrusted public certificate accepted: %+v", result)
 	}
-	defer listener.Close()
-	done := make(chan error, 1)
-	go func() {
-		connection, err := listener.Accept()
-		if err != nil {
-			done <- err
-			return
+	for _, protocol := range []string{"postgres", "mysql", "redis", "ssh", "tcp"} {
+		if _, _, err := PingAddress("db.example:5432", protocol); err == nil {
+			t.Fatalf("accepted retired public protocol %s", protocol)
 		}
-		defer connection.Close()
-		secure := tls.Server(connection, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
-		if err := secure.Handshake(); err != nil {
-			done <- err
-			return
+		if result := Ping(t.Context(), "127.0.0.1:1", protocol); result.State != "invalid protocol" {
+			t.Fatalf("retired protocol %s: %+v", protocol, result)
 		}
-		_ = secure.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-		var byteRead [1]byte
-		count, _ := secure.Read(byteRead[:])
-		if count != 0 {
-			done <- io.ErrUnexpectedEOF
-			return
-		}
-		done <- nil
-	}()
-	result := pingTCP(context.Background(), PingResult{Address: listener.Addr().String(), Protocol: "redis", State: "unavailable"}, &tls.Config{RootCAs: pool})
-	if result.State != "tls verified" {
-		t.Fatalf("ping = %+v", result)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
 	}
 }

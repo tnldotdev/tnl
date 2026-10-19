@@ -5,7 +5,6 @@ export const environmentBaseline = {
   APP_TEST_ENDPOINT: undefined,
   TNL_APP_ENDPOINT: undefined,
   TNL_STATE_DIR: undefined,
-  TNL_LOGIN_TOKEN: undefined,
   TNL_PROJECT_RUNTIME: undefined,
   TNL_PUBLIC_HOSTNAME: undefined,
   TNL_PUBLIC_URL: undefined,
@@ -23,7 +22,6 @@ export const environmentBaseline = {
 
 const blockedSubprocessEnvironment = [
   "TNL_ACCESS_TOKEN",
-  "TNL_LOGIN_TOKEN",
   "TNL_PROJECT_RUNTIME",
   "TNL_PUBLIC_HOSTNAME",
   "TNL_PUBLIC_URL",

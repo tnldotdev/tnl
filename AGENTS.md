@@ -203,7 +203,6 @@ not _inbox_, for the collection of threads.
 | **website credential**          | The secret the website sends to control for identity and invitation requests.                                                |
 | **webhook credential**          | The separate secret control sends to a mailer for invitation emails.                                                         |
 | **storage key**                 | The symmetric key available only to control and standalone for encrypting recoverable secrets in PostgreSQL.                 |
-| **login token**                 | The credential used to create administrator control sessions through the built-in authority.                                 |
 | **control session**             | A login session that can be revoked and has an access token and refresh token.                                               |
 | **access token**                | A short-lived credential that authorizes control API and authority API requests for a control session.                       |
 | **refresh token**               | A longer-lived credential used to rotate a control session's access and refresh tokens.                                      |

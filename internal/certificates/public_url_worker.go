@@ -46,7 +46,6 @@ type PublicURLDNSChallenges interface {
 // PublicURLStore is the stored certificate work used by a PublicURLWorker.
 type PublicURLStore interface {
 	ClaimACMEOrderWork(context.Context, string, time.Time, time.Duration) (controlstate.ACMEOrderWork, bool, error)
-	ACMEChallengeRoutingReady(context.Context, string, time.Time) (bool, error)
 	SaveACMEOrderWork(context.Context, controlstate.ACMEOrderWork, time.Time) (controlstate.ACMEOrderWork, error)
 }
 
@@ -182,7 +181,7 @@ func (w *PublicURLWorker) logWork(work controlstate.ACMEOrderWork, stage, outcom
 	if w.config.Logger == nil {
 		return
 	}
-	w.config.Logger.Info("public URL certificate work", "publish_run_id", work.PublishRunID, "publish_run_number", work.PublishRunNumber,
+	w.config.Logger.Info("service certificate work", "publish_run_id", work.PublishRunID, "publish_run_number", work.PublishRunNumber, "private_run_id", work.PrivateRunID, "run_number", work.PrivateRunNumber,
 		"issuance_id", work.ID, "stage", stage, "state", work.State, "outcome", outcome,
 		"attempts", work.Attempts, "age", now.Sub(work.CreatedAt).Round(time.Second), "next_available_at", work.AvailableAt)
 }
@@ -206,11 +205,11 @@ func (w *PublicURLWorker) clientFor(account controlstate.ACMEAccount) (acmeAPI, 
 
 func (w *PublicURLWorker) advance(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {
 	work.LastError = ""
-	if w.config.DNSChallenges == nil && (work.ChallengeMethod == certificateidentity.ChallengeDNS01 ||
-		slices.ContainsFunc(work.Authorizations, func(value controlstate.ACMEAuthorizationWork) bool {
-			return value.ChallengeType == certificateidentity.ChallengeDNS01
-		})) {
+	if w.config.DNSChallenges == nil {
 		return dnscontroller.ErrChallengesNotConfigured
+	}
+	if work.ChallengeMethod != certificateidentity.ChallengeDNS01 {
+		return terminalf("certificate issuance requires DNS-01")
 	}
 	switch work.State {
 	case "pending":
@@ -231,6 +230,11 @@ func (w *PublicURLWorker) advance(ctx context.Context, client acmeAPI, work *con
 		}
 		return err
 	case "failed", "canceled":
+		if work.FinalizationPossible && work.NotAfter == nil {
+			// finalization may have reached the CA before a response was lost.
+			// retain its actual certificate lifetime before releasing names.
+			return w.collectCertificate(ctx, client, work, now)
+		}
 		_, err := w.continueDNSCleanup(ctx, work, now)
 		return err
 	default:
@@ -371,6 +375,7 @@ func (w *PublicURLWorker) collectCertificate(ctx context.Context, client acmeAPI
 		work.AvailableAt = pollAt(now, w.config.PollInterval, order.RetryAfter)
 		return nil
 	case "invalid":
+		work.FinalizationPossible = false
 		return w.invalidOrder(ctx, client, work)
 	case "valid":
 		if order.Certificate == "" {

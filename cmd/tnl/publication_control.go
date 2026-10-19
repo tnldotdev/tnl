@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"slices"
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
@@ -15,7 +14,6 @@ import (
 // publicationVisitors exposes only publish-run-token visitor and feedback calls.
 // saved URL operations and signed run creation remain owned by Native.
 type publicationVisitors interface {
-	AuthorizeVisitorCertificate(context.Context, controlclient.VisitorCertificateScope, tls.ConnectionState) error
 	AuthorizeHTTPVisitor(context.Context, string, controlv1.HTTPVisitorRequest, credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error)
 	RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error)
 	CheckBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserAccessResponse, error)
@@ -37,7 +35,6 @@ type publicationControl struct {
 }
 
 var _ publisher.PublicURLControlClient = publicationControl{}
-var _ publisher.VisitorCertificateAuthorizer = publicationControl{}
 var _ publicationVisitors = (*controlclient.Client)(nil)
 
 func nativePublicationControl(native *nativeauth.Native, control *controlclient.Client) publicationControl {

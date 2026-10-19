@@ -14,7 +14,7 @@ import (
 type visitorAuthorityStore interface {
 	GetTeamFeedbackPolicy(context.Context, string, string) (controlstate.TeamFeedbackPolicy, error)
 	SetTeamFeedbackPolicy(context.Context, string, string, string, time.Time) (controlstate.TeamFeedbackPolicy, error)
-	IssueAdminBrowserHandoff(context.Context, credentials.AccessToken, credentials.RefreshToken, string, int64, time.Duration, time.Duration, time.Time) (controlstate.BrowserHandoff, string, error)
+	IssueControlBrowserHandoff(context.Context, credentials.AccessToken, credentials.RefreshToken, string, time.Duration, time.Duration, time.Time) (controlstate.BrowserHandoff, string, error)
 }
 
 func (h *handler) GetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, teamID string) {
@@ -56,7 +56,7 @@ func (h *handler) SetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, 
 	}
 	writeJSON(w, 200, policy)
 }
-func (h *handler) IssueAdminBrowserHandoff(w http.ResponseWriter, r *http.Request) {
+func (h *handler) IssueControlBrowserHandoff(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.authenticateControlRequest(w, r); !ok {
 		return
 	}
@@ -65,7 +65,7 @@ func (h *handler) IssueAdminBrowserHandoff(w http.ResponseWriter, r *http.Reques
 		writeAuthenticationUnavailable(w, "create browser handoff", nil)
 		return
 	}
-	var body authorityv1.IssueAdminBrowserHandoffJSONRequestBody
+	var body authorityv1.IssueControlBrowserHandoffJSONRequestBody
 	if decodeJSON(w, r, &body) != nil {
 		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid browser handoff")
 		return
@@ -75,7 +75,7 @@ func (h *handler) IssueAdminBrowserHandoff(w http.ResponseWriter, r *http.Reques
 		writeBearerProblem(w)
 		return
 	}
-	handoff, host, err := store.IssueAdminBrowserHandoff(r.Context(), credentials.AccessToken(access), credentials.RefreshToken(body.RefreshToken), body.PublicUrlId, h.loginSourceRevision, h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now())
+	handoff, host, err := store.IssueControlBrowserHandoff(r.Context(), credentials.AccessToken(access), credentials.RefreshToken(body.RefreshToken), body.PublicUrlId, h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now())
 	if err != nil {
 		switch {
 		case errors.Is(err, controlstate.ErrControlAuthentication):

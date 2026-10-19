@@ -318,7 +318,7 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
         raise InvalidResponse()
     if item.get("registration_id") != registration_id or item.get("target") != target:
         return None
-    if item["routable"] and (not item["registered"] or public_url is None or number is None):
+    if item["routable"] and (not item["registered"] or number is None):
         raise InvalidResponse()
     return Status(
         cast(bool, item["registered"]),

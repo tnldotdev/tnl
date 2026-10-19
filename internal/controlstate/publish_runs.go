@@ -10,7 +10,6 @@ import (
 	"slices"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -78,21 +77,22 @@ type ConnectionAssignment struct {
 
 // PublishRunSetup is the retry-stable result of publish-run creation.
 type PublishRunSetup struct {
-	PublishRunID         string
-	PublicURLID          string
-	TeamID               string
-	MembershipID         string
-	PublishRunNumber     uint64
-	PolicyRevision       uint64
-	PublishRunToken      credentials.PublishRunToken
-	State                PublishRunState
-	CreatedAt            time.Time
-	ExpiresAt            time.Time
-	ReadyAt              *time.Time
-	ClosedAt             *time.Time
-	PolicyDenials        uint64
-	Traffic              trafficlimits.Limits
-	PublisherConnections [publishRunConnectionCount]ConnectionAssignment
+	PublishRunID          string
+	PublicURLID           string
+	TeamID                string
+	MembershipID          string
+	PublishRunNumber      uint64
+	PolicyRevision        uint64
+	PublishRunToken       credentials.PublishRunToken
+	State                 PublishRunState
+	CreatedAt             time.Time
+	ExpiresAt             time.Time
+	ReadyAt               *time.Time
+	ClosedAt              *time.Time
+	PolicyDenials         uint64
+	VisitorPolicyRevision int64
+	Traffic               trafficlimits.Limits
+	PublisherConnections  [publishRunConnectionCount]ConnectionAssignment
 }
 
 // CreatePublishRun creates one publish run with two connection assignments on
@@ -119,10 +119,10 @@ func (d *Database) CreatePublishRun(
 	if err := validatePublishRunRequest(request, publisherLeaseDuration, connectionCredentialDuration); err != nil {
 		return PublishRunSetup{}, err
 	}
-	var err error
-	request.RequestDigest, err = publishRunTrafficDigest(request.RequestDigest, request.TrafficSelection)
-	if err != nil {
-		return PublishRunSetup{}, err
+	if request.TrafficSelection != nil {
+		if err := request.TrafficSelection.Validate(); err != nil {
+			return result, fmt.Errorf("%w: %v", ErrTrafficSelection, err)
+		}
 	}
 	if err := d.requireOpen(); err != nil {
 		return PublishRunSetup{}, err
@@ -181,12 +181,23 @@ func (d *Database) createPublishRun(
 	if err := authenticatePublishRunRequest(route, request); err != nil {
 		return PublishRunSetup{}, err
 	}
+	request.TrafficSelection, err = d.appliedProjectTraffic(ctx, tx, request.PublicURLID, request.TrafficSelection)
+	if err != nil {
+		return result, err
+	}
+	request.RequestDigest, err = publishRunTrafficDigest(request.RequestDigest, request.TrafficSelection)
+	if err != nil {
+		return result, err
+	}
 	if request.PublisherIdentityID != "" {
 		secret, err := d.authorizePublisherRun(ctx, queries, route, request, now)
 		if err != nil {
 			return PublishRunSetup{}, err
 		}
 		request.RetrySecret = secret[:]
+	}
+	if route.PublisherPool && request.PublisherIdentityID == "" {
+		return result, ErrPublisherIdentity
 	}
 	if PublicURLLifecycleState(route.LifecycleState) == PublicURLLifecycleDeleted {
 		return PublishRunSetup{}, ErrPublicURLNotEnabled
@@ -265,7 +276,17 @@ func (d *Database) createPublishRun(
 		return PublishRunSetup{}, ErrPublishRunCreationGated
 	}
 	if hasOpenSession {
-		return PublishRunSetup{}, ErrPublishRunConflict
+		if !route.PublisherPool || request.PublisherIdentityID == "" {
+			return PublishRunSetup{}, ErrPublishRunConflict
+		}
+		var samePublisher bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.publish_runs r LEFT JOIN control.publish_run_publisher_grants p ON p.publish_run_id=r.id
+		    WHERE r.public_url_id=$1 AND r.closed_at IS NULL AND (p.publisher_identity_id=$2 OR p.publisher_identity_id IS NULL))`, route.ID, request.PublisherIdentityID).Scan(&samePublisher); err != nil {
+			return PublishRunSetup{}, err
+		}
+		if samePublisher {
+			return PublishRunSetup{}, ErrPublishRunConflict
+		}
 	}
 	if route.Ephemeral {
 		if _, err := queries.RenewEphemeralPublicURLExpiry(ctx, controlstatedb.RenewEphemeralPublicURLExpiryParams{
@@ -304,6 +325,7 @@ func (d *Database) createPublishRun(
 	session, err := queries.InsertPublishRun(ctx, controlstatedb.InsertPublishRunParams{
 		ID: publishRunID, PublicURLID: request.PublicURLID, TeamID: request.TeamID, MembershipID: membershipID,
 		ActingIdentityID: request.ActingIdentityID, ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
+		PublisherIdentityID: nullableText(request.PublisherIdentityID), PublisherGrantID: nullableText(request.PublisherGrantID),
 		IdempotencyKey:          request.IdempotencyKey,
 		RequestDigestCiphertext: digestCiphertext, RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
 		PublishRunTokenID: publishRunTokenID.String(), PublishRunTokenDigest: publishRunTokenHash[:],
@@ -321,11 +343,6 @@ func (d *Database) createPublishRun(
 	}
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: insert session: %w", err)
-	}
-	if request.PublisherIdentityID != "" {
-		if err := queries.AttachPublisherRun(ctx, controlstatedb.AttachPublisherRunParams{PublishRunID: publishRunID, PublisherIdentityID: request.PublisherIdentityID, PublisherGrantID: request.PublisherGrantID}); err != nil {
-			return PublishRunSetup{}, err
-		}
 	}
 	if _, err := queries.GuestForPublicURL(ctx, request.PublicURLID); err == nil {
 		reserved, err := queries.BeginGuestPublishRun(ctx, controlstatedb.BeginGuestPublishRunParams{
@@ -614,11 +631,6 @@ func validatePublishRunRequest(
 	}
 	if !request.CertificateChallenge.Valid() {
 		return errors.New("controlstate: publish-run certificate challenge is invalid")
-	}
-	if request.CertificateChallenge == certificateidentity.ChallengeTLSALPN01 && slices.ContainsFunc(identifiers, func(identifier string) bool {
-		return strings.HasPrefix(identifier, "*.")
-	}) {
-		return errors.New("controlstate: TLS-ALPN-01 does not support wildcard identifiers")
 	}
 	if request.ExpectedMutationRevision == 0 || request.ExpectedMutationRevision > math.MaxInt64 {
 		return errors.New("controlstate: publish-run mutation revision must be positive")

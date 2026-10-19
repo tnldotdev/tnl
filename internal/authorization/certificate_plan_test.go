@@ -31,7 +31,7 @@ func TestPublicURLCertificatePlanDoesNotCrossNamespaceOrScope(t *testing.T) {
 	}
 	manual := PublicURLCertificatePlan("web."+namespace, namespace, false, false)
 	if manual.CacheKey != "web."+namespace || !slices.Equal(manual.Identifiers, []string{"web." + namespace}) ||
-		manual.ChallengeMethod != certificateidentity.ChallengeTLSALPN01 {
+		manual.ChallengeMethod != certificateidentity.ChallengeDNS01 {
 		t.Fatalf("manual DNS plan = %#v", manual)
 	}
 }

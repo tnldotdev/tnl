@@ -172,7 +172,7 @@ func TestIntegrationPublisherHeartbeatDomainReleaseLockOrder(t *testing.T) {
 
 func TestIntegrationPublisherRetiredKeyOnlyRecoversExactRun(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "retired_publisher_key")
-	request := builtinRouteRequest(t, d, now)
+	request := oidcRouteRequest(t, d, now)
 	route := createTestPublicURL(t, d, request, now)
 	registerCertificatePlanRelays(t, d, now)
 	p, private := reviewPublisher(t, d, route, request.ActingIdentityID, now)
@@ -222,7 +222,7 @@ func TestIntegrationPublisherRetiredKeyOnlyRecoversExactRun(t *testing.T) {
 
 func TestIntegrationPublisherSavedPurposesHaveExactGrants(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_saved_purposes")
-	base := builtinRouteRequest(t, d, now)
+	base := oidcRouteRequest(t, d, now)
 	registerCertificatePlanRelays(t, d, now)
 	for _, purpose := range []PublicURLPurpose{PublicURLPurposeApp, PublicURLPurposeOAuth, PublicURLPurposeWebhooks, PublicURLPurposeAlias, PublicURLPurposeDemo} {
 		r := base

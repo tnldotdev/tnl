@@ -183,6 +183,30 @@ func (e PublicationCommand) Valid() bool {
 	}
 }
 
+// Defines values for PublicationServiceProtocol.
+const (
+	Http     PublicationServiceProtocol = "http"
+	Mysql    PublicationServiceProtocol = "mysql"
+	Postgres PublicationServiceProtocol = "postgres"
+	Tcp      PublicationServiceProtocol = "tcp"
+)
+
+// Valid indicates whether the value is a known member of the PublicationServiceProtocol enum.
+func (e PublicationServiceProtocol) Valid() bool {
+	switch e {
+	case Http:
+		return true
+	case Mysql:
+		return true
+	case Postgres:
+		return true
+	case Tcp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PublicationState.
 const (
 	Draining     PublicationState = "draining"
@@ -323,9 +347,11 @@ type InvocationVersion int
 
 // Lease defines model for Lease.
 type Lease struct {
-	Owner   string `json:"owner"`
-	Pid     int    `json:"pid"`
-	Service string `json:"service"`
+	// ConfigurationDigest Digest of the complete selected native project snapshot, including configuration provenance and resolved server/team selection. The owner rejects another snapshot before reserving a service.
+	ConfigurationDigest string `json:"configuration_digest"`
+	Owner               string `json:"owner"`
+	Pid                 int    `json:"pid"`
+	Service             string `json:"service"`
 }
 
 // Observation defines model for Observation.
@@ -363,30 +389,35 @@ type Problem struct {
 
 // Publication defines model for Publication.
 type Publication struct {
-	Command          PublicationCommand                     `json:"command"`
-	Failure          *string                                `json:"failure,omitempty"`
-	Framework        *string                                `json:"framework,omitempty"`
-	HeartbeatAt      time.Time                              `json:"heartbeat_at"`
-	Hostname         *string                                `json:"hostname,omitempty"`
-	LeaseExpiresAt   time.Time                              `json:"lease_expires_at"`
-	ProcessId        int                                    `json:"process_id"`
-	Project          string                                 `json:"project"`
-	PublicPort       *int                                   `json:"public_port,omitempty"`
-	PublicUrl        *string                                `json:"public_url,omitempty"`
-	PublicUrlId      *string                                `json:"public_url_id,omitempty"`
-	PublishRunNumber *int64                                 `json:"publish_run_number,omitempty"`
-	Server           string                                 `json:"server"`
-	Service          *string                                `json:"service,omitempty"`
-	ServiceProtocol  *externalRef0.PublicURLServiceProtocol `json:"service_protocol,omitempty"`
-	StartedAt        time.Time                              `json:"started_at"`
-	State            PublicationState                       `json:"state"`
-	Target           *string                                `json:"target,omitempty"`
-	TunnelId         string                                 `json:"tunnel_id"`
-	UpdatedAt        time.Time                              `json:"updated_at"`
+	Command          PublicationCommand             `json:"command"`
+	Failure          *string                        `json:"failure,omitempty"`
+	Framework        *string                        `json:"framework,omitempty"`
+	HeartbeatAt      time.Time                      `json:"heartbeat_at"`
+	Hostname         *string                        `json:"hostname,omitempty"`
+	LeaseExpiresAt   time.Time                      `json:"lease_expires_at"`
+	PrivateRunId     *externalRef0.PrivateRunID     `json:"private_run_id,omitempty"`
+	PrivateServiceId *externalRef0.PrivateServiceID `json:"private_service_id,omitempty"`
+	ProcessId        int                            `json:"process_id"`
+	Project          string                         `json:"project"`
+	PublicUrl        *string                        `json:"public_url,omitempty"`
+	PublicUrlId      *string                        `json:"public_url_id,omitempty"`
+	PublishRunNumber *int64                         `json:"publish_run_number,omitempty"`
+	RunNumber        *int64                         `json:"run_number,omitempty"`
+	Server           string                         `json:"server"`
+	Service          *string                        `json:"service,omitempty"`
+	ServiceProtocol  *PublicationServiceProtocol    `json:"service_protocol,omitempty"`
+	StartedAt        time.Time                      `json:"started_at"`
+	State            PublicationState               `json:"state"`
+	Target           *string                        `json:"target,omitempty"`
+	TunnelId         string                         `json:"tunnel_id"`
+	UpdatedAt        time.Time                      `json:"updated_at"`
 }
 
 // PublicationCommand defines model for Publication.Command.
 type PublicationCommand string
+
+// PublicationServiceProtocol defines model for Publication.ServiceProtocol.
+type PublicationServiceProtocol string
 
 // PublicationState defines model for Publication.State.
 type PublicationState string

@@ -81,12 +81,12 @@ func TestRuntimeStatusIsAuthenticatedScopedAndDoesNotProbe(t *testing.T) {
 	}
 }
 
-func TestConfiguredRuntimeIncludesTCPAndAppServices(t *testing.T) {
+func TestHTTPRuntimeDoesNotCreatePublicURLsForPrivateServices(t *testing.T) {
 	protocol := "postgres"
 	address := config.Target("127.0.0.1:5432")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{"web": {}, "orders": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address}}}}}}
 	services := configuredRuntimeServices(project)
-	if len(services) != 2 || services[0].Name != "orders" || services[0].ServiceProtocol != "postgres" || services[1].ServiceProtocol != "http" {
+	if len(services) != 2 || services[0].Name != "orders" || services[0].ServiceProtocol != "postgres" || services[0].PublicURL != "" || services[1].PublicURL != "" {
 		t.Fatalf("services=%+v", services)
 	}
 }

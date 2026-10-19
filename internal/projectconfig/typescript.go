@@ -261,6 +261,7 @@ var typeScriptKeyMappings = map[string]string{
 	"total_download_bytes": "totalDownloadBytes",
 	"strip_prefix":         "stripPrefix",
 	"public_url":           "publicURL",
+	"publisher_pool":       "publisherPool",
 }
 
 // TypeScriptKeyMappings returns the static-to-TypeScript property mappings

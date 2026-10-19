@@ -12,7 +12,7 @@ SELECT * FROM control.control_sessions WHERE access_token_id = $1 FOR SHARE;
 SELECT * FROM control.control_sessions WHERE id = $1 FOR SHARE;
 
 -- name: ListVisitorInventory :many
-SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol, u.public_port,
+SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol,
     permission.reason::text AS visitor_access
 FROM control.public_urls u JOIN control.teams t ON t.id = u.team_id
 CROSS JOIN LATERAL control.visitor_permission(u.id, sqlc.arg(identity_id)::text,
@@ -20,6 +20,7 @@ CROSS JOIN LATERAL control.visitor_permission(u.id, sqlc.arg(identity_id)::text,
       WHERE included.public_url_id = u.id AND p.team_access_enabled AND p.demo_publish_run_id IS NULL ORDER BY p.id LIMIT 1), ''),
     sqlc.arg(now)::timestamptz) permission
 WHERE u.id > sqlc.arg(cursor)::text AND (sqlc.arg(team_id)::text = '' OR u.team_id = sqlc.arg(team_id))
+  AND control.company_subject_session_authorized(u.team_id,sqlc.arg(identity_id)::text,sqlc.arg(control_session_id)::text,sqlc.arg(now))
 ORDER BY u.id LIMIT 101;
 
 -- name: CreateVisitorGrant :one
@@ -65,25 +66,27 @@ SELECT feedback_authors FROM control.teams WHERE id = $1 AND deleted_at IS NULL;
 UPDATE control.teams SET feedback_authors = $2 WHERE id = $1;
 
 -- name: VisitorCurrentMembership :one
-SELECT id FROM control.team_memberships WHERE team_id = $1 AND identity_id = $2 AND removed_at IS NULL;
+SELECT id FROM control.team_memberships WHERE team_id = $1 AND identity_id = $2 AND control.active_membership(id,CURRENT_TIMESTAMP);
 
 -- name: ReadyBrowserHosts :many
-SELECT u.id AS public_url_id, u.canonical_hostname, r.id AS publish_run_id
+SELECT DISTINCT ON(u.id) u.id AS public_url_id, u.canonical_hostname, r.id AS publish_run_id
 FROM control.public_urls u JOIN control.publish_runs r ON r.public_url_id = u.id
 WHERE u.lifecycle_state = 'enabled' AND u.purpose IN ('app', 'alias') AND u.service_protocol = 'http'
   AND r.state = 'ready' AND r.publisher_expires_at > sqlc.arg(now) AND r.closed_at IS NULL
   AND (u.id = sqlc.arg(public_url_id) OR EXISTS (SELECT 1 FROM control.preview_public_urls included
        WHERE included.preview_id = sqlc.arg(preview_id)::text AND included.public_url_id = u.id))
-ORDER BY u.id LIMIT 32;
+ORDER BY u.id,r.publish_run_number DESC LIMIT 32;
 
 -- name: BindBrowserSessionHost :exec
-INSERT INTO control.browser_session_run_bindings(session_digest, public_url_id, publish_run_id) VALUES ($1, $2, $3)
-ON CONFLICT (session_digest, public_url_id) DO NOTHING;
+INSERT INTO control.browser_session_run_bindings(session_digest, public_url_id, publish_run_id)
+SELECT sqlc.arg(session_digest),sqlc.arg(public_url_id),publish_run_id FROM control.browser_handoff_run_bindings
+WHERE handoff_digest=sqlc.arg(handoff_digest)
+ON CONFLICT (session_digest, public_url_id,publish_run_id) DO NOTHING;
 
 -- name: BrowserSessionCurrentHost :one
 SELECT h.publish_run_id FROM control.browser_session_run_bindings h JOIN control.publish_runs r ON r.id = h.publish_run_id
 WHERE h.session_digest = $1 AND h.public_url_id = $2 AND r.closed_at IS NULL AND r.publisher_expires_at > $3
-  AND r.state = 'ready' AND r.public_url_id = h.public_url_id;
+  AND r.state = 'ready' AND r.public_url_id = h.public_url_id ORDER BY r.publish_run_number LIMIT 1;
 
 -- name: CreateVisitorIPGrant :exec
 INSERT INTO control.visitor_ip_grants(id, public_url_id, prefix_ciphertext, storage_key_id, created_at, expires_at)

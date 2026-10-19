@@ -17,7 +17,7 @@ SELECT guest.id, 'authority', guest.id, false, $1, $1
 FROM control.guest_trials AS guest WHERE guest.id = $2
 ON CONFLICT (id) DO UPDATE SET updated_at = GREATEST(control.identities.updated_at, EXCLUDED.updated_at)
 WHERE control.identities.kind = 'authority' AND control.identities.disabled_at IS NULL
-RETURNING id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, created_at, updated_at, disabled_at
+RETURNING id, kind, issuer, subject, display_name, normalized_email, email_verified, administrator, initial_team_id, created_at, updated_at, disabled_at
 `
 
 type EnsureGuestPrincipalParams struct {
@@ -37,6 +37,7 @@ func (q *Queries) EnsureGuestPrincipal(ctx context.Context, arg EnsureGuestPrinc
 		&i.NormalizedEmail,
 		&i.EmailVerified,
 		&i.Administrator,
+		&i.InitialTeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DisabledAt,

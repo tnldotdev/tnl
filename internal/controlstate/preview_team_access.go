@@ -114,6 +114,21 @@ func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewT
 	}); err != nil {
 		return Preview{}, fmt.Errorf("controlstate: save preview team access: %w", err)
 	}
+	if preview.TeamAccessEnabled != request.Enabled {
+		ids, err := queries.ListPreviewPublicURLs(ctx, preview.ID)
+		if err != nil {
+			return Preview{}, err
+		}
+		operation := "grant.revoke"
+		if request.Enabled {
+			operation = "grant.create"
+		}
+		for _, service := range ids {
+			if err = auditPublicMutation(ctx, tx, service, request.IdentityID, operation, preview.ID+"/"+now.UTC().Format(time.RFC3339Nano), now); err != nil {
+				return Preview{}, err
+			}
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Preview{}, fmt.Errorf("controlstate: commit preview team access: %w", err)
 	}

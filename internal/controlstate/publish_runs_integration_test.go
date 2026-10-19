@@ -148,7 +148,7 @@ func TestIntegrationPublishRunReplacesExpiredSession(t *testing.T) {
 
 func TestIntegrationPublishRunCreationRollsBackBothAssignmentsAndVersion(t *testing.T) {
 	database, now, request, leases := newPublishRunPrerequisites(t)
-	if _, err := database.pool.Exec(t.Context(), `ALTER TABLE control.publish_run_connection_slots ADD CONSTRAINT reject_second_slot CHECK (connection_slot <> 1)`); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `ALTER TABLE control.publisher_service_connection_slots ADD CONSTRAINT reject_second_slot CHECK (service_kind <> 'http' OR connection_slot <> 1)`); err != nil {
 		t.Fatal(err)
 	}
 	_, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Hour)
@@ -165,7 +165,7 @@ func TestIntegrationPublishRunCreationRollsBackBothAssignmentsAndVersion(t *test
 	if err != nil || version != 1 || revision != 1 || sessions != 0 || connections != 0 || audits != 0 {
 		t.Fatalf("failed creation left version/revision/sessions/connections/audits = %d/%d/%d/%d/%d, %v", version, revision, sessions, connections, audits, err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `ALTER TABLE control.publish_run_connection_slots DROP CONSTRAINT reject_second_slot`); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `ALTER TABLE control.publisher_service_connection_slots DROP CONSTRAINT reject_second_slot`); err != nil {
 		t.Fatal(err)
 	}
 	setup, err := database.CreatePublishRun(t.Context(), request, now, time.Hour, time.Hour)
@@ -453,7 +453,7 @@ func newPublishRunPrerequisites(t *testing.T) (*Database, time.Time, PublishRunR
 	}
 	return database, now, PublishRunRequest{PublicURLID: "public_url_session", TeamID: "team_session", ActingIdentityID: "identity_session", MembershipID: "membership_session",
 		RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")), PolicyRevision: 1,
-		CertificateCacheKey: "certificate_session", CertificateScope: "public-url", CertificateIdentifiers: []string{"route-session.example.test"}, CertificateChallenge: "tls-alpn-01", ExpectedMutationRevision: 1}, leases
+		CertificateCacheKey: "certificate_session", CertificateScope: "public-url", CertificateIdentifiers: []string{"route-session.example.test"}, CertificateChallenge: "dns-01", ExpectedMutationRevision: 1}, leases
 }
 
 func newPublishRunFixture(t *testing.T) publishRunFixture {

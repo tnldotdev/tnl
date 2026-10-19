@@ -101,6 +101,7 @@ func selectForegroundPublisher(ctx context.Context, database *clientstate.Databa
 			return nil, errors.Join(err, cleanupGuest())
 		}
 		cfg.Control = guestPublicationControl{publicationControl: nativePublicationControl(native, services.routes), assigned: route, bootstrap: services.routes}
+		cfg.PublisherID = native.PublisherID()
 		// guest cleanup uses the trial session; its native grant only starts runs.
 		return cleanupGuest, nil
 	}
@@ -130,6 +131,7 @@ func selectForegroundPublisher(ctx context.Context, database *clientstate.Databa
 			return nil, err
 		}
 		cfg.Control, cfg.AllocatedPublicURL = nativePublicationControl(native, services.routes), &route
+		cfg.PublisherID = native.PublisherID()
 		cfg.Hostname, cfg.PublicURLScope, cfg.Purpose = route.CanonicalHostname, route.PublicUrlScope, route.Purpose
 		cfg.MembershipID = ""
 		if route.MembershipId != nil {
@@ -161,6 +163,7 @@ func selectForegroundPublisher(ctx context.Context, database *clientstate.Databa
 		return nil, err
 	}
 	cfg.Control, cfg.PreserveSavedURLTarget = nativePublicationControl(native, services.routes), true
+	cfg.PublisherID = native.PublisherID()
 	return cleanup, nil
 }
 
@@ -215,5 +218,6 @@ func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database
 		return cfg, err
 	}
 	cfg.Control, cfg.PreserveSavedURLTarget = nativePublicationControl(native, services.routes), true
+	cfg.PublisherID = native.PublisherID()
 	return cfg, nil
 }

@@ -15,12 +15,15 @@ Later compatible changes must add schema before switching serving code to it.
 The baseline creates ingress pools before teams and public URLs. It seeds
 `ingress-a` disabled until the operator verifies its addresses and ports. A
 team's ingress pool is pinned while it owns saved public URLs; each new URL
-inherits that pool. TCP port claims belong to one URL and pool and retain their
-historical hostname and port through quarantine and release.
+inherits that pool. Private services use authenticated ingress assignments,
+not service-specific public TCP ports or port claims.
 
-The two publisher connection slots remain in
-`control.publish_run_connection_slots`. A slot keeps its `id` and
-`(publish_run_id, connection_slot)` identity when its assignment is replaced;
+Public and private publisher connection slots share
+`control.publisher_service_connection_slots`. The typed
+`control.publish_run_connection_slots` and
+`control.private_service_connection_slots` views enforce their service-kind
+boundaries on reads and writes. A slot keeps its `id` and
+`(run_id, connection_slot)` identity when its assignment is replaced;
 `publisher_connection_id` changes. Trigger-maintained relay-service reservations
 count open, assigned slots and use an advisory guard during placement. Historical
 process-run IDs do not require live ingress or relay lease rows.
@@ -29,6 +32,22 @@ Control stores the guest retry key in `control.guest_retry_keys` and the visitor
 network hash key in `control.visitor_network_hash_keys`. Both are encrypted with
 the storage key and must participate in key rotation. IP-policy and request
 digests elsewhere retain their own ciphertext and storage-key IDs.
+
+Applied projects store the source fingerprint, expected/current revision,
+encrypted normalized configuration, group scopes, and service assignments.
+Enrollment stores group membership and public signing keys; private signing
+keys stay with each member. Group leases permit only assigned configuration
+reads and exact-revision acknowledgements. Applying local declarations retains
+metadata without allocating shared worktree URLs. Named group services use
+publisher pools with independent member runs. See
+[applied project boundaries](applied-projects.md).
+
+Management audit facts commit with the mutation they describe. Visitor
+observations arrive in bounded, authenticated batches from ingress or an exact
+publisher run and are independently deduplicated. The service-audit clock
+preserves cursor commit order. A process crash can lose queued visitor
+observations; this does not undo a committed management fact or relax an
+authorization decision.
 
 ## acquire locks in one order
 
@@ -185,17 +204,11 @@ page.
 
 ## coordinate certificate challenges
 
-Before TLS-ALPN validation starts, control requires at least one live,
-non-draining ingress. Every such ingress must acknowledge the latest challenge
-projection for the order's publish run number.
-
-Unrelated routing events do not move this barrier. Changes to the challenge's
-own forwarding projection require a new acknowledgement. Selecting the latest
-challenge event before checking kind and expiration prevents a tombstone or
-expired challenge from exposing an older upsert.
-
-Routing retention must preserve the current challenge event until it is safely
-superseded.
+Publisher certificate issuance uses DNS-01 only. Control reconciles the owned
+TXT values under a record lock, waits for the provider change and authoritative
+DNS verification, then asks the CA to validate. Ingress routing and publisher
+connections have no certificate-challenge path. Each publisher keeps its own
+private key; a saved-URL grant receives an exact-host certificate plan.
 
 ## advance certificate work
 
@@ -214,9 +227,8 @@ Public URL certificate work has two stages that can advance independently:
 An ACME response may skip or revisit the intermediate order stages. The worker
 checks the complete authorization set before saving discovery. It presents all
 pending challenges before checking propagation or asking the CA to validate
-any one of them. Control changes TLS-ALPN authorizations from `presenting` to
-`presented` only after publishing their challenge; the worker checks ingress
-routing readiness again before accepting the challenge at the CA.
+any one of them. The worker changes DNS authorizations from `presenting` to
+`presented` after the provider write and verifies propagation before acceptance.
 
 An issued public URL certificate becomes available at `waiting_for_install`,
 even when DNS cleanup remains. For a DNS authorization, `valid` → `cleaning`

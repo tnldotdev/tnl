@@ -1,10 +1,62 @@
 -- +goose Up
+CREATE TABLE service_client_certificates (
+    server_origin TEXT NOT NULL,
+    identity_id TEXT NOT NULL,
+    private_service_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    private_key_ciphertext BLOB NOT NULL,
+    csr_der BLOB,
+    -- successful request retained for session rebinding; csr_der is a pending renewal
+    issued_csr_der BLOB,
+    csr_created_at INTEGER NOT NULL DEFAULT 0,
+    certificate_pem BLOB,
+    issuer_pem BLOB,
+    PRIMARY KEY(server_origin,identity_id,private_service_id,device_id)
+);
 CREATE TABLE server_profiles (
     id INTEGER PRIMARY KEY,
     origin TEXT NOT NULL UNIQUE,
     selected_team_id TEXT,
     created_at INTEGER NOT NULL,
     last_used_at INTEGER NOT NULL
+) STRICT;
+
+-- one remembered localhost port per signed-in identity and saved private
+-- service. a unique port also prevents two server profiles from silently
+-- assigning the same GUI endpoint.
+CREATE TABLE private_service_ports (
+    server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
+    identity_id TEXT NOT NULL,
+    service_id TEXT NOT NULL,
+    port INTEGER NOT NULL UNIQUE CHECK (port BETWEEN 1 AND 65535),
+    PRIMARY KEY (server_origin, identity_id, service_id)
+) STRICT;
+
+-- visitor device signing keys use the same wrapping key as control sessions.
+-- an empty device_id is a durable pending enrollment, safe to retry.
+CREATE TABLE visitor_devices (
+    server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
+    identity_id TEXT NOT NULL CHECK (length(identity_id) BETWEEN 1 AND 255),
+    device_id TEXT NOT NULL DEFAULT '' CHECK (length(device_id) <= 255),
+    public_key BLOB NOT NULL CHECK (length(public_key) = 32),
+    signing_key_ciphertext BLOB NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (server_origin, identity_id)
+) STRICT;
+
+-- connector status is local lifecycle state, never a source of authority or a
+-- place for session tokens, provider addresses, TLS keys, or credentials.
+CREATE TABLE private_connectors (
+    server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
+    identity_id TEXT NOT NULL,
+    service_id TEXT NOT NULL,
+    protocol TEXT NOT NULL CHECK (protocol IN ('tcp', 'mysql', 'postgres')),
+    process_id INTEGER NOT NULL CHECK (process_id > 0),
+    listen_port INTEGER NOT NULL UNIQUE CHECK (listen_port BETWEEN 1 AND 65535),
+    state TEXT NOT NULL CHECK (state IN ('starting', 'ready', 'stopped', 'failed')),
+    updated_at INTEGER NOT NULL,
+    lease_expires_at INTEGER NOT NULL,
+    PRIMARY KEY (server_origin, identity_id, service_id)
 ) STRICT;
 
 CREATE TABLE installation_settings (
@@ -31,26 +83,6 @@ CREATE TABLE control_sessions (
     updated_at INTEGER NOT NULL
 ) STRICT;
 
-CREATE TABLE public_url_certificate_cache (
-    id INTEGER PRIMARY KEY,
-    server_origin TEXT NOT NULL REFERENCES server_profiles (origin) ON DELETE CASCADE,
-    team_id TEXT NOT NULL,
-    publisher_identity_id TEXT NOT NULL DEFAULT '' CHECK(publisher_identity_id='' OR (length(publisher_identity_id)=26 AND substr(publisher_identity_id,1,4)='pub_' AND substr(publisher_identity_id,5) NOT GLOB '*[^0-9A-Za-z]*')),
-    cache_key TEXT NOT NULL,
-    plan TEXT NOT NULL,
-    phase TEXT NOT NULL CHECK (phase IN ('pending', 'current')),
-    private_key_ciphertext BLOB NOT NULL,
-    csr_der BLOB NOT NULL,
-    certificate_pem BLOB,
-    renew_at INTEGER,
-    issuance_id TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
-    UNIQUE (server_origin, team_id, publisher_identity_id, cache_key, plan, phase),
-    CHECK ((certificate_pem IS NULL AND renew_at IS NULL AND issuance_id = '') OR
-           (certificate_pem IS NOT NULL AND renew_at IS NOT NULL AND issuance_id <> '')),
-    CHECK (phase <> 'current' OR certificate_pem IS NOT NULL)
-) STRICT;
-
 CREATE TABLE local_tunnels (
     id TEXT PRIMARY KEY CHECK (length(id) = 26 AND substr(id, 1, 4) = 'tun_'),
     command TEXT NOT NULL CHECK (command IN ('publish', 'dev')),
@@ -58,8 +90,7 @@ CREATE TABLE local_tunnels (
     server_origin TEXT NOT NULL REFERENCES server_profiles (origin) ON DELETE RESTRICT,
     project_root TEXT NOT NULL,
     service TEXT CHECK (service IS NULL OR service <> ''),
-    service_protocol TEXT NOT NULL DEFAULT 'http' CHECK (service_protocol IN ('http', 'postgres', 'mysql', 'redis', 'ssh')),
-    public_port INTEGER CHECK (public_port BETWEEN 1024 AND 65535),
+    service_protocol TEXT NOT NULL DEFAULT 'http' CHECK (service_protocol = 'http'),
     primary_project_root TEXT,
     integration_namespace TEXT,
     -- compatibility projection for the native caller's existing group key;
@@ -462,9 +493,8 @@ SELECT id,
         'server', server_origin, 'project', project_root, 'service', coalesce(service, ''),
         'service_protocol', CASE WHEN service_protocol = 'http' THEN '' ELSE service_protocol END,
         'public_url_id', coalesce(public_url_id, ''), 'publish_run_number', coalesce(publish_run_number, 0),
-        'public_port', coalesce(public_port, 0), 'hostname', coalesce(hostname, ''),
-        'public_url', CASE WHEN hostname IS NULL THEN '' WHEN public_port IS NOT NULL THEN hostname || ':' || public_port
-            WHEN service_protocol = 'http' THEN 'https://' || hostname ELSE '' END,
+        'hostname', coalesce(hostname, ''),
+        'public_url', CASE WHEN hostname IS NULL THEN '' ELSE 'https://' || hostname END,
         'target', coalesce(target, ''), 'framework', coalesce(framework, ''), 'failure', coalesce(failure_code, ''),
         'started_at', CASE WHEN started_at = 0 THEN '0001-01-01T00:00:00Z' ELSE
             strftime('%Y-%m-%dT%H:%M:%S', started_at / 1000000000 - (started_at % 1000000000 < 0), 'unixepoch')
@@ -498,7 +528,7 @@ END;
 
 -- +goose StatementBegin
 CREATE TRIGGER project_publication_changed AFTER UPDATE ON local_tunnels
-WHEN NEW.state IS NOT OLD.state OR NEW.hostname IS NOT OLD.hostname OR NEW.public_port IS NOT OLD.public_port
+WHEN NEW.state IS NOT OLD.state OR NEW.hostname IS NOT OLD.hostname
     OR NEW.target IS NOT OLD.target OR NEW.publish_run_number IS NOT OLD.publish_run_number
     OR NEW.public_url_id IS NOT OLD.public_url_id OR NEW.framework IS NOT OLD.framework OR NEW.failure_code IS NOT OLD.failure_code
 BEGIN

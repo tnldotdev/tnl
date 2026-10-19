@@ -41,6 +41,8 @@ type integrationGuestPublisherControl struct {
 	assigned controlv1.PublicURL
 }
 
+func (c integrationGuestPublisherControl) PublisherID() string { return c.native.PublisherID() }
+
 func (c integrationGuestPublisherControl) CreatePublicURL(_ context.Context, body controlv1.CreatePublicURLRequest, _ string) (controlv1.PublicURL, error) {
 	if body.Purpose != controlv1.Demo || body.CanonicalHostname != c.assigned.CanonicalHostname || body.Target != c.assigned.Target || body.Ephemeral == nil || !*body.Ephemeral {
 		return controlv1.PublicURL{}, nativeauth.ErrScope
@@ -182,8 +184,8 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	}
 	var setup controlv1.PublishRunSetup
 	if err := json.Unmarshal(started.Body.Bytes(), &setup); err != nil ||
-		setup.CertificatePlan.Scope != guest.Namespace || len(setup.CertificatePlan.Identifiers) != 1 ||
-		setup.CertificatePlan.Identifiers[0] != "*."+guest.Namespace {
+		setup.CertificatePlan.Scope != route.CanonicalHostname || len(setup.CertificatePlan.Identifiers) != 1 ||
+		setup.CertificatePlan.Identifiers[0] != route.CanonicalHostname {
 		t.Fatalf("guest certificate plan = %+v, error = %v", setup.CertificatePlan, err)
 	}
 	if repeated := startRun("guest-second-run"); repeated.Code != http.StatusConflict {
@@ -206,19 +208,29 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	databaseURL, inspect := standaloneTestDatabase(t)
 	publicAddress, relayUDPAddress := unusedTCPAddress(t), unusedUDPAddress(t)
-	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), startIntegrationDNS(t))
+	dns := newPrivateFixtureDNS(t)
+	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address)
 	cfg := standalonePublishConfig(t, databaseURL, publicAddress, relayUDPAddress, pebble.directoryURL)
 	cfg.GuestDemoEnabled = true
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	owner := newRuntimeTopology(t)
+	ca := newIntegrationTestCA(t)
+	controlCertificate := ca.issueServer(t, cfg.ServerHostname())
+	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicControl := unusedTCPAddress(t)
+	startIntegrationControlProxy(t, owner, publicControl, cfg.ControlListen, controlTLS)
 	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
+		dns:            dns,
 		acmeHTTPClient: pebble.httpClient,
 		relayClientTLS: &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13}, owner: owner,
 	})
 	waitForProcessReady(t, process)
-	controlHTTP, _ := newIntegrationHTTPSClient(t, pebble.roots, publicAddress, false, owner)
+	controlHTTP, _ := newIntegrationHTTPSClient(t, ca.roots, publicControl, false, owner)
 	serverURL := "https://" + cfg.ServerHostname()
 	control, err := controlclient.New(serverURL, controlHTTP, "")
 	if err != nil {
@@ -322,7 +334,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 		t.Fatalf("guest trial did not record its first ready run: %v", err)
 	}
 	waitForReadyPublisherConnections(t, inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
-	waitForIngressRoutingCurrent(t, inspect, 1)
+	waitForIngressRoutingCurrent(t, inspect, 2)
 	localDemo.SetPublicURL(ready.PublicURL)
 	visitor := newIntegrationVisitor(t, pebble.roots, publicAddress, owner)
 	secret := make([]byte, 32)

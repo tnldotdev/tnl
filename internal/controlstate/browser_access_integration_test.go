@@ -19,7 +19,7 @@ import (
 
 func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 	database, now := newControlStateIntegrationDatabase(t, "browser-access")
-	request := builtinRouteRequest(t, database, now)
+	request := oidcRouteRequest(t, database, now)
 	route := createTestPublicURL(t, database, request, now)
 	auth := browserTestAuthentication(t, database, route.ID, now)
 	preview, err := database.CreatePreview(t.Context(), route.TeamID, request.ActingIdentityID, "browser-access", now)
@@ -34,7 +34,7 @@ func TestIntegrationBrowserLoginHandoffAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding := bytes.Repeat([]byte{7}, 32)
-	state, err := database.BeginBrowserLogin(t.Context(), preview.ID, route.ID, "/settings?tab=profile", "nonce-at-least-sixteen", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV", binding, now)
+	state, err := database.BeginBrowserLogin(t.Context(), preview.ID, route.ID, "/settings?tab=profile", "nonce-at-least-sixteen", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV", binding, nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestIntegrationBrowserLoginInstallsAccessOnReadyPreviewHostnames(t *testing
 		ID: "pr_browser_api", PublicURLID: otherID, TeamID: f.request.TeamID,
 		MembershipID: f.request.MembershipID, ActingIdentityID: f.request.ActingIdentityID,
 		CertificateCacheKey: "certificate_session", CertificateScope: "public-url",
-		CertificateIdentifiers: []string{"api-session.example.test"}, ChallengeMethod: "tls-alpn-01",
+		CertificateIdentifiers: []string{"api-session.example.test"}, ChallengeMethod: "dns-01",
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	})
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state = 'ready', ready_at = $2,
@@ -309,7 +309,7 @@ func browserTestAuthentication(t *testing.T, d *Database, urlID string, now time
 		if loadErr != nil {
 			t.Fatal(loadErr)
 		}
-		insertTestPublishRun(t, d, testPublishRun{ID: "pr_browser_" + urlID, PublicURLID: urlID, TeamID: url.TeamID, MembershipID: url.MembershipID.String, ActingIdentityID: url.CreatedByIdentityID, CertificateCacheKey: "browser", CertificateScope: "public-url", CertificateIdentifiers: []string{url.CanonicalHostname}, ChallengeMethod: "tls-alpn-01", CreatedAt: now, ExpiresAt: now.Add(time.Hour)})
+		insertTestPublishRun(t, d, testPublishRun{ID: "pr_browser_" + urlID, PublicURLID: urlID, TeamID: url.TeamID, MembershipID: url.MembershipID.String, ActingIdentityID: url.CreatedByIdentityID, CertificateCacheKey: "browser", CertificateScope: "public-url", CertificateIdentifiers: []string{url.CanonicalHostname}, ChallengeMethod: "dns-01", CreatedAt: now, ExpiresAt: now.Add(time.Hour)})
 		run, err = q.GetOpenPublishRun(t.Context(), urlID)
 	}
 	if err != nil {
@@ -332,7 +332,7 @@ func browserTestControlSession(t *testing.T, d *Database, identityID string, now
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	result, err := d.createControlSession(t.Context(), controlstatedb.New(tx), identityID, false, oidcAuthenticationMethod, 1, time.Hour, 24*time.Hour, now)
+	result, err := d.createControlSession(t.Context(), controlstatedb.New(tx), identityID, time.Hour, 24*time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}

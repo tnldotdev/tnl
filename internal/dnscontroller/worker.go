@@ -28,14 +28,14 @@ type Zone struct {
 	ChangeID    string
 }
 
-type PublicURLRecord struct {
+type AddressRecord struct {
 	ZoneID               string
 	ZoneDomain           string
 	CustomZone           bool
 	AuthorityReference   string
 	TeamID               string
 	DomainID             string
-	PublicURLID          string
+	Owner                AddressOwner
 	CanonicalHostname    string
 	Namespace            string
 	WildcardHostname     string
@@ -46,8 +46,8 @@ type PublicURLRecord struct {
 type Provider interface {
 	EnsureCustomZone(context.Context, controlstate.DNSAuthorityWork) (Zone, error)
 	ReleaseCustomZone(context.Context, controlstate.DNSAuthorityWork) error
-	PublishPublicURL(context.Context, PublicURLRecord) (Zone, error)
-	RemovePublicURL(context.Context, PublicURLRecord) (Zone, error)
+	PublishAddress(context.Context, AddressRecord) (Zone, error)
+	RemoveAddress(context.Context, AddressRecord) (Zone, error)
 }
 
 type DNSVerifier interface {
@@ -104,6 +104,7 @@ type Worker struct {
 	config        Config
 	now           func() time.Time
 	publicURLNext bool
+	managedNext   bool
 }
 
 func New(store Store, provider Provider, verifier DNSVerifier, config Config) (*Worker, error) {
@@ -151,6 +152,17 @@ func (w *Worker) Run(ctx context.Context) error {
 
 func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	now := w.now()
+	if w.managedNext {
+		w.managedNext = false
+		if found, err := w.processManagedEndpoint(ctx, now); found || err != nil {
+			return found, err
+		}
+	}
+	w.managedNext = true
+	return w.processExisting(ctx, now)
+}
+
+func (w *Worker) processExisting(ctx context.Context, now time.Time) (bool, error) {
 	if w.publicURLNext {
 		found, err := w.processPublicURL(ctx, now)
 		if found || err != nil {
@@ -172,7 +184,10 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	if found || err != nil {
 		w.publicURLNext = false
 	}
-	return found, err
+	if found || err != nil {
+		return found, err
+	}
+	return w.processManagedEndpoint(ctx, now)
 }
 
 func (w *Worker) retryAvailableAt(attempts uint64, now time.Time) time.Time {

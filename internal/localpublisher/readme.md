@@ -98,11 +98,9 @@ The parent dispatch wires these command types and functions:
 
 `runtimeConfigurePublication(ctx, database, project, service, *publisher.Config)`
 is the admission/access integration hook. It runs for configured and invocation
-workers before worker fencing wraps `PromoteVisitor`,
-`AuthorizeVisitorCertificate`, and `AdmitRequest`.
-`runtimeVisitorTLS(ctx, database, project, service)` supplies visitor TLS
-credentials for public database readiness checks. Both hooks are installed by
-the parent/access integration.
+workers before worker fencing wraps `PromoteVisitor` and `AdmitRequest`.
+Private readiness uses its own authenticated connector check and approved
+target trust.
 
 `runtimeAttachIntegrations(ctx, database, project, service, tunnel, *publisher.Config)`
 attaches companion publisher lifecycles and returns their cancel-and-join function.
@@ -133,18 +131,15 @@ path. The publisher verifies and strips that proof before forwarding. A public
 HTTP request cannot assert readiness by setting the probe header itself. Checks
 discard responses after owner, registration, target, run, or readiness changes.
 
-`clientruntime.CheckPublicTCP(ctx, TCPProbeOptions)` and `ProbeTCP` are shared
-with remote CLI checks. PostgreSQL and MySQL perform their public TLS
-negotiation, Redis uses verified TLS and PING, and SSH requires a bounded public
-SSH-2.0 banner. PostgreSQL/MySQL probes stop at verified protocol TLS; they do
-not authenticate to the database or issue queries. These probes use the public
-address, never the private target.
+Private checks use the authenticated connector and the approved target trust.
+They do not probe database or SSH targets through public ports. `tnl ping`
+checks HTTP public URLs with normal certificate verification.
 
 Configured workers use team sessions for saved-URL management and enrollment,
 then pass the grant-scoped `publisheridentity/native.Native` adapter to
 `publisher.Run`. Run creation uses scoped signing, not the team session.
 Inspection policy includes mode, retention, and byte budget; summary observations
-map directly into the native recorder. TCP saved addresses are reserved before
-`projectmeta.NewService` emits metadata. Preview association and OAuth response
+map directly into the native recorder. Private services have no public address
+in project metadata. Preview association and OAuth response
 observation use the same worker lifecycle; the companion lifecycle hook joins
 its workers before that lifecycle closes.
