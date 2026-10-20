@@ -5,7 +5,34 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/privatepublisher"
 	"github.com/tnldotdev/tnl/internal/targetdiscovery"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+// AssignmentDiscovery projects only the control-owned descriptor. there is no
+// local configuration lookup or fallback to an address/static trust setting.
+func AssignmentDiscovery(configuration controlv1.ProjectServiceConfiguration) (targetdiscovery.Request, error) {
+	descriptor := configuration.TargetDiscovery
+	if descriptor == nil || configuration.Protocol == nil || !configuration.Protocol.Valid() || !descriptor.Type.Valid() || configuration.Target != "" || configuration.TargetTls != nil || configuration.Publisher == nil || *configuration.Publisher == "" || *configuration.Publisher == "local" || configuration.PublicUrl != nil || configuration.Http != nil {
+		return targetdiscovery.Request{}, ErrAssignment
+	}
+	if descriptor.Cluster != nil && *descriptor.Cluster == "" || descriptor.Instance != nil && *descriptor.Instance == "" {
+		return targetdiscovery.Request{}, ErrAssignment
+	}
+	request := targetdiscovery.Request{Type: string(descriptor.Type), Region: descriptor.Region, Protocol: string(*configuration.Protocol)}
+	if descriptor.Cluster != nil {
+		request.Cluster = *descriptor.Cluster
+	}
+	if descriptor.Instance != nil {
+		request.Instance = *descriptor.Instance
+	}
+	if descriptor.Endpoint != nil {
+		if !descriptor.Endpoint.Valid() {
+			return targetdiscovery.Request{}, ErrAssignment
+		}
+		request.Endpoint = string(*descriptor.Endpoint)
+	}
+	return request.Normalize()
+}
 
 // PrepareCloudAssignment is the publisher-side assignment adapter. the caller
 // projects only the assigned descriptor into Request; it never evaluates local

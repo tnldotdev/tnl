@@ -8,7 +8,6 @@ import (
 	"net"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/privatepublisher"
 	"github.com/tnldotdev/tnl/internal/rdsroots"
 	"github.com/tnldotdev/tnl/internal/targetdiscovery"
@@ -34,10 +33,7 @@ func (p assignmentDiscovery) Discover(_ context.Context, request targetdiscovery
 }
 
 func TestPrepareCloudAssignmentUsesAssignedSelectorAndNormalPrivateHealth(t *testing.T) {
-	// until the control descriptor lands, this is the exact source adapter used
-	// to project its identical selected fields into the normalized request.
-	region, instance := "us-east-1", "database"
-	request, err := targetdiscovery.FromServiceTarget(config.ServiceTarget{Type: "rds", Region: &region, Instance: &instance}, config.ProtocolPostgres)
+	request, err := AssignmentDiscovery(controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.PrivateServiceProtocol("postgres")), Publisher: new("cloud"), TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Rds, Region: "us-east-1", Instance: new("database")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,5 +64,26 @@ func TestCloudDiscoveryRetryBoundary(t *testing.T) {
 		if got := retryablePublication(errors.Join(&targetdiscovery.Error{Kind: kind}, &net.DNSError{IsTemporary: true})); got != want {
 			t.Fatalf("retry %s = %v, want %v", kind, got, want)
 		}
+	}
+}
+
+func TestAssignmentDiscoveryPreservesTypedSelectorsAndEndpointIntent(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		descriptor controlv1.ProjectTargetDiscovery
+		protocol   string
+		want       targetdiscovery.Request
+	}{
+		{"eks", controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-west-2", Cluster: new("production-cluster")}, "kubernetes", targetdiscovery.Request{Type: "eks", Region: "us-west-2", Cluster: "production-cluster", Protocol: "kubernetes"}},
+		{"instance-writer-default", controlv1.ProjectTargetDiscovery{Type: controlv1.Rds, Region: "eu-west-1", Instance: new("orders")}, "postgres", targetdiscovery.Request{Type: "rds", Region: "eu-west-1", Instance: "orders", Endpoint: "writer", Protocol: "postgres"}},
+		{"cluster-writer", controlv1.ProjectTargetDiscovery{Type: controlv1.Rds, Region: "us-east-1", Cluster: new("orders"), Endpoint: new(controlv1.Writer)}, "mysql", targetdiscovery.Request{Type: "rds", Region: "us-east-1", Cluster: "orders", Endpoint: "writer", Protocol: "mysql"}},
+		{"cluster-reader", controlv1.ProjectTargetDiscovery{Type: controlv1.Rds, Region: "us-east-2", Cluster: new("orders"), Endpoint: new(controlv1.Reader)}, "postgres", targetdiscovery.Request{Type: "rds", Region: "us-east-2", Cluster: "orders", Endpoint: "reader", Protocol: "postgres"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := AssignmentDiscovery(controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.PrivateServiceProtocol(tc.protocol)), Publisher: new("cloud"), TargetDiscovery: &tc.descriptor})
+			if err != nil || got != tc.want {
+				t.Fatalf("descriptor projection = %#v, %v", got, err)
+			}
+		})
 	}
 }

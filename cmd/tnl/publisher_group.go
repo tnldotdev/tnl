@@ -15,17 +15,15 @@ import (
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/grouppublisher"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
-	"github.com/tnldotdev/tnl/internal/privatepublisher"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
 	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
 	"github.com/tnldotdev/tnl/internal/publisherjob"
 	"github.com/tnldotdev/tnl/internal/publisherprovenance"
-	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/internal/targetdiscovery"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -332,6 +330,10 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 }
 
 func servePublisherGroup(ctx context.Context, job publisherjob.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error, progress ...func(string, publisher.Event) error) error {
+	return servePublisherGroupWithDiscovery(ctx, job, profile, private, observe, nil, progress...)
+}
+
+func servePublisherGroupWithDiscovery(ctx context.Context, job publisherjob.Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error, provider targetdiscovery.Provider, progress ...func(string, publisher.Event) error) error {
 	deployment, err := publisherprovenance.ReadEnvironment(os.LookupEnv, job.GroupInstance, buildinfo.Version)
 	if err != nil {
 		return err
@@ -343,7 +345,7 @@ func servePublisherGroup(ctx context.Context, job publisherjob.Job, profile *cli
 			return err
 		}
 	}
-	client, err := grouppublisher.NewClient(job.Server, nil)
+	client, err := publisherjob.GroupClient(job)
 	if err != nil {
 		return err
 	}
@@ -352,6 +354,14 @@ func servePublisherGroup(ctx context.Context, job publisherjob.Job, profile *cli
 		return err
 	}
 	member := *job.GroupMember
+	resolver, err := targetdiscovery.New(provider, targetdiscovery.Options{})
+	if err != nil {
+		return err
+	}
+	// Runtime.Serve joins its assignments before returning; only then may shared
+	// discovery work be canceled and joined. nil provider uses the AWS chain.
+	defer resolver.Close()
+	publications := publisherjob.GroupPublisher{Member: member, Private: private, State: profile, Control: control, Authority: authority, Discovery: resolver}
 	return withPublisherCertificateState(ctx, job, profile, private, client, func(ctx context.Context) error {
 		err := (grouppublisher.Runtime{Control: client, Member: member, Private: private, Deployment: deployment, Observe: observe, MemberChanged: func(current controlv1.PublisherGroupMember) error {
 			value, err := credentialfile.NewGroup(job.Server, job.GroupInstance, current, private)
@@ -363,37 +373,7 @@ func servePublisherGroup(ctx context.Context, job publisherjob.Job, profile *cli
 			}
 			_, err = credentialfile.ImportGroup(ctx, profile, value, job.Server, current.ProjectKey, current.GroupName, job.GroupInstance)
 			return err
-		}, Publish: func(ctx context.Context, assignment controlv1.PublisherGroupServiceAssignment, health func(bool)) error {
-			identity := authorityv1.PublisherEnrollmentResult{ClientId: member.PublisherIdentityId, KeyId: member.KeyId, TeamId: member.TeamId, GrantId: assignment.GrantId}
-			if assignment.ServiceKind == "private_service" {
-				identity.Kind, identity.PrivateServiceId = authorityv1.PrivateService, &assignment.ServiceId
-			} else {
-				return grouppublisher.ErrAssignment
-			}
-			native, err := nativeauth.NewNative(control, authority, identity, private)
-			if err != nil {
-				return err
-			}
-			if assignment.ServiceKind == "private_service" {
-				service, err := native.SavedPrivateService(ctx)
-				if err != nil {
-					return err
-				}
-				if service.Id != assignment.ServiceId || service.TrustRevision != assignment.TrustRevision || assignment.Configuration.Protocol == nil || service.Protocol != *assignment.Configuration.Protocol {
-					return grouppublisher.ErrAssignment
-				}
-				privateJob := publisherjob.Job{Kind: publisherjob.KindPrivateService, Protocol: config.ProtocolName(service.Protocol), Target: assignment.Configuration.Target}
-				if err := assignedTargetTrust(&privateJob, assignment.Configuration.TargetTls); err != nil {
-					return err
-				}
-				return publisherjob.PublishPrivate(ctx, privateJob, privatepublisher.RunConfig{Control: native, State: profile, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: nativeauth.PrivateServiceMetadata(service),
-					Healthy: func(ctx context.Context) bool {
-						return publisherjob.PreflightPrivate(ctx, privateJob) == nil
-					}, ObserveReadiness: func(status privatepublisher.RunStatus) { health(status.Ready) },
-				})
-			}
-			return grouppublisher.ErrAssignment
-		}}).Serve(ctx)
+		}, Publish: publications.Publish}).Serve(ctx)
 		if errors.Is(err, grouppublisher.ErrAssignment) {
 			return errors.Join(publisherjob.ErrScope, err)
 		}

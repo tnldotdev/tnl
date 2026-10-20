@@ -41,24 +41,30 @@ and `Protocol`; an address, static TLS override, or local discovery field is
 rejected. `Endpoint` defaults to `writer`; `reader` is valid only for an RDS
 cluster. Endpoint choice does not grant database read permissions.
 
-## join the control descriptor at the assignment boundary
+## consume the assigned control descriptor
 
-The base revision predates
-`ProjectServiceConfiguration.TargetDiscovery`. The control/API owner supplies
-that authoritative descriptor and its validation. After merging it, the group
-callback in `cmd/tnl/publisher_group.go` should:
+Foreground and installed groups both enter `servePublisherGroup` in
+`cmd/tnl/publisher_group.go`. It owns one shared resolver for the group lifetime
+and closes it after `Runtime.Serve` has joined every assignment worker. Creating
+the resolver does not load credentials or call AWS.
 
-1. Allocate one resolver for the group runtime and defer `Close` after its
-   workers have joined. Do not construct it during apply or generation.
-2. For a cloud assignment, project the descriptor's selected type, region,
-   cluster/instance and endpoint plus the assignment protocol into `Request`.
-   Do not re-read a project configuration file on the publisher machine.
-3. Keep the existing saved-service, grant, protocol and trust-revision checks.
-   Cloud descriptors require no saved static `TargetTls` snapshot; the approved
-   descriptor, rather than a local file, authorizes publisher-side cloud trust.
-4. Call `grouppublisher.PublishCloudAssignment(ctx, resolver, request, run)`
-   with the existing native control client, identity, state, metadata and
-   readiness observer in `privatepublisher.RunConfig`.
+`publisherjob.GroupPublisher.Publish` is their common production callback. It
+reads the exact service through the native publisher grant, compares the saved
+service ID, protocol and trust revision with the assignment, and then selects
+static-target publication or cloud preparation.
+
+`grouppublisher.AssignmentDiscovery` projects the typed
+`ProjectServiceConfiguration.TargetDiscovery` fields and assignment protocol
+into `Request`. It rejects mixed address/static trust, local publisher settings,
+empty selectors and incompatible protocols before discovery. The saved
+`PrivateService` exposes protocol and trust revision, not another descriptor;
+the authenticated group assignment owns the exact cloud selector. No project
+checkout is evaluated on the publisher machine.
+
+Cloud runs call `grouppublisher.PublishCloudAssignment` with that request and
+their native control client, identity, state, metadata and readiness observer.
+The control/authority transport uses the job's selected control CA; discovered
+target trust remains independent of that transport and managed visitor TLS.
 
 `PrepareCloudAssignment` is the equivalent thin adapter when the caller needs
 to inspect the resulting `RunConfig` before calling `privatepublisher.Publish`.
@@ -80,10 +86,11 @@ retain their captured address, TLS verifier and connection. A fenced publication
 needs a fresh preparation; this adapter does not silently approve changed trust
 or automatically restart active SQL sessions.
 
-The wire-descriptor projection and its real signed control-assignment fixture
-must be completed at the parent integration point once the generated types
-land. The helper and its private-publisher consumer are implemented here; no
-parallel authoritative API or source-config contract is introduced.
+The Kubernetes transport receives the discovered verifier before validation;
+it never evaluates `FromTrust(kubernetes, nil)` on this path. The same verified
+snapshot is used by native preparation and new target captures. Changed
+assignment definitions are joined before replacement workers prepare their own
+publication; they do not reuse a different selector's resource pin.
 
 ## validate provider metadata
 
@@ -192,8 +199,14 @@ PostgreSQL fixture runs verified visitor and target TLS through privatepublisher
 changes a local DNS answer for new connections, and verifies that resource
 replacement leaves an existing stream on its original connection.
 
-The parent integration must add the finalized descriptor's actual signed
-assignment round trip. Live AWS qualification still needs an approved account,
+The signed group-assignment fixture uses real control/authority clients, the
+production callback, real SDK SigV4 HTTPS exchanges and verified EKS target TLS
+preflight. It covers foreground and installed supervisor execution; separate
+shutdown cases join an in-flight AWS request after cancellation. The fixture
+stops at the first heartbeat rather than inventing a ready relay or certificate
+issuer. Telemetry checks retain `kubernetes` within the fixed protocol budget.
+
+Live AWS qualification still needs an approved account,
 publisher task role and private network: exact-resource Describe allow/deny and
 not-found checks; task-role refresh; EKS delete/recreate and CA change; RDS
 instance/cluster writer and reader failover with real psql/mysql sessions; and

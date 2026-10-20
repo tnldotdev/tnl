@@ -245,12 +245,14 @@ tasks:
   go:test:target-discovery:
     desc: Check bounded publisher discovery, signed local AWS HTTPS, regional roots and target TLS without cloud access
     cmds:
-      - go test ./internal/targetdiscovery ./internal/rdsroots ./internal/grouppublisher ./internal/privatepublisher ./internal/targettransport ./internal/observability
+      - go test ./internal/targetdiscovery ./internal/rdsroots ./internal/grouppublisher ./internal/publisherjob ./internal/privatepublisher ./internal/targettransport ./internal/observability
+      - go test ./cmd/tnl -run='^TestPublisherGroupDiscovery' -count=1
 
   go:test:target-discovery:race:
     desc: Check publisher discovery and target preparation with the race detector
     cmds:
-      - go test -race ./internal/targetdiscovery ./internal/rdsroots ./internal/grouppublisher ./internal/privatepublisher ./internal/targettransport ./internal/observability
+      - go test -race ./internal/targetdiscovery ./internal/rdsroots ./internal/grouppublisher ./internal/publisherjob ./internal/privatepublisher ./internal/targettransport ./internal/observability
+      - go test -race ./cmd/tnl -run='^TestPublisherGroupDiscovery' -count=1
 
   go:test:kubernetes:
     desc: Check native Kubernetes credentials, kubeconfig ownership, and HTTP stream boundaries

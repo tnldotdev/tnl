@@ -4,12 +4,99 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
 	"errors"
+	"net/http"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
+	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/grouppublisher"
+	"github.com/tnldotdev/tnl/internal/privatepublisher"
+	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publisheridentity/credentialfile"
+	nativeauth "github.com/tnldotdev/tnl/internal/publisheridentity/native"
+	"github.com/tnldotdev/tnl/internal/targetdiscovery"
+	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
+
+// GroupClient uses the same selected control trust as native service clients.
+// group HTTPS and discovered target TLS remain independent trust boundaries.
+func GroupClient(job Job) (*grouppublisher.Client, error) {
+	roots, err := trustRoots(job.ServerCAPEM)
+	if err != nil {
+		return nil, err
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
+	transport.DisableKeepAlives = true
+	return grouppublisher.NewClient(job.Server, &http.Client{Transport: transport})
+}
+
+// GroupPublisher is the common foreground/installed assignment callback. its
+// resolver belongs to the surrounding group loop and outlives all its workers.
+type GroupPublisher struct {
+	Member    controlv1.PublisherGroupMember
+	Private   ed25519.PrivateKey
+	State     *clientstate.Store
+	Control   nativeauth.NativeControl
+	Authority nativeauth.AssertionExchanger
+	Discovery *targetdiscovery.Resolver
+}
+
+func (GroupPublisher) String() string   { return "publisher group publications" }
+func (GroupPublisher) GoString() string { return "publisher group publications" }
+
+func (p GroupPublisher) Publish(ctx context.Context, assignment controlv1.PublisherGroupServiceAssignment, health func(bool)) error {
+	if assignment.ServiceKind != "private_service" || assignment.Configuration.Protocol == nil || assignment.TrustRevision < 1 {
+		return grouppublisher.ErrAssignment
+	}
+	identity := authorityv1.PublisherEnrollmentResult{ClientId: p.Member.PublisherIdentityId, KeyId: p.Member.KeyId, TeamId: p.Member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.PrivateService, PrivateServiceId: &assignment.ServiceId}
+	native, err := nativeauth.NewNative(p.Control, p.Authority, identity, p.Private)
+	if err != nil {
+		return err
+	}
+	service, err := native.SavedPrivateService(ctx)
+	if err != nil {
+		return err
+	}
+	if service.Id != assignment.ServiceId || service.TrustRevision != assignment.TrustRevision || service.Protocol != *assignment.Configuration.Protocol {
+		return grouppublisher.ErrAssignment
+	}
+	run := privatepublisher.RunConfig{Control: native, State: p.State, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Metadata: nativeauth.PrivateServiceMetadata(service), ObserveReadiness: func(status privatepublisher.RunStatus) {
+		if health != nil {
+			health(status.Ready)
+		}
+	}}
+	if assignment.Configuration.TargetDiscovery != nil {
+		// PrivateService carries approved protocol/trust revision, not a second
+		// selector. the exact authenticated assignment owns the cloud descriptor.
+		if service.TargetTls != nil {
+			return grouppublisher.ErrAssignment
+		}
+		request, err := grouppublisher.AssignmentDiscovery(assignment.Configuration)
+		if err != nil {
+			return err
+		}
+		return grouppublisher.PublishCloudAssignment(ctx, p.Discovery, request, run)
+	}
+	job := Job{Kind: KindPrivateService, Protocol: config.ProtocolName(service.Protocol), Target: assignment.Configuration.Target}
+	if trust := assignment.Configuration.TargetTls; trust != nil {
+		snapshot := projectconfig.TargetTrustSnapshot{Hostname: trust.Hostname, Digest: trust.Digest}
+		if trust.CaPem != nil {
+			snapshot.CAPEM = []byte(*trust.CaPem)
+		}
+		job.Trust, err = snapshot.PrivateSnapshot()
+		if err != nil {
+			return err
+		}
+	}
+	if err := nativeauth.MatchPrivateServiceDeclaration(service, string(job.Protocol), job.Trust); err != nil {
+		return err
+	}
+	run.Target = job.Target
+	return PublishPrivate(ctx, job, run)
+}
 
 // InstallGroup captures the task's own signing identity. no person session or
 // project checkout is required by the supervisor after installation.
