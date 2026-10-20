@@ -103,6 +103,12 @@ jobs:
       - name: Allow local DNS and HTTPS test listeners
         run: sudo sysctl --write net.ipv4.ip_unprivileged_port_start=53
 
+      - name: Verify native SDK connections
+        run: task go:test:connections
+
+      - name: Verify native Drizzle Kit migration
+        run: task go:test:integration:connections
+
       - name: Run binary integration tests
         run: task go:test:integration:binary
 
