@@ -160,7 +160,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(ErrorType, "trace_log", "exact owned failure.Reason, diagnostic code, or closed tunnel.<code>; unknown errors use "+string(failure.Unexpected), errorTypeValues()...)
 	add(State, "bounded", "closed per-instrument readiness or state-machine value")
 	add(Event, "bounded", "closed per-instrument lifecycle event, including queued, delivered, dropped, and operational_failure")
-	add(CertificateKind, "bounded", "certificate worker domain", "public_url", "relay", "managed_service", "control")
+	add(CertificateKind, "bounded", "certificate worker domain", "public_url", "relay", "managed_service", "control", "service_queue")
 	add(DNSKind, "bounded", "DNS worker domain", "authority", "public_url", "managed_service", "public_url_challenge", "managed_service_challenge", "relay_challenge")
 	add(CleanupKind, "bounded", "cleanup domain", "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state")
 	add(CapacityResource, "bounded", "admission capacity domain", admissionResources...)

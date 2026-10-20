@@ -145,7 +145,8 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func finishDNSAttempt(ctx context.Context, finish func(error), err error) {
-	if err != nil && ctx.Err() == nil {
+	canceled := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	if err != nil && (!canceled || !workerloop.LifetimeEnded(ctx)) {
 		err = failure.Wrap("advance DNS work", dnsFailureReason(err), err)
 		operatorlog.ReportContext(ctx, "advance DNS work", dnsFailureReason(err), "", err)
 	}

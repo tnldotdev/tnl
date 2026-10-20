@@ -93,6 +93,17 @@ func (q *Queries) GetLocalProjectPrivateService(ctx context.Context, arg GetLoca
 	return i, err
 }
 
+const invalidatePublisherGroupRuntimeHealth = `-- name: InvalidatePublisherGroupRuntimeHealth :exec
+UPDATE control.publisher_group_members
+SET healthy=false, acknowledged_at=NULL
+WHERE publisher_identity_id=$1
+`
+
+func (q *Queries) InvalidatePublisherGroupRuntimeHealth(ctx context.Context, publisherIdentityID string) error {
+	_, err := q.db.Exec(ctx, invalidatePublisherGroupRuntimeHealth, publisherIdentityID)
+	return err
+}
+
 const listAppliedProjectServices = `-- name: ListAppliedProjectServices :many
 SELECT team_id, project_key, service, group_id, private_service_id, public_url_id, visitor_grant_id, desired_revision FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 ORDER BY service
 `

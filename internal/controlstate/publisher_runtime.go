@@ -207,6 +207,12 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 				return result, ErrPublisherRuntimeStale
 			}
 			current, err = q.StartPublisherRuntime(ctx, controlstatedb.StartPublisherRuntimeParams{PublisherIdentityID: i.ID, TeamID: team, KeyID: kid, ScopeID: r.ScopeID, ProcessRunID: r.ProcessRunID, Epoch: r.ExpectedEpoch + 1, Address: nullableText(address), AddressFamily: family, Now: timestamptz(r.Now), LeaseExpiresAt: timestamptz(until), DeploymentReport: deploymentJSON, DeploymentGroupID: deploymentGroup, DeploymentFirstObservedAt: deploymentFirst})
+			if err == nil && group != "" {
+				// the team lock serializes start with acknowledgement. invalidate
+				// only a new epoch, never recovery of a lost start reply; request
+				// timestamps cannot establish which runtime acknowledged health.
+				err = q.InvalidatePublisherGroupRuntimeHealth(ctx, i.ID)
+			}
 		}
 	} else {
 		if current.ProcessRunID != r.ProcessRunID || current.Epoch != r.ExpectedEpoch || current.ScopeID != r.ScopeID || current.KeyID != kid || r.Action == "renew" && current.StoppedAt.Valid {

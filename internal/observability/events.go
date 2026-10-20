@@ -147,7 +147,7 @@ func (m *Metrics) ObserveRecoveryAttempt(outcome RecoveryAttemptOutcome) {
 }
 
 func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimOutcome) {
-	if m == nil || kind != "relay" && kind != "public_url" && kind != "managed_service" {
+	if m == nil || kind != "relay" && kind != "public_url" && kind != "managed_service" && kind != "service_queue" {
 		return
 	}
 	if outcome != CertificateClaimed && outcome != CertificateEmpty && outcome != CertificateError {

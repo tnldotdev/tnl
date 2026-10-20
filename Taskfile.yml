@@ -261,6 +261,11 @@ tasks:
     cmds:
       - go test -race ./...
 
+  go:test:server:
+    desc: Check control state, APIs, background workers, and server runtime with races
+    cmds:
+      - go test -race ./internal/controlstate/... ./internal/controlapi ./internal/authorityapi ./internal/certificates ./internal/dnscontroller ./internal/tnldruntime ./internal/workerloop ./internal/observability
+
   go:test:observability:
     desc: Check vocabulary, identity isolation, local HTTPS export, and correlation without cloud access
     cmds:

@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
 const defaultFailedRetryInterval = time.Hour
@@ -100,7 +101,7 @@ func (w *RelayWorker) processOne(ctx context.Context) (_ bool, retErr error) {
 		return false, err
 	}
 	work, found, err := w.store.ClaimRelayCertificateOrderWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
-	if w.config.Observer != nil && ctx.Err() == nil {
+	if w.config.Observer != nil && !workerloop.LifetimeEnded(ctx) {
 		outcome := observability.CertificateClaimed
 		if err != nil {
 			outcome = observability.CertificateError

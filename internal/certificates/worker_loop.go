@@ -63,7 +63,8 @@ func runWorkerLoop(
 }
 
 func finishCertificateAttempt(ctx context.Context, finish func(error), err error) {
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+	canceled := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	if err != nil && (!canceled || !workerloop.LifetimeEnded(ctx)) {
 		err = failure.Wrap("advance certificate work", certificateFailureReason(err), err)
 		operatorlog.ReportContext(ctx, "advance certificate work", certificateFailureReason(err), "", err)
 	}

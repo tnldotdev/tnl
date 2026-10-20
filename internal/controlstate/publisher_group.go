@@ -469,7 +469,7 @@ func listPublisherGroupMemberStatus(ctx context.Context, tx pgx.Tx, team, projec
 			return nil, err
 		}
 		if result[i].Runtime != nil {
-			result[i].Healthy = result[i].Healthy && result[i].Runtime.Active && result[i].AcknowledgedAt != nil && !result[i].AcknowledgedAt.Before(result[i].Runtime.StartedAt)
+			result[i].Healthy = result[i].Healthy && result[i].Runtime.Active
 		}
 	}
 	return result, nil

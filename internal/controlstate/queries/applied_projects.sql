@@ -17,6 +17,11 @@ UPDATE control.publisher_group_members
 SET observed_revision=sqlc.arg(revision), healthy=sqlc.arg(healthy), acknowledged_at=sqlc.arg(acknowledged_at)
 WHERE publisher_identity_id=sqlc.arg(publisher_identity_id);
 
+-- name: InvalidatePublisherGroupRuntimeHealth :exec
+UPDATE control.publisher_group_members
+SET healthy=false, acknowledged_at=NULL
+WHERE publisher_identity_id=sqlc.arg(publisher_identity_id);
+
 -- name: ListPublisherGroupMemberStatus :many
 SELECT g.id AS group_id, g.name AS group_name, m.publisher_identity_id, m.key_id,
     m.observed_revision, p.revision AS current_revision, m.acknowledged_at,

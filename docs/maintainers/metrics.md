@@ -274,6 +274,14 @@ matter when reading it:
   `tnl_control_certificate_milestone_age_seconds` cover public URLs and managed
   services using `tnl.certificate_kind`; there are no public-URL-only aliases.
   certificate work, claims, transitions, and installation use the same kinds.
+  the shared service certificate queue reports failed claims and empty polls as
+  `service_queue`; only a successfully claimed row identifies `public_url` or
+  `managed_service`. relay claims retain `relay`.
+- certificate and DNS worker attempt deadlines are operational timeouts while the
+  process lifetime remains live. their owner attempt and one authored diagnostic
+  retain the timeout and trace correlation even if saving retry state succeeds.
+  process-lifetime cancellation or deadline ends work without an operational
+  failure diagnostic. expired work leases remain recoverable by later claims.
 - `tnl_control_publisher_runtime_duration_seconds` measures signed `inspect`,
   `start`, `renew`, and `stop` with selected authenticated team/group/publisher
   and reported deployment/replica dimensions. replaced/stopped runtime rejection

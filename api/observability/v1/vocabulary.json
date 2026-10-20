@@ -348,7 +348,8 @@
         "public_url",
         "relay",
         "managed_service",
-        "control"
+        "control",
+        "service_queue"
       ],
       "semantics": "certificate worker domain",
       "dimension_policy": "bounded"

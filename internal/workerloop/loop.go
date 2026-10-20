@@ -20,6 +20,17 @@ type Config struct {
 	OnError          func(error)
 }
 
+type lifetimeKey struct{}
+
+// LifetimeEnded distinguishes process shutdown from an iteration's own deadline.
+// outside Run, explicit cancellation remains ordinary caller control flow.
+func LifetimeEnded(ctx context.Context) bool {
+	if lifetime, ok := ctx.Value(lifetimeKey{}).(context.Context); ok {
+		return lifetime.Err() != nil
+	}
+	return errors.Is(ctx.Err(), context.Canceled)
+}
+
 // Run starts immediately and repeats without waiting while an iteration finds
 // more work and succeeds. empty or failed iterations wait for IdleInterval.
 // each iteration has its own deadline; OnError decides how to report failures,
@@ -42,7 +53,7 @@ func Run(ctx context.Context, config Config) error {
 			return nil
 		}
 		operationCtx, cancel := context.WithTimeout(ctx, config.OperationTimeout)
-		more, err := config.Process(operationCtx)
+		more, err := config.Process(context.WithValue(operationCtx, lifetimeKey{}, ctx))
 		cancel()
 		if err != nil && config.OnError != nil {
 			config.OnError(err)

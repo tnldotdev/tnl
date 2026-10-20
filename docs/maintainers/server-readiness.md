@@ -39,16 +39,19 @@ and lease fail-closed behavior; they do not qualify a Kubernetes operator.
 
 the existing authenticated project status includes each publisher group's
 `current_revision`, member `observed_revision`, `acknowledged_at`, `snapshot_at`,
-confirmed lease expiry, and signed runtime status. an older acknowledgement stops
-being healthy when the applied revision changes, its group lease expires, or a
-replacement signed runtime starts after that acknowledgement.
+confirmed lease expiry, and signed runtime status. an acknowledgement stops being
+healthy when the applied revision changes, its group lease expires, or a new
+signed runtime epoch starts. runtime start clears the previous health and
+acknowledgement in the same transaction, under the team lock shared with
+acknowledgement. equal or reversed request timestamps cannot carry health into a
+replacement. recovering a lost start reply for the same epoch preserves health.
 runtime activity is evaluated from current state at the same snapshot time;
 failed observation calls do not extend its last-seen time or lease. acknowledgement
 health is publisher-reported configuration health, not an application probe or
 proof that every service connection is ready.
 
 the timestamp is part of the fresh PostgreSQL baseline and the control OpenAPI
-source. callers must compare timestamps and revisions rather than retaining a
+source. callers must use a current snapshot and revision rather than retaining a
 healthy result indefinitely. runtime status retains its existing provenance:
 control-observed receipt/source facts and explicitly publisher-reported deployment
 metadata. configured/running AWS or Kubernetes facts remain infrastructure-owned

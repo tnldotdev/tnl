@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/dnscontroller"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
 type PublicURLConfig struct {
@@ -100,14 +101,17 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (_ bool, retErr error)
 	work, found, err := w.store.ClaimACMEOrderWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
 	if observer, ok := w.config.Observer.(interface {
 		ObserveCertificateClaim(string, observability.CertificateClaimOutcome)
-	}); ok && ctx.Err() == nil && found {
+	}); ok && !workerloop.LifetimeEnded(ctx) {
 		outcome := observability.CertificateClaimed
+		kind := "service_queue"
 		if err != nil {
 			outcome = observability.CertificateError
 		} else if !found {
 			outcome = observability.CertificateEmpty
+		} else {
+			kind = certificateKind(work)
 		}
-		observer.ObserveCertificateClaim(certificateKind(work), outcome)
+		observer.ObserveCertificateClaim(kind, outcome)
 	}
 	if err != nil || !found {
 		return found, err

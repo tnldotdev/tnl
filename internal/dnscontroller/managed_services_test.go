@@ -42,7 +42,7 @@ func (s *managedDNSStoreStub) ValidateManagedEndpointDNSWork(context.Context, co
 func (s *managedDNSStoreStub) SaveManagedEndpointDNSWork(_ context.Context, work controlstate.ManagedEndpointDNSWork, _ time.Time) (controlstate.ManagedEndpointDNSWork, error) {
 	s.saves++
 	s.saved = work
-	return work, nil
+	return work, s.saveErr
 }
 
 func TestManagedEndpointDNSUsesOwnedExactRecords(t *testing.T) {
