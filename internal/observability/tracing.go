@@ -84,6 +84,9 @@ func PublisherOperation(ctx context.Context, operation string) (context.Context,
 	var once sync.Once
 	return ctx, func(err error) {
 		once.Do(func() {
+			if operation == "target_tls" {
+				err = publisherTargetTLSError(err)
+			}
 			end(err)
 			if m == nil {
 				return

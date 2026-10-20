@@ -155,6 +155,9 @@ func PublisherTLS(ctx context.Context, leg string, state tls.ConnectionState, er
 	if leg != "visitor" && leg != "target" {
 		return
 	}
+	if leg == "target" {
+		err = publisherTargetTLSError(err)
+	}
 	attrs := append(publisherDataAttributes(ctx), TLSLeg.String(leg), OutcomeKey.String(string(ErrorOutcome(err))))
 	trace.SpanFromContext(ctx).SetAttributes(TLSLeg.String(leg))
 	if err == nil {

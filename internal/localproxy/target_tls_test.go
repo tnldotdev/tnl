@@ -81,7 +81,7 @@ func TestTargetTLSServerNameMatchesPreflightAndForwarding(t *testing.T) {
 			if w.Code != want {
 				t.Fatalf("forwarding status=%d", w.Code)
 			}
-			outcome := "error"
+			outcome := "rejected"
 			if test.valid {
 				outcome = "success"
 			}
