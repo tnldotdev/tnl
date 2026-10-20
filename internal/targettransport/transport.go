@@ -44,16 +44,24 @@ func (t Transport) Secure(ctx context.Context, backend net.Conn) (net.Conn, erro
 		return backend, rejected(ErrTargetTLS)
 	}
 	if t.Protocol == config.ProtocolPostgres {
+		var negotiationErr error
+		var finish func(error)
+		_, finish = observability.PublisherOperation(ctx, "target_negotiation")
+		defer func() { finish(negotiationErr) }()
 		if _, err := backend.Write(PostgresSSLRequest[:]); err != nil {
+			negotiationErr = err
 			return backend, err
 		}
 		var accepted [1]byte
 		if _, err := io.ReadFull(backend, accepted[:]); err != nil {
+			negotiationErr = err
 			return backend, err
 		}
 		if accepted[0] != 'S' {
+			negotiationErr = rejected(ErrDatabaseTLS)
 			return backend, rejected(ErrDatabaseTLS)
 		}
+		finish(nil)
 	}
 	return t.Handshake(ctx, backend)
 }
@@ -73,6 +81,7 @@ func (t Transport) Handshake(ctx context.Context, backend net.Conn) (_ net.Conn,
 	}
 	secured := tls.Client(backend, verification)
 	if err := secured.HandshakeContext(ctx); err != nil {
+		observability.PublisherTLS(ctx, "target", secured.ConnectionState(), err)
 		if ctx.Err() != nil {
 			return backend, context.Cause(ctx)
 		}
@@ -83,6 +92,7 @@ func (t Transport) Handshake(ctx context.Context, backend net.Conn) (_ net.Conn,
 		}
 		return backend, failure.Wrap("negotiate target TLS", failure.TargetUnavailable, errors.Join(ErrTargetTLS, err))
 	}
+	observability.PublisherTLS(ctx, "target", secured.ConnectionState(), nil)
 	return secured, nil
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -109,6 +110,38 @@ func TestReconcileJoinsOldAssignmentBeforeStartingReplacement(t *testing.T) {
 	}
 	if got := receive(t, events); got != "joined:replacement.internal:5432" {
 		t.Fatal(got)
+	}
+}
+
+func TestWorkerMeasurementsKeepAcceptedDeploymentAndReplicaScope(t *testing.T) {
+	control, key := groupFixture(t)
+	member := control.assignment.Member
+	report := &controlv1.PublisherDeploymentReport{DeploymentId: "aws-example", Provider: "aws", ReplicaKey: "replica-1", Instance: "instance-1", Image: "ghcr.io/tnldotdev/tnl@sha256:" + strings.Repeat("a", 64), SoftwareVersion: "devel", TemplateVersion: "2", TemplateSha256: strings.Repeat("b", 64)}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	identities := make(chan observability.Identity, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- (Runtime{Control: control, Member: member, Private: key, Deployment: report, PollInterval: time.Millisecond, Publish: func(ctx context.Context, a controlv1.PublisherGroupServiceAssignment, health func(bool)) error {
+			identities <- observability.IdentityFromContext(ctx)
+			health(true)
+			<-ctx.Done()
+			return ctx.Err()
+		}}).Serve(ctx)
+	}()
+	select {
+	case id := <-identities:
+		if id.TeamID != member.TeamId || id.PublisherGroupID != member.GroupId || id.PublisherIdentityID != member.PublisherIdentityId || id.DeploymentID != report.DeploymentId || id.ReplicaKey != report.ReplicaKey || id.ServiceID != "private-one" || id.PublicURLID != "" {
+			t.Fatal("worker lost accepted deployment scope", id)
+		}
+	case err := <-done:
+		t.Fatal("group ended before starting scoped worker", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("group did not start scoped worker")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 func TestLeaseExpiryStopsWorkersWhenAssignmentPollingFails(t *testing.T) {

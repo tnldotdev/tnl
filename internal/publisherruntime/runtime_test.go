@@ -11,6 +11,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/publisheridentity"
 	"github.com/tnldotdev/tnl/internal/publisherprovenance"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -86,14 +87,32 @@ func TestRuntimeDeploymentRetainedAcrossLostReply(t *testing.T) {
 	if _, err := owner.Renew(t.Context()); !errors.Is(err, controlclient.ErrUnavailable) {
 		t.Fatal(err)
 	}
+	if id := observability.IdentityFromContext(owner.ObservabilityContext(t.Context(), "team", "scope")); id != (observability.Identity{}) {
+		t.Fatal("unconfirmed runtime acquired deployment metric scope", id)
+	}
 	if _, err := owner.Renew(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	parent := observability.ReplaceIdentity(t.Context(), observability.Identity{TeamID: "old-team", DeploymentID: "old-deployment", PublicURLID: "old-url"})
+	scoped := owner.ObservabilityContext(parent, "team", "scope")
+	if id := observability.IdentityFromContext(scoped); id != (observability.Identity{TeamID: "team", PublisherGroupID: "scope", PublisherIdentityID: "publisher", DeploymentID: expected.DeploymentId, ReplicaKey: expected.ReplicaKey}) {
+		t.Fatal("accepted immutable runtime deployment was not bound to a fresh identity", id)
+	}
+	service := observability.NarrowIdentity(scoped, observability.Identity{ServiceID: "service"})
+	if id := observability.IdentityFromContext(service); id.DeploymentID != expected.DeploymentId || id.ReplicaKey != expected.ReplicaKey || id.ServiceID != "service" || id.PublicURLID != "" {
+		t.Fatal("service scope lost deployment provenance or leaked prior public URL", id)
+	}
+	if id := observability.IdentityFromContext(owner.ObservabilityContext(parent, "team", "different-group")); id != (observability.Identity{}) {
+		t.Fatal("runtime attributed a foreign group", id)
 	}
 	if _, err := owner.Renew(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := owner.Stop(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	if id := observability.IdentityFromContext(owner.ObservabilityContext(scoped, "team", "scope")); id != (observability.Identity{}) {
+		t.Fatal("stopped runtime retained deployment scope", id)
 	}
 	for _, request := range control.requests {
 		if request.Deployment == nil || *request.Deployment != expected {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -77,7 +78,11 @@ func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
 	visitor := v.visitor
 	visitor.Readiness = len(readiness) > 0 && readiness[0]
 	if v.guard != nil {
-		if err := v.guard(ctx, visitor); err != nil {
+		check, finish := observability.PublisherOperation(ctx, "visitor_authorization")
+		err := v.guard(check, visitor)
+		observability.PublisherAuthorization(check, err == nil, err == nil, err)
+		finish(err)
+		if err != nil {
 			return err
 		}
 	}
@@ -108,7 +113,11 @@ func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
 			workCtx, cancel := context.WithTimeout(base, visitorPromotionTimeout)
 			defer cancel()
 			if v.promote != nil {
+				var finish func(error)
+				workCtx, finish = observability.PublisherOperation(workCtx, "visitor_authorization")
 				work.err = v.promote(workCtx, visitor)
+				observability.PublisherAuthorization(workCtx, work.err == nil, work.err == nil, work.err)
+				finish(work.err)
 			}
 			if work.err == nil {
 				work.err = workCtx.Err()

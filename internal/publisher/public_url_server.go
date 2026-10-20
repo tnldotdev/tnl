@@ -183,6 +183,8 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	if base == nil {
 		base = context.Background()
 	}
+	base = observability.NarrowIdentity(base, observability.Identity{PublicURLID: config.PublicURLID})
+	base = observability.WithFields(base, observability.Fields{Component: "publisher", ServiceProtocol: "http", AccessPath: "direct", Exposure: "public"})
 	life, cancelLife := context.WithCancel(context.WithoutCancel(base))
 	route := &PublicURLServer{
 		hostname:  hostname,
@@ -200,7 +202,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		},
 		http: &http.Server{
 			BaseContext: func(net.Listener) context.Context { return life },
-			Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			Handler: observability.PublisherHTTP(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				auditOutcome, auditReason := "denied", "invalid_request"
 				auditReport := true
 				auditSent := false
@@ -424,11 +426,12 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				defer release()
 				emitAudit()
 				handler.ServeHTTP(response, request)
-			}),
+			})),
 			ConnContext: func(ctx context.Context, connection net.Conn) context.Context {
 				if secured, ok := connection.(*tls.Conn); ok {
 					if tracked, ok := secured.NetConn().(*doneConn); ok {
 						if metadata, ok := tracked.Conn.(*metadataConn); ok {
+							ctx = metadata.session.life
 							ctx = observability.WithVisitor(ctx, metadata.session.visitor.Header.VisitorConnectionID)
 							ctx = context.WithValue(ctx, shareConnectionKey{}, secured)
 							ctx = context.WithValue(ctx, visitorSessionKey{}, metadata.session)
@@ -684,7 +687,7 @@ func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tu
 			delete(r.streams, incoming.Stream)
 			r.mu.Unlock()
 		}()
-		r.handleVisitorHeaderContext(ctx, incoming.Stream, incoming.Header.AccessPending, incoming.Header)
+		r.handleVisitorHeaderContext(incoming.Context(), incoming.Stream, incoming.Header.AccessPending, incoming.Header)
 	}()
 	return nil
 }
@@ -796,13 +799,20 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 	if parent == nil {
 		parent = context.Background()
 	}
+	parent = observability.NarrowIdentity(parent, observability.Identity{PublicURLID: r.run.PublicURLID})
+	parent = observability.WithFields(parent, observability.Fields{Component: "publisher", ServiceProtocol: "http", AccessPath: "direct", Exposure: "public"})
+	parent = observability.WithVisitor(parent, streamHeader.VisitorConnectionID)
 	life, cancel := context.WithCancel(parent)
 	defer cancel()
+	life, endVisitor := observability.Start(life, "publisher.visitor")
+	var visitorErr error
+	defer func() { endVisitor(visitorErr) }()
 	stopClose := context.AfterFunc(life, func() { _ = connection.Close() })
 	defer stopClose()
 	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
 	header, replay, err := proxyproto.Decode(connection)
 	if err != nil {
+		visitorErr = err
 		return
 	}
 	promote := r.promote
@@ -832,6 +842,8 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 	ctx = observability.WithVisitor(ctx, streamHeader.VisitorConnectionID)
 	ctx, finish := observability.PublisherOperation(ctx, "visitor_tls")
 	err = secured.HandshakeContext(ctx)
+	visitorErr = err
+	observability.PublisherTLS(ctx, "visitor", secured.ConnectionState(), err)
 	finish(err)
 	cancelHandshake()
 	if err != nil {

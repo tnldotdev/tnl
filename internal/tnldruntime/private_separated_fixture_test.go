@@ -54,6 +54,7 @@ type privateSeparatedFixture struct {
 	configurePrivate            func(*ingress.PrivateConnectorConfig)
 	visitorRoots                *tls.Config
 	visitorRootPEM              []byte
+	processContext              func(string) context.Context
 }
 
 // the topology has one real control database/API, two ingress runtimes and two
@@ -64,6 +65,10 @@ func newPrivateRuntimeFixture(t *testing.T, standalone bool, opened chan<- priva
 }
 
 func newPrivateRuntimeFixtureTiming(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, configure ...func(*tnldconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
+	return newPrivateRuntimeFixtureContext(t, standalone, opened, defaults, nil, configure...)
+}
+
+func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, processContext func(string) context.Context, configure ...func(*tnldconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
 	t.Helper()
 	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "private-runtime")
 	if err := controlstate.Migrate(t.Context(), databaseURL); err != nil {
@@ -121,6 +126,10 @@ func newPrivateRuntimeFixtureTiming(t *testing.T, standalone bool, opened chan<-
 	ctx, cancel := context.WithCancel(context.Background())
 	control := &daemon{database: database, controlTLS: controlTLS, serviceHTTP: serviceHTTP, clusterSecret: privateRuntimeClusterSecret, clusterSecrets: secrets, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now(), relayClientTLS: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}}
 	metrics := observability.New("control")
+	if processContext != nil {
+		ctx = observability.WithMetrics(ctx, observability.FromContext(processContext("control")))
+		metrics = observability.FromContext(ctx)
+	}
 	handler, err := newPublicAPIHandler(config, time.Now(), serviceHTTP, database, metrics, control, nil)
 	if err != nil {
 		cancel()
@@ -189,6 +198,7 @@ func newPrivateRuntimeFixtureTiming(t *testing.T, standalone bool, opened chan<-
 		database: database, certificateAuthority: ca,
 		identity: privateRuntimeIdentity{teamID: identity.PersonalTeamId, state: profile, routes: authenticated.Control, authority: authenticated.Authority}, tcpAddresses: make(map[string]string), quicAddresses: make(map[string]string)}
 	f.defaultTiming = defaults
+	f.processContext = processContext
 	f.visitorRoots = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pebble.roots}
 	f.visitorRootPEM = pebble.rootPEM
 	if standalone {
@@ -203,11 +213,16 @@ func newPrivateRuntimeFixtureTiming(t *testing.T, standalone bool, opened chan<-
 		id := fmt.Sprintf("private-relay-%d", index)
 		name := id + ".private.integration.test"
 		lifetime, stop := context.WithCancel(context.Background())
+		relayMetrics := observability.New("relay")
+		if processContext != nil {
+			lifetime = observability.WithMetrics(lifetime, observability.FromContext(processContext("relay")))
+			relayMetrics = observability.FromContext(lifetime)
+		}
 		relay := &daemon{serviceHTTP: serviceHTTP, clusterSecret: privateRuntimeClusterSecret, clusterSecrets: secrets, cancel: stop, componentDone: make(chan error, 1), startedAt: time.Now()}
 		internal := privateUnusedTCPAddress(t)
 		if err := relay.startRelay(lifetime, relayProcessSettings{controlEndpoint: config.PrivateControlEndpoint(), controlAddress: config.PrivateControlListen, clusterSecret: privateRuntimeClusterSecret,
 			relayServiceID: id, relayID: id, relayAddress: net.JoinHostPort(name, "443"), tlsServerName: name, transportTLS: privateRuntimeTLS(t, ca, name), internalListen: internal, internalAddress: internal,
-			tcpListen: "127.0.0.1:0", udpListen: "127.0.0.1:0", quicIdleTimeout: time.Minute, quicMaxIncomingStreams: 128, runtime: relaySettingsFrom(config)}, observability.New("relay")); err != nil {
+			tcpListen: "127.0.0.1:0", udpListen: "127.0.0.1:0", quicIdleTimeout: time.Minute, quicMaxIncomingStreams: 128, runtime: relaySettingsFrom(config)}, relayMetrics); err != nil {
 			stop()
 			t.Fatal(err)
 		}

@@ -36,6 +36,7 @@ type Prepared struct {
 	managedTargetTLS    *tls.Config
 	managedVisitor      func(tunnelv1.PrivateForwardingHeader) publisher.ManagedVisitorAuthentication
 	managedPort         uint16
+	managedPublic       bool
 	managedHTTPRequests *publisher.ManagedHTTPRequestLimits
 }
 
@@ -257,16 +258,18 @@ func (b *Bound) ConnectSlotWithTransports(ctx context.Context, slot uint8, prefe
 		_ = session.Close()
 		return nil, ErrPrivateStream
 	}
-	return &Claimed{bound: b, ref: *hello.PrivateConnection, session: session, transport: transport}, nil
+	return &Claimed{bound: b, ref: *hello.PrivateConnection, session: session, transport: transport,
+		endObservation: observability.PublisherConnectionLifetime(ctx, string(transport), int(slot))}, nil
 }
 
 // Claimed can only be constructed after a relay accepted the private tunnel
 // hello over verified transport. visitor headers are still checked per stream.
 type Claimed struct {
-	bound     *Bound
-	ref       tunnelv1.PrivatePublisherConnectionRef
-	session   *tunnel.Session
-	transport tunnel.Transport
+	bound          *Bound
+	ref            tunnelv1.PrivatePublisherConnectionRef
+	session        *tunnel.Session
+	transport      tunnel.Transport
+	endObservation func(error, bool)
 }
 
 func (c *Claimed) Transport() tunnel.Transport { return c.transport }
@@ -283,13 +286,26 @@ func (c *Claimed) Close() error {
 	if c == nil || c.session == nil {
 		return nil
 	}
+	if c.endObservation != nil {
+		c.endObservation(nil, true)
+	}
 	return c.session.Close()
 }
 
-func (c *Claimed) Serve(ctx context.Context) error {
+func (c *Claimed) Serve(ctx context.Context) (result error) {
 	if c == nil || c.bound == nil || c.session == nil {
 		return ErrPrivateStream
 	}
+	owner := ctx
+	defer func() {
+		if c.endObservation != nil {
+			observationError := result
+			if observationError == nil && owner.Err() == nil {
+				observationError = io.EOF
+			}
+			c.endObservation(observationError, owner.Err() != nil)
+		}
+	}()
 	ctx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(ctx, func() { _ = c.session.Close() })
 	var workers sync.WaitGroup
@@ -328,7 +344,7 @@ func (c *Claimed) Serve(ctx context.Context) error {
 		workers.Go(func() {
 			defer func() { <-capacity }()
 			defer incoming.Stream.Close()
-			_ = c.bound.serveBody(ctx, c.ref, incoming.Stream, incoming.Header)
+			_ = c.bound.serveBody(incoming.Context(), c.ref, incoming.Stream, incoming.Header)
 		})
 	}
 }
@@ -352,6 +368,7 @@ func (b *Bound) Invalidate() {
 }
 
 func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.PrivatePublisherConnectionRef, stream net.Conn, header tunnelv1.PrivateForwardingHeader) error {
+	ctx = observability.ExtractWireTrace(ctx, header.TraceContext)
 	ctx = observability.WithVisitor(ctx, header.VisitorConnectionID)
 	if b == nil || stream == nil || !b.current(ref) ||
 		!headerMatches(ref, header, time.Now()) {
@@ -376,7 +393,7 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.PrivatePublisherConn
 	if header.Direct != nil && (metadata.Destination.Port() != header.Direct.DestinationPort || header.Direct.DestinationPort != b.prepared.managedPort) {
 		return ErrPrivateStream
 	}
-	managed := publisher.ManagedStream{Protocol: b.prepared.managedProtocol, Hostname: b.prepared.managedHostname, Target: b.prepared.target, HTTPRequests: b.prepared.managedHTTPRequests,
+	managed := publisher.ManagedStream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: b.prepared.target, HTTPRequests: b.prepared.managedHTTPRequests,
 		TLS: &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: b.prepared.managedTargetTLS, Visitor: b.prepared.managedVisitor(header)}
 	return managed.Forward(ctx, &replayConn{Conn: stream, reader: replay})
 }

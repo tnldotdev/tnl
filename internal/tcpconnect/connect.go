@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/internal/tunnel"
@@ -395,6 +396,8 @@ func validProtocol(protocol string) bool {
 }
 
 func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.Conn, committed bool, err error) {
+	ctx, endSetup := observability.Start(ctx, "connector.visitor_setup")
+	defer func() { endSetup(err) }()
 	release, err := path.acquire()
 	if err != nil {
 		return nil, false, err
@@ -425,6 +428,7 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 	defer stop()
 	entry := tunnelv1.PrivateVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.PrivateVisitorStream,
 		PrivateServiceID: run.PrivateServiceID, PrivateRunID: run.PrivateRunID, RunNumber: run.RunNumber}
+	entry.TraceContext = observability.WireTrace(ctx)
 	if err = tunnelv1.WritePrivateVisitorEntry(stream, entry); err != nil {
 		return nil, false, err
 	}

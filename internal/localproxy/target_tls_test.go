@@ -9,7 +9,6 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -82,13 +81,30 @@ func TestTargetTLSServerNameMatchesPreflightAndForwarding(t *testing.T) {
 			if w.Code != want {
 				t.Fatalf("forwarding status=%d", w.Code)
 			}
-			observed := httptest.NewRecorder()
-			metrics.Handler().ServeHTTP(observed, httptest.NewRequest("GET", "/metrics", nil))
 			outcome := "error"
 			if test.valid {
 				outcome = "success"
 			}
-			if !strings.Contains(observed.Body.String(), `tnl_publisher_operation_duration_seconds_count{tnl_operation="target_tls",tnl_outcome="`+outcome+`"} 1`) {
+			families, err := metrics.Gather()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var count uint64
+			for _, family := range families {
+				if family.GetName() != "tnl_publisher_operation_duration_seconds" {
+					continue
+				}
+				for _, point := range family.Metric {
+					labels := map[string]string{}
+					for _, label := range point.Label {
+						labels[label.GetName()] = label.GetValue()
+					}
+					if labels["tnl_operation"] == "target_tls" && labels["tnl_outcome"] == outcome && labels["tnl_tls_leg"] == "target" {
+						count += point.GetHistogram().GetSampleCount()
+					}
+				}
+			}
+			if count != 1 {
 				t.Fatal("missing target TLS result")
 			}
 		})

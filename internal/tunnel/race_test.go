@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -26,17 +27,39 @@ func TestRacePrimarySuccessDoesNotStartFallback(t *testing.T) {
 }
 
 func TestRaceUsesFallbackAfterPrimaryFailure(t *testing.T) {
+	metrics := observability.New("publisher")
+	t.Cleanup(func() { _ = metrics.Shutdown(context.Background()) })
 	var calls atomic.Int32
 	fallback := authenticatedConnector(t, &calls)
 	primary := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 		return nil, errors.New("UDP unavailable")
 	})
-	s, transport, err := Race(tunnelContext(t), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportTLSTCP}, time.Hour, publisherHello())
+	s, transport, err := Race(observability.WithMetrics(tunnelContext(t), metrics), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportTLSTCP}, time.Hour, publisherHello())
 	if s != nil {
 		t.Cleanup(func() { _ = s.Close() })
 	}
 	if err != nil || transport != TransportTLSTCP || calls.Load() != 1 {
 		t.Fatalf("race=%s, %v; fallback=%d", transport, err, calls.Load())
+	}
+	families, err := metrics.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]uint64{}
+	for _, family := range families {
+		if family.GetName() != "tnl_publisher_transport_candidate_duration_seconds" {
+			continue
+		}
+		for _, point := range family.Metric {
+			labels := map[string]string{}
+			for _, label := range point.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			counts[labels["tnl_transport"]+"/"+labels["tnl_outcome"]] += point.GetHistogram().GetSampleCount()
+		}
+	}
+	if len(counts) != 2 || counts["quic/error"] != 1 || counts["tls-tcp/success"] != 1 {
+		t.Fatal("failed primary candidate disappeared behind successful race result", counts)
 	}
 }
 

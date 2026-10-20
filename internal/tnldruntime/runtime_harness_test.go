@@ -23,6 +23,7 @@ const testClusterSecret = "0123456789abcdef0123456789abcdef"
 const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 type integrationProcessOptions struct {
+	context           context.Context
 	acmeHTTPClient    *http.Client
 	serviceHTTPClient *http.Client
 	relayClientTLS    *tls.Config
@@ -132,7 +133,11 @@ func startIntegrationProcessWithOptions(t *testing.T, cfg tnldconfig.Config, opt
 	if options.serviceHTTPClient == nil {
 		options.serviceHTTPClient = &http.Client{Timeout: 10 * time.Second}
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	parent := options.context
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
 	name := string(cfg.Role)
 	if cfg.IngressID != "" {
 		name += " " + cfg.IngressID

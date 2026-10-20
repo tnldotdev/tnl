@@ -29,7 +29,13 @@ type committedVisitorStream struct {
 var errBackendTrackingClosed = errors.New("ingress: backend tracking closed")
 
 // forward resolves policy and admission before attempting a publisher stream.
-func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, hello router.ClientHello) error {
+func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, hello router.ClientHello) (retErr error) {
+	owner := s.openContext
+	if owner == nil {
+		owner = context.Background()
+	}
+	ctx, finishConnection := observability.Start(owner, "ingress.visitor_connection")
+	defer func() { finishConnection(retErr) }()
 	var route PublicURL
 	var backends []routebackend.Backend
 	var ok bool
@@ -174,7 +180,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	if denied {
 		openTimeout = min(openTimeout, 2*time.Second, time.Until(admission.deadline))
 	}
-	openCtx, cancel := context.WithTimeout(s.openContext, openTimeout)
+	openCtx, cancel := context.WithTimeout(ctx, openTimeout)
 	opened, openErr := s.openVisitorStream(openCtx, backends, visitorID, kind, header, hello.Prefix, usage)
 	cancel()
 	if errors.Is(openErr, errBackendTrackingClosed) {
@@ -221,7 +227,9 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		auditOpened = true
 		serviceaudit.Emit(s.config.AuditSink, serviceaudit.Observation{ServiceID: route.ID, ServiceKind: "public_url", RunID: route.PublishRunID, RunNumber: int64(route.PublishRunNumber), VisitorConnectionID: visitorID, SourceIP: source.Addr().Unmap().String(), EventType: "connection.open", Outcome: "forwarded"})
 	}
+	_, finishForward := observability.Start(ctx, "ingress.forward_visitor")
 	err = s.copyVisitor(public, upstream, hello.Remainder, route, denied, usage)
+	finishForward(err)
 	{
 		outcome, reason := "closed", "closed"
 		if err != nil {

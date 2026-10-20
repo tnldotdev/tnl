@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpstream"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -30,6 +31,7 @@ type ManagedVisitorDecision struct {
 // target trust is independent of the public WebPKI identity presented to clients.
 type ManagedStream struct {
 	Protocol     config.ProtocolName
+	Public       bool
 	Hostname     string
 	HTTPRequests *ManagedHTTPRequestLimits
 	Target       string
@@ -39,6 +41,19 @@ type ManagedStream struct {
 }
 
 func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result error) {
+	fields := observability.Fields{Component: "publisher", ServiceProtocol: string(s.Protocol), AccessPath: "direct", Exposure: "private"}
+	if s.Public {
+		fields.Exposure = "public"
+	}
+	if _, ok := s.Visitor.(ConnectorVisitor); ok {
+		fields.AccessPath = "connector"
+	}
+	if _, ok := s.Visitor.(PublicHTTPVisitor); ok {
+		fields.Exposure = "public"
+	}
+	ctx = observability.WithFields(ctx, fields)
+	ctx, endVisitor := observability.Start(ctx, "publisher.visitor")
+	defer func() { endVisitor(result) }()
 	ctx, admissionDone := observability.PublisherOperation(ctx, "visitor_admission")
 	defer func() { admissionDone(result) }()
 	canonical, nameErr := naming.CanonicalizeHostname(s.Hostname)
@@ -67,7 +82,10 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	}()
 	switch s.Protocol {
 	case config.ProtocolPostgres:
-		if err := acceptPostgresTLS(visitor); err != nil {
+		_, negotiationDone := observability.PublisherOperation(setup, "visitor_negotiation")
+		err := acceptPostgresTLS(visitor)
+		negotiationDone(err)
+		if err != nil {
 			return err
 		}
 	case config.ProtocolMySQL:
@@ -78,7 +96,9 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		if err = backend.SetDeadline(deadline); err != nil {
 			return err
 		}
+		_, negotiationDone := observability.PublisherOperation(setup, "visitor_negotiation")
 		greeting, err = acceptMySQLTLS(visitor, backend, s.TargetTLS != nil)
+		negotiationDone(err)
 		if err != nil {
 			return err
 		}
@@ -96,6 +116,7 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	secured := tls.Server(visitor, frontTLS)
 	tlsCtx, tlsDone := observability.PublisherOperation(setup, "visitor_tls")
 	err = secured.HandshakeContext(tlsCtx)
+	observability.PublisherTLS(tlsCtx, "visitor", secured.ConnectionState(), err)
 	tlsDone(err)
 	if err != nil {
 		return err
@@ -113,10 +134,15 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		admissionDone(nil)
 		return httpVisitor.Frontend.Forward(ctx, secured, ManagedHTTPTarget{Address: s.Target, Transport: transport})
 	}
-	decision, err := s.Visitor.authorize(setup, secured.ConnectionState())
-	observability.AuthorizationDecision(ctx, "managed_visitor", err == nil && decision.Allowed && decision.ValidUntil.After(time.Now()))
-	if err != nil || !decision.Allowed || !decision.ValidUntil.After(time.Now()) {
+	authCtx, authDone := observability.PublisherOperation(setup, "visitor_authorization")
+	decision, err := s.Visitor.authorize(authCtx, secured.ConnectionState())
+	observability.PublisherAuthorization(authCtx, decision.Allowed && decision.ValidUntil.After(time.Now()), decision.Allowed && decision.ValidUntil.After(time.Now()), err)
+	authDone(managedAuthorizationError(decision, err))
+	if err != nil {
 		return errors.Join(ErrManagedTLS, err)
+	}
+	if !decision.Allowed || !decision.ValidUntil.After(time.Now()) {
+		return managedAuthorizationError(decision, nil)
 	}
 	if s.Protocol == config.ProtocolHTTP {
 		admissionDone(nil)
@@ -153,7 +179,10 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 				// connector admission is the credential, but every HTTP request still
 				// rechecks current policy before any target bytes on the shared socket.
 				check, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+				check, authDone := observability.PublisherOperation(check, "visitor_authorization")
 				decision, err := s.Visitor.authorize(check, secured.ConnectionState())
+				observability.PublisherAuthorization(check, decision.Allowed && decision.ValidUntil.After(time.Now()), decision.Allowed && decision.ValidUntil.After(time.Now()), err)
+				authDone(managedAuthorizationError(decision, err))
 				cancel()
 				if err != nil || !decision.Allowed || !decision.ValidUntil.After(time.Now()) {
 					managedHTTPDenied(w, managedHTTPDecisionStatus(err))
@@ -178,7 +207,9 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		}
 	}
 	if s.Protocol == config.ProtocolMySQL {
-		backend, err = connectMySQLTarget(setup, secured, backend, greeting, s.TargetTLS)
+		authCtx, authDone := observability.PublisherOperation(setup, "native_auth")
+		backend, err = connectMySQLTarget(authCtx, secured, backend, greeting, s.TargetTLS)
+		authDone(err)
 	} else {
 		backend, err = transport.Secure(setup, backend)
 	}
@@ -186,7 +217,10 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		return err
 	}
 	if s.Protocol == config.ProtocolPostgres {
-		if err = forwardPostgresAuthentication(secured, backend); err != nil {
+		_, authDone := observability.PublisherOperation(setup, "native_auth")
+		err = forwardPostgresAuthentication(secured, backend)
+		authDone(err)
+		if err != nil {
 			return err
 		}
 	}
@@ -208,7 +242,9 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		s.guardVisitor(live, secured, backend, decision)
 	}()
 	defer func() { cancel(); <-guardDone }()
-	_, err = streamcopy.Copy(secured, backend)
+	observed, streamDone := observability.PublisherStream(live, backend)
+	_, err = streamcopy.Copy(secured, observed)
+	streamDone(err)
 	return err
 }
 
@@ -234,7 +270,10 @@ func (s ManagedStream) guardVisitor(ctx context.Context, client *tls.Conn, targe
 			return
 		}
 		check, cancel := context.WithTimeout(ctx, min(5*time.Second, time.Until(decision.ValidUntil)))
+		check, authDone := observability.PublisherOperation(check, "visitor_authorization")
 		next, err := s.Visitor.authorize(check, client.ConnectionState())
+		observability.PublisherAuthorization(check, next.Allowed && next.ValidUntil.After(time.Now()), next.Allowed && next.ValidUntil.After(time.Now()), err)
+		authDone(managedAuthorizationError(next, err))
 		cancel()
 		if err == nil {
 			if !next.Allowed || !next.ValidUntil.After(time.Now()) {
@@ -243,6 +282,16 @@ func (s ManagedStream) guardVisitor(ctx context.Context, client *tls.Conn, targe
 			decision = next
 		}
 	}
+}
+
+func managedAuthorizationError(decision ManagedVisitorDecision, err error) error {
+	if err != nil {
+		return err
+	}
+	if !decision.Allowed || !decision.ValidUntil.After(time.Now()) {
+		return failure.Wrap("authorize service visitor", failure.ConnectAccessRequired, ErrManagedTLS)
+	}
+	return nil
 }
 
 var managedPostgresSSL = [8]byte{0, 0, 0, 8, 4, 210, 22, 47}

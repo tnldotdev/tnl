@@ -279,13 +279,17 @@ func prepareIntegrationPublisher(ctx context.Context, config publisher.Config) (
 }
 
 func startOwnedIntegrationPublisher(t *testing.T, owner *runtimeTopology, config publisher.Config, diagnostics func() string) *integrationPublisher {
+	return startOwnedIntegrationPublisherContext(t, context.Background(), owner, config, diagnostics)
+}
+
+func startOwnedIntegrationPublisherContext(t *testing.T, parent context.Context, owner *runtimeTopology, config publisher.Config, diagnostics func() string) *integrationPublisher {
 	t.Helper()
 	var err error
 	config, err = prepareIntegrationPublisher(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parent)
 	handle := &integrationPublisher{cancel: cancel, done: make(chan struct{}), diagnostics: diagnostics}
 	if owner != nil {
 		owner.publishers = append(owner.publishers, handle)

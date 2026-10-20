@@ -14,6 +14,7 @@ import (
 	"net"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/targettransport"
 )
 
@@ -89,7 +90,10 @@ func connectMySQLTarget(ctx context.Context, client net.Conn, backend net.Conn, 
 	defer clear(handshake.request)
 	defer func() { clear(handshake.scramble) }()
 	if verification != nil {
-		if err := managedMySQLWrite(backend, handshake.request, 1); err != nil {
+		_, negotiationDone := observability.PublisherOperation(ctx, "target_negotiation")
+		err := managedMySQLWrite(backend, handshake.request, 1)
+		negotiationDone(err)
+		if err != nil {
 			return backend, err
 		}
 		secured, err := (targettransport.Transport{Protocol: config.ProtocolMySQL, TLS: verification}).Handshake(ctx, backend)

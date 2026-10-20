@@ -5,10 +5,14 @@ import (
 	"errors"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+	"go.opentelemetry.io/otel/trace"
 )
 
-func RacePrivateConnector(ctx context.Context, primary, fallback Candidate, delay time.Duration, hello tunnelv1.PrivateConnectorSessionHello) (*PrivateConnectorSession, Transport, error) {
+func RacePrivateConnector(ctx context.Context, primary, fallback Candidate, delay time.Duration, hello tunnelv1.PrivateConnectorSessionHello) (session *PrivateConnectorSession, transport Transport, retErr error) {
+	ctx, finish := observability.Start(ctx, "tunnel.private_transport_race")
+	defer func() { finish(retErr) }()
 	if primary.Connector == nil || fallback.Connector == nil || delay < 0 {
 		return nil, "", errors.New("tunnel: two private transport candidates are required")
 	}
@@ -24,12 +28,15 @@ func RacePrivateConnector(ctx context.Context, primary, fallback Candidate, dela
 		go func() {
 			attempt, stop := context.WithTimeout(setup, handshakeTimeout)
 			defer stop()
+			attempt, finishAttempt := observability.Start(attempt, "tunnel.private_transport_candidate", trace.WithAttributes(observability.Transport.String(boundedTransport(candidate.Transport))))
 			transport, err := candidate.Connector.Connect(attempt, candidate.Endpoint)
 			if err != nil {
+				finishAttempt(err)
 				results <- result{err: err}
 				return
 			}
 			session, err := DialPrivateConnector(attempt, transport, hello)
+			finishAttempt(err)
 			results <- result{session: session, transport: candidate.Transport, err: err}
 		}()
 	}

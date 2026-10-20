@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/httpsubject"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/privatetrust"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
@@ -44,6 +45,7 @@ func newManagedPrepared(preparation controlv1.PrivateServiceRunPreparation, appr
 		return nil, err
 	}
 	prepared := &Prepared{Preparation: preparation, target: target, managedHostname: approved.ManagedTls.Hostname, managedPort: uint16(approved.ManagedTls.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
+	prepared.managedPublic = approved.ManagedTls.Public
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 		prepared.managedHTTPRequests, err = publisher.NewManagedHTTPRequestLimits(approved.HttpLimits)
 		if err != nil {
@@ -101,10 +103,28 @@ func configureManagedRun(ctx context.Context, config RunConfig, prepared *Prepar
 		}
 		return publisher.ManagedVisitorDecision{Allowed: result.Allowed, ValidUntil: result.ValidUntil}, err
 	}
+	awaitAdmission := func(ctx context.Context, authorize func(context.Context) (controlv1.ServiceClientCertificateDecision, error)) (publisher.ManagedVisitorDecision, error) {
+		for {
+			result, err := authorize(ctx)
+			if err != nil || !result.Allowed || result.Admitted {
+				return decision(result, err)
+			}
+			observability.PublisherAuthorization(ctx, true, false, nil)
+			timer := time.NewTimer(25 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return publisher.ManagedVisitorDecision{}, context.Cause(ctx)
+			case <-timer.C:
+			}
+		}
+	}
 	prepared.managedVisitor = func(header tunnelv1.PrivateForwardingHeader) publisher.ManagedVisitorAuthentication {
 		if header.Connector != nil && header.Direct == nil {
 			return publisher.ConnectorVisitor{Check: func(check context.Context) (publisher.ManagedVisitorDecision, error) {
-				return decision(control.AuthorizeServiceConnector(check, setup.PrivateServiceId, setup.PrivateRunId, credentials.PublishRunToken(setup.RunToken), controlv1.AuthorizeServiceConnectorRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, ConnectorSessionId: header.Connector.SessionID, IdentityId: header.Connector.IdentityID, DeviceId: header.Connector.DeviceID}))
+				return awaitAdmission(check, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
+					return control.AuthorizeServiceConnector(ctx, setup.PrivateServiceId, setup.PrivateRunId, credentials.PublishRunToken(setup.RunToken), controlv1.AuthorizeServiceConnectorRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, ConnectorSessionId: header.Connector.SessionID, IdentityId: header.Connector.IdentityID, DeviceId: header.Connector.DeviceID})
+				})
 			}}
 		}
 		if header.Direct != nil && header.Connector == nil {
@@ -117,19 +137,9 @@ func configureManagedRun(ctx context.Context, config RunConfig, prepared *Prepar
 				}}
 			}
 			return publisher.CertificateVisitor{Check: func(check context.Context, leaf *x509.Certificate) (publisher.ManagedVisitorDecision, error) {
-				for {
-					result, err := control.AuthorizeServiceClientCertificate(check, setup.PrivateServiceId, setup.PrivateRunId, credentials.PublishRunToken(setup.RunToken), controlv1.AuthorizeServiceClientCertificateRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, Certificate: leaf.Raw})
-					if err != nil || !result.Allowed || result.Admitted {
-						return decision(result, err)
-					}
-					timer := time.NewTimer(25 * time.Millisecond)
-					select {
-					case <-check.Done():
-						timer.Stop()
-						return publisher.ManagedVisitorDecision{}, context.Cause(check)
-					case <-timer.C:
-					}
-				}
+				return awaitAdmission(check, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
+					return control.AuthorizeServiceClientCertificate(ctx, setup.PrivateServiceId, setup.PrivateRunId, credentials.PublishRunToken(setup.RunToken), controlv1.AuthorizeServiceClientCertificateRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, Certificate: leaf.Raw})
+				})
 			}}
 		}
 		return nil

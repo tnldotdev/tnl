@@ -24,6 +24,7 @@ type splitRelayFixture struct {
 }
 
 type splitPublishFixture struct {
+	processContext           func(string) context.Context
 	owner                    *runtimeTopology
 	databaseURL              string
 	inspect                  *sql.DB
@@ -40,6 +41,7 @@ type splitPublishFixture struct {
 }
 
 type splitPublishOptions struct {
+	processContext       func(string) context.Context
 	dns                  *integrationRoute53
 	proxyIngress         bool
 	configureControlHTTP func(*http.Client)
@@ -126,6 +128,9 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		startSplitIngressProxy(t, owner, publicIngressAddress, ingressAddress)
 	}
 	controlOptions := integrationProcessOptions{acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, owner: owner}
+	if options.processContext != nil {
+		controlOptions.context = options.processContext("control")
+	}
 	if localDNS != nil {
 		controlOptions.dns = localDNS
 	}
@@ -156,7 +161,8 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		relayRoots = pebble.roots
 	}
 	f := &splitPublishFixture{
-		owner: owner, databaseURL: databaseURL, inspect: inspect, pebble: pebble,
+		processContext: options.processContext,
+		owner:          owner, databaseURL: databaseURL, inspect: inspect, pebble: pebble,
 		roots:         &tls.Config{RootCAs: relayRoots, MinVersion: tls.VersionTLS13},
 		controlConfig: controlConfig, controlOptions: controlOptions, ingressConfig: ingressConfig,
 		control: control, serviceHTTP: serviceHTTP,
@@ -165,6 +171,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	f.relayA.process = f.startRelay(t, relayAConfig)
 	f.relayB.process = f.startRelay(t, relayBConfig)
 	f.ingress = startIntegrationProcessWithOptions(t, ingressConfig, integrationProcessOptions{
+		context:        f.contextFor("ingress"),
 		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: serviceHTTP, relayClientTLS: f.roots, owner: owner,
 	})
 	for _, process := range []*integrationProcess{f.relayA.process, f.relayB.process, f.ingress} {
@@ -271,7 +278,14 @@ func splitPublishRelayConfig(t *testing.T, controlHostname, serverDomain, relayS
 
 func (f *splitPublishFixture) startRelay(t *testing.T, cfg tnldconfig.Config) *integrationProcess {
 	t.Helper()
-	return startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{acmeHTTPClient: f.pebble.httpClient, serviceHTTPClient: f.serviceHTTP, owner: f.owner})
+	return startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{context: f.contextFor("relay"), acmeHTTPClient: f.pebble.httpClient, serviceHTTPClient: f.serviceHTTP, owner: f.owner})
+}
+
+func (f *splitPublishFixture) contextFor(role string) context.Context {
+	if f.processContext != nil {
+		return f.processContext(role)
+	}
+	return nil
 }
 
 func (f *splitPublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {

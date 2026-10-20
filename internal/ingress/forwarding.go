@@ -11,6 +11,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/ippolicy"
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/routebackend"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
@@ -20,6 +21,7 @@ import (
 const relaySessionSetupTimeout = 10 * time.Second
 
 type ForwarderConfig struct {
+	Context         context.Context
 	TLSConfig       *tls.Config
 	ClusterSecret   string
 	TransportConfig muxsession.TLSYamuxConfig
@@ -51,7 +53,7 @@ func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := newForwarder(connector)
+	f := newForwarderContext(config.Context, connector)
 	f.observer = config.Observer
 	f.onSessionClosed = config.OnSessionClosed
 	f.promote = config.PromoteVisitor
@@ -59,7 +61,14 @@ func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
 }
 
 func newForwarder(connector relayConnector) *Forwarder {
-	ctx, cancel := context.WithCancel(context.Background())
+	return newForwarderContext(context.Background(), connector)
+}
+
+func newForwarderContext(owner context.Context, connector relayConnector) *Forwarder {
+	if owner == nil {
+		owner = context.Background()
+	}
+	ctx, cancel := context.WithCancel(owner)
 	return &Forwarder{connector: connector, context: ctx, cancel: cancel, sessions: make(map[relaySessionKey]*relaySession), pending: make(map[string]*forwardingAdmission)}
 }
 
@@ -222,7 +231,9 @@ func (b forwardingBackend) OpenPending(ctx context.Context, visitorConnectionID 
 	return b.open(ctx, visitorConnectionID, true)
 }
 
-func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string, denied bool) (net.Conn, error) {
+func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string, denied bool) (result net.Conn, retErr error) {
+	ctx, finish := observability.Start(ctx, "ingress.relay_attempt")
+	defer func() { finish(retErr) }()
 	header := b.header
 	header.VisitorConnectionID = visitorConnectionID
 	header.AccessPending = denied
@@ -346,6 +357,7 @@ func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Se
 }
 
 func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target relayTarget, entry *relaySession) {
+	ctx, finish := observability.Start(ctx, "ingress.relay_connect")
 	started := time.Now()
 	transport, err := f.connector.Connect(ctx, target)
 	var session *tunnel.Session
@@ -356,6 +368,7 @@ func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target rel
 		})
 	}
 	entry.cancel()
+	finish(err)
 	f.observe("IngressRelayConnect", err, started)
 
 	f.mu.Lock()

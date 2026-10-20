@@ -104,14 +104,18 @@ func ReadPrivateConnectorSessionAccepted(r io.Reader) (PrivateConnectorSessionAc
 // session identity and trusted source before forwarding any bytes.
 // no client-supplied IP or untrusted SNI selects a private service.
 type PrivateVisitorEntry struct {
-	ProtocolVersion  uint32     `json:"protocol_version"`
-	Kind             StreamKind `json:"kind"`
-	PrivateServiceID string     `json:"private_service_id"`
-	PrivateRunID     string     `json:"private_run_id"`
-	RunNumber        uint64     `json:"run_number"`
+	TraceContext     TraceContext `json:"trace_context,omitzero"`
+	ProtocolVersion  uint32       `json:"protocol_version"`
+	Kind             StreamKind   `json:"kind"`
+	PrivateServiceID string       `json:"private_service_id"`
+	PrivateRunID     string       `json:"private_run_id"`
+	RunNumber        uint64       `json:"run_number"`
 }
 
 func (e PrivateVisitorEntry) Validate() error {
+	if err := e.TraceContext.Validate(); err != nil {
+		return err
+	}
 	if e.ProtocolVersion != Version || e.Kind != PrivateVisitorStream ||
 		!opaqueid.Valid(e.PrivateServiceID, opaqueid.PrivateServicePrefix) ||
 		!opaqueid.Valid(e.PrivateRunID, opaqueid.PrivateRunPrefix) ||
@@ -189,6 +193,7 @@ func ReadPrivateVisitorEntry(r io.Reader) (PrivateVisitorEntry, error) {
 // compare its IDs, assignment and grant revisions with the claimed run;
 // never permit a public URL connection reference on this stream.
 type PrivateStreamHeader struct {
+	TraceContext                 TraceContext        `json:"trace_context,omitzero"`
 	ProtocolVersion              uint32              `json:"protocol_version"`
 	Kind                         StreamKind          `json:"kind"`
 	PrivateServiceID             string              `json:"private_service_id"`
@@ -233,6 +238,9 @@ func (h PrivateStreamHeader) Validate() error {
 }
 
 func (h PrivateStreamHeader) validate(kind StreamKind) error {
+	if err := h.TraceContext.Validate(); err != nil {
+		return err
+	}
 	if h.ProtocolVersion != Version || h.Kind != kind ||
 		!opaqueid.Valid(h.PrivateServiceID, opaqueid.PrivateServicePrefix) ||
 		!opaqueid.Valid(h.PrivateRunID, opaqueid.PrivateRunPrefix) || h.RunNumber == 0 ||

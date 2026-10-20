@@ -82,15 +82,27 @@ func PreflightWithOptions(ctx context.Context, target string, options TargetOpti
 	if parsed.Scheme != "https" && options.ServerName != "" {
 		return diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target TLS server name requires HTTPS"))
 	}
-	dialer := &net.Dialer{Timeout: 3 * time.Second}
-	var connection net.Conn
-	if parsed.Scheme == "https" {
-		connection, err = (&tls.Dialer{NetDialer: dialer, Config: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: options.RootCAs, ServerName: options.ServerName}}).DialContext(ctx, "tcp", parsed.Host)
-	} else {
-		connection, err = dialer.DialContext(ctx, "tcp", parsed.Host)
-	}
+	setup, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	connection, err := observability.DialTarget(setup, "tcp", parsed.Host)
 	if err != nil {
 		return diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("localproxy: connect to target: %w", err))
+	}
+	if parsed.Scheme == "https" {
+		name := options.ServerName
+		if name == "" {
+			name = parsed.Hostname()
+		}
+		secured := tls.Client(connection, &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: options.RootCAs, ServerName: name})
+		tlsCtx, finish := observability.PublisherOperation(setup, "target_tls")
+		err = secured.HandshakeContext(tlsCtx)
+		observability.PublisherTLS(tlsCtx, "target", secured.ConnectionState(), err)
+		finish(err)
+		if err != nil {
+			_ = connection.Close()
+			return diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("localproxy: connect to target: %w", err))
+		}
+		connection = secured
 	}
 	if err := connection.Close(); err != nil {
 		return diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("localproxy: close target connection: %w", err))
@@ -364,6 +376,7 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 		Transport:     transport,
 		FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
+			observability.PublisherHTTPForward(request.Out.Context())
 			request.Out = observability.TargetRequest(request.Out)
 			host := request.In.Host
 			if hooks.ModifyHTML != nil && !IsReadinessProbe(request.In) {
@@ -377,6 +390,7 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 			request.SetXForwarded()
 		},
 		ErrorHandler: func(response http.ResponseWriter, request *http.Request, targetErr error) {
+			observability.PublisherHTTPError(request.Context(), targetErr)
 			if code, ok := diagnostic.CodeOf(targetErr); ok {
 				diagnostic.WriteHTTP(response, request, code)
 				return
@@ -413,6 +427,7 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 			if hooks.OnForwarded != nil {
 				hooks.OnForwarded(response.Request)
 			}
+			observability.PublisherHTTPResponse(response.Request.Context())
 			return nil
 		},
 	}

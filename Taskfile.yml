@@ -266,6 +266,11 @@ tasks:
     cmds:
       - go test -race ./internal/observability ./internal/operatorlog
 
+  go:test:publisher-observability:
+    desc: Check publisher measurements, readiness, wire traces, and native data-path invariants with races
+    cmds:
+      - go test -race ./internal/observability ./internal/publisher ./internal/privatepublisher ./internal/publisherruntime ./internal/grouppublisher ./internal/httpstream ./internal/localproxy ./internal/targettransport ./internal/tunnel ./internal/ingress ./internal/relay ./internal/tcpconnect ./pkg/protocol/tunnelv1
+
   go:test:integration:
     desc: Run PostgreSQL-backed Go integration tests
     vars:
@@ -287,6 +292,11 @@ tasks:
     desc: Verify private visitor lifecycle through separated and standalone roles
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegration(SeparatedPrivateTwoIngressTwoRelayLifecycle|StandalonePrivateTwoIngressTwoRelayLifecycle|PrivateHTTPProductionControl|PrivateDefaultLeaseCycles|ServiceAuditRuntimePrivate|ManagedTLSProductionPath|ManagedHTTPAuthentication)$' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  go:test:integration:publisher-observability:
+    desc: Check exported parent chains across separated public and private publisher transports
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegrationPublisherObservability' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   go:test:integration:runtime:
     desc: Verify split and standalone runtime boundaries with disposable PostgreSQL and Pebble

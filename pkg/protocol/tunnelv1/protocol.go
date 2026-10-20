@@ -114,14 +114,15 @@ const (
 
 // VisitorStreamHeader identifies one visitor stream opened on a publisher connection.
 type VisitorStreamHeader struct {
-	ProtocolVersion              uint32     `json:"protocol_version"`
-	Kind                         StreamKind `json:"kind"`
-	VisitorConnectionID          string     `json:"visitor_connection_id"`
-	PublicURLID                  string     `json:"public_url_id"`
-	PublishRunID                 string     `json:"publish_run_id"`
-	PublishRunNumber             uint64     `json:"publish_run_number"`
-	PublisherConnectionID        string     `json:"publisher_connection_id"`
-	ConnectionAssignmentRevision uint64     `json:"connection_assignment_revision"`
+	TraceContext                 TraceContext `json:"trace_context,omitzero"`
+	ProtocolVersion              uint32       `json:"protocol_version"`
+	Kind                         StreamKind   `json:"kind"`
+	VisitorConnectionID          string       `json:"visitor_connection_id"`
+	PublicURLID                  string       `json:"public_url_id"`
+	PublishRunID                 string       `json:"publish_run_id"`
+	PublishRunNumber             uint64       `json:"publish_run_number"`
+	PublisherConnectionID        string       `json:"publisher_connection_id"`
+	ConnectionAssignmentRevision uint64       `json:"connection_assignment_revision"`
 	// AccessPending is trusted ingress state: this visitor has only bounded
 	// pending authorization capacity until an authenticated promotion is accepted.
 	AccessPending bool `json:"access_pending,omitempty"`
@@ -129,22 +130,23 @@ type VisitorStreamHeader struct {
 
 // InternalForwardingHeader identifies one visitor connection sent from ingress to a connected relay.
 type InternalForwardingHeader struct {
-	ProtocolVersion              uint32     `json:"protocol_version"`
-	Kind                         StreamKind `json:"kind"`
-	VisitorConnectionID          string     `json:"visitor_connection_id"`
-	PublicURLID                  string     `json:"public_url_id"`
-	PublishRunID                 string     `json:"publish_run_id"`
-	PublishRunNumber             uint64     `json:"publish_run_number"`
-	PublisherConnectionID        string     `json:"publisher_connection_id"`
-	ConnectionSlot               uint8      `json:"connection_slot"`
-	ConnectionAssignmentRevision uint64     `json:"connection_assignment_revision"`
-	RelayServiceID               string     `json:"relay_service_id"`
-	RelayID                      string     `json:"relay_id"`
-	RelayRunID                   string     `json:"relay_run_id"`
-	RelayLeaseRevision           uint64     `json:"relay_lease_revision"`
-	PublicUrlExpiresAt           time.Time  `json:"public_url_expires_at"`
-	LeaseExpiresAt               time.Time  `json:"lease_expires_at"`
-	AccessPending                bool       `json:"access_pending,omitempty"`
+	TraceContext                 TraceContext `json:"trace_context,omitzero"`
+	ProtocolVersion              uint32       `json:"protocol_version"`
+	Kind                         StreamKind   `json:"kind"`
+	VisitorConnectionID          string       `json:"visitor_connection_id"`
+	PublicURLID                  string       `json:"public_url_id"`
+	PublishRunID                 string       `json:"publish_run_id"`
+	PublishRunNumber             uint64       `json:"publish_run_number"`
+	PublisherConnectionID        string       `json:"publisher_connection_id"`
+	ConnectionSlot               uint8        `json:"connection_slot"`
+	ConnectionAssignmentRevision uint64       `json:"connection_assignment_revision"`
+	RelayServiceID               string       `json:"relay_service_id"`
+	RelayID                      string       `json:"relay_id"`
+	RelayRunID                   string       `json:"relay_run_id"`
+	RelayLeaseRevision           uint64       `json:"relay_lease_revision"`
+	PublicUrlExpiresAt           time.Time    `json:"public_url_expires_at"`
+	LeaseExpiresAt               time.Time    `json:"lease_expires_at"`
+	AccessPending                bool         `json:"access_pending,omitempty"`
 }
 
 type StreamResponseType string
@@ -288,6 +290,9 @@ func (r PublisherConnectionRef) Validate() error {
 }
 
 func (h VisitorStreamHeader) Validate() error {
+	if err := h.TraceContext.Validate(); err != nil {
+		return err
+	}
 	if h.ProtocolVersion != Version || h.Kind != VisitorStream || !validIdentifier(h.VisitorConnectionID) ||
 		!validIdentifier(h.PublicURLID) || !validIdentifier(h.PublishRunID) || h.PublishRunNumber == 0 ||
 		!validIdentifier(h.PublisherConnectionID) || h.ConnectionAssignmentRevision == 0 {
@@ -297,6 +302,9 @@ func (h VisitorStreamHeader) Validate() error {
 }
 
 func (h InternalForwardingHeader) Validate() error {
+	if err := h.TraceContext.Validate(); err != nil {
+		return err
+	}
 	if h.ProtocolVersion != Version || h.Kind != InternalForwardingStream || !validIdentifier(h.VisitorConnectionID) ||
 		!validIdentifier(h.PublicURLID) || !validIdentifier(h.PublishRunID) || h.PublishRunNumber == 0 ||
 		!validIdentifier(h.PublisherConnectionID) || h.ConnectionSlot > 1 || h.ConnectionAssignmentRevision == 0 ||

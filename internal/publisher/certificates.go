@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -89,7 +90,9 @@ func attemptCertificateTransaction(
 	state *clientstate.CertificateCache,
 	setup controlv1.PublishRunSetup,
 	renew bool,
-) (clientstate.Material, error) {
+) (_ clientstate.Material, result error) {
+	ctx, finish := observability.PublisherOperation(ctx, "certificate")
+	defer func() { finish(result) }()
 	publishRunID, publicURLID, hostname := setup.PublishRun.Id, setup.PublicUrl.Id, setup.PublicUrl.CanonicalHostname
 	version, publishRunToken := uint64(setup.PublishRun.PublishRunNumber), credentials.PublishRunToken(setup.PublishRunToken)
 	staged, found, err := state.Staged(ctx, hostname)

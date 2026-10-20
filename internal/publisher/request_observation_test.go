@@ -1,13 +1,16 @@
 package publisher
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/inspection"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
@@ -68,6 +71,8 @@ func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
 }
 
 func TestRequestObservationNoneRecordsNothing(t *testing.T) {
+	metrics := observability.New("publisher")
+	defer metrics.Shutdown(context.Background())
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -80,12 +85,19 @@ func TestRequestObservationNoneRecordsNothing(t *testing.T) {
 	}
 	defer server.Close()
 	request := httptest.NewRequest(http.MethodGet, "/health?token=private", nil)
+	request = request.WithContext(observability.WithMetrics(request.Context(), metrics))
 	request.Host = "app.example"
 	request.TLS = &tls.ConnectionState{ServerName: "app.example"}
 	response := httptest.NewRecorder()
 	server.http.Handler.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent || observed != 0 {
 		t.Fatalf("none mode response = %d, observations = %d", response.Code, observed)
+	}
+	scrape := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(scrape, httptest.NewRequest("GET", "/metrics", nil))
+	text := scrape.Body.String()
+	if !strings.Contains(text, "tnl_publisher_http_request_duration_seconds_count") || !strings.Contains(text, `tnl_response_origin="local_service"`) || strings.Contains(text, "token=private") || strings.Contains(text, "/health") {
+		t.Fatal("inspection none must retain safe OTel request measurements", text)
 	}
 	if _, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "app.example", Target: upstream.URL,
 		InspectionMode: "detailed"}); err == nil {

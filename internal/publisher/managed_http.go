@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/httpstream"
 	"github.com/tnldotdev/tnl/internal/httpsubject"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -61,7 +62,7 @@ func (f ManagedHTTP) Forward(ctx context.Context, client *tls.Conn, target Manag
 	return httpstream.Serve(ctx, client, &url.URL{Scheme: scheme, Host: target.Address}, func(ctx context.Context) (net.Conn, error) {
 		setup, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		conn, err := (&net.Dialer{}).DialContext(setup, "tcp", target.Address)
+		conn, err := observability.DialTarget(setup, "tcp", target.Address)
 		if err != nil {
 			return nil, err
 		}
@@ -221,16 +222,20 @@ func validManagedGrantSecret(value string) bool {
 }
 
 func (f ManagedHTTP) authorize(ctx context.Context, credential controlv1.ManagedHTTPCredential) (controlv1.ServiceClientCertificateDecision, error) {
+	ctx, finish := observability.PublisherOperation(ctx, "visitor_authorization")
 	input := controlv1.ManagedHTTPVisitorRequest{RunNumber: f.Number, VisitorConnectionId: f.Header.VisitorConnectionID, SourceIp: f.Header.SourceIP, DestinationPort: int(f.Port), Credential: credential}
 	for {
 		decision, err := f.Control.AuthorizeManagedHTTPVisitor(ctx, f.Subject.ID, f.RunID, f.Token, input)
+		observability.PublisherAuthorization(ctx, decision.Allowed, decision.Admitted, err)
 		if err != nil || !decision.Allowed || decision.Admitted {
+			finish(err)
 			return decision, err
 		}
 		timer := time.NewTimer(25 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			finish(context.Cause(ctx))
 			return controlv1.ServiceClientCertificateDecision{}, context.Cause(ctx)
 		case <-timer.C:
 		}

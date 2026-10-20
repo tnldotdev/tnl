@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -13,7 +14,9 @@ import (
 
 // OpenPrivate uses the same exact-process relay pool as HTTP, with a separate
 // ID-keyed private stream header. it sends no PROXY or visitor bytes itself.
-func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.PrivateServiceRelay, header tunnelv1.PrivateForwardingHeader) (net.Conn, error) {
+func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.PrivateServiceRelay, header tunnelv1.PrivateForwardingHeader) (result net.Conn, retErr error) {
+	ctx, finish := observability.Start(ctx, "ingress.private_relay_attempt")
+	defer func() { finish(retErr) }()
 	if f == nil || f.connector == nil || header.Validate() != nil || relay.TlsServerName == "" || relay.InternalRelayAddress == "" ||
 		relay.ConnectionSlot < 0 || relay.ConnectionSlot > 1 || relay.ConnectionAssignmentRevision < 1 || relay.RelayLeaseRevision < 1 ||
 		header.PublisherConnectionID != relay.PublisherConnectionId || header.ConnectionSlot != uint8(relay.ConnectionSlot) ||

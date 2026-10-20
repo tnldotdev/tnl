@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
@@ -17,7 +18,9 @@ import (
 // before the caller releases its ordinary stream capacity.
 func (p *PrivateConnector) copyLivePrivateVisitor(ctx context.Context, visitor muxsession.Stream, backend net.Conn,
 	lease ingressv1.IngressLease, bound ingressv1.PrivateConnectorSessionResult,
-	claimed ingressv1.PrivateServiceStreamResult, source netip.AddrPort, claimedAt time.Time) error {
+	claimed ingressv1.PrivateServiceStreamResult, source netip.AddrPort, claimedAt time.Time) (retErr error) {
+	ctx, finishForward := observability.Start(ctx, "ingress.forward_private_visitor")
+	defer func() { finishForward(retErr) }()
 	if !claimed.ValidUntil.After(time.Now()) {
 		return ErrPrivateAdmission
 	}

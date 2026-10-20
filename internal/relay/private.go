@@ -312,7 +312,9 @@ func (a *ForwardingAcceptor) forwardPrivate(ctx context.Context, incoming *tunne
 	defer func() { close(copyDone); <-watchDone }()
 	// ingress alone creates PROXY v2. relay copies it and every following
 	// visitor byte unchanged, once, through this exact publisher stream.
+	_, finishForward := observability.Start(ctx, "relay.forward_private_visitor")
 	copied, err := streamcopy.Copy(incoming.Stream, publisher)
+	finishForward(err)
 	if observer, ok := a.observer.(interface {
 		ObserveRelayTransfer(string, int64, int64, error)
 	}); ok {

@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/buildinfo"
@@ -387,15 +386,10 @@ func servePublisherGroup(ctx context.Context, job publisherjob.Job, profile *cli
 				if err := assignedTargetTrust(&privateJob, assignment.Configuration.TargetTls); err != nil {
 					return err
 				}
-				var ready atomic.Bool
 				return publisherjob.PublishPrivate(ctx, privateJob, privatepublisher.RunConfig{Control: native, State: profile, Access: native.Access, Identity: identity, PrivateServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: nativeauth.PrivateServiceMetadata(service),
 					Healthy: func(ctx context.Context) bool {
-						healthy := publisherjob.PreflightPrivate(ctx, privateJob) == nil
-						if ready.Load() {
-							health(healthy)
-						}
-						return healthy
-					}, Ready: func() error { ready.Store(true); health(true); return nil },
+						return publisherjob.PreflightPrivate(ctx, privateJob) == nil
+					}, ObserveReadiness: func(status privatepublisher.RunStatus) { health(status.Ready) },
 				})
 			}
 			return grouppublisher.ErrAssignment

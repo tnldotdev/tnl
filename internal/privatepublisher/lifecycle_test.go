@@ -295,7 +295,7 @@ func (f *lifecycleControl) CreatePrivateCertificateIssuance(_ context.Context, s
 		return controlv1.PrivateCertificateIssuance{}, err
 	}
 	value := string(append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issued}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: root})...))
-	return controlv1.PrivateCertificateIssuance{Id: "test-issuance", PrivateServiceId: service, PrivateRunId: run, RunNumber: number, CertificatePlan: *f.prep.CertificatePlan, State: controlv1.CertificateIssuanceStateWaitingForInstall, CertificatePem: &value, NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter}, nil
+	return controlv1.PrivateCertificateIssuance{Id: "test-issuance", PublisherIdentityId: f.prep.PublisherIdentityId, PrivateServiceId: service, PrivateRunId: run, RunNumber: number, CertificatePlan: *f.prep.CertificatePlan, State: controlv1.CertificateIssuanceStateWaitingForInstall, CertificatePem: &value, NotBefore: &leaf.NotBefore, NotAfter: &leaf.NotAfter}, nil
 }
 func (f *lifecycleControl) GetPrivateCertificateIssuance(context.Context, string, string, string, credentials.PublishRunToken) (controlv1.PrivateCertificateIssuance, error) {
 	return controlv1.PrivateCertificateIssuance{}, errors.New("unexpected poll")

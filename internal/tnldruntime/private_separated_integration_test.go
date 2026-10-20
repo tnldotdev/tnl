@@ -94,6 +94,11 @@ func (f observingPrivateForwarder) OpenPrivate(ctx context.Context, relay ingres
 func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, index int, transport string, opened chan<- privateObservation) *daemon {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
+	metrics := observability.New("ingress")
+	if f.processContext != nil {
+		ctx = observability.WithMetrics(ctx, observability.FromContext(f.processContext("ingress")))
+		metrics = observability.FromContext(ctx)
+	}
 	secrets, err := serviceapi.NewBearerSecrets(privateRuntimeClusterSecret, "")
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +114,7 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 	}
 	id := fmt.Sprintf("private-ingress-%d", index)
 	hostname := id + ".split.integration.test"
-	if err := d.startIngressRuntime(ctx, ingressSettingsFrom(f.controlConfig), observability.New("ingress"), ingressRuntimeConfig{
+	if err := d.startIngressRuntime(ctx, ingressSettingsFrom(f.controlConfig), metrics, ingressRuntimeConfig{
 		client: client, ingressID: id, listener: listener, clusterSecret: privateRuntimeClusterSecret,
 		privateHostname: hostname, privateAddress: listener.Addr().String(), disablePrivateQUIC: transport == "tls-tcp",
 		configurePrivate: func(config *ingress.PrivateConnectorConfig) {

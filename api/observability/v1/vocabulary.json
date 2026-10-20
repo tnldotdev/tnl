@@ -1384,6 +1384,43 @@
       ]
     },
     {
+      "name": "tnl_publisher_authorization_decisions_total",
+      "semantics": "Authorization checks distinguish denial, allowed pending admission, admission and infrastructure failure.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.deployment_id",
+        "tnl.exposure",
+        "tnl.outcome",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.reason",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.service_protocol",
+        "tnl.state",
+        "tnl.team_id"
+      ]
+    },
+    {
+      "name": "tnl_publisher_configuration_current",
+      "semantics": "Whether the latest control response matched the current run and approved configuration; target health is separate.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.deployment_id",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.team_id"
+      ]
+    },
+    {
       "name": "tnl_publisher_connection_attempts_total",
       "semantics": "Completed publisher connection races by selected transport and preference.",
       "kind": "counter",
@@ -1400,6 +1437,176 @@
         "tnl.team_id",
         "tnl.transport",
         "tnl.transport_preference"
+      ]
+    },
+    {
+      "name": "tnl_publisher_connection_events_total",
+      "semantics": "Authenticated publisher connection establishment and expected or unexpected close events.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.connection_slot",
+        "tnl.deployment_id",
+        "tnl.event",
+        "tnl.exposure",
+        "tnl.outcome",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.reason",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.service_protocol",
+        "tnl.team_id",
+        "tnl.transport"
+      ]
+    },
+    {
+      "name": "tnl_publisher_connections_active",
+      "semantics": "Authenticated publisher connections held by this process; sum slots for local redundancy, not control readiness.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.connection_slot",
+        "tnl.deployment_id",
+        "tnl.exposure",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.service_protocol",
+        "tnl.team_id",
+        "tnl.transport"
+      ]
+    },
+    {
+      "name": "tnl_publisher_forwarded_bytes_total",
+      "semantics": "HTTP body bytes read for target forwarding or written from accepted target responses, and opaque application copies, observed incrementally; excludes tnl-authored responses, HTTP headers, native authentication and TLS framing.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.deployment_id",
+        "tnl.direction",
+        "tnl.exposure",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.service_protocol",
+        "tnl.team_id"
+      ]
+    },
+    {
+      "name": "tnl_publisher_http_request_duration_seconds",
+      "semantics": "HTTP handler lifetime including streaming and upgrades; no request paths or query parsing.",
+      "kind": "histogram",
+      "dimensions": [
+        "http.request.method",
+        "http.response.status_code",
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.deployment_id",
+        "tnl.exposure",
+        "tnl.outcome",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.reason",
+        "tnl.replica_key",
+        "tnl.response_origin",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.service_protocol",
+        "tnl.team_id"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_publisher_http_requests_active",
+      "semantics": "HTTP handlers currently executing, including streaming and upgrades.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.deployment_id",
+        "tnl.exposure",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.service_protocol",
+        "tnl.team_id"
+      ]
+    },
+    {
+      "name": "tnl_publisher_http_response_headers_duration_seconds",
+      "semantics": "Time until final response headers, excluding informational responses.",
+      "kind": "histogram",
+      "dimensions": [
+        "http.request.method",
+        "http.response.status_code",
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.deployment_id",
+        "tnl.exposure",
+        "tnl.outcome",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.reason",
+        "tnl.replica_key",
+        "tnl.response_origin",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.service_protocol",
+        "tnl.team_id"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
       ]
     },
     {
@@ -1422,7 +1629,11 @@
       "semantics": "Finite publisher operations by authenticated identity and bounded outcome.",
       "kind": "histogram",
       "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.connection_slot",
         "tnl.deployment_id",
+        "tnl.exposure",
         "tnl.operation",
         "tnl.outcome",
         "tnl.public_url_id",
@@ -1432,7 +1643,11 @@
         "tnl.replica_key",
         "tnl.service_id",
         "tnl.service_kind",
-        "tnl.team_id"
+        "tnl.service_protocol",
+        "tnl.team_id",
+        "tnl.tls_leg",
+        "tnl.transport",
+        "tnl.transport_preference"
       ],
       "explicit_bounds": [
         0.001,
@@ -1467,6 +1682,209 @@
         "tnl.service_id",
         "tnl.service_kind",
         "tnl.state",
+        "tnl.team_id"
+      ]
+    },
+    {
+      "name": "tnl_publisher_readiness_last_check_timestamp_seconds",
+      "semantics": "Most recent publisher readiness check, including unsuccessful checks.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.deployment_id",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.team_id"
+      ]
+    },
+    {
+      "name": "tnl_publisher_readiness_last_success_timestamp_seconds",
+      "semantics": "Most recent successful publisher readiness check; a failure never advances it.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.deployment_id",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.team_id"
+      ]
+    },
+    {
+      "name": "tnl_publisher_ready",
+      "semantics": "Current publisher readiness decision; combine with last check and confirmed lease expiration for freshness.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.deployment_id",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.team_id"
+      ]
+    },
+    {
+      "name": "tnl_publisher_recovery_duration_seconds",
+      "semantics": "Publisher-local time from unexpected connection loss until an observed target response (HTTP headers or stream bytes); includes waiting for traffic, not visitor delivery or outage duration.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.deployment_id",
+        "tnl.exposure",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.service_protocol",
+        "tnl.team_id"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_publisher_target_healthy",
+      "semantics": "Latest target health decision; independent of publisher lease and configuration validity.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.deployment_id",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.team_id"
+      ]
+    },
+    {
+      "name": "tnl_publisher_tls_handshakes_total",
+      "semantics": "Completed TLS handshakes; negotiated version and resumption only on success.",
+      "kind": "counter",
+      "dimensions": [
+        "tls.protocol.version",
+        "tls.resumed",
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.deployment_id",
+        "tnl.exposure",
+        "tnl.outcome",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.reason",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.service_protocol",
+        "tnl.team_id",
+        "tnl.tls_leg"
+      ]
+    },
+    {
+      "name": "tnl_publisher_transport_candidate_duration_seconds",
+      "semantics": "Publisher transport candidate connection and authentication duration; count includes both raced candidates, not only the winner.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.deployment_id",
+        "tnl.exposure",
+        "tnl.outcome",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.reason",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.service_protocol",
+        "tnl.team_id",
+        "tnl.transport"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_publisher_visitor_stream_completions_total",
+      "semantics": "Application stream copies completed by outcome.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.deployment_id",
+        "tnl.exposure",
+        "tnl.outcome",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.reason",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.service_protocol",
+        "tnl.team_id"
+      ]
+    },
+    {
+      "name": "tnl_publisher_visitor_streams_active",
+      "semantics": "Publisher application streams currently forwarding.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
+        "tnl.deployment_id",
+        "tnl.exposure",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.service_protocol",
         "tnl.team_id"
       ]
     },

@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -108,7 +109,9 @@ func managedCertificateRetryable(err error) bool {
 	return errors.As(err, &network)
 }
 
-func (r ManagedCertificates) advance(ctx context.Context, initial bool) (clientstate.Material, error) {
+func (r ManagedCertificates) advance(ctx context.Context, initial bool) (_ clientstate.Material, result error) {
+	ctx, finish := observability.PublisherOperation(ctx, "certificate")
+	defer func() { finish(result) }()
 	lock, err := r.Cache.Lock(ctx)
 	if err != nil {
 		return clientstate.Material{}, err

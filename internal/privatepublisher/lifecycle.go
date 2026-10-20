@@ -49,6 +49,16 @@ type RunConfig struct {
 	Metadata          controlv1.PrivateServiceMetadata
 	StreamCapacity    int32
 	Healthy           func(context.Context) bool
+	ObserveReadiness  func(RunStatus)
+}
+
+// RunStatus separates current readiness from the one-time Ready notification.
+// a failed heartbeat cannot extend LeaseExpiresAt or LastSuccess. target health
+// is the local probe result, independent of control configuration and freshness.
+type RunStatus struct {
+	Ready, TargetHealthy, ConfigurationCurrent bool
+	LastCheck, LastSuccess, LeaseExpiresAt     time.Time
+	Connected                                  [2]bool
 }
 
 func (RunConfig) String() string   { return "private publisher configuration" }
@@ -92,6 +102,12 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	config.Metadata.TrustRevision = approved.TrustRevision
 	ctx = observability.NarrowIdentity(ctx, observability.Identity{TeamID: approved.TeamId, PublisherIdentityID: config.Identity.ClientId, ServiceID: approved.Id})
+	exposure := "private"
+	if approved.ManagedTls.Public {
+		exposure = "public"
+	}
+	ctx = observability.WithFields(ctx, observability.Fields{Component: "publisher", ServiceProtocol: string(approved.Protocol), Exposure: exposure})
+	ctx = observability.WithPublisherRecovery(ctx)
 	_, startup := observability.PublisherOperation(ctx, "private_startup")
 	defer func() { startup(result) }()
 	trust, err := targetTrust(approved)
@@ -170,7 +186,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	runToken := credentials.PublishRunToken(setup.RunToken)
 	defer func() {
 		bound.Invalidate()
-		finish, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		result = errors.Join(result, config.Control.ClosePrivateServiceRun(finish, config.PrivateServiceID, setup.PrivateRunId, runToken))
 	}()
@@ -190,6 +206,18 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			}
 		}()
 	}
+	status := RunStatus{ConfigurationCurrent: true}
+	report := func() {
+		observability.PublisherReadinessStatus(ctx, status.Ready, status.TargetHealthy, status.ConfigurationCurrent, status.LastCheck, status.LastSuccess)
+		if config.ObserveReadiness != nil {
+			config.ObserveReadiness(status)
+		}
+	}
+	defer func() {
+		status.Ready = false
+		status.LastCheck = time.Now()
+		report()
+	}()
 	heartbeat := func(ctx context.Context) (state controlv1.PrivateServiceRunState, err error) {
 		ctx, finish := observability.PublisherOperation(ctx, "private_heartbeat")
 		defer func() {
@@ -201,12 +229,17 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		bound.mu.Lock()
 		active := len(bound.active)
 		bound.mu.Unlock()
+		status.TargetHealthy = config.Healthy(ctx)
 		return config.Control.HeartbeatPrivateServiceRunHealth(ctx, config.PrivateServiceID, setup.PrivateRunId, runToken,
-			controlv1.PrivateServiceRunHeartbeat{Healthy: config.Healthy(ctx), StreamCapacity: config.StreamCapacity, ActiveStreams: int32(active)})
+			controlv1.PrivateServiceRunHeartbeat{Healthy: status.TargetHealthy, StreamCapacity: config.StreamCapacity, ActiveStreams: int32(active)})
 	}
 	state, err := heartbeat(ctx)
-	if err != nil || bound.ApplyHeartbeat(state) != nil {
+	if err != nil {
 		return errors.Join(ErrPrivateStream, err)
+	}
+	if err := bound.ApplyHeartbeat(state); err != nil {
+		status.ConfigurationCurrent = false
+		return err
 	}
 	paths, err := tunnel.NewSlots(context.WithoutCancel(ctx), tunnel.SlotsConfig{SingleUse: true, Connect: func(ctx context.Context, slot uint8, preferTCP bool) (tunnel.SlotSession, error) {
 		if config.Connect != nil {
@@ -219,7 +252,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	defer func() {
 		if result == nil && ctx.Err() != nil {
-			finish, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			defer cancel()
 			_ = paths.Drain(finish)
 		} else {
@@ -237,7 +270,18 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	heartbeatOK := true
 	for {
 		connected, changed := paths.Snapshot()
-		if heartbeatOK && state.State == controlv1.PrivateServiceRunStateState("ready") && (state.Healthy == nil || *state.Healthy) && !ready && connected[0] != nil && connected[1] != nil {
+		status.LastCheck = time.Now()
+		status.LeaseExpiresAt = state.PublisherExpiresAt
+		status.Connected = [2]bool{connected[0] != nil, connected[1] != nil}
+		// initial readiness needs both slots; an established run can serve on one
+		// while replacing the other, without repeating its one-time notification.
+		connectionsReady := status.Connected[0] && status.Connected[1] || ready && (status.Connected[0] || status.Connected[1])
+		status.Ready = heartbeatOK && status.ConfigurationCurrent && status.TargetHealthy && state.PublisherExpiresAt.After(status.LastCheck) && state.State == controlv1.PrivateServiceRunStateState("ready") && (state.Healthy == nil || *state.Healthy) && connectionsReady
+		if status.Ready {
+			status.LastSuccess = status.LastCheck
+		}
+		report()
+		if status.Ready && !ready {
 			if config.Ready != nil {
 				if err := config.Ready(); err != nil {
 					return err
@@ -245,7 +289,6 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			}
 			ready = true
 			startup(nil)
-			observability.PublisherReadiness(ctx, true)
 		}
 		expires := time.NewTimer(time.Until(state.PublisherExpiresAt))
 		select {
@@ -273,7 +316,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			cancel()
 			if err != nil {
 				heartbeatOK = false
-				observability.PublisherReadiness(ctx, false)
+				status.Ready = false
+				status.LastCheck = time.Now()
+				report()
 				if ctx.Err() != nil {
 					return nil
 				}
@@ -285,8 +330,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 				// publisher deadline; retry without reviving stale authority.
 				continue
 			}
-			if bound.ApplyHeartbeat(next) != nil {
-				return ErrPrivateStream
+			if err := bound.ApplyHeartbeat(next); err != nil {
+				status.ConfigurationCurrent = false
+				return err
 			}
 			state = next
 			heartbeatOK = true

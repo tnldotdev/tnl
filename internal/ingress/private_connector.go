@@ -16,6 +16,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/serviceaudit"
@@ -555,7 +556,7 @@ func (p *PrivateConnector) refreshRouting(ctx context.Context, lease ingressv1.I
 }
 
 func (p *PrivateConnector) handleStream(ctx context.Context, visitor muxsession.Stream, lease ingressv1.IngressLease, bound ingressv1.PrivateConnectorSessionResult,
-	source, destination netip.AddrPort, admission *privateStreamAdmission) error {
+	source, destination netip.AddrPort, admission *privateStreamAdmission) (retErr error) {
 	if !bound.ExpiresAt.After(time.Now()) {
 		return ErrPrivateAdmission
 	}
@@ -567,6 +568,9 @@ func (p *PrivateConnector) handleStream(ctx context.Context, visitor muxsession.
 	if err != nil {
 		return ErrPrivateAdmission
 	}
+	ctx = observability.ExtractWireTrace(ctx, entry.TraceContext)
+	ctx, finishConnection := observability.Start(ctx, "ingress.private_visitor_connection")
+	defer func() { finishConnection(retErr) }()
 	visitorID, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	if err != nil {
 		return err

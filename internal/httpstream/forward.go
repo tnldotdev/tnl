@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 var ErrClosed = errors.New("selected HTTP upstream connection is closed")
@@ -59,14 +61,17 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 	}()
 	proxy := &httputil.ReverseProxy{Transport: transport, FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
+			observability.PublisherHTTPForward(request.Out.Context())
 			request.SetURL(target)
 			request.Out.Host = target.Host
 		}, ModifyResponse: func(response *http.Response) error {
+			observability.PublisherHTTPResponse(response.Request.Context())
 			if response.StatusCode != http.StatusSwitchingProtocols && response.Close {
 				response.Header.Set("Connection", "close")
 			}
 			return nil
-		}, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+		}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			observability.PublisherHTTPError(r.Context(), err)
 			w.Header().Set("Connection", "close")
 			_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
 			http.Error(w, "service connection closed", http.StatusBadGateway)
@@ -77,6 +82,7 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 	if wrap != nil {
 		handler = wrap(handler)
 	}
+	handler = observability.PublisherHTTP(handler)
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10,
 		BaseContext: func(net.Listener) context.Context { return ctx }, ErrorLog: log.New(io.Discard, "", 0)}
 	defer server.Close()

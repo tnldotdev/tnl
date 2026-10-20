@@ -140,6 +140,11 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 
 func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.IncomingInternalForwardingStream, ingressSessions ...*tunnel.Session) (retErr error) {
 	if incoming.PrivateHeader != nil {
+		ctx = observability.ExtractWireTrace(ctx, incoming.PrivateHeader.TraceContext)
+	} else {
+		ctx = observability.ExtractWireTrace(ctx, incoming.Header.TraceContext)
+	}
+	if incoming.PrivateHeader != nil {
 		return a.forwardPrivate(ctx, incoming)
 	}
 	ctx, endSpan := observability.Start(ctx, "relay.open_visitor_stream")
@@ -202,7 +207,9 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming *tunnel.Incom
 	finishOpen(nil)
 	endSpan(nil)
 	defer incoming.Stream.Close()
+	_, finishForward := observability.Start(ctx, "relay.forward_visitor")
 	copied, err := streamcopy.Copy(incoming.Stream, publisher)
+	finishForward(err)
 	if observer, ok := a.observer.(interface {
 		ObserveRelayTransfer(string, int64, int64, error)
 	}); ok {

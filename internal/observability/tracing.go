@@ -66,10 +66,18 @@ func WithVisitor(ctx context.Context, id string) context.Context {
 // these spans end at the operation boundary, not when the publisher exits.
 func PublisherOperation(ctx context.Context, operation string) (context.Context, func(error)) {
 	switch operation {
-	case "startup", "heartbeat", "connect", "private_startup", "private_heartbeat", "private_connect", "target_connect", "target_tls", "target_preflight", "readiness_probe", "visitor_admission", "visitor_tls", "certificate", "group_lease":
+	case "startup", "heartbeat", "connect", "private_startup", "private_heartbeat", "private_connect", "target_connect", "target_tls", "target_preflight", "readiness_probe", "visitor_admission", "visitor_tls", "visitor_negotiation", "target_negotiation", "native_auth", "visitor_authorization", "certificate", "group_lease":
 	default:
 		return ctx, func(error) {}
 	}
+	fields, _ := ctx.Value(fieldsKey{}).(Fields)
+	switch operation {
+	case "visitor_tls", "visitor_negotiation":
+		fields.TLSLeg = "visitor"
+	case "target_tls", "target_negotiation":
+		fields.TLSLeg = "target"
+	}
+	ctx = WithFields(ctx, fields)
 	started := time.Now()
 	ctx, end := Start(ctx, "publisher."+operation)
 	m := FromContext(ctx)
@@ -80,7 +88,8 @@ func PublisherOperation(ctx context.Context, operation string) (context.Context,
 			if m == nil {
 				return
 			}
-			attrs := append(identityAttributes(ctx), Operation.String(operation), OutcomeKey.String(durationOutcome(err)))
+			attrs := append(publisherDataAttributes(ctx), Attributes(ctx, TLSLeg, Transport, TransportPreference, ConnectionSlot)...)
+			attrs = append(attrs, Operation.String(operation), OutcomeKey.String(durationOutcome(err)))
 			m.publisherOperations.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attrs...))
 		})
 	}

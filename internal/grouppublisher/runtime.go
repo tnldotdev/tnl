@@ -67,7 +67,7 @@ func (r Runtime) Serve(ctx context.Context) error {
 		return err
 	}
 	defer func() {
-		finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = owner.Stop(finish)
 	}()
@@ -118,7 +118,7 @@ func (r Runtime) Serve(ctx context.Context) error {
 			}
 			if err == nil && next.AccessToken != "" && next.ExpiresAt.After(time.Now()) {
 				lease = next
-				ctx = observability.ReplaceIdentity(ctx, observability.Identity{TeamID: r.Member.TeamId, PublisherGroupID: r.Member.GroupId, PublisherIdentityID: r.Member.PublisherIdentityId})
+				ctx = owner.ObservabilityContext(ctx, r.Member.TeamId, r.Member.GroupId)
 				observability.PublisherLease(ctx, lease.ExpiresAt)
 				for _, w := range workers {
 					w.lease.Reset(time.Until(lease.ExpiresAt))

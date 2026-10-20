@@ -21,6 +21,7 @@ import (
 
 // Metrics owns one process's OTel instruments, providers, and scrape exporter.
 type Metrics struct {
+	publisherData               publisherData
 	relayBytes                  *counter
 	relayCompletions            *counter
 	meter                       metric.Meter
@@ -31,6 +32,7 @@ type Metrics struct {
 	publisherOperations         metric.Float64Histogram
 	publisherLease              metric.Float64Gauge
 	publisherReadiness          metric.Float64Gauge
+	publisherReadinessMetrics   publisherReadinessMetrics
 	publisherConnectionAttempts metric.Int64Counter
 	authDecisions               *counter
 	serviceAudit                *counter
@@ -108,7 +110,9 @@ func New(role string) *Metrics {
 
 func (metrics *Metrics) initInstruments(role string) {
 	m := metrics.meter
-	metrics.publisherOperations = newHistogram(m, "tnl_publisher_operation_duration_seconds", "Finite publisher operations by authenticated identity and bounded outcome.", DurationBucketsSeconds(), "operation", "outcome").instrument
+	metrics.initPublisherReadiness()
+	metrics.initPublisherData()
+	metrics.publisherOperations = newHistogram(m, "tnl_publisher_operation_duration_seconds", "Finite publisher operations by authenticated identity and bounded outcome.", DurationBucketsSeconds(), "operation", "outcome", string(Component), string(ServiceProtocol), string(AccessPath), string(Exposure), string(TLSLeg), string(Transport), string(TransportPreference), string(ConnectionSlot)).instrument
 	describe(m, "tnl_publisher_lease_expiration_timestamp_seconds", "Last confirmed control lease; failed refresh never extends it.", "gauge", nil)
 	describe(m, "tnl_publisher_readiness_check_timestamp_seconds", "Most recent readiness decision; timestamp requires freshness checks.", "gauge", nil, "state")
 	describe(m, "tnl_publisher_connection_attempts_total", "Completed publisher connection races by selected transport and preference.", "counter", nil, "transport", "transport_preference", "outcome")

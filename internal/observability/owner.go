@@ -140,7 +140,7 @@ func newOwner(role string, config Config) (*Metrics, error) {
 		o.Observe(exports.droppedSpans.Load())
 		return nil
 	}))
-	traceOptions := []sdktrace.TracerProviderOption{sdktrace.WithResource(res), sdktrace.WithSampler(sdktrace.NeverSample()), sdktrace.WithRawSpanLimits(sdktrace.SpanLimits{AttributeValueLengthLimit: 256, AttributeCountLimit: 32, EventCountLimit: 8, LinkCountLimit: 8, AttributePerEventCountLimit: 8, AttributePerLinkCountLimit: 8})}
+	traceOptions := []sdktrace.TracerProviderOption{sdktrace.WithResource(res), sdktrace.WithIDGenerator(xrayIDGenerator{}), sdktrace.WithSampler(sdktrace.NeverSample()), sdktrace.WithRawSpanLimits(sdktrace.SpanLimits{AttributeValueLengthLimit: 256, AttributeCountLimit: 32, EventCountLimit: 8, LinkCountLimit: 8, AttributePerEventCountLimit: 8, AttributePerLinkCountLimit: 8})}
 	if config.Traces.Endpoint != "" && !config.Disabled {
 		s := config.Traces
 		compression := otlptracehttp.NoCompression
@@ -165,7 +165,10 @@ func newOwner(role string, config Config) (*Metrics, error) {
 		}
 		var sampler sdktrace.Sampler = sdktrace.TraceIDRatioBased(config.SampleRatio)
 		if config.Sampler == "" || strings.HasPrefix(config.Sampler, "parentbased_") {
-			sampler = sdktrace.ParentBased(sampler)
+			// remote trace flags are untrusted. every externally supplied parent
+			// uses this process's configured policy; local children retain their
+			// parent's decision so one visitor's local spans stay coherent.
+			sampler = sdktrace.ParentBased(sampler, sdktrace.WithRemoteParentSampled(sampler), sdktrace.WithRemoteParentNotSampled(sampler))
 		}
 		traceOptions = append(traceOptions, sdktrace.WithSampler(sampler), sdktrace.WithSpanProcessor(newSpanQueue(exporter, exports, queue, min(batch, queue), delay, s.Timeout)))
 	}

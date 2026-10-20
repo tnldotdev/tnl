@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/serviceaudit"
@@ -19,6 +20,8 @@ import (
 // AcceptDirect selects by the trusted destination port and carries native TLS
 // unchanged. publisher authentication promotes a bounded pending connection.
 func (p *PrivateConnector) AcceptDirect(ctx context.Context, connection net.Conn, source, destination netip.AddrPort) (retErr error) {
+	ctx, finishConnection := observability.Start(ctx, "ingress.direct_visitor_connection")
+	defer func() { finishConnection(retErr) }()
 	control := p.config.DirectControl
 	if control == nil || connection == nil || !validPrivateSocketPair(source, destination) {
 		return ErrPrivateAdmission
@@ -114,7 +117,9 @@ func (p *PrivateConnector) AcceptDirect(ctx context.Context, connection net.Conn
 			defer backend.Close()
 			p.guardDirectVisitor(live, control, lease, lookup, claimed.ExpiresAt, pending, admission, onAuthorized)
 		}()
+		_, finishForward := observability.Start(ctx, "ingress.forward_private_visitor")
 		_, err = streamcopy.Copy(pending, backend)
+		finishForward(err)
 		cancel()
 		<-done
 		return err

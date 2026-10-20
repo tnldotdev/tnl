@@ -14,16 +14,18 @@ func TargetRequest(request *http.Request) *http.Request {
 		return request
 	}
 	var mu sync.Mutex
+	tlsCtx := request.Context()
 	finish := func(error) {}
 	observer := &httptrace.ClientTrace{
 		TLSHandshakeStart: func() {
 			mu.Lock()
 			defer mu.Unlock()
-			_, finish = PublisherOperation(request.Context(), "target_tls")
+			tlsCtx, finish = PublisherOperation(request.Context(), "target_tls")
 		},
-		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
+		TLSHandshakeDone: func(state tls.ConnectionState, err error) {
 			mu.Lock()
 			defer mu.Unlock()
+			PublisherTLS(tlsCtx, "target", state, err)
 			finish(err)
 		},
 	}
