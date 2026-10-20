@@ -459,10 +459,20 @@ tasks:
       - go test ./internal/router -run='^$' -fuzz='^FuzzInspectClientHello$' -fuzztime='{{.TIME}}'
       - go test ./internal/proxyproto -run='^$' -fuzz='^FuzzDecode$' -fuzztime='{{.TIME}}'
       - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReadFrames$' -fuzztime='{{.TIME}}'
+      - task: go:test:fuzz:publisher-observability
+        vars:
+          TIME: "{{.TIME}}"
       - go test ./internal/localproxy -run='^$' -fuzz='^FuzzNormalizeTarget$' -fuzztime='{{.TIME}}'
       - go test ./internal/naming -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime='{{.TIME}}'
       - go test ./internal/naming -run='^$' -fuzz='^FuzzDomainPolicy$' -fuzztime='{{.TIME}}'
       - go test ./internal/clioutput -run='^$' -fuzz='^FuzzRender$' -fuzztime='{{.TIME}}'
+
+  go:test:fuzz:publisher-observability:
+    desc: Fuzz bounded public and private infrastructure trace-context frames
+    vars:
+      TIME: '{{default "10s" .TIME}}'
+    cmds:
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzWireTraceContext$' -fuzztime='{{.TIME}}' -parallel=2
 
   go:bench:plan:
     desc: Describe a local workload against an explicit tnl server without creating resources
