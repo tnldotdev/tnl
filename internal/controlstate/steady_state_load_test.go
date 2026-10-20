@@ -3,7 +3,7 @@ package controlstate
 import (
 	"context"
 	"fmt"
-	"slices"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -361,7 +361,7 @@ func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ing
 func checkSteadyLoadProjection(event, expected IngressRoutingTableEvent, now time.Time) error {
 	if event.Kind != IngressPublicURLUpsert || event.PublicURLID != expected.PublicURLID || event.PublishRunNumber != expected.PublishRunNumber ||
 		event.CanonicalHostname != expected.CanonicalHostname || event.Projection.PublishRunID != expected.Projection.PublishRunID ||
-		!event.Projection.PublicUrlExpiresAt.After(now) || !slices.Equal(event.Projection.PublisherConnections, expected.Projection.PublisherConnections) {
+		!event.Projection.PublicUrlExpiresAt.After(now) || !reflect.DeepEqual(event.Projection.PublisherConnections, expected.Projection.PublisherConnections) {
 		return fmt.Errorf("routing projection lost ready session or assignment identity route=%s revision=%d", event.PublicURLID, event.RoutingTableRevision)
 	}
 	return nil
