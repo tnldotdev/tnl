@@ -2,8 +2,10 @@ package observability
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -19,6 +21,19 @@ func WireTrace(ctx context.Context) tunnelv1.TraceContext {
 		flags = "01"
 	}
 	return tunnelv1.TraceContext{TraceParent: "00-" + sc.TraceID().String() + "-" + sc.SpanID().String() + "-" + flags}
+}
+
+// extractHTTPTrace accepts the same canonical parent-only carrier as tunnel
+// telemetry. HTTP retains the remote sampled flag for the owner's local policy.
+// an absent or invalid header clears previous parentage and its vendor state.
+// request tracestate and baggage never enter the extraction carrier.
+func extractHTTPTrace(ctx context.Context, header http.Header) context.Context {
+	ctx = trace.ContextWithSpanContext(ctx, trace.SpanContext{})
+	parents := header.Values("Traceparent")
+	if len(parents) != 1 || parents[0] == "" || (tunnelv1.TraceContext{TraceParent: parents[0]}).Validate() != nil {
+		return ctx
+	}
+	return propagation.TraceContext{}.Extract(ctx, propagation.MapCarrier{"traceparent": parents[0]})
 }
 
 // ExtractWireTrace replaces only span parentage, retaining the receiver's local

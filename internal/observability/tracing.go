@@ -8,7 +8,6 @@ import (
 
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -24,6 +23,7 @@ func (m *Metrics) tracer() trace.Tracer {
 // hostnames, errors or other external input as the name. errors become a fixed
 // outcome; raw causes are never recorded as span status or exception events.
 func Start(ctx context.Context, name string, options ...trace.SpanStartOption) (context.Context, func(error)) {
+	options = parentOnlyLinks(options)
 	options = append(options, trace.WithAttributes(append(identityAttributes(ctx), fieldAttributes(ctx)...)...))
 	ctx, span := FromContext(ctx).tracer().Start(ctx, name, options...)
 	span.SetAttributes(Operation.String(name))
@@ -32,6 +32,26 @@ func Start(ctx context.Context, name string, options ...trace.SpanStartOption) (
 	}
 	var once sync.Once
 	return ctx, func(err error) { once.Do(func() { finishError(span, err); span.End() }) }
+}
+
+// parentOnlyLinks removes vendor state without mutating caller options. keep link
+// attributes for the SDK's raw zero limit to drop and count; keep all other start
+// options intact, including asynchronous roots, explicit timestamps, and kinds.
+func parentOnlyLinks(options []trace.SpanStartOption) []trace.SpanStartOption {
+	config := trace.NewSpanStartConfig(options...)
+	if len(config.Links()) == 0 {
+		return options
+	}
+	links := make([]trace.Link, len(config.Links()))
+	for i, link := range config.Links() {
+		link.SpanContext = link.SpanContext.WithTraceState(trace.TraceState{})
+		links[i] = link
+	}
+	clean := []trace.SpanStartOption{trace.WithAttributes(config.Attributes()...), trace.WithTimestamp(config.Timestamp()), trace.WithSpanKind(config.SpanKind()), trace.WithLinks(links...)}
+	if config.NewRoot() {
+		clean = append(clean, trace.WithNewRoot())
+	}
+	return clean
 }
 
 func finishSpan(span trace.Span, outcome string) {
@@ -148,7 +168,9 @@ func (t ownedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	ctx, span := m.tracer().Start(r.Context(), "tnl."+t.surface+".request", trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 	r = r.Clone(ctx)
-	propagation.TraceContext{}.Inject(ctx, propagation.HeaderCarrier(r.Header))
+	r.Header.Del("Tracestate")
+	r.Header.Del("Baggage")
+	r.Header.Set("Traceparent", WireTrace(ctx).TraceParent)
 	response, err := t.base.RoundTrip(r)
 	outcome := durationOutcome(err)
 	if response != nil {

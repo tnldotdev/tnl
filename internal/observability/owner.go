@@ -140,7 +140,9 @@ func newOwner(role string, config Config) (*Metrics, error) {
 		o.Observe(exports.droppedSpans.Load())
 		return nil
 	}))
-	traceOptions := []sdktrace.TracerProviderOption{sdktrace.WithResource(res), sdktrace.WithIDGenerator(xrayIDGenerator{}), sdktrace.WithSampler(sdktrace.NeverSample()), sdktrace.WithRawSpanLimits(sdktrace.SpanLimits{AttributeValueLengthLimit: 256, AttributeCountLimit: 32, EventCountLimit: 8, LinkCountLimit: 8, AttributePerEventCountLimit: 8, AttributePerLinkCountLimit: 8})}
+	// raw zero drops all link attributes rather than restoring the SDK default.
+	// links carry bounded causal IDs, never scheduling or tenant payloads.
+	traceOptions := []sdktrace.TracerProviderOption{sdktrace.WithResource(res), sdktrace.WithIDGenerator(xrayIDGenerator{}), sdktrace.WithSampler(sdktrace.NeverSample()), sdktrace.WithRawSpanLimits(sdktrace.SpanLimits{AttributeValueLengthLimit: 256, AttributeCountLimit: 32, EventCountLimit: 8, LinkCountLimit: 8, AttributePerEventCountLimit: 8, AttributePerLinkCountLimit: 0})}
 	if config.Traces.Endpoint != "" && !config.Disabled {
 		s := config.Traces
 		compression := otlptracehttp.NoCompression

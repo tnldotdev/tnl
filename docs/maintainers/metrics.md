@@ -91,8 +91,10 @@ operation interval to its caller context; do not wrap the same boundary in an
 additional span. control state starts `ControlOperation` before transaction work;
 driver query and acquisition spans use that context. DNS and certificate workers
 start finite `WorkerAttempt` spans; an available scheduling span is a link, never
-an invented asynchronous request parent. no request context is stored in worker
-records or database activity snapshots.
+an invented asynchronous request parent. links retain trace/span IDs and flags,
+with at most eight links per span and no link attributes. `Start` also removes
+link tracestate. no scheduling payload is copied into link events or attributes,
+and no request context is stored in worker records or database activity snapshots.
 
 publisher byte directions are `visitor_to_target|target_to_visitor`. relay wire
 directions are `visitor_to_publisher|publisher_to_visitor`; ingress keeps its
@@ -121,10 +123,14 @@ span status and logs never contain raw error strings or exception messages.
 
 HTTP instrumentation uses standard method/status/route attributes; the route is
 a compiled matched pattern, never a raw path or URL. a semantic HTTP 200 denial
-remains `denied`. `OwnedHTTPClient` injects W3C trace context only into dedicated
-tnl-owned API clients. customer target, DNS, CA, and identity-provider traffic does
-not receive tnl trace propagation. no baggage, headers, bodies, peer addresses,
-hostnames, credentials, project paths, or SQL text are recorded.
+remains `denied`. `APIRequests` accepts only one canonical, 55-byte version-00
+`traceparent`, preserving its parent IDs while the process chooses sampling.
+absent, duplicate, or malformed parents clear previous parentage. tracestate and
+baggage headers are never extracted. `OwnedHTTPClient` sends only the current
+canonical `traceparent` to dedicated tnl-owned API clients and removes any existing
+tracestate or baggage headers. customer target, DNS, CA, and identity-provider
+traffic does not receive tnl trace propagation. no baggage, headers, bodies, peer
+addresses, hostnames, credentials, project paths, or SQL text are recorded.
 
 visitor, request, publish-run, connection, grant, actor, revision, and image-hash
 correlation is trace/log-only. `Visitor` and `WithVisitor` correlate existing
@@ -132,8 +138,13 @@ visitor connection IDs without inventing tunnel parentage or changing headers.
 SDK views enforce per-instrument attribute allowlists and fixed enum values. each
 instrument is capped at 2000 series per collection; overflow has the SDK overflow
 attribute. absolute gauge state is reserved for bounded process-wide enums.
-spans are limited to 32 attributes, 256 characters per value, eight events and
-eight links, with eight attributes per event/link.
+spans are limited to 32 attributes, 256 characters per value, eight events with
+eight attributes each, and eight attribute-free links. the native SDK's raw
+per-link attribute limit is zero, including links added after span creation.
+link IDs and flags are trace-only correlation, never metric dimensions or tenant
+authorization evidence. authenticated telemetry receivers trust hosted producers
+to derive tenant scope from authenticated state and enforce this producer policy;
+retaining asynchronous links does not verify a tenant claim on the wire.
 
 ## optional HTTPS export
 

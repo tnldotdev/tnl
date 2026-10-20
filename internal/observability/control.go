@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -17,7 +16,7 @@ import (
 func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := WithMetrics(r.Context(), m)
-		ctx = propagation.TraceContext{}.Extract(ctx, propagation.HeaderCarrier(r.Header))
+		ctx = extractHTTPTrace(ctx, r.Header)
 		ctx, span := m.tracer().Start(ctx, "tnl."+surface+".request", trace.WithSpanKind(trace.SpanKindServer))
 		defer span.End()
 		decision := &atomic.Int32{}
