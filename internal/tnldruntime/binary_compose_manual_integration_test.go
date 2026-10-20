@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/clientruntime"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/publishertarget"
@@ -106,6 +107,26 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 		command.Dir = root
 		if output, err := command.CombinedOutput(); err == nil {
 			t.Logf("Compose publisher and app output:\n%s", output)
+		}
+		status := exec.CommandContext(diagnostic, "docker", append(append([]string{}, args...), "exec", "--no-TTY", "publisher", "tnl", "status", "--scope", "local", "--output=json")...)
+		status.Dir = root
+		if output, err := status.Output(); err == nil {
+			var result struct {
+				Projects []struct {
+					Local *struct {
+						Snapshot clientruntime.Snapshot `json:"snapshot"`
+					} `json:"local"`
+				} `json:"projects"`
+			}
+			if json.Unmarshal(output, &result) == nil {
+				for _, project := range result.Projects {
+					if project.Local != nil {
+						for _, service := range project.Local.Snapshot.Services {
+							t.Logf("Compose service=%s failure=%s stage=%s", service.Name, service.Failure, service.ProvisioningStage)
+						}
+					}
+				}
+			}
 		}
 		t.Logf("disposable server output:\n%s", fixture.server.output.String())
 	})
