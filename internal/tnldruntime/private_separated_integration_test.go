@@ -119,7 +119,7 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 		privateHostname: hostname, privateAddress: listener.Addr().String(), disablePrivateQUIC: transport == "tls-tcp",
 		configurePrivate: func(config *ingress.PrivateConnectorConfig) {
 			if !f.defaultTiming {
-				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 100*time.Millisecond, 500*time.Millisecond, 3*time.Second
+				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
 				config.Control = acceleratedPrivateRecheck{config.Control}
 			}
 			if f.configurePrivate != nil {
