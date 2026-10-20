@@ -47,14 +47,14 @@ func TestDatabaseMetricsUseOnePassiveSnapshot(t *testing.T) {
 	for _, want := range []string{
 		`tnl_database_pool_max_connections 3`,
 		`tnl_database_pool_total_connections 0`,
-		`tnl_database_client_connections{purpose="request_pool",state="open"} 2`,
-		`tnl_database_client_connections{purpose="request_pool",state="connecting"} 1`,
-		`tnl_database_client_connection_events_total{event="opened",purpose="request_pool"} 5`,
-		`tnl_database_client_connection_events_total{event="closed",purpose="request_pool"} 3`,
-		`tnl_database_client_connection_events_total{event="failed",purpose="request_pool"} 4`,
-		`tnl_database_operations_active{operation="HeartbeatPublishRun"} 2`,
-		`tnl_database_operation_oldest_age_seconds{operation="HeartbeatPublishRun"} 7`,
-		`tnl_database_operations_active{operation="unknown"} 1`,
+		`tnl_database_client_connections{tnl_database_purpose="request_pool",tnl_state="open"} 2`,
+		`tnl_database_client_connections{tnl_database_purpose="request_pool",tnl_state="connecting"} 1`,
+		`tnl_database_client_connection_events_total{tnl_database_purpose="request_pool",tnl_event="opened"} 5`,
+		`tnl_database_client_connection_events_total{tnl_database_purpose="request_pool",tnl_event="closed"} 3`,
+		`tnl_database_client_connection_events_total{tnl_database_purpose="request_pool",tnl_event="failed"} 4`,
+		`tnl_database_operations_active{tnl_operation="HeartbeatPublishRun"} 2`,
+		`tnl_database_operation_oldest_age_seconds{tnl_operation="HeartbeatPublishRun"} 7`,
+		`tnl_database_operations_active{tnl_operation="unknown"} 1`,
 		`tnl_database_operations_omitted 6`,
 	} {
 		if !strings.Contains(text, want) {

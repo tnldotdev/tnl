@@ -30,7 +30,7 @@ func assertRelayOperation(t *testing.T, metrics *observability.Metrics, operatio
 			for _, label := range metric.Label {
 				labels[label.GetName()] = label.GetValue()
 			}
-			if labels["operation"] == operation && labels["outcome"] == outcome {
+			if labels["tnl_operation"] == operation && labels["tnl_outcome"] == outcome {
 				count += metric.GetHistogram().GetSampleCount()
 			}
 		}
@@ -62,7 +62,7 @@ func TestRelayControlMetricsRecordCanceledAndTimedOutCalls(t *testing.T) {
 		t.Fatalf("renew: %v", err)
 	}
 	assertRelayOperation(t, metrics, "RelayRegister", "canceled", 1)
-	assertRelayOperation(t, metrics, "RelayRenewLease", "deadline_exceeded", 1)
+	assertRelayOperation(t, metrics, "RelayRenewLease", "timeout", 1)
 	// unknown or dynamic names must not create cardinality from user input.
 	metrics.ObserveOperation("route-private-id", nil, time.Second)
 	assertRelayOperation(t, metrics, "route-private-id", "success", 0)

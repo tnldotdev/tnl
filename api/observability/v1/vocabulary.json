@@ -1,0 +1,1584 @@
+{
+  "version": 1,
+  "authority": "internal/observability: vocabulary.go and instrument declarations",
+  "cardinality_limit": 2000,
+  "attributes": [
+    {
+      "key": "cloud.availability_zone",
+      "semantics": "known operator-declared cloud fact; no metadata discovery",
+      "dimension_policy": "resource"
+    },
+    {
+      "key": "cloud.provider",
+      "semantics": "known operator-declared cloud fact; no metadata discovery",
+      "dimension_policy": "resource"
+    },
+    {
+      "key": "cloud.region",
+      "semantics": "known operator-declared cloud fact; no metadata discovery",
+      "dimension_policy": "resource"
+    },
+    {
+      "key": "deployment.environment.name",
+      "semantics": "operator-declared deployment environment; omitted when unknown",
+      "dimension_policy": "resource"
+    },
+    {
+      "key": "error.type",
+      "semantics": "owned failure.Reason or diagnostic code only; unknown errors use unexpected",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "http.request.method",
+      "values": [
+        "GET",
+        "HEAD",
+        "POST",
+        "PUT",
+        "DELETE",
+        "CONNECT",
+        "OPTIONS",
+        "TRACE",
+        "PATCH",
+        "_OTHER"
+      ],
+      "semantics": "standard HTTP method; unknown methods normalize to _OTHER",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "http.response.status_code",
+      "semantics": "HTTP response status code, 100 through 599",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "http.route",
+      "semantics": "compiled matched route template only; never raw request path",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "service.instance.id",
+      "semantics": "unique runtime instance; random when unset, never a durable publisher identity",
+      "dimension_policy": "resource"
+    },
+    {
+      "key": "service.name",
+      "values": [
+        "tnld",
+        "tnl",
+        "tnl-accounts",
+        "otel-collector"
+      ],
+      "semantics": "process service, not a tenant or managed service",
+      "dimension_policy": "resource"
+    },
+    {
+      "key": "service.namespace",
+      "values": [
+        "tnl"
+      ],
+      "semantics": "fixed product namespace",
+      "dimension_policy": "resource"
+    },
+    {
+      "key": "service.version",
+      "semantics": "binary or deployed application version",
+      "dimension_policy": "resource"
+    },
+    {
+      "key": "tls.protocol.version",
+      "values": [
+        "1.2",
+        "1.3"
+      ],
+      "semantics": "negotiated TLS version",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tls.resumed",
+      "values": [
+        "true",
+        "false"
+      ],
+      "semantics": "whether this TLS handshake resumed a session",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.access_path",
+      "values": [
+        "connector",
+        "direct"
+      ],
+      "semantics": "visitor admission path",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.action",
+      "semantics": "closed domain value supplied by the owning semantic observer",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.actor_id",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.capacity_resource",
+      "values": [
+        "client_hello_connections",
+        "public_connections",
+        "public_url_connections",
+        "denied_connections",
+        "denied_public_url_connections",
+        "control_connections",
+        "relay_tcp_connections",
+        "publisher_connections",
+        "relay_streams",
+        "process_connection_rate",
+        "source_connection_rate",
+        "source_connections",
+        "public_url_connection_rate",
+        "public_url_connection_total",
+        "pending_source_capacity",
+        "pending_source_connections",
+        "pending_public_url_connections",
+        "pending_source_rate",
+        "pending_public_url_rate",
+        "traffic_keys",
+        "traffic_bandwidth",
+        "invalid_traffic_projection",
+        "other"
+      ],
+      "semantics": "admission capacity domain",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.certificate_kind",
+      "values": [
+        "public_url",
+        "relay",
+        "managed_service",
+        "control"
+      ],
+      "semantics": "certificate worker domain",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.certificate_plan",
+      "semantics": "closed domain value supplied by the owning semantic observer",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.cleanup_kind",
+      "values": [
+        "expired_publish_runs",
+        "ephemeral_public_urls",
+        "routing_floor",
+        "routing_prune",
+        "service_audit",
+        "guest_private_state"
+      ],
+      "semantics": "cleanup domain",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.component",
+      "values": [
+        "control",
+        "authority",
+        "private_ingress",
+        "private_relay",
+        "ingress",
+        "relay",
+        "publisher",
+        "client",
+        "accounts",
+        "collector"
+      ],
+      "semantics": "component performing this work; independent of process role",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.connection_class",
+      "semantics": "closed domain value supplied by the owning semantic observer",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.connection_slot",
+      "values": [
+        "0",
+        "1"
+      ],
+      "semantics": "assigned publisher connection slot; omitted when unknown",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.database_purpose",
+      "semantics": "closed domain value supplied by the owning semantic observer",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.deployment_id",
+      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
+      "dimension_policy": "scoped"
+    },
+    {
+      "key": "tnl.direction",
+      "values": [
+        "visitor_to_target",
+        "target_to_visitor",
+        "visitor_to_publisher",
+        "publisher_to_visitor",
+        "visitor_to_relay",
+        "relay_to_visitor"
+      ],
+      "semantics": "byte direction at the named component; wire bytes are distinct from target payload",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.dns_kind",
+      "values": [
+        "authority",
+        "public_url",
+        "managed_service",
+        "public_url_challenge",
+        "relay_challenge"
+      ],
+      "semantics": "DNS worker domain",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.domain_kind",
+      "semantics": "closed domain value supplied by the owning semantic observer",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.event",
+      "semantics": "closed per-instrument lifecycle event, including queued, delivered, and dropped",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.exposure",
+      "values": [
+        "private",
+        "public"
+      ],
+      "semantics": "service reachability",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.grant_id",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.image_hash",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.ingress_pool",
+      "semantics": "closed domain value supplied by the owning semantic observer",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.milestone",
+      "semantics": "closed domain value supplied by the owning semantic observer",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.operation",
+      "semantics": "compiled operation name; never supplied input, SQL, or a path",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.outcome",
+      "values": [
+        "success",
+        "denied",
+        "rejected",
+        "timeout",
+        "canceled",
+        "error"
+      ],
+      "semantics": "operation result; domain detail belongs in reason, state, or event",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.phase",
+      "semantics": "closed domain value supplied by the owning semantic observer",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.provider",
+      "semantics": "closed domain value supplied by the owning semantic observer",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.public_url_id",
+      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
+      "dimension_policy": "scoped"
+    },
+    {
+      "key": "tnl.public_url_purpose",
+      "semantics": "closed domain value supplied by the owning semantic observer",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.publish_run_id",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.publish_run_number",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.publisher_connection_id",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.publisher_group_id",
+      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
+      "dimension_policy": "scoped"
+    },
+    {
+      "key": "tnl.publisher_identity_id",
+      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
+      "dimension_policy": "scoped"
+    },
+    {
+      "key": "tnl.reason",
+      "values": [
+        "bandwidth",
+        "busy",
+        "capacity",
+        "capacity_denied",
+        "claimed",
+        "client_error",
+        "committed",
+        "committed_failed",
+        "draining",
+        "empty",
+        "expired",
+        "forwarded",
+        "http_error",
+        "insufficient_services",
+        "invalid",
+        "invalid_projection",
+        "invalid_response",
+        "lookup_missing",
+        "lookup_unavailable",
+        "not_modified",
+        "open_failed",
+        "other",
+        "pending",
+        "placed",
+        "policy_denied",
+        "progress",
+        "retry",
+        "save_failed",
+        "served",
+        "server_error",
+        "setup_failed",
+        "stale",
+        "terminal",
+        "transport_error",
+        "unavailable",
+        "expected",
+        "unexpected",
+        "stale_assignment",
+        "publisher_unavailable",
+        "failed_ready"
+      ],
+      "semantics": "closed domain reason from semantic result classification or lifecycle observer; never error text",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.replica_key",
+      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
+      "dimension_policy": "scoped"
+    },
+    {
+      "key": "tnl.request_id",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.response_origin",
+      "values": [
+        "tnl",
+        "local_service"
+      ],
+      "semantics": "component authoring the HTTP response",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.revision",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.role",
+      "values": [
+        "control",
+        "ingress",
+        "relay",
+        "standalone",
+        "publisher",
+        "client",
+        "accounts",
+        "collector"
+      ],
+      "semantics": "configured process role",
+      "dimension_policy": "resource"
+    },
+    {
+      "key": "tnl.service_id",
+      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
+      "dimension_policy": "scoped"
+    },
+    {
+      "key": "tnl.service_kind",
+      "values": [
+        "managed_service",
+        "public_url"
+      ],
+      "semantics": "managed service or public URL; private_service wire value normalizes to managed_service",
+      "dimension_policy": "scoped"
+    },
+    {
+      "key": "tnl.service_protocol",
+      "values": [
+        "http",
+        "postgres",
+        "mysql",
+        "tcp"
+      ],
+      "semantics": "service application protocol",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.signal",
+      "semantics": "closed domain value supplied by the owning semantic observer",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.stage",
+      "semantics": "closed domain value supplied by the owning semantic observer",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.state",
+      "semantics": "closed per-instrument readiness or state-machine value",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.team_id",
+      "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
+      "dimension_policy": "scoped"
+    },
+    {
+      "key": "tnl.tls_leg",
+      "values": [
+        "visitor",
+        "target"
+      ],
+      "semantics": "TLS boundary owned by this observation",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.transport",
+      "values": [
+        "quic",
+        "tls-tcp"
+      ],
+      "semantics": "selected transport (omit when not selected), or initial preference",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.transport_preference",
+      "values": [
+        "quic",
+        "tls-tcp"
+      ],
+      "semantics": "selected transport (omit when not selected), or initial preference",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.visitor_connection_id",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    }
+  ],
+  "instruments": [
+    {
+      "name": "tnl_admission_limit",
+      "semantics": "Resolved admission limit by fixed resource; per-URL and per-hostname resources are per key.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.capacity_resource"
+      ]
+    },
+    {
+      "name": "tnl_admission_rejections_total",
+      "semantics": "Admission rejected because a bounded resource was full.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.capacity_resource"
+      ]
+    },
+    {
+      "name": "tnl_api_request_duration_seconds",
+      "semantics": "tnl API handler duration including long polls; count is the request total.",
+      "kind": "histogram",
+      "dimensions": [
+        "http.request.method",
+        "http.route",
+        "tnl.component",
+        "tnl.outcome",
+        "tnl.reason"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_api_requests_in_flight",
+      "semantics": "tnl API requests currently executing by component.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.component"
+      ]
+    },
+    {
+      "name": "tnl_authorization_decisions_total",
+      "semantics": "Semantic authorization results, independent of HTTP status.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.operation",
+        "tnl.outcome",
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_control_certificate_claims_total",
+      "semantics": "Certificate worker claims by certificate kind and outcome.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.certificate_kind",
+        "tnl.outcome",
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_control_certificate_transitions_total",
+      "semantics": "Committed certificate work transitions by kind and resulting state.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.certificate_kind",
+        "tnl.state"
+      ]
+    },
+    {
+      "name": "tnl_control_certificate_work_duration_seconds",
+      "semantics": "Certificate worker advance and save duration; count is the number of claimed iterations.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.certificate_kind",
+        "tnl.outcome",
+        "tnl.reason",
+        "tnl.stage"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_control_cleanup_items_total",
+      "semantics": "Committed items removed by cleanup kind.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.cleanup_kind"
+      ]
+    },
+    {
+      "name": "tnl_control_cleanup_last_success_timestamp_seconds",
+      "semantics": "Unix time of last successful cleanup by kind; zero before success.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.cleanup_kind"
+      ]
+    },
+    {
+      "name": "tnl_control_cleanup_runs_total",
+      "semantics": "Cleanup calls by fixed kind and outcome.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.cleanup_kind",
+        "tnl.outcome",
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_control_connection_assignments_replaced_total",
+      "semantics": "Committed replacement of connection assignments by fixed reason.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_control_dns_transitions_total",
+      "semantics": "Committed DNS work transitions by kind and resulting state.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.dns_kind",
+        "tnl.state"
+      ]
+    },
+    {
+      "name": "tnl_control_dns_work_duration_seconds",
+      "semantics": "DNS worker phase duration; count is the number of attempts.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.dns_kind",
+        "tnl.outcome",
+        "tnl.phase",
+        "tnl.reason"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_control_guest_trials_last_24h",
+      "semantics": "Service-wide trial counts from committed state over the last 24 hours; use max rather than sum across control replicas.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.event"
+      ]
+    },
+    {
+      "name": "tnl_control_operation_duration_seconds",
+      "semantics": "Completed control state operation duration by fixed operation and outcome.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.operation",
+        "tnl.outcome",
+        "tnl.reason"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_control_placement_decisions_total",
+      "semantics": "Publish run placement decisions by action and bounded result.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.action",
+        "tnl.outcome",
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_control_public_url_certificate_milestone_age_seconds",
+      "semantics": "Time from issuance creation to certificate availability or DNS cleanup; availability does not imply installation.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.milestone"
+      ],
+      "explicit_bounds": [
+        1,
+        5,
+        10,
+        20,
+        30,
+        45,
+        60,
+        90,
+        120,
+        300,
+        600
+      ]
+    },
+    {
+      "name": "tnl_control_public_url_certificate_orders_total",
+      "semantics": "New public URL certificate orders committed by this control process, excluding idempotent retries and certificate reuse; not a CA issuance quota.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.certificate_plan",
+        "tnl.domain_kind"
+      ]
+    },
+    {
+      "name": "tnl_control_public_url_recovery_duration_seconds",
+      "semantics": "Duration of newly committed public URL recovery observations on this control process.",
+      "kind": "histogram",
+      "dimensions": [],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_control_public_url_usage_items_total",
+      "semantics": "Usage runs, buckets or deliveries committed by result.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.event"
+      ]
+    },
+    {
+      "name": "tnl_control_public_url_usage_last_success_timestamp_seconds",
+      "semantics": "Unix time of the last successful finalization call or committed delivery; zero before success.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.phase"
+      ]
+    },
+    {
+      "name": "tnl_control_public_url_usage_receiver_duration_seconds",
+      "semantics": "Usage receiver request duration by bounded outcome.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.outcome",
+        "tnl.reason"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_control_public_url_usage_work_total",
+      "semantics": "Usage worker operations by fixed phase and outcome.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.outcome",
+        "tnl.phase",
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_control_public_urls_created_total",
+      "semantics": "New public URLs committed by client-declared purpose; excludes idempotent retries.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.public_url_purpose"
+      ]
+    },
+    {
+      "name": "tnl_control_publish_run_readiness_age_seconds",
+      "semantics": "Age of the publish run at a readiness decision; excludes other errors.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.state"
+      ],
+      "explicit_bounds": [
+        1,
+        5,
+        10,
+        30,
+        60,
+        120,
+        300,
+        600
+      ]
+    },
+    {
+      "name": "tnl_control_publish_run_readiness_duration_seconds",
+      "semantics": "Time spent checking and publishing publish run readiness; count is the number of attempts.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.state"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_control_publish_runs_ready_total",
+      "semantics": "Publish runs first marked ready by their saved public URL purpose.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.public_url_purpose"
+      ]
+    },
+    {
+      "name": "tnl_control_routing_history_cleanup_rows_total",
+      "semantics": "Committed routing-history cleanup rows by action.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.action"
+      ]
+    },
+    {
+      "name": "tnl_control_routing_history_cleanup_skipped_total",
+      "semantics": "Cleanup batches skipped because another control holds the cleanup guard.",
+      "kind": "counter",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_control_routing_history_retained_after_revision",
+      "semantics": "Highest committed routing-history retention floor observed by this process.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_control_tcp_port_pool_ports",
+      "semantics": "Configured, claimed, quarantined and available public TCP ports by ingress pool; use maximum across control replicas.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.ingress_pool",
+        "tnl.state"
+      ]
+    },
+    {
+      "name": "tnl_control_tls_certificate_expiration_timestamp_seconds",
+      "semantics": "Locally loaded internal control certificate expiry. Public control TLS belongs to the deployment proxy.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_control_webhook_provider_source_requests_total",
+      "semantics": "Webhook sender-policy lookups by fixed provider and bounded outcome; not configured endpoints or webhook deliveries.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.outcome",
+        "tnl.provider",
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_database_client_connection_events_total",
+      "semantics": "Local database client connection lifecycle events.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.database_purpose",
+        "tnl.event"
+      ]
+    },
+    {
+      "name": "tnl_database_client_connections",
+      "semantics": "Current local database client sockets by purpose and state.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.database_purpose",
+        "tnl.state"
+      ]
+    },
+    {
+      "name": "tnl_database_failures_total",
+      "semantics": "Request-pool failures by fixed boundary and outcome; acquire has no SQL operation name.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.outcome",
+        "tnl.phase",
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_database_guard_held_duration_seconds",
+      "semantics": "Driver-observed interval from successful guard query completion through transaction completion; not exact PostgreSQL lock time.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.operation",
+        "tnl.outcome",
+        "tnl.reason"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_database_operation_oldest_age_seconds",
+      "semantics": "Age of the oldest active request-pool operation by compiled operation name.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.operation"
+      ]
+    },
+    {
+      "name": "tnl_database_operations_active",
+      "semantics": "Current active request-pool operations by compiled operation name.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.operation"
+      ]
+    },
+    {
+      "name": "tnl_database_operations_omitted",
+      "semantics": "Current active request-pool operations omitted by the bounded tracker.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_database_pool_acquire_duration_seconds",
+      "semantics": "Time to acquire a request-pool connection, including waits and failed acquisitions.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.outcome",
+        "tnl.reason"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_database_pool_acquire_wait_seconds_total",
+      "semantics": "Time spent waiting on successful acquisitions from an empty pool.",
+      "kind": "counter",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_database_pool_acquired_connections",
+      "semantics": "Connections currently in use.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_database_pool_acquires_total",
+      "semantics": "Successful connection acquisitions.",
+      "kind": "counter",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_database_pool_canceled_acquires_total",
+      "semantics": "Connection acquisitions canceled before completion.",
+      "kind": "counter",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_database_pool_idle_connections",
+      "semantics": "Connections available for acquisition.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_database_pool_max_connections",
+      "semantics": "Configured connection limit.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_database_pool_total_connections",
+      "semantics": "Total pool connections, including those being constructed.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_database_pool_waited_acquires_total",
+      "semantics": "Successful acquisitions that waited for an available connection.",
+      "kind": "counter",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_database_query_duration_seconds",
+      "semantics": "Completed request-pool SQL duration observed by the driver, excluding pool acquisition.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.operation",
+        "tnl.outcome",
+        "tnl.reason"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_ingress_backend_streams",
+      "semantics": "Tracked backend streams including streams being opened, challenges, and denied connections.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_connections",
+      "semantics": "Current ingress admission slots by fixed connection class.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.connection_class"
+      ]
+    },
+    {
+      "name": "tnl_ingress_draining_rejections_total",
+      "semantics": "Connections rejected because ingress was draining.",
+      "kind": "counter",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_forwarded_bytes_total",
+      "semantics": "Bytes forwarded through ingress, recorded after a copy finishes.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.direction"
+      ]
+    },
+    {
+      "name": "tnl_ingress_inspection_failures_total",
+      "semantics": "Ingress connections rejected before classification by fixed failure stage.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.stage"
+      ]
+    },
+    {
+      "name": "tnl_ingress_lease_expiration_timestamp_seconds",
+      "semantics": "Local ingress lease expiration; zero before registration or after lease loss.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_operation_duration_seconds",
+      "semantics": "Completed ingress operation duration by fixed operation and outcome.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.operation",
+        "tnl.outcome",
+        "tnl.reason"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_ingress_recovery_observation_attempts_total",
+      "semantics": "Recovery reporting attempts by bounded outcome.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.outcome",
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_ingress_recovery_observations_pending",
+      "semantics": "Recovery observations awaiting a successful or stale response.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_relay_attempts_total",
+      "semantics": "Ingress internal-forwarding attempts by connection slot and bounded outcome.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.connection_slot",
+        "tnl.outcome",
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_ingress_routing_acknowledged_revision",
+      "semantics": "Last routing-table revision acknowledged by a successful ingress lease renewal.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_routing_applied_revision",
+      "semantics": "Last applied routing-table revision.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_routing_caught_up",
+      "semantics": "Whether the last successful event response confirmed catch-up, cleared on update failure or resnapshot; not a guarantee about pending updates.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_routing_initialized",
+      "semantics": "Whether a routing snapshot has been applied; independent of lease readiness.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_routing_last_acknowledged_timestamp_seconds",
+      "semantics": "Unix time of the last routing-table acknowledgment; zero before success.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_routing_last_caught_up_timestamp_seconds",
+      "semantics": "Unix time of the last event response confirming catch-up; zero before confirmation.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_routing_last_successful_check_timestamp_seconds",
+      "semantics": "Unix time of the last successfully applied snapshot or event response, including empty responses; zero before success.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_routing_latest_observed_revision",
+      "semantics": "Highest control revision observed in a successfully applied routing response; pending requests may hide newer revisions.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_routing_resnapshots_total",
+      "semantics": "Resnapshot-required responses received from routing event requests.",
+      "kind": "counter",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_routing_update_failures_total",
+      "semantics": "Routing fetch or apply failures, excluding resnapshot-required responses and controller shutdown cancellation.",
+      "kind": "counter",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_traffic_admissions_total",
+      "semantics": "Process-local traffic decisions by fixed stage and result; excludes identities and network addresses.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.outcome",
+        "tnl.reason",
+        "tnl.stage"
+      ]
+    },
+    {
+      "name": "tnl_ingress_usage_retained_buckets",
+      "semantics": "Ingress usage buckets retained in memory, including dirty and pending buckets.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_ingress_visitor_connections_total",
+      "semantics": "Classified visitor connections by forwarding outcome; forwarded does not imply visitor TLS success.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.outcome",
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_ingress_visitor_stream_open_duration_seconds",
+      "semantics": "Time from a classified visitor to a forwarding decision, excluding TLS and copy time.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.outcome",
+        "tnl.reason"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_observability_export_failures_total",
+      "semantics": "Failed export batches after bounded retries; never gates readiness.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.signal"
+      ]
+    },
+    {
+      "name": "tnl_observability_export_lost_spans_total",
+      "semantics": "Spans lost in failed export batches; excludes queue overflow.",
+      "kind": "counter",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_observability_queue_dropped_spans_total",
+      "semantics": "Sampled spans dropped by the bounded nonblocking export queue.",
+      "kind": "counter",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_process_info",
+      "semantics": "Process role (one for this process).",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.role"
+      ]
+    },
+    {
+      "name": "tnl_publisher_connection_attempts_total",
+      "semantics": "Completed publisher connection races by selected transport and preference.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.deployment_id",
+        "tnl.outcome",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.reason",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.team_id",
+        "tnl.transport",
+        "tnl.transport_preference"
+      ]
+    },
+    {
+      "name": "tnl_publisher_lease_expiration_timestamp_seconds",
+      "semantics": "Last confirmed control lease; failed refresh never extends it.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.deployment_id",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.team_id"
+      ]
+    },
+    {
+      "name": "tnl_publisher_operation_duration_seconds",
+      "semantics": "Finite publisher operations by authenticated identity and bounded outcome.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.deployment_id",
+        "tnl.operation",
+        "tnl.outcome",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.reason",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.team_id"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_publisher_readiness_check_timestamp_seconds",
+      "semantics": "Most recent readiness decision; timestamp requires freshness checks.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.deployment_id",
+        "tnl.public_url_id",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.replica_key",
+        "tnl.service_id",
+        "tnl.service_kind",
+        "tnl.state",
+        "tnl.team_id"
+      ]
+    },
+    {
+      "name": "tnl_relay_earliest_lease_expiration_timestamp_seconds",
+      "semantics": "Earliest known relay lease expiration in this process; zero without a lease.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_relay_forwarded_bytes_total",
+      "semantics": "Wire bytes copied by relay, including preserved PROXY metadata; recorded at stream close.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.direction",
+        "tnl.service_kind"
+      ]
+    },
+    {
+      "name": "tnl_relay_local_leases",
+      "semantics": "Relay leases held by this process by state; not a control-wide lease count.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.state"
+      ]
+    },
+    {
+      "name": "tnl_relay_operation_duration_seconds",
+      "semantics": "Completed relay operation duration by fixed operation and outcome.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.operation",
+        "tnl.outcome",
+        "tnl.reason"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_relay_publisher_connection_exits_total",
+      "semantics": "Ready publisher connections that ended, by expectedness.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_relay_publisher_connections_ready",
+      "semantics": "Publisher connections marked ready on relays in this process.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_relay_publisher_connections_registered",
+      "semantics": "Locally registered publisher connections, including those not yet ready; not authoritative database claims.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_relay_transport_certificate_expiration_timestamp_seconds",
+      "semantics": "Earliest locally known relay transport certificate expiry; zero before material is observed.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_relay_visitor_stream_completions_total",
+      "semantics": "Opened visitor streams whose relay copy ended, not application request outcomes.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.outcome",
+        "tnl.reason",
+        "tnl.service_kind"
+      ]
+    },
+    {
+      "name": "tnl_relay_visitor_stream_rejections_total",
+      "semantics": "Relay stream rejections other than capacity exhaustion, by fixed reason.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.reason"
+      ]
+    },
+    {
+      "name": "tnl_relay_visitor_stream_slots_occupied",
+      "semantics": "Occupied relay forwarding-stream slots, including opens in progress.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "tnl_service_audit_events_total",
+      "semantics": "Process-local service audit queue and ingestion counts by fixed result; queued observations can be lost on a crash.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.event"
+      ]
+    }
+  ]
+}

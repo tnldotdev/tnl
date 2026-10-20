@@ -91,7 +91,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		return ErrPrivateStream
 	}
 	config.Metadata.TrustRevision = approved.TrustRevision
-	ctx = observability.WithIdentity(ctx, observability.Identity{TeamID: approved.TeamId, PublisherID: config.Identity.ClientId, ServiceID: approved.Id})
+	ctx = observability.NarrowIdentity(ctx, observability.Identity{TeamID: approved.TeamId, PublisherIdentityID: config.Identity.ClientId, ServiceID: approved.Id})
 	_, startup := observability.PublisherOperation(ctx, "private_startup")
 	defer func() { startup(result) }()
 	trust, err := targetTrust(approved)

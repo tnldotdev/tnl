@@ -2,7 +2,6 @@ package observability
 
 import (
 	"context"
-	"errors"
 	"time"
 )
 
@@ -14,21 +13,18 @@ func DurationBucketsSeconds() []float64 {
 }
 
 func durationOutcome(err error) string {
-	switch {
-	case err == nil:
-		return "success"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "deadline_exceeded"
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	default:
-		return "error"
-	}
+	return string(ErrorOutcome(err))
 }
 
 // ObserveOperation records only the fixed application operations below. nil
 // metrics are useful for callers that do not run a process metrics listener.
 func (m *Metrics) ObserveOperation(operation string, err error, elapsed time.Duration) {
+	m.ObserveOperationContext(context.Background(), operation, err, elapsed)
+}
+
+// ObserveOperationContext attaches a measured interval to the caller's span and
+// metric exemplar context. use it instead of adding a second span at this boundary.
+func (m *Metrics) ObserveOperationContext(ctx context.Context, operation string, err error, elapsed time.Duration) {
 	if m == nil {
 		return
 	}
@@ -51,8 +47,9 @@ func (m *Metrics) ObserveOperation(operation string, err error, elapsed time.Dur
 	default:
 		return
 	}
-	histogram.WithLabelValues(operation, durationOutcome(err)).Observe(elapsed.Seconds())
-	m.completedSpan(operation, durationOutcome(err), elapsed)
+	ctx, finish := m.completedOperation(ctx, operation, elapsed)
+	histogram.WithLabelValues(operation, durationOutcome(err)).ObserveContext(ctx, elapsed.Seconds())
+	finish(err)
 }
 
 // ObserveDatabaseQuery accepts only names sanitized by the controlstate tracer:

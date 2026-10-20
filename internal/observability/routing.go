@@ -43,6 +43,7 @@ func (m *Metrics) RegisterIngressRouting(source func() IngressRoutingSnapshot) {
 		{"resnapshots_total", "Resnapshot-required responses received from routing event requests."},
 	} {
 		if i < 8 {
+			describe(m.meter, "tnl_ingress_routing_"+spec[0], spec[1], "gauge", nil)
 			g, err := m.meter.Float64ObservableGauge("tnl_ingress_routing_"+spec[0], metric.WithDescription(spec[1]))
 			if err != nil {
 				panic(err)
@@ -50,6 +51,7 @@ func (m *Metrics) RegisterIngressRouting(source func() IngressRoutingSnapshot) {
 			gauges = append(gauges, g)
 			instruments = append(instruments, g)
 		} else {
+			describe(m.meter, "tnl_ingress_routing_"+spec[0], spec[1], "counter", nil)
 			c, err := m.meter.Float64ObservableCounter("tnl_ingress_routing_"+spec[0], metric.WithDescription(spec[1]))
 			if err != nil {
 				panic(err)

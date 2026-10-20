@@ -118,7 +118,7 @@ func (r Runtime) Serve(ctx context.Context) error {
 			}
 			if err == nil && next.AccessToken != "" && next.ExpiresAt.After(time.Now()) {
 				lease = next
-				ctx = observability.WithIdentity(ctx, observability.Identity{TeamID: r.Member.TeamId, GroupID: r.Member.GroupId, PublisherID: r.Member.PublisherIdentityId})
+				ctx = observability.ReplaceIdentity(ctx, observability.Identity{TeamID: r.Member.TeamId, PublisherGroupID: r.Member.GroupId, PublisherIdentityID: r.Member.PublisherIdentityId})
 				observability.PublisherLease(ctx, lease.ExpiresAt)
 				for _, w := range workers {
 					w.lease.Reset(time.Until(lease.ExpiresAt))
@@ -193,7 +193,7 @@ func (r Runtime) Serve(ctx context.Context) error {
 					if workers[service.Service] != nil {
 						continue
 					}
-					workerCtx, cancel := context.WithCancel(observability.WithIdentity(ctx, observability.Identity{ServiceID: service.ServiceId}))
+					workerCtx, cancel := context.WithCancel(observability.NarrowIdentity(ctx, observability.Identity{ServiceID: service.ServiceId}))
 					w := &running{definition: definitions[service.Service], cancel: cancel, done: make(chan struct{})}
 					w.lease = time.AfterFunc(time.Until(lease.ExpiresAt), cancel)
 					workers[service.Service] = w

@@ -15,7 +15,7 @@ func durationFixture(t *testing.T, count uint64, sum float64, buckets ...uint64)
 	t.Helper()
 	var text strings.Builder
 	text.WriteString("# TYPE tnl_control_operation_duration_seconds histogram\n")
-	labels := `operation="POST /v1/\"routes\"\\path",outcome="success"`
+	labels := `tnl_operation="POST /v1/\"routes\"\\path",tnl_outcome="success"`
 	for index, count := range buckets {
 		fmt.Fprintf(&text, "tnl_control_operation_duration_seconds_bucket{%s,le=%q} %d\n", labels, fmt.Sprint(index+1), count)
 	}
@@ -42,7 +42,7 @@ func TestDurationSummariesIntervalAndLabels(t *testing.T) {
 		t.Fatalf("summaries = %+v", result)
 	}
 	got := result[0]
-	if got.Name != "tnl_control_operation_duration_seconds" || got.Labels["operation"] != "POST /v1/\"routes\"\\path" ||
+	if got.Name != "tnl_control_operation_duration_seconds" || got.Labels["tnl_operation"] != "POST /v1/\"routes\"\\path" ||
 		got.Count != 4 || got.SumSeconds != 5 || got.MeanSeconds != 1.25 ||
 		got.P50Seconds == nil || *got.P50Seconds != 1 || got.P95Seconds == nil || math.Abs(*got.P95Seconds-1.9) > 1e-9 ||
 		got.P99Seconds == nil || math.Abs(*got.P99Seconds-1.98) > 1e-9 {
@@ -160,7 +160,7 @@ func TestDurationSummariesRejectInvalidIntervals(t *testing.T) {
 }
 
 func TestParseMetricsRejectsMalformedText(t *testing.T) {
-	if _, err := ParseMetrics(strings.NewReader("tnl_control_operation_duration_seconds_count{operation=broken} nope\n")); err == nil {
+	if _, err := ParseMetrics(strings.NewReader("tnl_control_operation_duration_seconds_count{tnl_operation=broken} nope\n")); err == nil {
 		t.Fatal("malformed exposition accepted")
 	}
 }

@@ -1,5 +1,6 @@
 {
   "ignorePatterns": [
+    "api/observability/v1/vocabulary.json",
     "internal/feedbacktoolbar/toolbar.js",
     "deploy/publishers/fargate.yaml",
     "deploy/publishers/fargate.parameters.example.json",

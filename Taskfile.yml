@@ -198,6 +198,8 @@ tasks:
       - test -z "$(git ls-files --others --exclude-standard -- pkg/api internal/clientstate/clientstatedb internal/controlstate/controlstatedb internal/diagnostic/codes.gen.go internal/failure/catalog.gen.json internal/feedbacktoolbar/toolbar.js internal/publisherapi/model.gen.ts internal/projectconfig/keys.gen.json internal/projectconfig/loader.mjs packages/ts/src/config.gen.ts schema/v1.json scripts/install.sh)"
       - git diff --exit-code HEAD -- deploy/publishers/fargate.yaml deploy/publishers/fargate.parameters.example.json deploy/publishers/fargate.manifest.example.json
       - test -z "$(git ls-files --others --exclude-standard -- deploy/publishers/fargate.yaml deploy/publishers/fargate.parameters.example.json deploy/publishers/fargate.manifest.example.json)"
+      - git diff --exit-code HEAD -- api/observability/v1/vocabulary.json
+      - test -z "$(git ls-files --others --exclude-standard -- api/observability/v1/vocabulary.json)"
 
   go:format:
     cmds:
@@ -258,6 +260,11 @@ tasks:
     desc: Run routine Go tests with the race detector
     cmds:
       - go test -race ./...
+
+  go:test:observability:
+    desc: Check vocabulary, identity isolation, local HTTPS export, and correlation without cloud access
+    cmds:
+      - go test -race ./internal/observability ./internal/operatorlog
 
   go:test:integration:
     desc: Run PostgreSQL-backed Go integration tests

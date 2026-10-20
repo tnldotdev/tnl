@@ -36,6 +36,7 @@ type DatabaseOperationSnapshot struct {
 func (m *Metrics) RegisterDatabase(source func(time.Time) DatabaseSnapshot) {
 	var instruments []metric.Observable
 	gauge := func(name, help string) metric.Float64ObservableGauge {
+		describe(m.meter, "tnl_database_"+name, help, "gauge", nil, databaseKeys(name)...)
 		g, err := m.meter.Float64ObservableGauge("tnl_database_"+name, metric.WithDescription(help))
 		if err != nil {
 			panic(err)
@@ -44,6 +45,7 @@ func (m *Metrics) RegisterDatabase(source func(time.Time) DatabaseSnapshot) {
 		return g
 	}
 	counter := func(name, help string) metric.Float64ObservableCounter {
+		describe(m.meter, "tnl_database_"+name, help, "counter", nil, databaseKeys(name)...)
 		c, err := m.meter.Float64ObservableCounter("tnl_database_"+name, metric.WithDescription(help))
 		if err != nil {
 			panic(err)
@@ -77,10 +79,10 @@ func (m *Metrics) RegisterDatabase(source func(time.Time) DatabaseSnapshot) {
 			observer.ObserveFloat64(poolCanceled, float64(pool.CanceledAcquireCount()))
 		}
 		for purpose, counts := range snapshot.Connections {
-			observer.ObserveFloat64(connections, float64(counts.Open), metric.WithAttributes(attribute.String("purpose", purpose), attribute.String("state", "open")))
-			observer.ObserveFloat64(connections, float64(counts.Connecting), metric.WithAttributes(attribute.String("purpose", purpose), attribute.String("state", "connecting")))
+			observer.ObserveFloat64(connections, float64(counts.Open), metric.WithAttributes(attribute.String("tnl.database_purpose", purpose), State.String("open")))
+			observer.ObserveFloat64(connections, float64(counts.Connecting), metric.WithAttributes(attribute.String("tnl.database_purpose", purpose), State.String("connecting")))
 			for event, count := range map[string]int64{"opened": counts.Opened, "closed": counts.Closed, "failed": counts.Failed} {
-				observer.ObserveFloat64(connectionEvents, float64(count), metric.WithAttributes(attribute.String("purpose", purpose), attribute.String("event", event)))
+				observer.ObserveFloat64(connectionEvents, float64(count), metric.WithAttributes(attribute.String("tnl.database_purpose", purpose), Event.String(event)))
 			}
 		}
 		type operationAggregate struct {
@@ -95,7 +97,7 @@ func (m *Metrics) RegisterDatabase(source func(time.Time) DatabaseSnapshot) {
 			operations[operation.Operation] = aggregate
 		}
 		for operation, aggregate := range operations {
-			attrs := metric.WithAttributes(attribute.String("operation", operation))
+			attrs := metric.WithAttributes(Operation.String(operation))
 			observer.ObserveFloat64(active, float64(aggregate.count), attrs)
 			observer.ObserveFloat64(oldest, aggregate.oldest, attrs)
 		}
@@ -105,4 +107,16 @@ func (m *Metrics) RegisterDatabase(source func(time.Time) DatabaseSnapshot) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func databaseKeys(name string) []string {
+	switch name {
+	case "client_connections":
+		return []string{"purpose", "state"}
+	case "client_connection_events_total":
+		return []string{"purpose", "event"}
+	case "operations_active", "operation_oldest_age_seconds":
+		return []string{"operation"}
+	}
+	return nil
 }

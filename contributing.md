@@ -181,6 +181,7 @@ the [publisher infrastructure templates](deploy/publishers/readme.md).
 | `internal/publisherdeployment`                                                            | `deploy/publishers/fargate.yaml` and its example manifest/parameters                      |
 | `internal/diagnostic/catalog.json`                                                        | `internal/diagnostic/codes.gen.go` and the tnl.dev diagnostic pages                       |
 | `internal/failure/reasons.go`                                                             | `internal/failure/catalog.gen.json` and the tnl.dev client-error pages                    |
+| `internal/observability` vocabulary and instrument declarations                           | `api/observability/v1/vocabulary.json`, shared with tnl.dev                               |
 
 `packages/ts/dist` is disposable build output. The CLI generates project-local
 `.tnl/local/project.json` and `.tnl/local/project.d.ts`. Both contain values tied
@@ -228,8 +229,8 @@ digests; deploying and qualifying them requires separate operator approval.
 - [Architecture](docs/maintainers/architecture.md) explains package ownership,
   APIs, and runtime boundaries. [AGENTS.md](AGENTS.md) defines the terms and CLI
   output rules used in this repo.
-- [Metrics](docs/maintainers/metrics.md) lists OTel process ownership, optional
-  export settings, instrumentation boundaries, and compatible Prometheus families.
+- [Observability](docs/maintainers/metrics.md) lists the shared vocabulary, OTel
+  process ownership, optional export settings, and instrument boundaries.
 - [Benchmarks](docs/benchmarks/readme.md) covers local results and deployed
   workloads. Deployed runs require explicit approval.
 - [Releasing](docs/maintainers/releasing.md) covers maintainer release rules.

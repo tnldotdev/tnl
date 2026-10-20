@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"os"
 	"strings"
@@ -13,7 +14,6 @@ import (
 	"github.com/prometheus/otlptranslator"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	bridge "go.opentelemetry.io/contrib/bridges/prometheus"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -37,15 +37,9 @@ func StartProcess(ctx context.Context, role string) (context.Context, *Metrics, 
 	if err != nil {
 		return ctx, nil, err
 	}
-	config.processOwner = true
-	// use the SDK's own bounded queue/drop instrumentation, rather than adding a
-	// second queue. this SDK feature is enabled before constructing processors.
-	if os.Getenv("OTEL_GO_X_OBSERVABILITY") == "" {
-		_ = os.Setenv("OTEL_GO_X_OBSERVABILITY", "true")
-	}
 	m, err := newOwner(role, config)
 	if err != nil {
-		return ctx, nil, errors.New("initialize observability exporters")
+		return ctx, nil, safeExportError("initialize observability exporters", err)
 	}
 	return WithMetrics(ctx, m), m, nil
 }
@@ -57,18 +51,30 @@ func FromContext(ctx context.Context) *Metrics { m, _ := ctx.Value(ownerKey{}).(
 
 func newOwner(role string, config Config) (*Metrics, error) {
 	exports := &exportState{}
-	if config.processOwner {
-		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) { exports.sdkErrors.Add(1) }))
-	}
 	name := config.ServiceName
 	if name == "" {
 		name = "tnld"
-		if role == "publisher" {
+		if role == "publisher" || role == "client" {
 			name = "tnl"
+		}
+		if role == "accounts" {
+			name = "tnl-accounts"
+		}
+		if role == "collector" {
+			name = "otel-collector"
 		}
 	}
 	attrs := append([]attribute.KeyValue{}, config.Resource...)
-	attrs = append(attrs, attribute.String("service.name", name), attribute.String("service.version", buildinfo.Version), attribute.String("tnl.role", role))
+	instance := ""
+	for _, a := range attrs {
+		if a.Key == attribute.Key(ServiceInstanceID) {
+			instance = a.Value.AsString()
+		}
+	}
+	if instance == "" {
+		attrs = append(attrs, ServiceInstanceID.String(rand.Text()))
+	}
+	attrs = append(attrs, ServiceNamespace.String("tnl"), ServiceName.String(name), ServiceVersion.String(buildinfo.Version), RoleKey.String(role))
 	res := resource.NewSchemaless(attrs...)
 	registry := prometheus.NewRegistry()
 	// the supported bridge exports runtime/process collectors to OTLP. the OTel
@@ -80,11 +86,20 @@ func newOwner(role string, config Config) (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	catalog := &contractMeter{specs: make(map[string]InstrumentDefinition)}
 	opts := []sdkmetric.Option{sdkmetric.WithResource(res), sdkmetric.WithReader(scrape), sdkmetric.WithCardinalityLimit(2000), sdkmetric.WithView(func(i sdkmetric.Instrument) (sdkmetric.Stream, bool) {
+		if config.Disabled {
+			return sdkmetric.Stream{Aggregation: sdkmetric.AggregationDrop{}}, true
+		}
 		for prefix, owner := range map[string]string{"tnl_control_": "control", "tnl_database_": "control", "tnl_ingress_": "ingress", "tnl_relay_": "relay", "tnl_publisher_": "publisher"} {
 			if strings.HasPrefix(i.Name, prefix) && role != owner && role != "standalone" {
 				return sdkmetric.Stream{Aggregation: sdkmetric.AggregationDrop{}}, true
 			}
+		}
+		if spec, ok := catalog.definition(i.Name); ok {
+			return sdkmetric.Stream{Name: i.Name, Description: i.Description, Unit: i.Unit, AttributeFilter: func(kv attribute.KeyValue) bool {
+				return slicesContainsKey(spec.Dimensions, Key(kv.Key)) && validMetricValue(kv)
+			}}, true
 		}
 		return sdkmetric.Stream{}, false
 	})}
@@ -95,7 +110,7 @@ func newOwner(role string, config Config) (*Metrics, error) {
 		if s.Gzip {
 			compression = otlpmetrichttp.GzipCompression
 		}
-		e, err := otlpmetrichttp.New(context.Background(), otlpmetrichttp.WithEndpointURL(s.Endpoint), otlpmetrichttp.WithHTTPClient(s.client()), otlpmetrichttp.WithHeaders(s.Headers), otlpmetrichttp.WithCompression(compression), otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: false}), otlpmetrichttp.WithAggregationSelector(sdkmetric.DefaultAggregationSelector), otlpmetrichttp.WithMaxResponseSize(64<<10))
+		e, err := otlpmetrichttp.New(context.Background(), otlpmetrichttp.WithEndpointURL(s.Endpoint), otlpmetrichttp.WithHTTPClient(s.client()), otlpmetrichttp.WithHeaders(s.Headers), otlpmetrichttp.WithCompression(compression), otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: true, InitialInterval: 100 * time.Millisecond, MaxInterval: time.Second, MaxElapsedTime: s.Timeout}), otlpmetrichttp.WithAggregationSelector(sdkmetric.DefaultAggregationSelector), otlpmetrichttp.WithMaxResponseSize(64<<10))
 		if err != nil {
 			return nil, err
 		}
@@ -108,18 +123,23 @@ func newOwner(role string, config Config) (*Metrics, error) {
 		opts = append(opts, sdkmetric.WithReader(reader))
 	}
 	mp := sdkmetric.NewMeterProvider(opts...)
-	if config.processOwner {
-		otel.SetMeterProvider(mp)
-	}
-	m := &Metrics{meterProvider: mp, meter: mp.Meter(scope), registry: registry, runtimeRegistry: runtime}
+	catalog.Meter = mp.Meter(scope)
+	m := &Metrics{meterProvider: mp, meter: catalog, registry: registry, runtimeRegistry: runtime, resource: res}
 	m.initInstruments(role)
+	describe(m.meter, "tnl_observability_export_failures_total", "Failed export batches after bounded retries; never gates readiness.", "counter", nil, "signal")
 	_, _ = m.meter.Int64ObservableCounter("tnl_observability_export_failures_total", metric.WithDescription("Failed export batches; export never gates readiness."), metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-		o.Observe(exports.metricsFailures.Load(), metric.WithAttributes(attribute.String("signal", "metrics")))
-		o.Observe(exports.traceFailures.Load(), metric.WithAttributes(attribute.String("signal", "traces")))
+		o.Observe(exports.metricsFailures.Load(), metric.WithAttributes(attribute.String("tnl.signal", "metrics")))
+		o.Observe(exports.traceFailures.Load(), metric.WithAttributes(attribute.String("tnl.signal", "traces")))
+		o.Observe(exports.logFailures.Load(), metric.WithAttributes(attribute.String("tnl.signal", "logs")))
 		return nil
 	}))
-	_, _ = m.meter.Int64ObservableCounter("tnl_observability_export_lost_spans_total", metric.WithDescription("Spans lost in failed export batches; excludes SDK queue overflow."), metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error { o.Observe(exports.lostSpans.Load()); return nil }))
-	_, _ = m.meter.Int64ObservableCounter("tnl_observability_sdk_errors_total", metric.WithDescription("SDK errors reported without endpoint, header, or response content."), metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error { o.Observe(exports.sdkErrors.Load()); return nil }))
+	describe(m.meter, "tnl_observability_export_lost_spans_total", "Spans lost in failed export batches; excludes queue overflow.", "counter", nil)
+	_, _ = m.meter.Int64ObservableCounter("tnl_observability_export_lost_spans_total", metric.WithDescription("Spans lost in failed export batches; excludes queue overflow."), metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error { o.Observe(exports.lostSpans.Load()); return nil }))
+	describe(m.meter, "tnl_observability_queue_dropped_spans_total", "Sampled spans dropped by the bounded nonblocking export queue.", "counter", nil)
+	_, _ = m.meter.Int64ObservableCounter("tnl_observability_queue_dropped_spans_total", metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+		o.Observe(exports.droppedSpans.Load())
+		return nil
+	}))
 	traceOptions := []sdktrace.TracerProviderOption{sdktrace.WithResource(res), sdktrace.WithSampler(sdktrace.NeverSample()), sdktrace.WithRawSpanLimits(sdktrace.SpanLimits{AttributeValueLengthLimit: 256, AttributeCountLimit: 32, EventCountLimit: 8, LinkCountLimit: 8, AttributePerEventCountLimit: 8, AttributePerLinkCountLimit: 8})}
 	if config.Traces.Endpoint != "" && !config.Disabled {
 		s := config.Traces
@@ -127,7 +147,7 @@ func newOwner(role string, config Config) (*Metrics, error) {
 		if s.Gzip {
 			compression = otlptracehttp.GzipCompression
 		}
-		e, err := otlptracehttp.New(context.Background(), otlptracehttp.WithEndpointURL(s.Endpoint), otlptracehttp.WithHTTPClient(s.client()), otlptracehttp.WithHeaders(s.Headers), otlptracehttp.WithCompression(compression), otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: false}))
+		e, err := otlptracehttp.New(context.Background(), otlptracehttp.WithEndpointURL(s.Endpoint), otlptracehttp.WithHTTPClient(s.client()), otlptracehttp.WithHeaders(s.Headers), otlptracehttp.WithCompression(compression), otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: true, InitialInterval: 100 * time.Millisecond, MaxInterval: time.Second, MaxElapsedTime: s.Timeout}))
 		if err != nil {
 			_ = mp.Shutdown(context.Background())
 			return nil, err
@@ -147,11 +167,12 @@ func newOwner(role string, config Config) (*Metrics, error) {
 		if config.Sampler == "" || strings.HasPrefix(config.Sampler, "parentbased_") {
 			sampler = sdktrace.ParentBased(sampler)
 		}
-		traceOptions = append(traceOptions, sdktrace.WithSampler(sampler), sdktrace.WithBatcher(exporter, sdktrace.WithMaxQueueSize(queue), sdktrace.WithMaxExportBatchSize(min(batch, queue)), sdktrace.WithBatchTimeout(delay), sdktrace.WithExportTimeout(s.Timeout)))
+		traceOptions = append(traceOptions, sdktrace.WithSampler(sampler), sdktrace.WithSpanProcessor(newSpanQueue(exporter, exports, queue, min(batch, queue), delay, s.Timeout)))
 	}
 	m.tracerProvider = sdktrace.NewTracerProvider(traceOptions...)
-	if config.processOwner {
-		otel.SetTracerProvider(m.tracerProvider)
+	if err := m.initLogs(config, res, exports); err != nil {
+		_ = m.Shutdown(context.Background())
+		return nil, err
 	}
 	return m, nil
 }
@@ -165,13 +186,24 @@ func (m *Metrics) Shutdown(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, ShutdownTimeout)
 	defer cancel()
-	return errors.Join(m.tracerProvider.Shutdown(ctx), m.meterProvider.Shutdown(ctx))
+	var logs error
+	if m.loggerProvider != nil {
+		logs = m.loggerProvider.Shutdown(ctx)
+	}
+	return errors.Join(m.tracerProvider.Shutdown(ctx), logs, m.meterProvider.Shutdown(ctx))
 }
 
 func (m *Metrics) ForceFlush(ctx context.Context) error {
+	if m == nil {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, ShutdownTimeout)
 	defer cancel()
-	return errors.Join(m.tracerProvider.ForceFlush(ctx), m.meterProvider.ForceFlush(ctx))
+	var logs error
+	if m.loggerProvider != nil {
+		logs = m.loggerProvider.ForceFlush(ctx)
+	}
+	return errors.Join(m.tracerProvider.ForceFlush(ctx), logs, m.meterProvider.ForceFlush(ctx))
 }
 
 // exporters sanitize errors before the SDK can report them. neither endpoint
@@ -181,12 +213,12 @@ type metricExporter struct {
 	state *exportState
 }
 
-type exportState struct{ metricsFailures, traceFailures, lostSpans, sdkErrors atomic.Int64 }
+type exportState struct{ metricsFailures, traceFailures, logFailures, lostSpans, droppedSpans atomic.Int64 }
 
 func (e *metricExporter) Export(ctx context.Context, data *metricdata.ResourceMetrics) error {
 	if err := e.Exporter.Export(ctx, data); err != nil {
 		e.state.metricsFailures.Add(1)
-		return errors.New("metrics export failed")
+		return safeExportError("metrics export failed", err)
 	}
 	return nil
 }
@@ -200,7 +232,26 @@ func (e *spanExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnl
 	if err := e.SpanExporter.ExportSpans(ctx, spans); err != nil {
 		e.state.traceFailures.Add(1)
 		e.state.lostSpans.Add(int64(len(spans)))
-		return errors.New("trace export failed")
+		return safeExportError("trace export failed", err)
 	}
 	return nil
+}
+
+// exportError retains cause identity while formatting only authored text.
+type exportError struct {
+	message string
+	cause   error
+}
+
+func (e *exportError) Error() string                    { return e.message }
+func (e *exportError) GoString() string                 { return e.message }
+func (e *exportError) Unwrap() error                    { return e.cause }
+func safeExportError(message string, cause error) error { return &exportError{message, cause} }
+func slicesContainsKey(keys []Key, key Key) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }

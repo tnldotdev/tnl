@@ -99,7 +99,7 @@ func TestOperationDurationsUseFixedRoleLabels(t *testing.T) {
 		}
 		found := false
 		for _, label := range family.Metric[0].Label {
-			if label.GetName() == "operation" && label.GetValue() == test.operation {
+			if label.GetName() == "tnl_operation" && label.GetValue() == test.operation {
 				found = true
 			}
 		}

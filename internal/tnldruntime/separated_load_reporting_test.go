@@ -395,7 +395,7 @@ func assertRelayOpenedVisitors(t *testing.T, before, after separatedSnapshot, ro
 				for _, label := range metric.Label {
 					labels[label.GetName()] = label.GetValue()
 				}
-				if labels["operation"] == "RelayOpenVisitorStream" && labels["outcome"] == "success" {
+				if labels["tnl_operation"] == "RelayOpenVisitorStream" && labels["tnl_outcome"] == "success" {
 					count += metric.GetHistogram().GetSampleCount()
 				}
 			}

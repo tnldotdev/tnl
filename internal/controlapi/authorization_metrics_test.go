@@ -32,7 +32,7 @@ func TestConnectorDecisionMetricsDistinguishHTTP200DenialAndStateFailure(t *test
 	}{
 		{"allowed", "success", true, nil, 200},
 		{"denied", "denied", false, nil, 200},
-		{"state failure", "server_error", false, errors.New("secret database cause"), 500},
+		{"state failure", "error", false, errors.New("secret database cause"), 500},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metrics := observability.New("control")
@@ -52,15 +52,15 @@ func TestConnectorDecisionMetricsDistinguishHTTP200DenialAndStateFailure(t *test
 			w := httptest.NewRecorder()
 			metrics.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
 			text := w.Body.String()
-			if !strings.Contains(text, `outcome="`+test.outcome+`"`) {
+			if !strings.Contains(text, `tnl_outcome="`+test.outcome+`"`) {
 				t.Fatal("missing semantic request outcome", test.outcome)
 			}
 			if test.err == nil {
 				decision := "denied"
 				if test.allowed {
-					decision = "allowed"
+					decision = "success"
 				}
-				if !strings.Contains(text, `tnl_authorization_decisions_total{operation="service_connector",result="`+decision+`"} 1`) {
+				if !strings.Contains(text, `tnl_authorization_decisions_total{tnl_operation="service_connector",tnl_outcome="`+decision+`"} 1`) {
 					t.Fatal("missing handler decision")
 				}
 			}

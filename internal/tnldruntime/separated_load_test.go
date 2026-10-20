@@ -321,7 +321,7 @@ func assertSeparatedIngressTraffic(t *testing.T, before, after separatedSnapshot
 					for _, label := range metric.Label {
 						labels[label.GetName()] = label.GetValue()
 					}
-					if labels["operation"] == "IngressBackendAttempt" && labels["outcome"] == "success" {
+					if labels["tnl_operation"] == "IngressBackendAttempt" && labels["tnl_outcome"] == "success" {
 						total += metric.GetHistogram().GetSampleCount()
 					}
 				}

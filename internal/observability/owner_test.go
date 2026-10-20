@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,11 +13,13 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/otel"
+	"github.com/tnldotdev/tnl/internal/failure"
+
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
+	collectorlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectormetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/proto"
@@ -48,6 +51,10 @@ func TestExportConfigurationRequiresExplicitHTTPSAndKeepsSecretsOutOfErrors(t *t
 		"OTEL_BSP_MAX_QUEUE_SIZE":            "999999-secret",
 		"OTEL_RESOURCE_ATTRIBUTES":           "request.id=secret",
 		"OTEL_TRACES_SAMPLER":                "secret",
+		"OTEL_LOGS_EXPORTER":                 "secret",
+		"OTEL_BLRP_MAX_QUEUE_SIZE":           "999999-secret",
+		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":   "https://user:secret@collector.invalid/v1/logs",
+		"OTEL_EXPORTER_OTLP_LOGS_HEADERS":    "invalid@name=secret",
 	} {
 		t.Run(key, func(t *testing.T) {
 			_, err := ConfigFromEnv(get(map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "https://collector.invalid", key: value}))
@@ -62,6 +69,7 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 	var mu sync.Mutex
 	var metrics collectormetrics.ExportMetricsServiceRequest
 	var traces collectortrace.ExportTraceServiceRequest
+	var logs collectorlogs.ExportLogsServiceRequest
 	receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer local-fixture-secret" {
 			t.Error("missing configured export header")
@@ -81,6 +89,9 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 		case "/v1/traces":
 			err = proto.Unmarshal(body, &traces)
 			response = &collectortrace.ExportTraceServiceResponse{}
+		case "/v1/logs":
+			err = proto.Unmarshal(body, &logs)
+			response = &collectorlogs.ExportLogsServiceResponse{}
 		default:
 			t.Error("unexpected export path", r.URL.Path)
 			w.WriteHeader(404)
@@ -95,8 +106,9 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 	}))
 	defer receiver.Close()
 	signal := SignalConfig{Endpoint: receiver.URL + "/v1/metrics", Headers: map[string]string{"Authorization": "Bearer local-fixture-secret"}, Timeout: time.Second, TLS: receiver.Client().Transport.(*http.Transport).TLSClientConfig.Clone()}
-	config := Config{Metrics: signal, Traces: signal, Interval: time.Hour, BatchDelay: time.Hour, SampleRatio: 1}
+	config := Config{Metrics: signal, Traces: signal, Logs: signal, Interval: time.Hour, BatchDelay: time.Hour, SampleRatio: 1}
 	config.Traces.Endpoint = receiver.URL + "/v1/traces"
+	config.Logs.Endpoint = receiver.URL + "/v1/logs"
 	m, err := newOwner("standalone", config)
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +116,8 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 	defer m.Shutdown(context.Background())
 	ctx := WithMetrics(t.Context(), m)
 	m.ObserveOperation("CreatePublishRun", nil, 25*time.Millisecond)
-	_, finish := Start(ctx, "local.fixture")
+	spanCtx, finish := Start(ctx, "local.fixture")
+	OperationalFailure(spanCtx, "fixture operation", failure.Unexpected, "request-fixture", errors.New("secret log cause"))
 	finish(errors.New("secret error body"))
 	if err := m.ForceFlush(t.Context()); err != nil {
 		t.Fatal(err)
@@ -155,7 +168,15 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 	if !seenDuration || !seenRuntime || !seenProcess || !seenSpan {
 		t.Fatalf("missing signals: histogram=%t runtime=%t process=%t span=%t", seenDuration, seenRuntime, seenProcess, seenSpan)
 	}
-	if strings.Contains(traces.String()+metrics.String(), "secret") {
+	if len(logs.ResourceLogs) != 1 || len(logs.ResourceLogs[0].ScopeLogs) != 1 || len(logs.ResourceLogs[0].ScopeLogs[0].LogRecords) != 1 {
+		t.Fatal("safe operational log missing", &logs)
+	}
+	record := logs.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
+	traceID := trace.SpanContextFromContext(spanCtx).TraceID()
+	if len(record.TraceId) != 16 || len(record.SpanId) != 8 || !bytes.Equal(record.TraceId, traceID[:]) {
+		t.Fatal("log trace correlation missing", record)
+	}
+	if strings.Contains(traces.String()+metrics.String()+logs.String(), "secret") {
 		t.Fatal("exported secret error or export credentials")
 	}
 }
@@ -210,19 +231,12 @@ func TestOwnedHTTPPropagationAndSemanticDenial(t *testing.T) {
 		}
 	}
 	text := metricsText(t, m)
-	if !strings.Contains(text, `tnl_authorization_decisions_total{operation="fixture",result="denied"} 1`) || !strings.Contains(text, `outcome="denied"`) || strings.Contains(text, "secret") {
+	if !strings.Contains(text, `tnl_authorization_decisions_total{tnl_operation="fixture",tnl_outcome="denied"} 1`) || !strings.Contains(text, `tnl_outcome="denied"`) || strings.Contains(text, "secret") {
 		t.Fatal("missing semantic denial or unsafe metric labels")
 	}
 }
 
 func TestExporterFailureCannotBlockRecordingAndQueueDropsAreVisible(t *testing.T) {
-	t.Setenv("OTEL_GO_X_OBSERVABILITY", "true")
-	previousMeter, previousTrace, previousErrors := otel.GetMeterProvider(), otel.GetTracerProvider(), otel.GetErrorHandler()
-	defer func() {
-		otel.SetMeterProvider(previousMeter)
-		otel.SetTracerProvider(previousTrace)
-		otel.SetErrorHandler(previousErrors)
-	}()
 	receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
@@ -232,7 +246,7 @@ func TestExporterFailureCannotBlockRecordingAndQueueDropsAreVisible(t *testing.T
 		_, _ = io.WriteString(w, "secret export rejection")
 	}))
 	defer receiver.Close()
-	m, err := newOwner("publisher", Config{processOwner: true, SampleRatio: 1, QueueSize: 2, BatchSize: 1, BatchDelay: time.Hour, Traces: SignalConfig{Endpoint: receiver.URL + "/v1/traces", Timeout: 50 * time.Millisecond, TLS: receiver.Client().Transport.(*http.Transport).TLSClientConfig.Clone()}})
+	m, err := newOwner("publisher", Config{SampleRatio: 1, QueueSize: 2, BatchSize: 1, BatchDelay: time.Hour, Traces: SignalConfig{Endpoint: receiver.URL + "/v1/traces", Timeout: 50 * time.Millisecond, TLS: receiver.Client().Transport.(*http.Transport).TLSClientConfig.Clone()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +272,7 @@ func TestExporterFailureCannotBlockRecordingAndQueueDropsAreVisible(t *testing.T
 		t.Fatal("export response leaked through flush")
 	}
 	text := metricsText(t, m)
-	if !strings.Contains(text, `error_type="queue_full"`) || !strings.Contains(text, `tnl_observability_export_failures_total{signal="traces"} `) {
+	if !strings.Contains(text, `tnl_observability_queue_dropped_spans_total `) || strings.Contains(text, `tnl_observability_queue_dropped_spans_total 0`) || !strings.Contains(text, `tnl_observability_export_failures_total{tnl_signal="traces"} `) {
 		t.Fatal("missing exporter/drop observations", text)
 	}
 	if strings.Contains(text, "secret") {
@@ -279,7 +293,7 @@ func TestPublisherIdentityCardinalityAndVisitorIDBoundary(t *testing.T) {
 	m.tracerProvider = sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	defer m.Shutdown(context.Background())
 	for i := range 2010 {
-		ctx := WithIdentity(WithMetrics(t.Context(), m), Identity{TeamID: "team", PublisherID: "publisher", ServiceID: fmt.Sprint("service-", i)})
+		ctx := ReplaceIdentity(WithMetrics(t.Context(), m), Identity{TeamID: "team", PublisherIdentityID: "publisher", ServiceID: fmt.Sprint("service-", i)})
 		ctx = WithVisitor(ctx, "visitor-high-churn")
 		_, finish := PublisherOperation(ctx, "connect")
 		finish(context.Canceled)
@@ -294,10 +308,10 @@ func TestPublisherIdentityCardinalityAndVisitorIDBoundary(t *testing.T) {
 		}
 	}
 	text := metricsText(t, m)
-	if strings.Contains(text, "visitor-high-churn") || !strings.Contains(text, "otel_metric_overflow") || !strings.Contains(text, `team_id="team"`) {
+	if strings.Contains(text, "visitor-high-churn") || !strings.Contains(text, "otel_metric_overflow") || !strings.Contains(text, `tnl_team_id="team"`) {
 		t.Fatal("identity/overflow boundary failed")
 	}
-	if spans := exporter.GetSpans(); len(spans) == 0 || !containsAttribute(spans[0].Attributes, "visitor_connection_id", "visitor-high-churn") {
+	if spans := exporter.GetSpans(); len(spans) == 0 || !containsAttribute(spans[0].Attributes, string(VisitorConnectionID), "visitor-high-churn") {
 		t.Fatal("visitor correlation missing from span")
 	}
 }

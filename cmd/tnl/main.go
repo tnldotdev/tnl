@@ -164,16 +164,10 @@ func main() {
 		stop() // restore default handling so a second signal terminates immediately.
 	}()
 	var telemetry *asyncTelemetryReporter
-	processCtx, metrics, err := observability.StartProcess(ctx, "publisher")
-	if err == nil {
-		err = run(processCtx, os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
-			telemetry = newTelemetryReporter(root)
-			return telemetry
-		})
-		_ = metrics.Shutdown(context.Background())
-	} else if machineOutputRequested(os.Args[1:]) {
-		err = &machineCommandError{err}
-	}
+	err := run(context.WithValue(ctx, nativeProcessKey{}, true), os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
+		telemetry = newTelemetryReporter(root)
+		return telemetry
+	})
 	if telemetry != nil {
 		waitCtx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
 		telemetry.Wait(waitCtx)
@@ -356,6 +350,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	command = clioutput.CommandTitle("tnl", parsedCommand)
 	if parsedCommand == "generate" {
 		return runGenerate(ctx, flags, stdout)
+	}
+	if native, _ := ctx.Value(nativeProcessKey{}).(bool); native && parsedCommand != "version" && !strings.HasPrefix(parsedCommand, "config ") {
+		var metrics *observability.Metrics
+		ctx, metrics, err = observability.StartProcess(ctx, string(commandObservabilityRole(parsedCommand, flags)))
+		if err != nil {
+			return err
+		}
+		defer metrics.Shutdown(context.Background())
 	}
 	if parsedCommand == "publisher serve" {
 		serve := &flags.Publisher.Serve
@@ -830,6 +832,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	default:
 		return errors.New("command is required")
 	}
+}
+
+type nativeProcessKey struct{}
+
+func commandObservabilityRole(command string, flags cli) observability.Role {
+	switch command {
+	case "publish <service-or-target>":
+		if !flags.Publish.Install && !flags.Publish.Detach {
+			return observability.RolePublisher
+		}
+	case "publisher serve":
+		if !flags.Publisher.Serve.Detach {
+			return observability.RolePublisher
+		}
+	case "runtime serve", "service serve":
+		return observability.RolePublisher
+	}
+	return observability.RoleClient
 }
 
 func commandFailureOperation(command string) string {

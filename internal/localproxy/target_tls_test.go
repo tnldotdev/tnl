@@ -88,7 +88,7 @@ func TestTargetTLSServerNameMatchesPreflightAndForwarding(t *testing.T) {
 			if test.valid {
 				outcome = "success"
 			}
-			if !strings.Contains(observed.Body.String(), `tnl_publisher_operation_duration_seconds_count{operation="target_tls",outcome="`+outcome+`"} 1`) {
+			if !strings.Contains(observed.Body.String(), `tnl_publisher_operation_duration_seconds_count{tnl_operation="target_tls",tnl_outcome="`+outcome+`"} 1`) {
 				t.Fatal("missing target TLS result")
 			}
 		})

@@ -23,7 +23,7 @@ func TestIntegrationManagedServicePortInventory(t *testing.T) {
 		w := httptest.NewRecorder()
 		metrics.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
 		for state, value := range map[string]int{"configured": configured, "claimed": claimed, "quarantined": quarantined, "available": available} {
-			want := fmt.Sprintf("tnl_control_tcp_port_pool_ports{pool=%q,state=%q} %d", PrimaryIngressPoolID, state, value)
+			want := fmt.Sprintf("tnl_control_tcp_port_pool_ports{tnl_ingress_pool=%q,tnl_state=%q} %d", PrimaryIngressPoolID, state, value)
 			if !strings.Contains(w.Body.String(), want) {
 				t.Errorf("missing %s", want)
 			}

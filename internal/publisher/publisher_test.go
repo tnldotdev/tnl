@@ -272,7 +272,7 @@ func TestHeartbeatMetricsKeepLastConfirmedLeaseOnFallback(t *testing.T) {
 		if family.GetName() == "tnl_publisher_operation_duration_seconds" {
 			for _, point := range family.Metric {
 				for _, label := range point.Label {
-					if label.GetName() == "outcome" && label.GetValue() == "error" && point.GetHistogram().GetSampleCount() == 1 {
+					if label.GetName() == "tnl_outcome" && label.GetValue() == "error" && point.GetHistogram().GetSampleCount() == 1 {
 						seenFailure = true
 					}
 				}

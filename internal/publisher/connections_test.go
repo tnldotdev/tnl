@@ -235,7 +235,7 @@ func TestTLSFallbackIsPublishedBeforeConnectionReadiness(t *testing.T) {
 				for _, label := range point.Label {
 					labels[label.GetName()] = label.GetValue()
 				}
-				if labels["transport"] == "tls-tcp" && labels["preference"] == "quic" && labels["outcome"] == "success" && point.GetCounter().GetValue() >= 1 {
+				if labels["tnl_transport"] == "tls-tcp" && labels["tnl_transport_preference"] == "quic" && labels["tnl_outcome"] == "success" && point.GetCounter().GetValue() >= 1 {
 					seen = true
 				}
 			}

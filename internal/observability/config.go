@@ -19,16 +19,17 @@ import (
 // Config contains only export settings. no endpoint means no network export.
 // resource attributes are fixed process facts, never a current request's tenant.
 type Config struct {
-	Metrics, Traces      SignalConfig
-	ServiceName          string
-	Resource             []attribute.KeyValue
-	Interval             time.Duration
-	QueueSize, BatchSize int
-	BatchDelay           time.Duration
-	SampleRatio          float64
-	Sampler              string
-	Disabled             bool
-	processOwner         bool
+	Metrics, Traces, Logs      SignalConfig
+	ServiceName                string
+	Resource                   []attribute.KeyValue
+	Interval                   time.Duration
+	QueueSize, BatchSize       int
+	BatchDelay                 time.Duration
+	LogQueueSize, LogBatchSize int
+	LogBatchDelay              time.Duration
+	SampleRatio                float64
+	Sampler                    string
+	Disabled                   bool
 }
 
 type SignalConfig struct {
@@ -47,8 +48,9 @@ func (SignalConfig) GoString() string { return "observability signal configurati
 // ConfigFromEnv accepts the standard OTLP/HTTP configuration subset documented
 // in metrics.md. errors include only the setting name, never its input value.
 func ConfigFromEnv(getenv func(string) string) (Config, error) {
-	c := Config{ServiceName: getenv("OTEL_SERVICE_NAME"), Interval: 60 * time.Second, QueueSize: 2048, BatchSize: 512, BatchDelay: 5 * time.Second, SampleRatio: 1}
-	if getenv("OTEL_SDK_DISABLED") == "true" {
+	c := Config{ServiceName: getenv("OTEL_SERVICE_NAME"), Interval: 60 * time.Second, QueueSize: 2048, BatchSize: 512, BatchDelay: 5 * time.Second, LogQueueSize: 2048, LogBatchSize: 512, LogBatchDelay: time.Second, SampleRatio: 1}
+	if strings.EqualFold(getenv("OTEL_SDK_DISABLED"), "true") {
+		c.ServiceName = ""
 		c.Disabled = true
 		return c, nil
 	}
@@ -61,6 +63,10 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	c.Logs, err = signalConfig(getenv, "LOGS", "logs")
+	if err != nil {
+		return Config{}, err
+	}
 	for _, spec := range []struct {
 		key               string
 		dest              *time.Duration
@@ -68,6 +74,7 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	}{
 		{"OTEL_METRIC_EXPORT_INTERVAL", &c.Interval, 60 * time.Second, 10 * time.Minute},
 		{"OTEL_BSP_SCHEDULE_DELAY", &c.BatchDelay, 5 * time.Second, time.Minute},
+		{"OTEL_BLRP_SCHEDULE_DELAY", &c.LogBatchDelay, time.Second, time.Minute},
 	} {
 		*spec.dest, err = milliseconds(getenv(spec.key), spec.fallback, spec.maximum)
 		if err != nil {
@@ -80,6 +87,7 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 		maximum int
 	}{
 		{"OTEL_BSP_MAX_QUEUE_SIZE", &c.QueueSize, 8192}, {"OTEL_BSP_MAX_EXPORT_BATCH_SIZE", &c.BatchSize, 1024},
+		{"OTEL_BLRP_MAX_QUEUE_SIZE", &c.LogQueueSize, 8192}, {"OTEL_BLRP_MAX_EXPORT_BATCH_SIZE", &c.LogBatchSize, 1024},
 	} {
 		if value := getenv(spec.key); value != "" {
 			n, err := strconv.Atoi(value)
@@ -91,6 +99,9 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	}
 	if c.BatchSize > c.QueueSize {
 		c.BatchSize = c.QueueSize
+	}
+	if c.LogBatchSize > c.LogQueueSize {
+		c.LogBatchSize = c.LogQueueSize
 	}
 	c.Sampler = getenv("OTEL_TRACES_SAMPLER")
 	switch c.Sampler {
@@ -106,7 +117,7 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	default:
 		return Config{}, settingError("OTEL_TRACES_SAMPLER")
 	}
-	if len(c.ServiceName) > 128 || strings.ContainsAny(c.ServiceName, "\r\n") {
+	if !validServiceName(c.ServiceName) {
 		return Config{}, settingError("OTEL_SERVICE_NAME")
 	}
 	if raw := getenv("OTEL_RESOURCE_ATTRIBUTES"); raw != "" {
@@ -118,10 +129,17 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 			}
 			switch key {
 			case "service.name":
+				if !validServiceName(value) {
+					return Config{}, settingError("OTEL_RESOURCE_ATTRIBUTES")
+				}
 				if getenv("OTEL_SERVICE_NAME") == "" {
 					c.ServiceName = value
 				}
-			case "service.instance.id", "service.namespace", "deployment.environment.name", "cloud.provider", "cloud.region", "cloud.availability_zone":
+			case "service.namespace":
+				if value != "tnl" {
+					return Config{}, settingError("OTEL_RESOURCE_ATTRIBUTES")
+				}
+			case "service.instance.id", "deployment.environment.name", "cloud.provider", "cloud.region", "cloud.availability_zone":
 				c.Resource = append(c.Resource, attribute.String(key, value))
 			default:
 				return Config{}, settingError("OTEL_RESOURCE_ATTRIBUTES")
@@ -129,6 +147,14 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+func validServiceName(value string) bool {
+	switch value {
+	case "", "tnl", "tnld", "tnl-accounts", "otel-collector":
+		return true
+	}
+	return false
 }
 
 func signalConfig(getenv func(string) string, signal, path string) (SignalConfig, error) {
@@ -171,7 +197,7 @@ func signalConfig(getenv func(string) string, signal, path string) (SignalConfig
 		return c, settingError(prefix + "TIMEOUT")
 	}
 	// the periodic reader and batch processor may shorten the exporter timeout.
-	for _, key := range map[string][]string{"METRICS": {"OTEL_METRIC_EXPORT_TIMEOUT"}, "TRACES": {"OTEL_BSP_EXPORT_TIMEOUT"}}[signal] {
+	for _, key := range map[string][]string{"METRICS": {"OTEL_METRIC_EXPORT_TIMEOUT"}, "TRACES": {"OTEL_BSP_EXPORT_TIMEOUT"}, "LOGS": {"OTEL_BLRP_EXPORT_TIMEOUT"}}[signal] {
 		if value := getenv(key); value != "" {
 			d, err := milliseconds(value, c.Timeout, 10*time.Second)
 			if err != nil {
@@ -189,7 +215,7 @@ func signalConfig(getenv func(string) string, signal, path string) (SignalConfig
 			key, value, ok := strings.Cut(pair, "=")
 			key = strings.TrimSpace(key)
 			value, err = url.PathUnescape(strings.TrimSpace(value))
-			if !ok || err != nil || key == "" || strings.ContainsAny(key, " \t\r\n:") || strings.ContainsAny(value, "\r\n") {
+			if !ok || err != nil || !validHeaderName(key) || strings.ContainsAny(value, "\r\n\x00") {
 				return c, settingError(prefix + "HEADERS")
 			}
 			c.Headers[key] = value
@@ -222,6 +248,19 @@ func signalConfig(getenv func(string) string, signal, path string) (SignalConfig
 		c.TLS.Certificates = []tls.Certificate{pair}
 	}
 	return c, nil
+}
+
+func validHeaderName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, c := range value {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", c) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func milliseconds(raw string, fallback, maximum time.Duration) (time.Duration, error) {

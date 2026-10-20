@@ -97,8 +97,8 @@ func TestWorkerPersistsProviderFailureForRetry(t *testing.T) {
 	response := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 	for _, want := range []string{
-		`tnl_control_dns_work_duration_seconds_count{kind="authority",outcome="error",phase="provider"} 1`,
-		`tnl_control_dns_work_duration_seconds_count{kind="authority",outcome="error",phase="advance"} 1`,
+		`tnl_control_dns_work_duration_seconds_count{tnl_dns_kind="authority",tnl_outcome="error",tnl_phase="provider"} 1`,
+		`tnl_control_dns_work_duration_seconds_count{tnl_dns_kind="authority",tnl_outcome="error",tnl_phase="advance"} 1`,
 	} {
 		if !strings.Contains(response.Body.String(), want) {
 			t.Errorf("saved retry missing metric %q", want)

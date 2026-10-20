@@ -80,11 +80,11 @@ func TestManagedEndpointDNSUsesOwnedExactRecords(t *testing.T) {
 			response := httptest.NewRecorder()
 			metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 			for _, phase := range []string{"claim", "provider", "verify", "advance", "save"} {
-				outcome := "success"
+				reason := ""
 				if !test.propagated && (phase == "verify" || phase == "advance") {
-					outcome = "pending"
+					reason = `,tnl_reason="pending"`
 				}
-				want := fmt.Sprintf(`tnl_control_dns_work_duration_seconds_count{kind="managed_service",outcome=%q,phase=%q} 1`, outcome, phase)
+				want := fmt.Sprintf(`tnl_control_dns_work_duration_seconds_count{tnl_dns_kind="managed_service",tnl_outcome="success",tnl_phase=%q%s} 1`, phase, reason)
 				if !strings.Contains(response.Body.String(), want) {
 					t.Errorf("missing managed DNS stage %s", want)
 				}

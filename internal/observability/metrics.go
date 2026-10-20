@@ -2,6 +2,8 @@ package observability
 
 import (
 	"net/http"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,7 +13,9 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/readiness"
 	"go.opentelemetry.io/otel/metric"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -22,6 +26,8 @@ type Metrics struct {
 	meter                       metric.Meter
 	meterProvider               *sdkmetric.MeterProvider
 	tracerProvider              *sdktrace.TracerProvider
+	loggerProvider              *sdklog.LoggerProvider
+	resource                    *resource.Resource
 	publisherOperations         metric.Float64Histogram
 	publisherLease              metric.Float64Gauge
 	publisherReadiness          metric.Float64Gauge
@@ -102,7 +108,10 @@ func New(role string) *Metrics {
 
 func (metrics *Metrics) initInstruments(role string) {
 	m := metrics.meter
-	metrics.publisherOperations = newHistogram(m, "tnl_publisher_operation_duration_seconds", "Finite publisher operations by authenticated identity and bounded outcome.", DurationBucketsSeconds()).instrument
+	metrics.publisherOperations = newHistogram(m, "tnl_publisher_operation_duration_seconds", "Finite publisher operations by authenticated identity and bounded outcome.", DurationBucketsSeconds(), "operation", "outcome").instrument
+	describe(m, "tnl_publisher_lease_expiration_timestamp_seconds", "Last confirmed control lease; failed refresh never extends it.", "gauge", nil)
+	describe(m, "tnl_publisher_readiness_check_timestamp_seconds", "Most recent readiness decision; timestamp requires freshness checks.", "gauge", nil, "state")
+	describe(m, "tnl_publisher_connection_attempts_total", "Completed publisher connection races by selected transport and preference.", "counter", nil, "transport", "transport_preference", "outcome")
 	metrics.publisherLease, _ = m.Float64Gauge("tnl_publisher_lease_expiration_timestamp_seconds", metric.WithDescription("Last confirmed control lease expiration, not locally extended on failed refreshes."))
 	metrics.publisherReadiness, _ = m.Float64Gauge("tnl_publisher_readiness_check_timestamp_seconds", metric.WithDescription("Most recent readiness decision by outcome; use its timestamp to check freshness."))
 	metrics.publisherConnectionAttempts, _ = m.Int64Counter("tnl_publisher_connection_attempts_total", metric.WithDescription("Completed connection races by selected transport and initial preference; replacements and failed attempts count independently."))
@@ -130,8 +139,8 @@ func (metrics *Metrics) initInstruments(role string) {
 	metrics.forwardedBytes = newCounter(m, "tnl_ingress_forwarded_bytes_total", "Bytes forwarded through ingress, recorded after a copy finishes.", "direction")
 	metrics.trafficAdmissions = newCounter(m, "tnl_ingress_traffic_admissions_total", "Process-local traffic decisions by fixed stage and result; excludes identities and network addresses.", "stage", "result")
 	metrics.relayAttempts = newCounter(m, "tnl_ingress_relay_attempts_total", "Ingress internal-forwarding attempts by connection slot and bounded outcome.", "connection_slot", "outcome")
-	metrics.apiDuration = newHistogram(m, "tnl_control_api_request_duration_seconds", "Control-served HTTP handler duration including long polls; count is the request total.", DurationBucketsSeconds(), "surface", "operation", "outcome")
-	metrics.apiInFlight = newGauge(m, "tnl_control_api_requests_in_flight", "Control-served HTTP requests currently executing by API surface.", "surface")
+	metrics.apiDuration = newHistogram(m, "tnl_api_request_duration_seconds", "tnl API handler duration including long polls; count is the request total.", DurationBucketsSeconds(), "surface", "http.request.method", "http.route", "outcome")
+	metrics.apiInFlight = newGauge(m, "tnl_api_requests_in_flight", "tnl API requests currently executing by component.", "surface")
 	metrics.webhookProviderSources = newCounter(m, "tnl_control_webhook_provider_source_requests_total", "Webhook sender-policy lookups by fixed provider and bounded outcome; not configured endpoints or webhook deliveries.", "provider", "outcome")
 	metrics.publicURLsCreated = newCounter(m, "tnl_control_public_urls_created_total", "New public URLs committed by client-declared purpose; excludes idempotent retries.", "purpose")
 	metrics.publishRunsReady = newCounter(m, "tnl_control_publish_runs_ready_total", "Publish runs first marked ready by their saved public URL purpose.", "purpose")
@@ -284,10 +293,16 @@ func (m *Metrics) Gather() ([]*dto.MetricFamily, error) {
 }
 
 func (m *Metrics) SetRelayLeases(state string, count int) {
+	if m == nil || state != "active" && state != "draining" {
+		return
+	}
 	m.relayLeases.WithLabelValues(state).Set(float64(count))
 }
 
 func (m *Metrics) AddRelayLeases(state string, delta int) {
+	if m == nil || state != "active" && state != "draining" {
+		return
+	}
 	m.relayLeases.WithLabelValues(state).Add(float64(delta))
 }
 
@@ -324,16 +339,7 @@ func (m *Metrics) SetCapacityLimit(resource string, limit int64) {
 }
 
 func admissionResource(resource string) bool {
-	switch resource {
-	case "client_hello_connections", "public_connections", "public_url_connections",
-		"denied_connections", "denied_public_url_connections", "control_connections", "relay_tcp_connections",
-		"publisher_connections", "relay_streams":
-		return true
-	case "process_connection_rate", "source_connection_rate", "source_connections", "public_url_connection_rate", "public_url_connection_total",
-		"pending_source_capacity", "pending_source_connections", "pending_public_url_connections", "pending_source_rate", "pending_public_url_rate", "traffic_keys", "traffic_bandwidth", "invalid_traffic_projection":
-		return true
-	}
-	return false
+	return slices.Contains(admissionResources, resource)
 }
 
 func (m *Metrics) IncInspectionFailure(stage string) {
@@ -360,7 +366,15 @@ func (m *Metrics) ObserveRelayAttempt(slot string, outcome RelayAttemptOutcome) 
 }
 
 func (m *Metrics) ObserveAPIRequest(surface, operation string, outcome APIRequestOutcome, duration time.Duration) {
-	m.apiDuration.WithLabelValues(surface, operation, string(outcome)).Observe(duration.Seconds())
+	method, route, matched := strings.Cut(operation, " ")
+	if !matched {
+		method, route = "_OTHER", operation
+	}
+	m.observeAPIRequest(surface, method, route, outcome, duration)
+}
+
+func (m *Metrics) observeAPIRequest(surface, method, route string, outcome APIRequestOutcome, duration time.Duration) {
+	m.apiDuration.WithLabelValues(surface, httpMethod(method), route, string(outcome)).Observe(duration.Seconds())
 }
 
 // outcomes and stages are closed sets, independent of public URL and order identity.

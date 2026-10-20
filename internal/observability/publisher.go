@@ -5,7 +5,6 @@ import (
 	"net"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -21,7 +20,7 @@ func PublisherReadiness(ctx context.Context, ready bool) {
 		if ready {
 			outcome = "ready"
 		}
-		attrs := append(identityAttributes(ctx), attribute.String("outcome", outcome))
+		attrs := append(identityAttributes(ctx), State.String(outcome))
 		m.publisherReadiness.Record(ctx, routingTimestamp(time.Now()), metric.WithAttributes(attrs...))
 	}
 }
@@ -29,13 +28,16 @@ func PublisherReadiness(ctx context.Context, ready bool) {
 func PublisherConnection(ctx context.Context, transport string, preferTCP bool, err error) {
 	if m := FromContext(ctx); m != nil {
 		if transport != "quic" && transport != "tls-tcp" {
-			transport = "none"
+			transport = ""
 		}
 		preference := "quic"
 		if preferTCP {
 			preference = "tls-tcp"
 		}
-		attrs := append(identityAttributes(ctx), attribute.String("transport", transport), attribute.String("preference", preference), attribute.String("outcome", durationOutcome(err)))
+		attrs := append(identityAttributes(ctx), TransportPreference.String(preference), OutcomeKey.String(durationOutcome(err)))
+		if transport != "" {
+			attrs = append(attrs, Transport.String(transport))
+		}
 		m.publisherConnectionAttempts.Add(ctx, 1, metric.WithAttributes(attrs...))
 	}
 }

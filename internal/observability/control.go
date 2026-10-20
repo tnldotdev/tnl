@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -39,15 +39,21 @@ func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 				outcome = APIRequestCanceled
 			case response.status >= 500:
 				outcome = APIRequestServerError
+			case response.status == http.StatusUnauthorized || response.status == http.StatusForbidden:
+				outcome = APIRequestDenied
 			case response.status >= 400:
 				outcome = APIRequestClientError
 			case decision.Load():
 				outcome = APIRequestDenied
 			}
 			span.SetName(surface + " " + operation)
-			span.SetAttributes(attribute.String("http.route", operation), attribute.Int("http.response.status_code", response.status))
+			route := operation
+			if _, template, ok := strings.Cut(operation, " "); ok {
+				route = template
+			}
+			span.SetAttributes(HTTPRoute.String(route), HTTPMethod.String(httpMethod(r.Method)), HTTPStatus.Int(response.status), Component.String(surface))
 			finishSpan(span, string(outcome))
-			m.ObserveAPIRequest(surface, operation, outcome, time.Since(started))
+			m.observeAPIRequest(surface, r.Method, route, outcome, time.Since(started))
 		}()
 		next.ServeHTTP(response, r)
 	})
@@ -64,7 +70,8 @@ func AuthorizationDecision(ctx context.Context, operation string, allowed bool) 
 	} else if denied, ok := ctx.Value(decisionKey{}).(*atomic.Bool); ok {
 		denied.Store(true)
 	}
-	trace.SpanFromContext(ctx).SetAttributes(attribute.String("authorization.decision", result))
+	outcome, _ := classifyResult(result)
+	trace.SpanFromContext(ctx).SetAttributes(OutcomeKey.String(string(outcome)))
 	if m := FromContext(ctx); m != nil {
 		m.authDecisions.WithLabelValues(operation, result).Inc()
 	}

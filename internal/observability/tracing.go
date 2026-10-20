@@ -6,52 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
-
-// Identity must come from a verified control response or authenticated state.
-// it is scoped to work, never attached to a process resource. run, request and
-// visitor IDs deliberately have no metric attribute slot here.
-type Identity struct{ TeamID, GroupID, PublisherID, ServiceID, DeploymentID string }
-type identityKey struct{}
-
-func WithIdentity(ctx context.Context, identity Identity) context.Context {
-	previous, _ := ctx.Value(identityKey{}).(Identity)
-	if identity.TeamID == "" {
-		identity.TeamID = previous.TeamID
-	}
-	if identity.GroupID == "" {
-		identity.GroupID = previous.GroupID
-	}
-	if identity.PublisherID == "" {
-		identity.PublisherID = previous.PublisherID
-	}
-	if identity.ServiceID == "" {
-		identity.ServiceID = previous.ServiceID
-	}
-	if identity.DeploymentID == "" {
-		identity.DeploymentID = previous.DeploymentID
-	}
-	if identity == previous {
-		return ctx
-	}
-	return context.WithValue(ctx, identityKey{}, identity)
-}
-func identityAttributes(ctx context.Context) []attribute.KeyValue {
-	id, _ := ctx.Value(identityKey{}).(Identity)
-	var attrs []attribute.KeyValue
-	for _, item := range [][2]string{{"team_id", id.TeamID}, {"group_id", id.GroupID}, {"publisher_id", id.PublisherID}, {"service_id", id.ServiceID}, {"deployment_id", id.DeploymentID}} {
-		if item[1] != "" && len(item[1]) <= 128 {
-			attrs = append(attrs, attribute.String(item[0], item[1]))
-		}
-	}
-	return attrs
-}
 
 func (m *Metrics) tracer() trace.Tracer {
 	if m == nil || m.tracerProvider == nil {
@@ -63,19 +23,25 @@ func (m *Metrics) tracer() trace.Tracer {
 // Start records a finite, authored operation. callers must not pass paths,
 // hostnames, errors or other external input as the name. errors become a fixed
 // outcome; raw causes are never recorded as span status or exception events.
-func Start(ctx context.Context, name string) (context.Context, func(error)) {
-	ctx, span := FromContext(ctx).tracer().Start(ctx, name, trace.WithAttributes(identityAttributes(ctx)...))
+func Start(ctx context.Context, name string, options ...trace.SpanStartOption) (context.Context, func(error)) {
+	options = append(options, trace.WithAttributes(append(identityAttributes(ctx), fieldAttributes(ctx)...)...))
+	ctx, span := FromContext(ctx).tracer().Start(ctx, name, options...)
+	span.SetAttributes(Operation.String(name))
 	if id, ok := ctx.Value(visitorKey{}).(string); ok {
 		Visitor(ctx, id)
 	}
 	var once sync.Once
-	return ctx, func(err error) { once.Do(func() { finishSpan(span, durationOutcome(err)); span.End() }) }
+	return ctx, func(err error) { once.Do(func() { finishError(span, err); span.End() }) }
 }
 
 func finishSpan(span trace.Span, outcome string) {
-	span.SetAttributes(attribute.String("outcome", outcome))
-	if outcome != "success" && outcome != "canceled" && outcome != "progress" && outcome != "pending" {
-		span.SetStatus(codes.Error, outcome)
+	result, reason := classifyResult(outcome)
+	span.SetAttributes(OutcomeKey.String(string(result)))
+	if reason != "" {
+		span.SetAttributes(Reason.String(reason))
+	}
+	if result != Success && result != Canceled {
+		span.SetStatus(codes.Error, string(result))
 	}
 }
 
@@ -83,7 +49,7 @@ func finishSpan(span trace.Span, outcome string) {
 // tunnel protocol or treating an external ID as an OTel parent span.
 func Visitor(ctx context.Context, id string) {
 	if len(id) <= 128 {
-		trace.SpanFromContext(ctx).SetAttributes(attribute.String("visitor_connection_id", id))
+		trace.SpanFromContext(ctx).SetAttributes(VisitorConnectionID.String(id))
 	}
 }
 
@@ -114,7 +80,7 @@ func PublisherOperation(ctx context.Context, operation string) (context.Context,
 			if m == nil {
 				return
 			}
-			attrs := append(identityAttributes(ctx), attribute.String("operation", operation), attribute.String("outcome", durationOutcome(err)))
+			attrs := append(identityAttributes(ctx), Operation.String(operation), OutcomeKey.String(durationOutcome(err)))
 			m.publisherOperations.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attrs...))
 		})
 	}
@@ -130,6 +96,15 @@ func (m *Metrics) completedSpan(name, outcome string, elapsed time.Duration) {
 	_, span := m.tracer().Start(context.Background(), name, trace.WithTimestamp(now.Add(-elapsed)))
 	finishSpan(span, outcome)
 	span.End(trace.WithTimestamp(now))
+}
+
+func (m *Metrics) completedOperation(ctx context.Context, name string, elapsed time.Duration) (context.Context, func(error)) {
+	if elapsed < 0 {
+		return ctx, func(error) {}
+	}
+	now := time.Now()
+	ctx, span := m.tracer().Start(ctx, name, trace.WithTimestamp(now.Add(-elapsed)), trace.WithAttributes(append(identityAttributes(ctx), fieldAttributes(ctx)...)...))
+	return ctx, func(err error) { finishError(span, err); span.End(trace.WithTimestamp(now)) }
 }
 
 // OwnedHTTPClient must only wrap a client dedicated to tnl-owned HTTP APIs.
@@ -165,11 +140,29 @@ func (t ownedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	response, err := t.base.RoundTrip(r)
 	outcome := durationOutcome(err)
 	if response != nil {
-		span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
-		if response.StatusCode >= 400 {
-			outcome = "http_error"
+		span.SetAttributes(HTTPStatus.Int(response.StatusCode))
+		switch {
+		case response.StatusCode >= 500:
+			outcome = "server_error"
+		case response.StatusCode == 401 || response.StatusCode == 403:
+			outcome = "denied"
+		case response.StatusCode >= 400:
+			outcome = "client_error"
 		}
 	}
-	finishSpan(span, outcome)
+	if err != nil {
+		finishError(span, err)
+	} else {
+		finishSpan(span, outcome)
+	}
+	span.SetAttributes(Component.String(t.surface), HTTPMethod.String(httpMethod(r.Method)))
 	return response, err
+}
+
+func httpMethod(value string) string {
+	switch value {
+	case "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH":
+		return value
+	}
+	return "_OTHER"
 }

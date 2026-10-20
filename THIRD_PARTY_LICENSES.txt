@@ -14,13 +14,18 @@ license terms.
 
 Packages: go.opentelemetry.io/otel, go.opentelemetry.io/otel/metric,
 go.opentelemetry.io/otel/trace, go.opentelemetry.io/otel/log,
-go.opentelemetry.io/otel/sdk, go.opentelemetry.io/otel/sdk/metric,
+go.opentelemetry.io/otel/sdk, go.opentelemetry.io/otel/sdk/metric, go.opentelemetry.io/otel/sdk/log,
 go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp,
 go.opentelemetry.io/otel/exporters/otlp/otlptrace,
 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp
 Version: 1.47.0
 Copyright The OpenTelemetry Authors
 License source: https://github.com/open-telemetry/opentelemetry-go/blob/v1.47.0/LICENSE
+
+Package: go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp
+Version: 0.23.0
+Copyright The OpenTelemetry Authors
+License source: https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlplog/otlploghttp/v0.23.0/LICENSE
 
 Package: go.opentelemetry.io/otel/exporters/prometheus
 Version: 0.69.0
