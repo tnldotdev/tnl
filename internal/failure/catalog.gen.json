@@ -198,6 +198,69 @@
       "action": "configure existing gh authentication with read access to this repository, then run tnl apply again"
     },
     {
+      "code": "TNL_CLIENT_CONNECTION_CLEANUP_FAILED",
+      "slug": "connection-cleanup-failed",
+      "class": "unavailable",
+      "message": "the native connection owner stopped with a cleanup failure",
+      "action": "check the selected server's availability and revoke the workload session if it remains active"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_EXPIRED",
+      "slug": "connection-expired",
+      "class": "unavailable",
+      "message": "the native connection session has expired",
+      "action": "prepare connections again within the authorized execution window"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_HANDLE_INVALID",
+      "slug": "connection-handle-invalid",
+      "class": "invalid",
+      "message": "the private connection handle is not valid for this project or user",
+      "action": "prepare connections again from the selected project"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_PORT_IN_USE",
+      "slug": "connection-port-in-use",
+      "class": "conflict",
+      "message": "the service's allocated loopback port is already in use",
+      "action": "stop the process using that port and prepare connections again"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_REQUEST_INVALID",
+      "slug": "connection-request-invalid",
+      "class": "invalid",
+      "message": "the native connection request is invalid",
+      "action": "check the connection schema, project configuration, and selected services"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_TEAM_BINDING",
+      "slug": "connection-team-binding",
+      "class": "invalid",
+      "message": "the project has no matching applied team binding",
+      "action": "run tnl apply as a team administrator and commit .tnl/generated/connections.json"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_TLS_REJECTED",
+      "slug": "connection-tls-rejected",
+      "class": "invalid",
+      "message": "the native service TLS certificate could not be verified",
+      "action": "check the managed service hostname and the client's server trust roots, then prepare connections again"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_TRANSPORT_MISSING",
+      "slug": "connection-transport-missing",
+      "class": "unavailable",
+      "message": "this binary does not include the required native connection transport",
+      "action": "use a tnl binary with the required connection capabilities"
+    },
+    {
+      "code": "TNL_CLIENT_CONNECTION_UNAVAILABLE",
+      "slug": "connection-unavailable",
+      "class": "unavailable",
+      "message": "the native connection owner could not prepare or maintain every selected service",
+      "action": "check service availability and prepare connections again"
+    },
+    {
       "code": "TNL_CLIENT_CONNECT_ACCESS_REQUIRED",
       "slug": "connect-access-required",
       "class": "forbidden",

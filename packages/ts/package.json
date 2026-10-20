@@ -63,6 +63,9 @@
     "clean": "node ../../scripts/clean-package.ts",
     "prepack": "pnpm run build"
   },
+  "dependencies": {
+    "undici": "7.30.1"
+  },
   "devDependencies": {
     "@hono/node-server": "2.1.1",
     "@types/bun": "1.4.2",

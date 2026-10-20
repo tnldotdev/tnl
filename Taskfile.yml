@@ -264,6 +264,19 @@ tasks:
     cmds:
       - go test -race ./internal/kubeconfig ./internal/kubernetes ./internal/publisher ./internal/targettransport ./internal/tcpconnect ./internal/privatepublisher ./internal/observability ./cmd/tnl -run='Test(ClientGoExec|Credential|EKS|SelectedUser|Prepare|Preflight|SessionPlan|OwnedNamespace|Cleanup|Classification|Kubernetes|NativeProfile|ConnectMode|PublisherLifecycle)' -count=1
 
+  go:test:connections:
+    desc: Check private owner IPC, native SDK HTTPS, cancellation, and connection lifetimes
+    deps: [js:build]
+    cmds:
+      - go test -race ./internal/connectionruntime -count=1 -timeout=3m
+      - go test -race ./cmd/tnl -run='^Test(Connection|IntegrationConnectionNativeSDK)' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
+  go:test:integration:connections:
+    desc: Migrate disposable PostgreSQL with real Drizzle Kit and native SDK TLS credentials
+    deps: [js:build]
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationConnectionDrizzleKit$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
   go:test:integration:kubernetes:
     desc: Run kubectl against a digest-pinned disposable kind cluster (Docker, kubectl, kind v0.30.0)
     vars:

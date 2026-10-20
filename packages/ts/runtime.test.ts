@@ -160,7 +160,7 @@ describe("root runtime", () => {
       expect.objectContaining({ code: "sdk.service_unprepared" }),
     );
     await expect(unprepared.tnl.connect("api" as never)).rejects.toMatchObject({
-      code: "sdk.connection_unavailable",
+      code: "sdk.native_missing",
     });
     vi.stubEnv("TNL_PROJECT_RUNTIME", JSON.stringify({ ...project, dev: true }));
     vi.resetModules();

@@ -25,6 +25,6 @@ export const tnl = Object.freeze({
     throw new TnlError("sdk.configuration_invalid");
   },
   async connect(): Promise<never> {
-    throw new TnlError("sdk.connection_unavailable");
+    throw new TnlError("sdk.connection_server_only");
   },
 }) as unknown as TnlRuntime;

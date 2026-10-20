@@ -70,6 +70,9 @@ func machineOutputRequested(args []string) bool {
 		if argument == "--" {
 			break
 		}
+		if argument == "runtime" && index+1 < len(args) && args[index+1] == "connections" {
+			return true
+		}
 		if argument == "--output=json" || argument == "--output=ndjson" {
 			return true
 		}

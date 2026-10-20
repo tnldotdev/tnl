@@ -27,3 +27,6 @@ websockets (BSD-3-Clause). Their distributions provide their license texts.
 
 Kubernetes client configuration and exec credentials use the official client-go
 and apimachinery API types (Apache-2.0), developed by the Kubernetes Authors.
+
+The Node connection helper uses Undici (MIT), developed by the Undici team and
+contributors, for scoped native HTTPS dispatch without changing application headers.

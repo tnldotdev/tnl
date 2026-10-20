@@ -1,6 +1,10 @@
 import { developmentPort } from "./internal/port.js";
 import { serviceMetadata } from "./internal/service_metadata.js";
-import { parseRuntimePayload, type ProjectMetadata } from "./internal/runtime.js";
+import {
+  parseRuntimePayload,
+  parseProjectRuntime,
+  type ProjectMetadata,
+} from "./internal/runtime.js";
 import { TnlError } from "./errors.js";
 import type { PrepareOptions, PreparedService } from "./internal/app.js";
 import type { AdHocTunnel, OpenOptions } from "./internal/open.js";
@@ -46,6 +50,7 @@ export type TnlRuntime = Readonly<
 
 declare const process:
   | {
+      readonly versions?: { readonly node?: string };
       readonly env?: {
         readonly TNL_PROJECT_RUNTIME?: string;
         readonly BUN_PORT?: string;
@@ -61,7 +66,7 @@ const serializedRuntime =
 /** Server port and optional browser-safe project metadata for this process. */
 // the parser validates the runtime shape; generated project declarations supply
 // project-specific service names and literals unavailable to this shared module.
-const runtime = parseRuntimePayload(serializedRuntime);
+let runtime = parseRuntimePayload(serializedRuntime);
 export const tnl = Object.freeze({
   ...runtime,
   get services() {
@@ -85,7 +90,18 @@ export const tnl = Object.freeze({
     const { openServer, openFetch } = await import("./internal/open.js");
     return typeof server === "function" ? openFetch(server, options) : openServer(server, options);
   },
-  async connect(): Promise<never> {
-    throw new TnlError("sdk.connection_unavailable");
+  async connect(name: string) {
+    if (typeof process === "undefined" || typeof process.versions?.node !== "string")
+      throw new TnlError("sdk.connection_server_only");
+    const { connectService } = await import("./internal/connection.js");
+    const prepared = await connectService(name);
+    runtime =
+      runtime === undefined
+        ? prepared.project
+        : parseProjectRuntime(
+            { ...runtime, services: { ...runtime.services, ...prepared.project.services } },
+            "connected project runtime",
+          );
+    return prepared.connection;
   },
 }) as unknown as TnlRuntime;

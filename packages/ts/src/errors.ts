@@ -8,6 +8,7 @@ export type TnlErrorCode =
   | "sdk.configuration_invalid"
   | "sdk.service_unprepared"
   | "sdk.connection_unavailable"
+  | "sdk.connection_server_only"
   | "sdk.runtime_invalid"
   | "sdk.protocol_unsupported"
   | "sdk.project_unavailable"
@@ -72,9 +73,13 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   },
   "sdk.connection_unavailable": {
     class: "unavailable",
+    retry: "later",
+    message: "the native connection owner is unavailable; prepare connections again",
+  },
+  "sdk.connection_server_only": {
+    class: "unavailable",
     retry: "after_change",
-    message:
-      "native SDK connections are unavailable in this build; use tnl connect for native client access",
+    message: "native connections require Node.js or Bun; call tnl.connect from server code",
   },
   "sdk.runtime_invalid": {
     class: "invalid",

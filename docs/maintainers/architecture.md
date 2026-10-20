@@ -225,6 +225,11 @@ reports completion and closes client state.
 
 ## own the app-led lifecycle
 
+native visitor connections use the separate bounded
+[connection runtime](connection-runtime.md). its private owner retains human or
+workload credentials; the root SDK exposes browser-safe service addresses and
+returns native credentials only from Node connection calls.
+
 the application starts with its normal development command. Vite and Next
 integrations prepare browser-safe project metadata, then register the bound
 listener. Node and Bun applications call `await tnl.prepare({service: "api"})`

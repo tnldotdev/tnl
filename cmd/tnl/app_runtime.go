@@ -35,6 +35,7 @@ import (
 )
 
 type runtimeCommand struct {
+	Connections   connectionsCommand     `cmd:"" hidden:""`
 	Endpoint      runtimeEndpointOptions `cmd:"" hidden:""`
 	OwnerEndpoint runtimeOptions         `cmd:"" hidden:""`
 	Serve         runtimeOptions         `cmd:"" hidden:""`

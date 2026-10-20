@@ -1,4 +1,17 @@
 import { tnl } from "@tnldotdev/tnl";
+import type { TnlConnectionRegistry } from "@tnldotdev/tnl";
+
+declare const database: TnlConnectionRegistry["postgres"];
+({
+  ...database,
+  user: "app",
+  database: "app",
+  password: "application-owned",
+}) satisfies import("pg").PoolConfig;
+({
+  dialect: "postgresql",
+  dbCredentials: { ...database, user: "app", database: "app", password: "application-owned" },
+}) satisfies import("drizzle-kit").Config;
 
 tnl.port satisfies number;
 tnl.dev satisfies boolean;

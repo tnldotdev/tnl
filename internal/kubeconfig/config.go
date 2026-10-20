@@ -92,6 +92,8 @@ type Options struct {
 	TLSServerName string
 	Helper        string
 	Profile       string
+	// CredentialArgs selects the same native owner's private credential helper.
+	CredentialArgs []string
 }
 
 type Result struct {
@@ -202,6 +204,9 @@ func (p Plan) Prepare(ctx context.Context, o Options) (Result, error) {
 		Clusters:  []kubev1.NamedCluster{{Name: name, Cluster: kubev1.Cluster{Server: o.Server, TLSServerName: o.TLSServerName, Extensions: extensions}}},
 		AuthInfos: []kubev1.NamedAuthInfo{{Name: name, AuthInfo: kubev1.AuthInfo{Exec: &kubev1.ExecConfig{APIVersion: "client.authentication.k8s.io/v1", Command: o.Helper, Args: []string{"connect", "kube-credential", "--profile", o.Profile}, InteractiveMode: "Never"}, Extensions: extensions}}},
 		Contexts:  []kubev1.NamedContext{{Name: name, Context: kubev1.Context{Cluster: name, AuthInfo: name, Namespace: o.Namespace, Extensions: extensions}}},
+	}
+	if o.CredentialArgs != nil {
+		config.AuthInfos[0].AuthInfo.Exec.Args = o.CredentialArgs
 	}
 	data, err := json.Marshal(config)
 	if err != nil {

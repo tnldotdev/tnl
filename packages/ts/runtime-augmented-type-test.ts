@@ -63,6 +63,16 @@ const mysql = await tnl.connect("mysql");
 mysql.ssl.key satisfies string | undefined;
 mysql.ssl.servername satisfies string;
 mysql.ssl.rejectUnauthorized satisfies true;
+const cluster = await tnl.connect("cluster");
+cluster.server satisfies `https://${string}`;
+cluster.kubeconfig satisfies string;
+cluster.context satisfies string;
+const api = await tnl.connect("api");
+api.fetch satisfies typeof fetch;
+// @ts-expect-error HTTP clients do not expose TLS keys as metadata.
+void api.ssl;
+// @ts-expect-error SQL account credentials belong to the application.
+void db.password;
 const privateTLS = { servername: "db.example", rejectUnauthorized: true } as const;
 ({ host: "127.0.0.1", port: 5432, ssl: privateTLS }) satisfies TnlConnectionRegistry["postgres"];
 ({ host: "127.0.0.1", port: 3306, ssl: privateTLS }) satisfies TnlConnectionRegistry["mysql"];

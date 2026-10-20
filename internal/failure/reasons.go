@@ -6,6 +6,15 @@ import (
 )
 
 const (
+	ConnectionTLSRejected               Reason = "TNL_CLIENT_CONNECTION_TLS_REJECTED"
+	ConnectionCleanupFailed             Reason = "TNL_CLIENT_CONNECTION_CLEANUP_FAILED"
+	ConnectionPortInUse                 Reason = "TNL_CLIENT_CONNECTION_PORT_IN_USE"
+	ConnectionTeamBinding               Reason = "TNL_CLIENT_CONNECTION_TEAM_BINDING"
+	ConnectionTransportMissing          Reason = "TNL_CLIENT_CONNECTION_TRANSPORT_MISSING"
+	ConnectionHandleInvalid             Reason = "TNL_CLIENT_CONNECTION_HANDLE_INVALID"
+	ConnectionExpired                   Reason = "TNL_CLIENT_CONNECTION_EXPIRED"
+	ConnectionRequestInvalid            Reason = "TNL_CLIENT_CONNECTION_REQUEST_INVALID"
+	ConnectionUnavailable               Reason = "TNL_CLIENT_CONNECTION_UNAVAILABLE"
 	TargetDiscoveryInvalid              Reason = "TNL_CLIENT_TARGET_DISCOVERY_INVALID"
 	TargetDiscoveryDenied               Reason = "TNL_CLIENT_TARGET_DISCOVERY_DENIED"
 	TargetDiscoveryAuthentication       Reason = "TNL_CLIENT_TARGET_DISCOVERY_AUTHENTICATION"
@@ -178,6 +187,15 @@ const (
 )
 
 var definitions = map[Reason]Definition{
+	ConnectionTLSRejected:              {Class: Invalid, Message: "the native service TLS certificate could not be verified", Action: "check the managed service hostname and the client's server trust roots, then prepare connections again", Retry: RetryAfterChange},
+	ConnectionCleanupFailed:            {Class: Unavailable, Message: "the native connection owner stopped with a cleanup failure", Action: "check the selected server's availability and revoke the workload session if it remains active", Retry: RetryAfterChange},
+	ConnectionPortInUse:                {Class: Conflict, Message: "the service's allocated loopback port is already in use", Action: "stop the process using that port and prepare connections again", Retry: RetryAfterChange},
+	ConnectionTeamBinding:              {Class: Invalid, Message: "the project has no matching applied team binding", Action: "run tnl apply as a team administrator and commit .tnl/generated/connections.json", Retry: RetryAfterChange},
+	ConnectionTransportMissing:         {Class: Unavailable, Message: "this binary does not include the required native connection transport", Action: "use a tnl binary with the required connection capabilities", Retry: RetryAfterChange},
+	ConnectionHandleInvalid:            {Class: Invalid, Message: "the private connection handle is not valid for this project or user", Action: "prepare connections again from the selected project", Retry: RetryAfterChange},
+	ConnectionExpired:                  {Class: Unavailable, Message: "the native connection session has expired", Action: "prepare connections again within the authorized execution window", Retry: RetryAfterChange},
+	ConnectionRequestInvalid:           {Class: Invalid, Message: "the native connection request is invalid", Action: "check the connection schema, project configuration, and selected services", Retry: RetryAfterChange},
+	ConnectionUnavailable:              {Class: Unavailable, Message: "the native connection owner could not prepare or maintain every selected service", Action: "check service availability and prepare connections again", Retry: RetryLater},
 	PublisherDeploymentMetadataInvalid: {Class: Invalid, Message: "publisher deployment metadata is incomplete or invalid", Action: "supply all TNL_DEPLOYMENT_* metadata fields from the generated deployment and use the provisioned instance", Retry: RetryAfterChange},
 	AWSBootstrapInvalid:                {Class: Invalid, Message: "publisher deployment input is invalid or stale", Action: "check the customer deployment file and run tnl generate for the current project", Retry: RetryAfterChange},
 	AWSBootstrapScope:                  {Class: Conflict, Message: "publisher deployment scope does not match the current project, team, or AWS account", Action: "check the applied project, selected company, AWS profile, account and region", Retry: RetryAfterChange},

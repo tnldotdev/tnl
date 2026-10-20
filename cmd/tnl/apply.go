@@ -13,6 +13,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/connectionruntime"
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -69,6 +70,15 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	}
 	if applied.ProjectKey != source.Key || applied.TeamId != current.team.Id || applied.SourceFingerprint != source.Fingerprint || applied.Revision < 1 {
 		return failure.Wrap("read applied project", failure.ServerResponseInvalid, errors.New("control returned another project configuration"))
+	}
+	if len(project.Config.CI) != 0 {
+		team := ""
+		if project.Config.Team != nil {
+			team = *project.Config.Team
+		}
+		if err := connectionruntime.WriteBinding(project.Root, connectionruntime.Binding{Schema: 1, Server: session.authenticated.ServerEndpoint, Team: team, TeamID: current.team.Id, ProjectKey: source.Key, SourceID: source.Fingerprint}); err != nil {
+			return failure.Wrap("write applied connection scope", failure.ProjectConfigInvalid, err)
+		}
 	}
 	if flags.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(applied)

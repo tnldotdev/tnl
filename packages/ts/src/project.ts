@@ -32,6 +32,9 @@ export interface TnlNativeTLSOptions {
   key?: string;
 }
 
+/** standard fetch calls, independent of platform-specific static helpers. */
+export type TnlFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export interface TnlConnectionRegistry {
   postgres: {
     host: string;
@@ -44,8 +47,8 @@ export interface TnlConnectionRegistry {
     ssl: TnlNativeTLSOptions;
   };
   tcp: { host: string; port: number };
-  http: { url: `https://${string}`; fetch: typeof fetch };
-  kubernetes: { server: `https://${string}`; kubeconfig: string };
+  http: { url: `https://${string}`; fetch: TnlFetch };
+  kubernetes: { server: `https://${string}`; kubeconfig: string; context: string };
 }
 
 export type TnlResolvedConfig<Input> = Input extends (...args: never[]) => infer Result

@@ -291,6 +291,7 @@ func classifyCommandError(err error) error {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterFactories ...telemetryReporterFactory) (result error) {
 	command := ""
+	machineIntent := false
 	defer func() {
 		result = classifyCommandError(result)
 		if result != nil {
@@ -304,7 +305,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			result = clioutput.WrapCommand(command, result)
 		}
 		var reported *reportedError
-		if result != nil && machineOutputRequested(args) && !errors.As(result, &reported) {
+		if result != nil && (machineIntent || machineOutputRequested(args)) && !errors.As(result, &reported) {
 			result = &machineCommandError{result}
 		}
 	}()
@@ -332,8 +333,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return err
 	}
 	parsedCommand := canonicalParsedCommand(parsed.Command())
+	machineIntent = strings.HasPrefix(parsedCommand, "runtime connections ")
 	applyTunnelCLIUnits(parsed, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
+	if strings.HasPrefix(parsedCommand, "runtime connections ") {
+		return runConnections(ctx, parsedCommand, flags.Runtime.Connections, stdout)
+	}
 	if parsedCommand == "connect kube-credential" {
 		return runKubeCredential(ctx, flags.Connect.KubeCredential, stdout)
 	}
