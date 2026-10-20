@@ -724,6 +724,69 @@
       ]
     },
     {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_AUTHENTICATION",
+      "slug": "target-discovery-authentication",
+      "class": "unauthenticated",
+      "message": "cloud target credentials are unavailable or rejected",
+      "action": "check the publisher's AWS credential chain"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_CHANGED",
+      "slug": "target-discovery-changed",
+      "class": "conflict",
+      "message": "cloud target resource or CA changed",
+      "action": "prepare a new publication"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_DENIED",
+      "slug": "target-discovery-denied",
+      "class": "forbidden",
+      "message": "cloud target discovery was denied",
+      "action": "allow the selected resource's Describe action on the publisher role"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_INVALID",
+      "slug": "target-discovery-invalid",
+      "class": "invalid",
+      "message": "cloud target selector or protocol is invalid",
+      "action": "check the assigned target declaration"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_METADATA",
+      "slug": "target-discovery-metadata",
+      "class": "invalid",
+      "message": "cloud target metadata or TLS trust is invalid",
+      "action": "check the selected resource before preparing another publication"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_NOT_FOUND",
+      "slug": "target-discovery-not-found",
+      "class": "not_found",
+      "message": "cloud target was not found",
+      "action": "check the declared region and resource identifier"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_NOT_READY",
+      "slug": "target-discovery-not-ready",
+      "class": "unavailable",
+      "message": "cloud target is not ready",
+      "action": "wait for the selected resource to become available"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_STALE",
+      "slug": "target-discovery-stale",
+      "class": "stale",
+      "message": "cloud target discovery is stale",
+      "action": "restore publisher access to AWS before opening new connections"
+    },
+    {
+      "code": "TNL_CLIENT_TARGET_DISCOVERY_UNAVAILABLE",
+      "slug": "target-discovery-unavailable",
+      "class": "unavailable",
+      "message": "cloud target discovery is unavailable",
+      "action": "retry when AWS is reachable"
+    },
+    {
       "code": "TNL_CLIENT_TARGET_TLS_REJECTED",
       "slug": "target-tls-rejected",
       "class": "invalid",

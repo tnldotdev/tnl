@@ -13,8 +13,14 @@ Prometheus exporters, and the OpenTelemetry Prometheus bridge (Apache-2.0),
 developed by the OpenTelemetry Authors. Prometheus metric name translation uses
 otlptranslator (Apache-2.0), developed by the Prometheus Authors.
 
-DNS automation and publisher identity bootstrap (Secrets Manager and STS) use the AWS SDK for Go v2 and Smithy
+DNS automation, publisher identity bootstrap (Secrets Manager and STS), and
+publisher target discovery (EKS, RDS and STS) use the AWS SDK for Go v2 and Smithy
 for Go (Apache-2.0), developed by Amazon Web Services and contributors.
+
+Publisher target TLS includes public Amazon RDS root certificates published by
+Amazon Web Services at https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem.
+The pinned source digest and regional certificate digests are distributed in
+internal/rdsroots/bundles.json in the source tree and embedded in the binary.
 
 The Python ASGI binding directly depends on HTTPX, Starlette, Uvicorn, and
 websockets (BSD-3-Clause). Their distributions provide their license texts.

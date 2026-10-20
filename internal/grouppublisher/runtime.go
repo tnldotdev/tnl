@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/privatepublisher"
 	"github.com/tnldotdev/tnl/internal/publisherruntime"
+	"github.com/tnldotdev/tnl/internal/targetdiscovery"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -235,6 +236,10 @@ func (r Runtime) Serve(ctx context.Context) error {
 }
 
 func retryablePublication(err error) bool {
+	var discovery *targetdiscovery.Error
+	if errors.As(err, &discovery) {
+		return temporary(err)
+	}
 	// an apply or namespace rename can revoke a service grant just after a
 	// successful poll. refresh assignments rather than killing the group task;
 	// revoked group membership still fails at the lease/assignment boundary.
@@ -246,6 +251,15 @@ func retryablePublication(err error) bool {
 }
 
 func temporary(err error) bool {
+	var discovery *targetdiscovery.Error
+	if errors.As(err, &discovery) {
+		switch discovery.Kind {
+		case targetdiscovery.Unavailable, targetdiscovery.Stale, targetdiscovery.NotReady:
+			return true
+		default:
+			return false
+		}
+	}
 	if errors.Is(err, controlclient.ErrUnavailable) || errors.Is(err, controlclient.ErrRateLimited) || errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}

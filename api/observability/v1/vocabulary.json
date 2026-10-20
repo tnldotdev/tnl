@@ -655,6 +655,48 @@
       "dimension_policy": "bounded"
     },
     {
+      "key": "tnl.target_discovery_outcome",
+      "values": [
+        "success",
+        "permission",
+        "authentication",
+        "not_found",
+        "not_ready",
+        "unavailable",
+        "metadata",
+        "changed"
+      ],
+      "semantics": "publisher metadata refresh result",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.target_provider",
+      "values": [
+        "aws"
+      ],
+      "semantics": "publisher target discovery provider",
+      "dimension_policy": "bounded"
+    },
+    {
+      "key": "tnl.target_resource_arn",
+      "semantics": "validated cloud resource ARN; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.target_resource_id",
+      "semantics": "validated cloud resource identity; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.target_type",
+      "values": [
+        "eks",
+        "rds"
+      ],
+      "semantics": "publisher target discovery resource type",
+      "dimension_policy": "bounded"
+    },
+    {
       "key": "tnl.team_id",
       "semantics": "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive",
       "dimension_policy": "scoped"
@@ -2486,6 +2528,57 @@
       "dimensions": [
         "otel.metric.overflow",
         "tnl.event"
+      ]
+    },
+    {
+      "name": "tnl_target_discovery_cache_lookups_total",
+      "semantics": "Publisher cache decisions by fixed type, protocol and health; last_success is bounded transient fallback, never a new success.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.service_protocol",
+        "tnl.state",
+        "tnl.target_provider",
+        "tnl.target_type"
+      ]
+    },
+    {
+      "name": "tnl_target_discovery_duration_seconds",
+      "semantics": "Publisher AWS metadata refresh duration by fixed provider, target type, protocol and result; excludes cache hits.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.service_protocol",
+        "tnl.target_discovery_outcome",
+        "tnl.target_provider",
+        "tnl.target_type"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
+      "name": "tnl_target_discovery_last_success_timestamp_seconds",
+      "semantics": "Last success of the target observed by the most recent lookup in this fixed type/protocol class; not a per-resource freshness guarantee.",
+      "kind": "gauge",
+      "dimensions": [
+        "tnl.service_protocol",
+        "tnl.target_provider",
+        "tnl.target_type"
       ]
     }
   ]

@@ -42,6 +42,8 @@ type RunConfig struct {
 	Identity          authorityv1.PublisherEnrollmentResult
 	PrivateServiceID  string
 	Target            string
+	TargetResolver    TargetResolver
+	resolvedTargetTLS *tls.Config
 	HeartbeatInterval time.Duration
 	Connect           func(context.Context, *Bound, uint8) (SlotSession, error)
 	Ready             func() error
@@ -70,6 +72,18 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if config.Control == nil || config.Access == nil || config.Identity.PrivateServiceId == nil ||
 		config.Identity.Kind != authorityv1.PrivateService || *config.Identity.PrivateServiceId != config.PrivateServiceID {
 		return ErrPrivateStream
+	}
+	var discoveredTLS *tls.Config
+	if config.TargetResolver != nil {
+		var err error
+		config.Target, discoveredTLS, err = config.TargetResolver.ResolveTarget(ctx)
+		if err != nil {
+			return err
+		}
+		if discoveredTLS == nil {
+			return ErrPrivateStream
+		}
+		config.resolvedTargetTLS = discoveredTLS
 	}
 	if _, err := tcptarget.Normalize(config.Target); err != nil {
 		return err
@@ -121,6 +135,14 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			return err
 		}
 	}
+	if config.TargetResolver != nil {
+		// cloud trust comes from the exact assigned selector's publisher-side
+		// discovery, never from a local apply or a saved static CA override.
+		if trust != nil {
+			return ErrPrivateStream
+		}
+		transport.TLS = discoveredTLS
+	}
 	if err := transport.Validate(); err != nil {
 		return err
 	}
@@ -135,7 +157,15 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		config.Healthy = func(ctx context.Context) bool {
 			probe, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
-			return transport.Preflight(probe, config.Target) == nil
+			target, current := config.Target, transport
+			if config.TargetResolver != nil {
+				var err error
+				target, current.TLS, err = config.TargetResolver.ResolveTarget(probe)
+				if err != nil {
+					return false
+				}
+			}
+			return current.Preflight(probe, target) == nil
 		}
 	}
 	var preparation controlv1.PrivateServiceRunPreparation

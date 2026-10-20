@@ -31,6 +31,7 @@ type Prepared struct {
 	*preparedCertificate
 	clock               func() time.Time
 	target              string
+	targetResolver      TargetResolver
 	managedHostname     string
 	managedProtocol     config.ProtocolName
 	managedTargetTLS    *tls.Config
@@ -393,8 +394,19 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.PrivatePublisherConn
 	if header.Direct != nil && (metadata.Destination.Port() != header.Direct.DestinationPort || header.Direct.DestinationPort != b.prepared.managedPort) {
 		return ErrPrivateStream
 	}
+	target, targetTLS := b.prepared.target, b.prepared.managedTargetTLS
+	if b.prepared.targetResolver != nil {
+		target, targetTLS, err = b.prepared.targetResolver.ResolveTarget(ctx)
+		if err != nil {
+			return err
+		}
+		if targetTLS == nil {
+			return ErrPrivateStream
+		}
+	}
 	managed := publisher.ManagedStream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: b.prepared.target, HTTPRequests: b.prepared.managedHTTPRequests,
-		TLS: &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: b.prepared.managedTargetTLS, Visitor: b.prepared.managedVisitor(header)}
+		TLS: &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: b.prepared.managedVisitor(header)}
+	managed.Target = target
 	return managed.Forward(ctx, &replayConn{Conn: stream, reader: replay})
 }
 

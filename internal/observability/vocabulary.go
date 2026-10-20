@@ -149,6 +149,11 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(ServiceKindKey, "scoped", "managed service or public URL; private_service wire value normalizes to managed_service", string(ManagedService), string(PublicURL))
 	add(Component, "bounded", "component performing this work; independent of process role", "control", "authority", "private_ingress", "private_relay", "ingress", "relay", "publisher", "client", "accounts", "collector")
 	add(ServiceProtocol, "bounded", "service application protocol", "http", "postgres", "mysql", "tcp", "kubernetes")
+	add(Key("tnl.target_provider"), "bounded", "publisher target discovery provider", "aws")
+	add(Key("tnl.target_type"), "bounded", "publisher target discovery resource type", "eks", "rds")
+	add(Key("tnl.target_discovery_outcome"), "bounded", "publisher metadata refresh result", "success", "permission", "authentication", "not_found", "not_ready", "unavailable", "metadata", "changed")
+	add(Key("tnl.target_resource_arn"), "trace_log", "validated cloud resource ARN; prohibited as a metric dimension")
+	add(Key("tnl.target_resource_id"), "trace_log", "validated cloud resource identity; prohibited as a metric dimension")
 	for _, k := range []Key{Transport, TransportPreference} {
 		add(k, "bounded", "selected transport (omit when not selected), or initial preference", "quic", "tls-tcp")
 	}

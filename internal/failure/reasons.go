@@ -6,6 +6,15 @@ import (
 )
 
 const (
+	TargetDiscoveryInvalid              Reason = "TNL_CLIENT_TARGET_DISCOVERY_INVALID"
+	TargetDiscoveryDenied               Reason = "TNL_CLIENT_TARGET_DISCOVERY_DENIED"
+	TargetDiscoveryAuthentication       Reason = "TNL_CLIENT_TARGET_DISCOVERY_AUTHENTICATION"
+	TargetDiscoveryNotFound             Reason = "TNL_CLIENT_TARGET_DISCOVERY_NOT_FOUND"
+	TargetDiscoveryNotReady             Reason = "TNL_CLIENT_TARGET_DISCOVERY_NOT_READY"
+	TargetDiscoveryUnavailable          Reason = "TNL_CLIENT_TARGET_DISCOVERY_UNAVAILABLE"
+	TargetDiscoveryMetadata             Reason = "TNL_CLIENT_TARGET_DISCOVERY_METADATA"
+	TargetDiscoveryChanged              Reason = "TNL_CLIENT_TARGET_DISCOVERY_CHANGED"
+	TargetDiscoveryStale                Reason = "TNL_CLIENT_TARGET_DISCOVERY_STALE"
 	AWSBootstrapInvalid                 Reason = "TNL_CLIENT_AWS_BOOTSTRAP_INVALID"
 	AWSBootstrapScope                   Reason = "TNL_CLIENT_AWS_BOOTSTRAP_SCOPE"
 	AWSBootstrapStateLost               Reason = "TNL_CLIENT_AWS_BOOTSTRAP_STATE_LOST"
@@ -179,6 +188,15 @@ var definitions = map[Reason]Definition{
 	AWSBootstrapAuthentication:         {Class: Unauthenticated, Message: "AWS credentials are missing, expired, or rejected", Action: "renew the selected AWS credentials and retry bootstrap", Retry: RetryAfterChange},
 	AWSBootstrapThrottled:              {Class: Unavailable, Message: "AWS throttled publisher bootstrap", Action: "wait before retrying the same deployment", Retry: RetryLater},
 	AWSBootstrapUnavailable:            {Class: Unavailable, Message: "AWS publisher bootstrap could not complete its request", Action: "check network access and AWS service availability, then retry the same deployment", Retry: RetryLater},
+	TargetDiscoveryInvalid:             {Class: Invalid, Message: "cloud target selector or protocol is invalid", Action: "check the assigned target declaration", Retry: RetryAfterChange},
+	TargetDiscoveryDenied:              {Class: Forbidden, Message: "cloud target discovery was denied", Action: "allow the selected resource's Describe action on the publisher role", Retry: RetryAfterChange},
+	TargetDiscoveryAuthentication:      {Class: Unauthenticated, Message: "cloud target credentials are unavailable or rejected", Action: "check the publisher's AWS credential chain", Retry: RetryAfterChange},
+	TargetDiscoveryNotFound:            {Class: NotFound, Message: "cloud target was not found", Action: "check the declared region and resource identifier", Retry: RetryAfterChange},
+	TargetDiscoveryNotReady:            {Class: Unavailable, Message: "cloud target is not ready", Action: "wait for the selected resource to become available", Retry: RetryLater},
+	TargetDiscoveryUnavailable:         {Class: Unavailable, Message: "cloud target discovery is unavailable", Action: "retry when AWS is reachable", Retry: RetryLater},
+	TargetDiscoveryMetadata:            {Class: Invalid, Message: "cloud target metadata or TLS trust is invalid", Action: "check the selected resource before preparing another publication", Retry: RetryAfterChange},
+	TargetDiscoveryChanged:             {Class: Conflict, Message: "cloud target resource or CA changed", Action: "prepare a new publication", Retry: RetryAfterChange},
+	TargetDiscoveryStale:               {Class: Stale, Message: "cloud target discovery is stale", Action: "restore publisher access to AWS before opening new connections", Retry: RetryLater},
 	TargetTLSRejected: {
 		Class: Invalid, Message: "target TLS could not be verified or negotiated",
 		Action: "check the target protocol, target.tls.server_name, and target.tls.ca_file, then retry", Retry: RetryAfterChange,

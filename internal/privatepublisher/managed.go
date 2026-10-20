@@ -46,6 +46,7 @@ func newManagedPrepared(preparation controlv1.PrivateServiceRunPreparation, appr
 	}
 	prepared := &Prepared{Preparation: preparation, target: target, managedHostname: approved.ManagedTls.Hostname, managedPort: uint16(approved.ManagedTls.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
 	prepared.managedPublic = approved.ManagedTls.Public
+	prepared.targetResolver = cfg.TargetResolver
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 		prepared.managedHTTPRequests, err = publisher.NewManagedHTTPRequestLimits(approved.HttpLimits)
 		if err != nil {
@@ -61,6 +62,15 @@ func newManagedPrepared(preparation controlv1.PrivateServiceRunPreparation, appr
 		if err != nil {
 			return nil, err
 		}
+	}
+	if cfg.TargetResolver != nil {
+		if trust != nil {
+			return nil, ErrPrivateStream
+		}
+		if cfg.resolvedTargetTLS == nil {
+			return nil, ErrPrivateStream
+		}
+		prepared.managedTargetTLS = cfg.resolvedTargetTLS.Clone()
 	}
 	return prepared, nil
 }

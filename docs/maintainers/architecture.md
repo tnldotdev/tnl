@@ -130,6 +130,13 @@ and a second TLS `mode` are rejected on the fresh baseline. The protocol default
 to `http`; `tcp` carries opaque application bytes. Managed database clients
 verify the service's WebPKI hostname independently of the target certificate.
 
+Assigned EKS and RDS selectors are resolved by the publisher through
+`internal/targetdiscovery`, using its normal AWS credential chain and network.
+The discovery adapter pins resource identity and CA trust for a publication,
+bounds metadata freshness, and captures DNS endpoints only for new target
+connections. See [publisher AWS target discovery](aws-target-discovery.md) for
+the assignment adapter, root catalog, tests and live qualification boundary.
+
 The ingress routing table retains the relay process identity and the last
 advertised lease deadline. A relay can renew its lease without changing the
 public URL projection, so ingress does not treat that copied deadline as final.

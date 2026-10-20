@@ -24,6 +24,9 @@ import (
 // Metrics owns one process's OTel instruments, providers, and scrape exporter.
 type Metrics struct {
 	publisherData               publisherData
+	targetDiscovery             *histogram
+	targetDiscoveryCache        *counter
+	targetDiscoverySuccess      *gauge
 	relayBytes                  *counter
 	relayCompletions            *counter
 	meter                       metric.Meter
@@ -118,6 +121,9 @@ func (metrics *Metrics) initInstruments(role string) {
 	m := metrics.meter
 	metrics.initPublisherReadiness()
 	metrics.initPublisherData()
+	metrics.targetDiscovery = newHistogram(m, "tnl_target_discovery_duration_seconds", "Publisher AWS metadata refresh duration by fixed provider, target type, protocol and result; excludes cache hits.", DurationBucketsSeconds(), "tnl.target_provider", "tnl.target_type", string(ServiceProtocol), "tnl.target_discovery_outcome")
+	metrics.targetDiscoveryCache = newCounter(m, "tnl_target_discovery_cache_lookups_total", "Publisher cache decisions by fixed type, protocol and health; last_success is bounded transient fallback, never a new success.", "tnl.target_provider", "tnl.target_type", string(ServiceProtocol), "state")
+	metrics.targetDiscoverySuccess = newGauge(m, "tnl_target_discovery_last_success_timestamp_seconds", "Last success of the target observed by the most recent lookup in this fixed type/protocol class; not a per-resource freshness guarantee.", "tnl.target_provider", "tnl.target_type", string(ServiceProtocol))
 	metrics.publisherOperations = newHistogram(m, "tnl_publisher_operation_duration_seconds", "Finite publisher operations by authenticated identity and bounded outcome.", DurationBucketsSeconds(), "operation", "outcome", string(Component), string(ServiceProtocol), string(AccessPath), string(Exposure), string(TLSLeg), string(Transport), string(TransportPreference), string(ConnectionSlot)).instrument
 	describe(m, "tnl_publisher_lease_expiration_timestamp_seconds", "Last confirmed control lease; failed refresh never extends it.", "gauge", nil, string(Component), string(ServiceProtocol), string(AccessPath), string(Exposure))
 	describe(m, "tnl_publisher_readiness_check_timestamp_seconds", "Most recent readiness decision; timestamp requires freshness checks.", "gauge", nil, "state", string(Component), string(ServiceProtocol), string(AccessPath), string(Exposure))
