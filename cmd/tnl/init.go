@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"golang.org/x/term"
 )
 
@@ -105,17 +106,19 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if err := runGenerate(ctx, cli{ConfigPath: plan.configPath, Generate: generateCommand{OutputDir: ".tnl/generated"}}, io.Discard); err != nil {
 		return err
 	}
+	var typeUpdates []string
 	if plan.generatedService || packageTypeConfigExists(plan.root) {
-		typeActions, err := projectTypeIncludeActions(projectConfiguration{
+		types, err := wireProjectTypeIncludes(projectConfiguration{
 			Project: projectconfig.Project{Root: plan.root},
 		})
 		if err != nil {
 			return err
 		}
-		plan.actions = append(plan.actions, typeActions...)
+		plan.actions = append(plan.actions, types.actions...)
+		typeUpdates = types.updated
 	}
 	state := "already configured"
-	if created || installed || frameworkUpdated || serverUpdated || gitignoreUpdated {
+	if created || installed || frameworkUpdated || serverUpdated || gitignoreUpdated || len(typeUpdates) != 0 {
 		state = "configured"
 	}
 	if len(plan.actions) != 0 {
@@ -139,6 +142,10 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if gitignoreUpdated {
 		fields = append(fields, clioutput.Field{Label: "updated", Value: filepath.Join(plan.root, ".gitignore")})
 	}
+	for _, path := range typeUpdates {
+		fields = append(fields, clioutput.Field{Label: "updated", Value: path})
+	}
+	fields = append(fields, clioutput.Field{Label: "types", Value: filepath.Join(plan.root, projectmeta.GeneratedDirectoryName, projectmeta.DeclarationsName)})
 	fields = append(fields, clioutput.Field{Label: "ignore", Value: tnlLocalIgnoreRule})
 	blocks := []clioutput.Block{clioutput.Fields(fields...)}
 	for _, action := range plan.actions {

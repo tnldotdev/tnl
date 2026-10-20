@@ -3,7 +3,7 @@
 import { tnl } from "@tnldotdev/tnl";
 
 export default function Page() {
-  const metadata = tnl.services.api?.metadata;
+  const metadata = tnl.services.api;
   return (
     <main>
       <h1>Next.js fixture</h1>

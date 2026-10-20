@@ -1056,6 +1056,9 @@ export interface CI {
    * @maxItems 32
    */
   services: [string, ...string[]];
+  /**
+   * Maximum GitHub-hosted run duration; defaults to 1h and must be positive and at most 6h.
+   */
   maxDuration?: TnlRatePeriod;
 }
 

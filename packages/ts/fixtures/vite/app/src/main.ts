@@ -5,7 +5,7 @@ import { tnl } from "@tnldotdev/tnl";
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (app !== null) {
-  const metadata = tnl.services.api?.metadata;
+  const metadata = tnl.services.api;
   app.textContent = [
     "Vite fixture",
     `url:${metadata?.protocol === "http" ? metadata.url : undefined}`,

@@ -38,7 +38,7 @@ describe("root runtime", () => {
     vi.stubEnv("TNL_PROJECT_RUNTIME", JSON.stringify({ ...project, dev: running }));
     vi.resetModules();
     const runtime = await import("@tnldotdev/tnl");
-    expect(runtime.tnl.services.api?.metadata).toEqual(project.services.api);
+    expect(runtime.tnl.services.api).toEqual(project.services.api);
     expect(runtime.tnl.dev).toBe(running);
     expect(runtime.tnl.prepare).toBeTypeOf("function");
   });
@@ -104,6 +104,53 @@ describe("root runtime", () => {
     expect(Object.getPrototypeOf(runtime?.services)).toBeNull();
     expect(runtime?.services.constructor).toBeUndefined();
   });
+
+  test.each(["http", "postgres", "mysql", "tcp", "kubernetes"] as const)(
+    "exposes %s runtime endpoint fields directly with current exposure",
+    async (protocol) => {
+      const service = {
+        protocol,
+        hostname: "database.member.example",
+        namespace: "member.example",
+        port: 15432,
+        public: protocol !== "http",
+        ...(["http", "kubernetes"].includes(protocol)
+          ? { url: "https://database.member.example:15432" }
+          : {}),
+      };
+      vi.stubEnv(
+        "TNL_PROJECT_RUNTIME",
+        JSON.stringify({
+          namespace: "member.example",
+          services: { database: service },
+          dev: false,
+        }),
+      );
+      vi.resetModules();
+      const runtime = await import("@tnldotdev/tnl");
+      expect(runtime.tnl.services.database).toEqual(service);
+      expect(runtime.tnl.services.database?.hostname).toBe(service.hostname);
+      expect(runtime.tnl.services.database?.port).toBe(15432);
+      expect(runtime.tnl.services.database?.protocol).toBe(protocol);
+      expect(runtime.tnl.services.database?.public).toBe(service.public);
+      expect(runtime.tnl.services.database).not.toHaveProperty("metadata");
+      expect(runtime.tnl.services.database).not.toHaveProperty("ssl");
+    },
+  );
+
+  test.each(["hostname", "port", "protocol", "public"])(
+    "rejects missing %s runtime values with an owned diagnostic",
+    async (field) => {
+      const service: Record<string, unknown> = { ...project.services.api };
+      delete service[field];
+      vi.stubEnv(
+        "TNL_PROJECT_RUNTIME",
+        JSON.stringify({ ...project, services: { api: service }, dev: false }),
+      );
+      vi.resetModules();
+      await expect(import("@tnldotdev/tnl")).rejects.toMatchObject({ code: "sdk.runtime_invalid" });
+    },
+  );
 
   test("missing preparation and missing service metadata have owned diagnostics", async () => {
     vi.stubEnv("TNL_PROJECT_RUNTIME", undefined);

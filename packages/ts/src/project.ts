@@ -22,16 +22,26 @@ export interface TnlProtocolRegistry {
 }
 
 /** native TLS options exist only in the result of a node connection method. */
+export interface TnlNativeTLSOptions {
+  servername: string;
+  rejectUnauthorized: true;
+  /** omitted by default so native clients use webpki server roots. */
+  ca?: string;
+  /** supplied by the native sdk only when the selected admission needs mtls. */
+  cert?: string;
+  key?: string;
+}
+
 export interface TnlConnectionRegistry {
   postgres: {
     host: string;
     port: number;
-    ssl: { ca: string; cert: string; key: string; rejectUnauthorized: true };
+    ssl: TnlNativeTLSOptions;
   };
   mysql: {
     host: string;
     port: number;
-    ssl: { ca: string; cert: string; key: string; rejectUnauthorized: true };
+    ssl: TnlNativeTLSOptions;
   };
   tcp: { host: string; port: number };
   http: { url: `https://${string}`; fetch: typeof fetch };
@@ -61,10 +71,7 @@ type HTTPFields<Service> = Service extends { http?: infer HTTP }
 export type TnlServiceMetadata<Service> = Service extends unknown
   ? TnlProtocolRegistry[Protocol<Service>] & HTTPFields<Service>
   : never;
-export type TnlService<Service> =
-  NonNullable<Service> extends unknown
-    ? { metadata: TnlServiceMetadata<NonNullable<Service>> }
-    : never;
+export type TnlService<Service> = TnlServiceMetadata<NonNullable<Service>>;
 type Services<Config> = NonNullable<Field<Config, "services", {}>>;
 export type TnlStableServiceNames<Config> = Config extends unknown
   ? string extends keyof Services<Config>

@@ -34,6 +34,11 @@ func main() {
 		property.Const = config.DocumentVersion
 		property.Description = "Configuration format version."
 	}
+	if ci, ok := schema.Definitions["CI"]; ok {
+		if duration, ok := ci.Properties.Get("max_duration"); ok {
+			duration.Default = config.DefaultCIMaxDuration.String()
+		}
+	}
 	data, err := json.MarshalIndent(schema, "", "  ")
 	if err != nil {
 		fatal(err)

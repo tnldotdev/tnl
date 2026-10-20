@@ -4,11 +4,11 @@ import type { ProjectRuntime, ProjectServiceMetadata } from "./runtime.js";
 /** missing metadata is a preparation failure, never an invented endpoint. */
 export function serviceMetadata(
   runtime: ProjectRuntime | undefined,
-): Record<string, { metadata: ProjectServiceMetadata }> {
+): Record<string, ProjectServiceMetadata> {
   if (runtime === undefined) throw new TnlError("sdk.service_unprepared");
-  const services: Record<string, { metadata: ProjectServiceMetadata }> = Object.create(null);
+  const services: Record<string, ProjectServiceMetadata> = Object.create(null);
   for (const [name, metadata] of Object.entries(runtime.services)) {
-    if (metadata !== undefined) services[name] = Object.freeze({ metadata });
+    if (metadata !== undefined) services[name] = metadata;
   }
   return new Proxy(Object.freeze(services), {
     get(target, key, receiver): unknown {

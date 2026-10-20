@@ -70,19 +70,19 @@ func TestProjectTypeIncludesUseReferencedProjectDirectories(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nested, "tsconfig.json"), nestedSource, 0600); err != nil {
 		t.Fatal(err)
 	}
-	actions, err := projectTypeIncludeActions(projectConfiguration{Project: projectconfig.Project{Root: root}})
-	if err != nil || len(actions) != 1 || !strings.Contains(actions[0], "../../.tnl/generated/project.d.ts") || !strings.Contains(actions[0], filepath.Join(nested, "tsconfig.json")) {
-		t.Fatalf("referenced action = %v %v", actions, err)
+	result, err := wireProjectTypeIncludes(projectConfiguration{Project: projectconfig.Project{Root: root}})
+	if err != nil || len(result.actions) != 0 || len(result.updated) != 1 || result.updated[0] != filepath.Join(nested, "tsconfig.json") {
+		t.Fatalf("referenced include = %v %v", result, err)
 	}
-	for name, before := range map[string][]byte{filepath.Join(root, "tsconfig.json"): rootSource, filepath.Join(nested, "tsconfig.json"): nestedSource} {
-		after, err := os.ReadFile(name)
-		if err != nil || !bytes.Equal(before, after) {
-			t.Fatal("type include action rewrote custom config", err)
-		}
+	if after, err := os.ReadFile(filepath.Join(root, "tsconfig.json")); err != nil || !bytes.Equal(rootSource, after) {
+		t.Fatal("solution references changed", err)
+	}
+	if after, err := os.ReadFile(filepath.Join(nested, "tsconfig.json")); err != nil || !bytes.Contains(after, []byte("../../.tnl/generated/project.d.ts")) || !bytes.Contains(after, []byte(`"src"`)) {
+		t.Fatalf("referenced include = %s %v", after, err)
 	}
 }
 
-func TestProjectTypeIncludeActionsPreserveConfiguration(t *testing.T) {
+func TestProjectTypeIncludesPreserveConfiguration(t *testing.T) {
 	root := t.TempDir()
 	nested := filepath.Join(root, "apps", "api")
 	if err := os.MkdirAll(nested, 0o700); err != nil {
@@ -98,26 +98,27 @@ func TestProjectTypeIncludeActionsPreserveConfiguration(t *testing.T) {
 	for _, test := range []struct {
 		name, source string
 		wantAction   bool
+		wantUpdate   bool
 	}{
-		{"missing_include", "{\n  \"include\": [\"src/**/*.ts\"]\n}\n", true},
-		{"included", "{\n  \"include\": [\"src/**/*.ts\", \".tnl/generated/project.d.ts\"]\n}\n", false},
-		{"jsonc", "{\n  // preserve this JSONC file\n  \"include\": [\"src\"]\n}\n", true},
-		{"jsonc_included", "{\n  // preserve comments and trailing commas\n  \"include\": [\"src\", \".tnl/generated/project.d.ts\",],\n}\n", false},
-		{"duplicate_keys", "{\n  \"include\": [\"src\"],\n  \"include\": [\"generated\"]\n}\n", true},
+		{"missing_include", "{\n  \"include\": [\"src/**/*.ts\"]\n}\n", false, true},
+		{"included", "{\n  \"include\": [\"src/**/*.ts\", \".tnl/generated/project.d.ts\"]\n}\n", false, false},
+		{"jsonc", "{\n  // preserve this JSONC file\n  \"include\": [\"src\"]\n}\n", false, true},
+		{"jsonc_included", "{\n  // preserve comments and trailing commas\n  \"include\": [\"src\", \".tnl/generated/project.d.ts\",],\n}\n", false, false},
+		{"duplicate_keys", "{\n  \"include\": [\"src\"],\n  \"include\": [\"generated\"]\n}\n", true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := os.WriteFile(path, []byte(test.source), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			actions, err := projectTypeIncludeActions(project)
+			result, err := wireProjectTypeIncludes(project)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if test.wantAction && (len(actions) != 1 || !strings.Contains(actions[0], `".tnl/generated/project.d.ts"`) || !strings.Contains(actions[0], path)) || !test.wantAction && len(actions) != 0 {
-				t.Fatalf("actions = %v", actions)
+			if test.wantAction && (len(result.actions) != 1 || !strings.Contains(result.actions[0], `".tnl/generated/project.d.ts"`) || !strings.Contains(result.actions[0], path)) || !test.wantAction && len(result.actions) != 0 || (len(result.updated) != 0) != test.wantUpdate {
+				t.Fatalf("include result = %v", result)
 			}
 			after, err := os.ReadFile(path)
-			if err != nil || string(after) != test.source {
+			if err != nil || !test.wantUpdate && string(after) != test.source || test.wantUpdate && !bytes.Contains(after, []byte(".tnl/generated/project.d.ts")) {
 				t.Fatalf("tsconfig changed: %s, %v", after, err)
 			}
 			if got, err := os.ReadFile(nestedPath); err != nil || !bytes.Equal(got, nestedSource) {
@@ -127,22 +128,22 @@ func TestProjectTypeIncludeActionsPreserveConfiguration(t *testing.T) {
 	}
 }
 
-func TestProjectTypeIncludeActionUsesRootWithoutNamedServices(t *testing.T) {
+func TestProjectTypeIncludeWiresRootWithoutNamedServices(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "tsconfig.json")
 	source := []byte("{\n  \"include\": [\"src/**/*.ts\"]\n}\n")
 	if err := os.WriteFile(path, source, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	actions, err := projectTypeIncludeActions(projectConfiguration{Project: projectconfig.Project{Root: root}})
+	result, err := wireProjectTypeIncludes(projectConfiguration{Project: projectconfig.Project{Root: root}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 1 || !strings.Contains(actions[0], `".tnl/generated/project.d.ts"`) {
-		t.Fatalf("actions = %v", actions)
+	if len(result.actions) != 0 || len(result.updated) != 1 || result.updated[0] != path {
+		t.Fatalf("include result = %v", result)
 	}
 	data, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(data, source) {
+	if err != nil || !bytes.Contains(data, []byte(".tnl/generated/project.d.ts")) || !bytes.Contains(data, []byte("src/**/*.ts")) {
 		t.Fatalf("tsconfig changed: %s, %v", data, err)
 	}
 }
@@ -159,12 +160,12 @@ func TestProjectTypeIncludeActionDoesNotInferNestedServiceDirectory(t *testing.T
 		t.Fatal(err)
 	}
 	project := projectConfiguration{Project: projectconfig.Project{Root: root, Config: config.TNL{Services: config.Services{"web": {}}}}}
-	actions, err := projectTypeIncludeActions(project)
+	result, err := wireProjectTypeIncludes(project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 1 || !strings.Contains(actions[0], filepath.Join(root, "tsconfig.json")) || !strings.Contains(actions[0], `".tnl/generated/project.d.ts"`) || strings.Contains(actions[0], nestedPath) {
-		t.Fatalf("actions = %v", actions)
+	if len(result.actions) != 1 || !strings.Contains(result.actions[0], filepath.Join(root, "tsconfig.json")) || !strings.Contains(result.actions[0], `".tnl/generated/project.d.ts"`) || strings.Contains(result.actions[0], nestedPath) {
+		t.Fatalf("actions = %v", result.actions)
 	}
 	if got, err := os.ReadFile(nestedPath); err != nil || !bytes.Equal(got, source) {
 		t.Fatalf("nested tsconfig changed: %s, %v", got, err)
@@ -210,7 +211,7 @@ func TestInitGitignoreGroupsNewRuleAndPreservesExistingRules(t *testing.T) {
 	}
 }
 
-func TestInitReportsTypeIncludeForExistingProjectConfig(t *testing.T) {
+func TestInitWiresTypeIncludeForExistingProjectConfig(t *testing.T) {
 	root := copyInitFixture(t, "next")
 	if err := os.WriteFile(filepath.Join(root, "tnl.yml"), []byte("version: 1\ntnl: {}\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -226,7 +227,7 @@ func TestInitReportsTypeIncludeForExistingProjectConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(got, source) || !strings.Contains(output.String(), `.tnl/generated/project.d.ts`) || !strings.Contains(output.String(), "ignore") {
+	if err != nil || !bytes.Contains(got, []byte("app/**/*.tsx")) || !bytes.Contains(got, []byte(".tnl/generated/project.d.ts")) || !strings.Contains(output.String(), `.tnl/generated/project.d.ts`) || !strings.Contains(output.String(), "ignore") {
 		t.Fatalf("tsconfig = %s, output = %s, err = %v", got, output.String(), err)
 	}
 }

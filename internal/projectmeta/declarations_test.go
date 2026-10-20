@@ -46,20 +46,24 @@ export default defineConfig(({worktree}) => ({
   ci: { deploy: { github: { workflow: ".github/workflows/deploy.yml", ref: "refs/heads/main", events: ["push"] }, services: ["db"] } },
 }));`
 			usage := `import { tnl } from "@tnldotdev/tnl";
-tnl.services.db.metadata.protocol satisfies "postgres" | "mysql";
-tnl.services.web.metadata.paths["/api"].service satisfies "api";
+tnl.services.db.protocol satisfies "postgres" | "mysql";
+tnl.services.web.paths["/api"].service satisfies "api";
 tnl.aliases!.review.service satisfies "web";
 tnl.webhooks!.stripe.path satisfies "/hooks/stripe";
 tnl.webhooks!.stripe.methods satisfies readonly ["POST"];
-tnl.services.db.metadata.port satisfies number;
+tnl.services.db.port satisfies number;
 // @ts-expect-error endpoints are runtime values, not literals from this checkout.
-tnl.services.db.metadata.port satisfies 5432;
+tnl.services.db.port satisfies 5432;
 // @ts-expect-error unknown configured service.
 tnl.connect("missing");
 const connection = await tnl.connect("db");
-connection.ssl.key satisfies string;
+connection.ssl.servername satisfies string;
+connection.ssl.rejectUnauthorized satisfies true;
+connection.ssl.key satisfies string | undefined;
+connection.ssl.ca satisfies string | undefined;
+connection.ssl.cert satisfies string | undefined;
 // @ts-expect-error optional factory services remain optional.
-tnl.services.worker.metadata;
+tnl.services.worker.protocol;
 `
 			if format == "yaml" {
 				path = filepath.Join(root, "tnl.yml")
@@ -70,10 +74,10 @@ tnl.services.worker.metadata;
 					t.Fatal(err)
 				}
 				usage = `import { tnl } from "@tnldotdev/tnl";
-tnl.services.db.metadata.protocol satisfies "postgres";
-tnl.services.web.metadata.paths["/api"].service satisfies "api";
+tnl.services.db.protocol satisfies "postgres";
+tnl.services.web.paths["/api"].service satisfies "api";
 // @ts-expect-error no HTTP URL on database metadata.
-tnl.services.db.metadata.url;
+tnl.services.db.url;
 // @ts-expect-error no unknown service.
 tnl.services.unknown;
 `

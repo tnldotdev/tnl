@@ -3,6 +3,9 @@ Copyright 2026 Chase Adams
 
 This product includes software developed for the tnl project.
 
+Comment-preserving tsconfig edits use HuJSON (BSD-3-Clause), developed by
+Tailscale Inc. and contributors.
+
 Third-party license terms and notices are provided in THIRD_PARTY_LICENSES.txt.
 
 Operational metrics, tracing, and logs use OpenTelemetry Go, its OTLP/HTTP and

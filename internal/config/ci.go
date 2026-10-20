@@ -15,7 +15,7 @@ import (
 type CI struct {
 	GitHub      CIGitHub  `json:"github" yaml:"github" jsonschema:"required"`
 	Services    []string  `json:"services" yaml:"services" jsonschema:"required,minItems=1,maxItems=32,uniqueItems=true"`
-	MaxDuration *Duration `json:"max_duration,omitempty" yaml:"max_duration,omitempty"`
+	MaxDuration *Duration `json:"max_duration,omitempty" yaml:"max_duration,omitempty" jsonschema_description:"Maximum GitHub-hosted run duration; defaults to 1h and must be positive and at most 6h."`
 }
 
 type CIGitHub struct {
@@ -25,6 +25,19 @@ type CIGitHub struct {
 	Ref              string   `json:"ref" yaml:"ref" jsonschema:"required" jsonschema_description:"Exact refs/heads/ or refs/tags/ reference."`
 	Events           []string `json:"events" yaml:"events" jsonschema:"required,minItems=1,uniqueItems=true"`
 	ReusableWorkflow *string  `json:"reusable_workflow,omitempty" yaml:"reusable_workflow,omitempty" jsonschema_description:"Exact owner/repository/.github/workflows/file@ref constraint."`
+}
+
+const (
+	DefaultCIMaxDuration = time.Hour
+	MaxCIMaxDuration     = 6 * time.Hour
+)
+
+// DurationLimit applies the shared default without changing the declaration.
+func (policy CI) DurationLimit() time.Duration {
+	if policy.MaxDuration == nil {
+		return DefaultCIMaxDuration
+	}
+	return policy.MaxDuration.Value()
 }
 
 var githubRepository = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -79,8 +92,8 @@ func validateCI(configuration TNL) error {
 			}
 			seen[service] = true
 		}
-		if policy.MaxDuration != nil && (policy.MaxDuration.Value() <= 0 || policy.MaxDuration.Value() > 24*time.Hour) {
-			return fmt.Errorf("ci.%s.max_duration must be positive and at most 24h", name)
+		if policy.DurationLimit() <= 0 || policy.DurationLimit() > MaxCIMaxDuration {
+			return fmt.Errorf("ci.%s.max_duration must be positive and at most 6h", name)
 		}
 	}
 	return nil

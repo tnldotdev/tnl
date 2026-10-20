@@ -15,6 +15,16 @@ func TestCloudSelectorsAndCIReferences(t *testing.T) {
 	if err := ValidateTNL(configuration); err != nil {
 		t.Fatal(err)
 	}
+	if configuration.CI["deploy"].DurationLimit() != time.Hour || configuration.CI["deploy"].MaxDuration != nil {
+		t.Fatal("CI default must be 1h without changing the declaration")
+	}
+	policy := configuration.CI["deploy"]
+	limit := Duration(6 * time.Hour)
+	policy.MaxDuration = &limit
+	configuration.CI["deploy"] = policy
+	if err := ValidateTNL(configuration); err != nil {
+		t.Fatal("6h must be allowed", err)
+	}
 	for _, invalid := range []struct {
 		name   string
 		mutate func(*TNL)
@@ -29,7 +39,7 @@ func TestCloudSelectorsAndCIReferences(t *testing.T) {
 		{"event unsupported", func(c *TNL) { p := c.CI["deploy"]; p.GitHub.Events = []string{"anything"}; c.CI["deploy"] = p }},
 		{"duration", func(c *TNL) {
 			p := c.CI["deploy"]
-			duration := Duration(25 * time.Hour)
+			duration := Duration(6*time.Hour + time.Nanosecond)
 			p.MaxDuration = &duration
 			c.CI["deploy"] = p
 		}},
