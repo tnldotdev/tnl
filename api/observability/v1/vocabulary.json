@@ -129,6 +129,15 @@
         "TNL_CLIENT_SHARE_INPUT_INVALID",
         "TNL_CLIENT_STATE_LOCKED",
         "TNL_CLIENT_STATE_UNAVAILABLE",
+        "TNL_CLIENT_TARGET_DISCOVERY_AUTHENTICATION",
+        "TNL_CLIENT_TARGET_DISCOVERY_CHANGED",
+        "TNL_CLIENT_TARGET_DISCOVERY_DENIED",
+        "TNL_CLIENT_TARGET_DISCOVERY_INVALID",
+        "TNL_CLIENT_TARGET_DISCOVERY_METADATA",
+        "TNL_CLIENT_TARGET_DISCOVERY_NOT_FOUND",
+        "TNL_CLIENT_TARGET_DISCOVERY_NOT_READY",
+        "TNL_CLIENT_TARGET_DISCOVERY_STALE",
+        "TNL_CLIENT_TARGET_DISCOVERY_UNAVAILABLE",
         "TNL_CLIENT_TARGET_TLS_REJECTED",
         "TNL_CLIENT_TARGET_UNAVAILABLE",
         "TNL_CLIENT_TEAM_NOT_FOUND",
@@ -2536,6 +2545,7 @@
       "semantics": "Publisher cache decisions by fixed type, protocol and health; last_success is bounded transient fallback, never a new success.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.service_protocol",
         "tnl.state",
         "tnl.target_provider",
@@ -2547,6 +2557,7 @@
       "semantics": "Publisher AWS metadata refresh duration by fixed provider, target type, protocol and result; excludes cache hits.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.service_protocol",
         "tnl.target_discovery_outcome",
         "tnl.target_provider",
@@ -2577,6 +2588,7 @@
       "semantics": "Last success of the target observed by the most recent lookup in this fixed type/protocol class; not a per-resource freshness guarantee.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.service_protocol",
         "tnl.target_provider",
         "tnl.target_type"
