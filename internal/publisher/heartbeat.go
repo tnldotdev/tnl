@@ -42,7 +42,6 @@ func heartbeatSessionAfterUpdate(
 		if err != nil || ctx.Err() != nil {
 			return err
 		}
-		expiresAt = response.PublishRun.ExpiresAt
 		if observedHeartbeat {
 			for _, observe := range observeVisitorPolicy {
 				if observe != nil {
@@ -65,6 +64,10 @@ func heartbeatSessionAfterUpdate(
 				}
 				return err
 			}
+		}
+		if observedHeartbeat {
+			expiresAt = response.PublishRun.ExpiresAt
+			observability.PublisherLease(ctx, expiresAt)
 		}
 	}
 }
@@ -104,7 +107,6 @@ func heartbeatResponseOnce(
 	callTimedOut := errors.Is(err, context.DeadlineExceeded) && errors.Is(callCtx.Err(), context.DeadlineExceeded)
 	cancel()
 	if err == nil {
-		observability.PublisherLease(ctx, response.PublishRun.ExpiresAt)
 		return response, true, nil
 	}
 	if ctx.Err() != nil {

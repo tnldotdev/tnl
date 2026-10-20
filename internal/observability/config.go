@@ -54,6 +54,9 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 		c.Disabled = true
 		return c, nil
 	}
+	if err := validateSDKEnvironment(getenv); err != nil {
+		return Config{}, err
+	}
 	var err error
 	c.Metrics, err = signalConfig(getenv, "METRICS", "metrics")
 	if err != nil {
@@ -147,6 +150,78 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// validate every exporter input the pinned SDK parses, including generic values
+// overridden by per-signal values. explicit options do not suppress that parsing.
+// no process environment or global OTel handler is changed during construction.
+func validateSDKEnvironment(getenv func(string) string) error {
+	if err := validateSDKProviderEnvironment(getenv); err != nil {
+		return err
+	}
+	const virtual = "OTEL_EXPORTER_OTLP_TRACES_"
+	for _, prefix := range []string{"OTEL_EXPORTER_OTLP_", "OTEL_EXPORTER_OTLP_METRICS_", virtual, "OTEL_EXPORTER_OTLP_LOGS_"} {
+		_, err := signalConfig(func(key string) string {
+			if !strings.HasPrefix(key, virtual) {
+				return ""
+			}
+			suffix := strings.TrimPrefix(key, virtual)
+			value := getenv(prefix + suffix)
+			if suffix == "ENDPOINT" && value == "" {
+				return "https://validation.invalid"
+			}
+			return value
+		}, "TRACES", "traces")
+		if err != nil {
+			if typed, ok := failure.Of(err); ok {
+				return settingError(prefix + strings.TrimPrefix(string(typed.Setting()), virtual))
+			}
+			return err
+		}
+	}
+	for key, allowed := range map[string]string{
+		"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE":        "cumulative",
+		"OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION": "explicit_bucket_histogram",
+	} {
+		if value := getenv(key); value != "" && !strings.EqualFold(value, allowed) {
+			return settingError(key)
+		}
+	}
+	return nil
+}
+
+// provider constructors also read these defaults before their explicit options.
+// validate their syntax even though tnl owns the effective limits and selectors.
+func validateSDKProviderEnvironment(getenv func(string) string) error {
+	for _, key := range []string{
+		"OTEL_GO_X_CARDINALITY_LIMIT", "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT", "OTEL_ATTRIBUTE_COUNT_LIMIT",
+		"OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT", "OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT", "OTEL_SPAN_EVENT_COUNT_LIMIT",
+		"OTEL_EVENT_ATTRIBUTE_COUNT_LIMIT", "OTEL_SPAN_LINK_COUNT_LIMIT", "OTEL_LINK_ATTRIBUTE_COUNT_LIMIT",
+	} {
+		if value := getenv(key); value != "" {
+			if _, err := strconv.Atoi(value); err != nil {
+				return settingError(key)
+			}
+		}
+	}
+	for _, key := range []string{"OTEL_METRIC_EXPORT_INTERVAL", "OTEL_METRIC_EXPORT_TIMEOUT"} {
+		if value := getenv(key); value != "" {
+			if _, err := milliseconds(value, time.Second, 10*time.Minute); err != nil {
+				return settingError(key)
+			}
+		}
+	}
+	switch getenv("OTEL_TRACES_SAMPLER") {
+	case "", "always_on", "always_off", "parentbased_always_on", "parentbased_always_off":
+	case "traceidratio", "parentbased_traceidratio":
+		ratio, err := strconv.ParseFloat(getenv("OTEL_TRACES_SAMPLER_ARG"), 64)
+		if err != nil || !(ratio >= 0 && ratio <= 1) {
+			return settingError("OTEL_TRACES_SAMPLER_ARG")
+		}
+	default:
+		return settingError("OTEL_TRACES_SAMPLER")
+	}
+	return nil
 }
 
 func validServiceName(value string) bool {
@@ -279,7 +354,9 @@ func settingError(key string) error {
 
 func (s SignalConfig) client() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = s.TLS
+	if s.TLS != nil {
+		transport.TLSClientConfig = s.TLS.Clone()
+	}
 	transport.MaxConnsPerHost = 2
 	transport.MaxIdleConnsPerHost = 2
 	transport.ResponseHeaderTimeout = s.Timeout

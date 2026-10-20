@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ type spanQueue struct {
 	stopped  bool
 	batch    int
 	timeout  time.Duration
+	result   error // published by closing done
 }
 type queueCommand struct {
 	ctx    context.Context
@@ -60,18 +62,21 @@ func (q *spanQueue) Shutdown(ctx context.Context) error {
 	if previous {
 		select {
 		case <-q.done:
-			return nil
+			return q.result
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
 	// the shutdown signal cannot be displaced by flush callers. its deadline also
 	// cancels an export already in flight, so the worker cannot outlive that bound.
+	if ctx.Err() != nil {
+		q.cancel()
+	}
 	context.AfterFunc(ctx, q.cancel)
 	q.shutdown <- ctx
 	select {
 	case <-q.done:
-		return nil
+		return q.result
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -108,7 +113,13 @@ func (q *spanQueue) run(delay time.Duration) {
 		defer cancel()
 		stop := context.AfterFunc(q.lifetime, cancel)
 		defer stop()
-		err := q.exporter.ExportSpans(ctx, batch)
+		err := ctx.Err()
+		if err == nil {
+			err = q.lifetime.Err()
+		}
+		if err == nil {
+			err = q.exporter.ExportSpans(ctx, batch)
+		}
 		clear(batch)
 		batch = batch[:0]
 		return err
@@ -118,14 +129,10 @@ func (q *spanQueue) run(delay time.Duration) {
 		for remaining := len(q.queue); remaining > 0; remaining-- {
 			batch = append(batch, <-q.queue)
 			if len(batch) == q.batch {
-				if e := export(ctx); e != nil {
-					err = e
-				}
+				err = errors.Join(err, export(ctx))
 			}
 		}
-		if e := export(ctx); e != nil {
-			err = e
-		}
+		err = errors.Join(err, export(ctx))
 		return err
 	}
 	for {
@@ -140,8 +147,7 @@ func (q *spanQueue) run(delay time.Duration) {
 		case c := <-q.commands:
 			c.result <- drain(c.ctx)
 		case ctx := <-q.shutdown:
-			_ = drain(ctx)
-			_ = q.exporter.Shutdown(ctx)
+			q.result = errors.Join(drain(ctx), q.exporter.Shutdown(ctx))
 			return
 		}
 	}

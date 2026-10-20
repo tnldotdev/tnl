@@ -108,6 +108,29 @@ func TestPublisherHTTPObservesLiveStreamingAndSafeFinalResult(t *testing.T) {
 	}
 }
 
+type failingFlushWriter struct {
+	*httptest.ResponseRecorder
+	cause error
+}
+
+func (w failingFlushWriter) FlushError() error { return w.cause }
+
+func TestPublisherHTTPResponseControllerPreservesFlushError(t *testing.T) {
+	m := New("publisher")
+	defer m.Shutdown(t.Context())
+	cause := errors.New("secret flush failure")
+	request := httptest.NewRequest("GET", "/", nil).WithContext(WithMetrics(t.Context(), m))
+	PublisherHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		PublisherHTTPResponse(r.Context())
+		if err := http.NewResponseController(w).Flush(); !errors.Is(err, cause) {
+			t.Fatal("flush cause hidden", err)
+		}
+	})).ServeHTTP(failingFlushWriter{httptest.NewRecorder(), cause}, request)
+	if dataMetric(t, m, "tnl_publisher_http_request_duration_seconds", map[string]string{"tnl_outcome": "error"}) != 1 {
+		t.Fatal("flush failure was success")
+	}
+}
+
 func TestPublisherAuthorizationKeepsPendingDenialAndFailureDistinct(t *testing.T) {
 	m := New("publisher")
 	defer m.Shutdown(context.Background())

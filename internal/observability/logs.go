@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -37,7 +38,8 @@ func (m *Metrics) initLogs(config Config, res *resource.Resource, state *exportS
 	if delay <= 0 {
 		delay = time.Second
 	}
-	m.loggerProvider = sdklog.NewLoggerProvider(sdklog.WithResource(res), sdklog.WithAttributeCountLimit(32), sdklog.WithAttributeValueLengthLimit(256), sdklog.WithProcessor(sdklog.NewBatchProcessor(&logExporter{e, state}, sdklog.WithMaxQueueSize(queue), sdklog.WithExportMaxBatchSize(min(batch, queue)), sdklog.WithExportInterval(delay), sdklog.WithExportTimeout(s.Timeout))))
+	m.logProcessor = sdklog.NewBatchProcessor(&logExporter{e, state}, sdklog.WithMaxQueueSize(queue), sdklog.WithExportMaxBatchSize(min(batch, queue)), sdklog.WithExportInterval(delay), sdklog.WithExportTimeout(s.Timeout))
+	m.loggerProvider = sdklog.NewLoggerProvider(sdklog.WithResource(res), sdklog.WithAttributeCountLimit(32), sdklog.WithAttributeValueLengthLimit(256), sdklog.WithProcessor(m.logProcessor))
 	return nil
 }
 
@@ -47,6 +49,11 @@ type logExporter struct {
 }
 
 func (e *logExporter) Export(ctx context.Context, records []sdklog.Record) error {
+	ctx, cancel := e.state.exportContext(ctx)
+	defer cancel()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err := e.Exporter.Export(ctx, records); err != nil {
 		e.state.logFailures.Add(1)
 		return safeExportError("log export failed", err)
@@ -85,7 +92,7 @@ func OperationalFailure(ctx context.Context, operation failure.Operation, reason
 	record.SetSeverity(log.SeverityError)
 	record.SetSeverityText("error")
 	record.SetBody(attribute.StringValue(def.Message))
-	record.AddAttributes(Operation.String(string(operation)), OutcomeKey.String(string(ErrorOutcome(cause))), ErrorType.String(string(reason)))
+	record.AddAttributes(Operation.String(operationID(operation)), Event.String("operational_failure"), OutcomeKey.String(string(ErrorOutcome(cause))), ErrorType.String(string(reason)))
 	if requestID != "" && len(requestID) <= 128 {
 		record.AddAttributes(RequestID.String(requestID))
 	}
@@ -93,4 +100,19 @@ func OperationalFailure(ctx context.Context, operation failure.Operation, reason
 		record.AddAttributes(a)
 	}
 	m.loggerProvider.Logger(scope).Emit(ctx, record)
+}
+
+// operation is authored by the caller, never taken from a cause or request. keep
+// its words while producing a stable identifier accepted by the shared contract.
+func operationID(operation failure.Operation) string {
+	value := strings.ToLower(strings.Join(strings.Fields(string(operation)), "_"))
+	if len(value) == 0 || len(value) > 128 {
+		return "operational_failure"
+	}
+	for _, c := range value {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '.' || c == '-') {
+			return "operational_failure"
+		}
+	}
+	return value
 }

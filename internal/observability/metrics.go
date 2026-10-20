@@ -30,6 +30,9 @@ type Metrics struct {
 	meterProvider               *sdkmetric.MeterProvider
 	tracerProvider              *sdktrace.TracerProvider
 	loggerProvider              *sdklog.LoggerProvider
+	spanQueue                   *spanQueue
+	logProcessor                *sdklog.BatchProcessor
+	cancelExports               context.CancelFunc
 	resource                    *resource.Resource
 	publisherOperations         metric.Float64Histogram
 	publisherLease              metric.Float64Gauge

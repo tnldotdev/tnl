@@ -66,6 +66,7 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 			request.Out.Host = target.Host
 		}, ModifyResponse: func(response *http.Response) error {
 			observability.PublisherHTTPResponse(response.Request.Context())
+			observability.PublisherHTTPUpgrade(response)
 			if response.StatusCode != http.StatusSwitchingProtocols && response.Close {
 				response.Header.Set("Connection", "close")
 			}

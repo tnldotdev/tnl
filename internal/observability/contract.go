@@ -36,6 +36,9 @@ func (m *contractMeter) describe(name, semantics, kind string, bounds []float64,
 			dimensions = append(dimensions, Reason)
 		}
 	}
+	// the SDK creates overflow points after applying the instrument view. this
+	// exception is boolean true only, never a caller-supplied dimension.
+	dimensions = append(dimensions, MetricOverflow)
 	if strings.HasPrefix(name, "tnl_publisher_") {
 		dimensions = append(dimensions, TeamID, DeploymentID, ReplicaKey, PublisherGroupID, PublisherIdentityID, ServiceID, PublicURLID, ServiceKindKey)
 	}
@@ -95,7 +98,9 @@ func SharedVocabulary() Vocabulary {
 	m.RegisterIngressRouting(func() IngressRoutingSnapshot { return IngressRoutingSnapshot{} })
 	m.RegisterIngressLease(func() time.Time { return time.Time{} })
 	m.RegisterControlCertificate(func() time.Time { return time.Time{} })
-	return Vocabulary{1, "internal/observability: vocabulary.go and instrument declarations", 2000, VocabularyAttributes(), m.InstrumentDefinitions()}
+	instruments := append(m.InstrumentDefinitions(), RuntimeInstrumentDefinitions()...)
+	slices.SortFunc(instruments, func(a, b InstrumentDefinition) int { return strings.Compare(a.Name, b.Name) })
+	return Vocabulary{1, "internal/observability: vocabulary.go and instrument declarations", 2000, VocabularyAttributes(), instruments}
 }
 
 func dimensionKey(name, key string) Key {

@@ -23,6 +23,10 @@ through workers. retain that context when starting background work; use
 `context.WithoutCancel` when the worker has a separate cancellation lifetime.
 join workers before `Shutdown` with a fresh context. flush and shutdown have a
 shared five-second bound across signals and respect shorter caller deadlines.
+each provider starts its flush or shutdown independently within that bound. the
+owner stops its processors even when shutdown starts with a canceled context;
+one slow signal cannot strand another signal's queue. export failures preserve
+their causes for callers while displaying only authored text.
 
 `New(role)` is isolated and local-only. embedding never reads exporter environment
 variables or installs global providers implicitly. neither native entry point
@@ -117,9 +121,13 @@ allowed but the visitor was not admitted. infrastructure failures remain `error`
 
 `ErrorOutcome` classifies context cancellation/deadlines, network timeouts, and
 owned failure classes without formatting an error. `FailureCode` exports only an
-owned failure reason or diagnostic code as `error.type`, using `unexpected` for
+owned failure reason or diagnostic code as `error.type`, using `internal.unexpected` for
 unclassified errors. original errors and causes remain available to callers.
 span status and logs never contain raw error strings or exception messages.
+the generated `error.type` values include exact catalog codes, including `TNL_*`
+client codes. native providers disable the SDK's automatic panic exception
+recording. interrupted API handlers finish with an error and continue unwinding
+the original panic; an unsent response does not acquire a synthetic HTTP 200.
 
 HTTP instrumentation uses standard method/status/route attributes; the route is
 a compiled matched pattern, never a raw path or URL. a semantic HTTP 200 denial
@@ -136,8 +144,10 @@ visitor, request, publish-run, connection, grant, actor, revision, and image-has
 correlation is trace/log-only. `Visitor` and `WithVisitor` correlate existing
 visitor connection IDs without inventing tunnel parentage or changing headers.
 SDK views enforce per-instrument attribute allowlists and fixed enum values. each
-instrument is capped at 2000 series per collection; overflow has the SDK overflow
-attribute. absolute gauge state is reserved for bounded process-wide enums.
+instrument is capped at 2000 series per collection. overflow points carry only
+`otel.metric.overflow=true` as a boolean, replacing application dimensions.
+collectors must preserve that validated marker. instrument callers cannot supply
+it themselves. absolute gauge state is reserved for bounded process-wide enums.
 spans are limited to 32 attributes, 256 characters per value, eight events with
 eight attributes each, and eight attribute-free links. the native SDK's raw
 per-link attribute limit is zero, including links added after span creation.
@@ -163,6 +173,8 @@ independent of pseudonymous CLI usage telemetry.
 | `OTEL_EXPORTER_OTLP_TIMEOUT`                                                        | milliseconds, default 5000, maximum 10000                                                                                                           |
 | `OTEL_METRIC_EXPORT_TIMEOUT`, `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT` | may shorten the corresponding timeout; maximum 10000 ms                                                                                             |
 | `OTEL_METRIC_EXPORT_INTERVAL`                                                       | milliseconds, default 60000, maximum 600000                                                                                                         |
+| `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE`                                 | unset or `cumulative`; `delta` and `lowmemory` are rejected                                                                                         |
+| `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION`                          | unset or `explicit_bucket_histogram`; other aggregations are rejected                                                                               |
 | `OTEL_EXPORTER_OTLP_COMPRESSION`                                                    | `none` or `gzip`                                                                                                                                    |
 | `OTEL_EXPORTER_OTLP_CERTIFICATE`                                                    | PEM receiver CA file                                                                                                                                |
 | `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE`, `OTEL_EXPORTER_OTLP_CLIENT_KEY`            | paired PEM client certificate/key                                                                                                                   |
@@ -182,6 +194,19 @@ userinfo, query strings, fragments, insecure transport, and redirects are reject
 invalid settings report only the setting name. standard headers support a receiver's
 authorization scheme, including website-issued collector authorization, without
 adding a tnl-specific auth protocol.
+the pinned Go metric exporter supports delta and low-memory selectors, but the
+hosted contract accepts cumulative sums and explicit-bucket histograms. native
+construction pins those selectors and validates their environment settings.
+all generic and signal-specific exporter settings are validated even when an
+override wins: SDK constructors parse some ambient values before applying explicit
+options. invalid overridden URLs, headers, durations, or certificate files must
+fail through the owned setting error before that SDK diagnostic path runs.
+
+the indirect Go auto-instrumentation SDK also reads span-limit variables during
+package initialization. malformed values such as `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT`
+or `OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT` can produce upstream stderr warnings before
+`StartProcess` runs. constructor validation cannot intercept that import-time
+output; those variables do not change tnl's fixed span limits.
 
 export runs outside traffic with bounded queues and retry deadlines. retries start
 at 100 ms, back off to at most one second, and share the signal timeout. sampled
@@ -195,6 +220,10 @@ adds `trace_id`/`span_id` when present, and optionally calls `OperationalFailure
 to export safe failure copy with authenticated scope. `Correlation` is available
 for other existing operational logs. these helpers never export arbitrary log
 bodies or secrets. existing context-free `Report` still writes its one-line log.
+exported operational failures use `tnl.event=operational_failure` and normalize
+the caller's authored operation words to a lowercase underscore-separated
+`tnl.operation`. the operation never comes from cause text. already measured
+operation spans retain their own machine operation attribute too.
 
 export health is local and best-effort:
 
@@ -206,6 +235,13 @@ export health is local and best-effort:
 
 the generated JSON is the complete instrument/dimension inventory. these boundaries
 matter when reading it:
+
+- `RuntimeInstrumentDefinitions` declares an exact-name subset of the pinned
+  Prometheus Go/process bridge for hosted collection. its gauges, cumulative
+  counters, and `go_gc_duration_seconds` OTLP summary keep their actual types;
+  a summary is not an explicit-bucket histogram. platform-specific process metrics
+  may be absent. other local runtime scrape families are outside that hosted
+  allowlist; collectors must not admit arbitrary `go_*` or `process_*` names.
 
 - ingress visitor outcomes describe forwarding, not visitor TLS or application
   success. `success` with reason `forwarded` means forwarding was established.

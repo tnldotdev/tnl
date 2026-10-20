@@ -25,7 +25,197 @@
     },
     {
       "key": "error.type",
-      "semantics": "owned failure.Reason, diagnostic code, or closed tunnel.\u003ccode\u003e; unknown errors use unexpected",
+      "values": [
+        "TNL_ALIAS_UNAVAILABLE",
+        "TNL_AUTHENTICATION_REQUIRED",
+        "TNL_AUTHENTICATION_TIMEOUT",
+        "TNL_CLIENT_ADMIN_UNAVAILABLE",
+        "TNL_CLIENT_ALIAS_NOT_SELECTED",
+        "TNL_CLIENT_ALIAS_OWNED",
+        "TNL_CLIENT_ALIAS_POLICY_CONFLICT",
+        "TNL_CLIENT_ALIAS_RECEIVER_UNREADY",
+        "TNL_CLIENT_APP_CURSOR_EXPIRED",
+        "TNL_CLIENT_APP_READINESS_TIMEOUT",
+        "TNL_CLIENT_AUTHENTICATION_REQUIRED",
+        "TNL_CLIENT_AUTH_CANCELLED",
+        "TNL_CLIENT_AUTH_DENIED",
+        "TNL_CLIENT_AUTH_EXPIRED",
+        "TNL_CLIENT_AUTH_METHOD_UNAVAILABLE",
+        "TNL_CLIENT_AUTH_OPERATION_NOT_FOUND",
+        "TNL_CLIENT_AUTH_PROVIDER_UNAVAILABLE",
+        "TNL_CLIENT_AUTH_RECOVERY_REQUIRED",
+        "TNL_CLIENT_AUTH_WAIT_TIMEOUT",
+        "TNL_CLIENT_AWS_BOOTSTRAP_AUTHENTICATION",
+        "TNL_CLIENT_AWS_BOOTSTRAP_DENIED",
+        "TNL_CLIENT_AWS_BOOTSTRAP_INVALID",
+        "TNL_CLIENT_AWS_BOOTSTRAP_SCOPE",
+        "TNL_CLIENT_AWS_BOOTSTRAP_SECRET_CONFLICT",
+        "TNL_CLIENT_AWS_BOOTSTRAP_STATE_LOST",
+        "TNL_CLIENT_AWS_BOOTSTRAP_THROTTLED",
+        "TNL_CLIENT_AWS_BOOTSTRAP_UNAVAILABLE",
+        "TNL_CLIENT_AWS_BOOTSTRAP_VERSION_CONFLICT",
+        "TNL_CLIENT_BROWSER_OPEN_FAILED",
+        "TNL_CLIENT_CERTIFICATE_UNAVAILABLE",
+        "TNL_CLIENT_CONNECT_ACCESS_REQUIRED",
+        "TNL_CLIENT_CONNECT_MODE_INVALID",
+        "TNL_CLIENT_CONNECT_NATIVE_MODE_REQUIRED",
+        "TNL_CLIENT_CONNECT_OUTPUT_MODE_INVALID",
+        "TNL_CLIENT_CONNECT_PROTOCOL_MISMATCH",
+        "TNL_CLIENT_CONNECT_SERVER_ROOTS_UNAVAILABLE",
+        "TNL_CLIENT_CONNECT_STDIO_PROTOCOL_INVALID",
+        "TNL_CLIENT_CURRENT_DIRECTORY_UNAVAILABLE",
+        "TNL_CLIENT_CUSTOM_DOMAINS_DISABLED",
+        "TNL_CLIENT_DEMO_CONFIG_NOT_USED",
+        "TNL_CLIENT_DEMO_LOCAL_SERVICE_UNAVAILABLE",
+        "TNL_CLIENT_DEMO_MUST_BE_EPHEMERAL",
+        "TNL_CLIENT_DEMO_TARGET_NOT_ALLOWED",
+        "TNL_CLIENT_DEMO_URL_MANAGED",
+        "TNL_CLIENT_DETACHED_NOT_FOUND",
+        "TNL_CLIENT_DETACHED_START_FAILED",
+        "TNL_CLIENT_DNS_PENDING",
+        "TNL_CLIENT_DOMAIN_NOT_AVAILABLE",
+        "TNL_CLIENT_DOMAIN_NOT_READY",
+        "TNL_CLIENT_DOMAIN_UNAVAILABLE",
+        "TNL_CLIENT_FEEDBACK_INPUT_INVALID",
+        "TNL_CLIENT_GUEST_DEMO_ONLY",
+        "TNL_CLIENT_GUEST_IP_CHANGED",
+        "TNL_CLIENT_GUEST_ISSUANCE_LIMITED",
+        "TNL_CLIENT_GUEST_SESSION_INVALID",
+        "TNL_CLIENT_GUEST_SIGN_IN_REQUIRED",
+        "TNL_CLIENT_GUEST_TRIAL_EXHAUSTED",
+        "TNL_CLIENT_INIT_FAILED",
+        "TNL_CLIENT_INIT_FRAMEWORK",
+        "TNL_CLIENT_INIT_PACKAGE_MANAGER",
+        "TNL_CLIENT_INSTALLED_JOB_AMBIGUOUS",
+        "TNL_CLIENT_INSTALLED_PUBLISHER_SELECTION_MISSING",
+        "TNL_CLIENT_INSTALLED_SERVICE_IDENTITY_UNAVAILABLE",
+        "TNL_CLIENT_INSTALLED_TARGET_MISSING",
+        "TNL_CLIENT_INTEGRATION_URL_LEASE_EXPIRED",
+        "TNL_CLIENT_INTEGRATION_URL_NOT_READY",
+        "TNL_CLIENT_INVALID_AUTHORITY_URL",
+        "TNL_CLIENT_INVALID_COMMAND",
+        "TNL_CLIENT_INVALID_CONTROL_PORT",
+        "TNL_CLIENT_INVALID_CONTROL_URL",
+        "TNL_CLIENT_INVALID_DOMAIN_NAME",
+        "TNL_CLIENT_INVALID_SETUP_INPUT",
+        "TNL_CLIENT_INVALID_TARGET",
+        "TNL_CLIENT_INVALID_TUNNEL_FLAGS",
+        "TNL_CLIENT_LOCAL_PRIVATE_SERVICE_UNAVAILABLE",
+        "TNL_CLIENT_MEMBER_HOSTNAME_DEPTH_EXCEEDED",
+        "TNL_CLIENT_MISSING_TARGET",
+        "TNL_CLIENT_OBSERVABILITY_CONFIG_INVALID",
+        "TNL_CLIENT_OUTPUT_UNAVAILABLE",
+        "TNL_CLIENT_PREVIEW_NOT_SAVED",
+        "TNL_CLIENT_PREVIEW_STATE_CONFLICT",
+        "TNL_CLIENT_PRIVATE_PUBLISHER_UNAVAILABLE",
+        "TNL_CLIENT_PROJECT_CONFIG_INVALID",
+        "TNL_CLIENT_PROJECT_CONFIG_MISSING",
+        "TNL_CLIENT_PUBLISHER_CERTIFICATE_STATE_MISSING",
+        "TNL_CLIENT_PUBLISHER_DEPLOYMENT_INVALID",
+        "TNL_CLIENT_PUBLISHER_DEPLOYMENT_METADATA_INVALID",
+        "TNL_CLIENT_PUBLISHER_DEPLOYMENT_WRITE_FAILED",
+        "TNL_CLIENT_PUBLISHER_IDENTITY_STATE_INVALID",
+        "TNL_CLIENT_PUBLISHER_IDENTITY_STATE_UNAVAILABLE",
+        "TNL_CLIENT_SERVER_CONFLICT",
+        "TNL_CLIENT_SERVER_DENIED",
+        "TNL_CLIENT_SERVER_RATE_LIMITED",
+        "TNL_CLIENT_SERVER_REQUEST_INVALID",
+        "TNL_CLIENT_SERVER_RESOURCE_NOT_FOUND",
+        "TNL_CLIENT_SERVER_RESPONSE_INVALID",
+        "TNL_CLIENT_SERVER_UNAVAILABLE",
+        "TNL_CLIENT_SERVICE_NOT_CONFIGURED",
+        "TNL_CLIENT_SERVICE_NOT_INSTALLED",
+        "TNL_CLIENT_SHARE_INPUT_INVALID",
+        "TNL_CLIENT_STATE_LOCKED",
+        "TNL_CLIENT_STATE_UNAVAILABLE",
+        "TNL_CLIENT_TARGET_TLS_REJECTED",
+        "TNL_CLIENT_TARGET_UNAVAILABLE",
+        "TNL_CLIENT_TEAM_NOT_FOUND",
+        "TNL_CLIENT_TEAM_SELECTION_AMBIGUOUS",
+        "TNL_CLIENT_TEAM_UNAVAILABLE",
+        "TNL_CLIENT_TRANSPORT_FALLBACK",
+        "TNL_CLIENT_TRANSPORT_UNAVAILABLE",
+        "TNL_CLIENT_TUNNEL_UNAVAILABLE",
+        "TNL_CLIENT_WEBHOOK_NOT_SELECTED",
+        "TNL_CLIENT_WEBHOOK_NO_READY_RECEIVERS",
+        "TNL_CLIENT_WEBHOOK_OWNED",
+        "TNL_CLIENT_WEBHOOK_OWNER_MISSING",
+        "TNL_CLIENT_WEBHOOK_OWNER_UNREADY",
+        "TNL_CLIENT_WEBHOOK_POLICY_CONFLICT",
+        "TNL_CLIENT_WEBHOOK_RECEIVER_UNREADY",
+        "TNL_DNS_SETUP_PENDING",
+        "TNL_IP_POLICY_DENIED",
+        "TNL_MEMBER_HOSTNAME_DEPTH_EXCEEDED",
+        "TNL_OAUTH_CALLBACK_EXPIRED",
+        "TNL_OAUTH_CALLBACK_UNAVAILABLE",
+        "TNL_PROVISIONING_STALLED",
+        "TNL_PUBLIC_URL_CONFLICT",
+        "TNL_PUBLIC_URL_INVALID",
+        "TNL_RATE_LIMITED",
+        "TNL_REQUEST_BUDGET_EXHAUSTED",
+        "TNL_REQUEST_LIMIT_REACHED",
+        "TNL_REQUEST_MISDIRECTED",
+        "TNL_REQUEST_RATE_LIMITED",
+        "TNL_REQUEST_REJECTED",
+        "TNL_SERVER_UNAVAILABLE",
+        "TNL_SERVICE_AMBIGUOUS",
+        "TNL_TARGET_INVALID",
+        "TNL_TARGET_UNAVAILABLE",
+        "TNL_VISITOR_ACCESS_DENIED",
+        "TNL_WEBHOOK_DELIVERY_FAILED",
+        "TNL_WEBHOOK_UNAVAILABLE",
+        "benchmark.input_invalid",
+        "benchmark.measurement_failed",
+        "internal.unexpected",
+        "relay.lease_stale",
+        "server.acme_invalid",
+        "server.api_internal",
+        "server.authority_unavailable",
+        "server.certificate_failed",
+        "server.certificate_rejected",
+        "server.cluster_secret_invalid",
+        "server.command_invalid",
+        "server.config_file_invalid",
+        "server.config_invalid",
+        "server.connection_failed",
+        "server.control_connection_failed",
+        "server.database_diagnostics_unavailable",
+        "server.database_unavailable",
+        "server.database_url_invalid",
+        "server.diagnostics_busy",
+        "server.direct_database_url_missing",
+        "server.dns_config_invalid",
+        "server.dns_conflict",
+        "server.dns_failed",
+        "server.email_config_invalid",
+        "server.email_delivery_failed",
+        "server.email_lease_stale",
+        "server.identity_provider_unavailable",
+        "server.ingress_failed",
+        "server.invalid_role",
+        "server.listen_address_invalid",
+        "server.migration_failed",
+        "server.oidc_invalid",
+        "server.output_unavailable",
+        "server.relay_failed",
+        "server.startup_failed",
+        "server.storage_key_invalid",
+        "server.stored_state_invalid",
+        "server.usage_config_invalid",
+        "server.usage_delivery_failed",
+        "server.website_config_invalid",
+        "server.worker_failed",
+        "tunnel.capacity_exceeded",
+        "tunnel.draining",
+        "tunnel.duplicate_publisher_connection",
+        "tunnel.internal",
+        "tunnel.invalid_message",
+        "tunnel.stale_connection_assignment",
+        "tunnel.stale_publish_run_number",
+        "tunnel.unauthenticated",
+        "tunnel.unavailable"
+      ],
+      "semantics": "exact owned failure.Reason, diagnostic code, or closed tunnel.\u003ccode\u003e; unknown errors use internal.unexpected",
       "dimension_policy": "trace_log"
     },
     {
@@ -54,6 +244,12 @@
       "key": "http.route",
       "semantics": "compiled matched route template only; never raw request path",
       "dimension_policy": "bounded"
+    },
+    {
+      "key": "otel.metric.overflow",
+      "semantics": "SDK cardinality overflow point; only boolean true is valid; replaces all application dimensions and must survive collector filtering",
+      "dimension_policy": "sdk",
+      "value_type": "bool"
     },
     {
       "key": "service.instance.id",
@@ -249,7 +445,7 @@
     },
     {
       "key": "tnl.event",
-      "semantics": "closed per-instrument lifecycle event, including queued, delivered, and dropped",
+      "semantics": "closed per-instrument lifecycle event, including queued, delivered, dropped, and operational_failure",
       "dimension_policy": "bounded"
     },
     {
@@ -496,10 +692,77 @@
   ],
   "instruments": [
     {
+      "name": "go_gc_duration_seconds",
+      "semantics": "garbage collection pause duration summary from the Go collector",
+      "kind": "summary",
+      "dimensions": []
+    },
+    {
+      "name": "go_goroutines",
+      "semantics": "current goroutine count",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "go_memstats_heap_alloc_bytes",
+      "semantics": "currently allocated heap bytes",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "go_memstats_heap_inuse_bytes",
+      "semantics": "heap spans in use in bytes",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "go_memstats_sys_bytes",
+      "semantics": "bytes obtained from the operating system",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "process_cpu_seconds_total",
+      "semantics": "cumulative process CPU seconds",
+      "kind": "counter",
+      "dimensions": []
+    },
+    {
+      "name": "process_max_fds",
+      "semantics": "maximum file descriptors when supported",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "process_open_fds",
+      "semantics": "current open file descriptors when supported",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "process_resident_memory_bytes",
+      "semantics": "resident process memory bytes",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "process_start_time_seconds",
+      "semantics": "process start Unix timestamp in seconds",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
+      "name": "process_virtual_memory_bytes",
+      "semantics": "virtual process memory bytes",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
       "name": "tnl_admission_limit",
       "semantics": "Resolved admission limit by fixed resource; per-URL and per-hostname resources are per key.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.capacity_resource"
       ]
     },
@@ -508,6 +771,7 @@
       "semantics": "Admission rejected because a bounded resource was full.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.capacity_resource"
       ]
     },
@@ -518,6 +782,7 @@
       "dimensions": [
         "http.request.method",
         "http.route",
+        "otel.metric.overflow",
         "tnl.component",
         "tnl.outcome",
         "tnl.reason"
@@ -547,6 +812,7 @@
       "semantics": "tnl API requests currently executing by component.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.component"
       ]
     },
@@ -555,6 +821,7 @@
       "semantics": "Semantic authorization results, independent of HTTP status.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
@@ -565,6 +832,7 @@
       "semantics": "Certificate worker claims by certificate kind and outcome.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.certificate_kind",
         "tnl.outcome",
         "tnl.reason"
@@ -575,6 +843,7 @@
       "semantics": "Time from issuance creation to certificate availability or DNS cleanup; availability does not imply installation.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.certificate_kind",
         "tnl.event"
       ],
@@ -597,6 +866,7 @@
       "semantics": "New service certificate orders committed by this control process, excluding idempotent retries and certificate reuse; not a CA issuance quota.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.certificate_kind",
         "tnl.certificate_plan",
         "tnl.domain_kind"
@@ -607,6 +877,7 @@
       "semantics": "Committed certificate work transitions by kind and resulting state.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.certificate_kind",
         "tnl.state"
       ]
@@ -616,6 +887,7 @@
       "semantics": "Certificate worker advance and save duration; count is the number of claimed iterations.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.certificate_kind",
         "tnl.operation",
         "tnl.outcome",
@@ -646,6 +918,7 @@
       "semantics": "Committed items removed by cleanup kind.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.cleanup_kind"
       ]
     },
@@ -654,6 +927,7 @@
       "semantics": "Unix time of last successful cleanup by kind; zero before success.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.cleanup_kind"
       ]
     },
@@ -662,6 +936,7 @@
       "semantics": "Cleanup calls by fixed kind and outcome.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.cleanup_kind",
         "tnl.outcome",
         "tnl.reason"
@@ -672,6 +947,7 @@
       "semantics": "Committed replacement of connection assignments by fixed reason.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.reason"
       ]
     },
@@ -680,6 +956,7 @@
       "semantics": "Committed DNS work transitions by kind and resulting state.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.dns_kind",
         "tnl.state"
       ]
@@ -689,6 +966,7 @@
       "semantics": "DNS worker phase duration; count is the number of attempts.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.dns_kind",
         "tnl.operation",
         "tnl.outcome",
@@ -719,6 +997,7 @@
       "semantics": "Service-wide trial counts from committed state over the last 24 hours; use max rather than sum across control replicas.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.event"
       ]
     },
@@ -727,6 +1006,7 @@
       "semantics": "Completed control state operation duration by fixed operation and outcome.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
@@ -756,6 +1036,7 @@
       "semantics": "Publish run placement decisions by action and bounded result.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
@@ -765,7 +1046,9 @@
       "name": "tnl_control_public_url_recovery_duration_seconds",
       "semantics": "Duration of newly committed public URL recovery observations on this control process.",
       "kind": "histogram",
-      "dimensions": [],
+      "dimensions": [
+        "otel.metric.overflow"
+      ],
       "explicit_bounds": [
         0.001,
         0.0025,
@@ -791,6 +1074,7 @@
       "semantics": "Usage runs, buckets or deliveries committed by result.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.event"
       ]
     },
@@ -799,6 +1083,7 @@
       "semantics": "Unix time of the last successful finalization call or committed delivery; zero before success.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation"
       ]
     },
@@ -807,6 +1092,7 @@
       "semantics": "Usage receiver request duration by bounded outcome.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.outcome",
         "tnl.reason"
       ],
@@ -835,6 +1121,7 @@
       "semantics": "Usage worker operations by fixed phase and outcome.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
@@ -845,6 +1132,7 @@
       "semantics": "New public URLs committed by client-declared purpose; excludes idempotent retries.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.public_url_purpose"
       ]
     },
@@ -853,6 +1141,7 @@
       "semantics": "Age of the publish run at a readiness decision; excludes other errors.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.state"
       ],
       "explicit_bounds": [
@@ -871,6 +1160,7 @@
       "semantics": "Time spent checking and publishing publish run readiness; count is the number of attempts.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.state"
       ],
       "explicit_bounds": [
@@ -898,6 +1188,7 @@
       "semantics": "Publish runs first marked ready by their saved public URL purpose.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.public_url_purpose"
       ]
     },
@@ -906,6 +1197,7 @@
       "semantics": "Signed publisher runtime inspect/start/renew/stop decisions; identity dimensions attach only after proof verification.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.deployment_id",
         "tnl.operation",
         "tnl.outcome",
@@ -940,6 +1232,7 @@
       "semantics": "Committed routing-history cleanup rows by action.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation"
       ]
     },
@@ -947,25 +1240,32 @@
       "name": "tnl_control_routing_history_cleanup_skipped_total",
       "semantics": "Cleanup batches skipped because another control holds the cleanup guard.",
       "kind": "counter",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_control_routing_history_retained_after_revision",
       "semantics": "Highest committed routing-history retention floor observed by this process.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_control_tcp_port_pool_last_success_timestamp_seconds",
       "semantics": "Last complete successful inventory refresh; zero before success. Use maximum across control replicas.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_control_tcp_port_pool_ports",
       "semantics": "Fresh committed port inventory; absent after 90 seconds without refresh. Use maximum across control replicas.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.ingress_pool",
         "tnl.state"
       ]
@@ -974,13 +1274,16 @@
       "name": "tnl_control_tls_certificate_expiration_timestamp_seconds",
       "semantics": "Locally loaded internal control certificate expiry. Public control TLS belongs to the deployment proxy.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_control_webhook_provider_source_requests_total",
       "semantics": "Webhook sender-policy lookups by fixed provider and bounded outcome; not configured endpoints or webhook deliveries.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.outcome",
         "tnl.provider",
         "tnl.reason"
@@ -991,6 +1294,7 @@
       "semantics": "Local database client connection lifecycle events.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.database_purpose",
         "tnl.event"
       ]
@@ -1000,6 +1304,7 @@
       "semantics": "Current local database client sockets by purpose and state.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.database_purpose",
         "tnl.state"
       ]
@@ -1009,6 +1314,7 @@
       "semantics": "Request-pool failures by fixed boundary and outcome; acquire has no SQL operation name.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
@@ -1019,6 +1325,7 @@
       "semantics": "Driver-observed interval from successful guard query completion through transaction completion; not exact PostgreSQL lock time.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
@@ -1048,6 +1355,7 @@
       "semantics": "Age of the oldest active request-pool operation by compiled operation name.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation"
       ]
     },
@@ -1056,6 +1364,7 @@
       "semantics": "Current active request-pool operations by compiled operation name.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation"
       ]
     },
@@ -1063,13 +1372,16 @@
       "name": "tnl_database_operations_omitted",
       "semantics": "Current active request-pool operations omitted by the bounded tracker.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_database_pool_acquire_duration_seconds",
       "semantics": "Time to acquire a request-pool connection, including waits and failed acquisitions.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.outcome",
         "tnl.reason"
       ],
@@ -1097,55 +1409,72 @@
       "name": "tnl_database_pool_acquire_wait_seconds_total",
       "semantics": "Time spent waiting on successful acquisitions from an empty pool.",
       "kind": "counter",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_database_pool_acquired_connections",
       "semantics": "Connections currently in use.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_database_pool_acquires_total",
       "semantics": "Successful connection acquisitions.",
       "kind": "counter",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_database_pool_canceled_acquires_total",
       "semantics": "Connection acquisitions canceled before completion.",
       "kind": "counter",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_database_pool_idle_connections",
       "semantics": "Connections available for acquisition.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_database_pool_max_connections",
       "semantics": "Configured connection limit.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_database_pool_total_connections",
       "semantics": "Total pool connections, including those being constructed.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_database_pool_waited_acquires_total",
       "semantics": "Successful acquisitions that waited for an available connection.",
       "kind": "counter",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_database_query_duration_seconds",
       "semantics": "Completed request-pool SQL duration observed by the driver, excluding pool acquisition.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
@@ -1174,13 +1503,16 @@
       "name": "tnl_ingress_backend_streams",
       "semantics": "Tracked backend streams including streams being opened, challenges, and denied connections.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_connections",
       "semantics": "Current ingress admission slots by fixed connection class.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.connection_class"
       ]
     },
@@ -1188,13 +1520,16 @@
       "name": "tnl_ingress_draining_rejections_total",
       "semantics": "Connections rejected because ingress was draining.",
       "kind": "counter",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_forwarded_bytes_total",
       "semantics": "Bytes forwarded through ingress, recorded after a copy finishes.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.direction"
       ]
     },
@@ -1203,6 +1538,7 @@
       "semantics": "Ingress connections rejected before classification by fixed failure stage.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation"
       ]
     },
@@ -1210,13 +1546,16 @@
       "name": "tnl_ingress_lease_expiration_timestamp_seconds",
       "semantics": "Local ingress lease expiration; zero before registration or after lease loss.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_operation_duration_seconds",
       "semantics": "Completed ingress operation duration by fixed operation and outcome.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
@@ -1246,6 +1585,7 @@
       "semantics": "Recovery reporting attempts by bounded outcome.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.outcome",
         "tnl.reason"
       ]
@@ -1254,13 +1594,16 @@
       "name": "tnl_ingress_recovery_observations_pending",
       "semantics": "Recovery observations awaiting a successful or stale response.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_relay_attempts_total",
       "semantics": "Ingress internal-forwarding attempts by connection slot and bounded outcome.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.connection_slot",
         "tnl.outcome",
         "tnl.reason"
@@ -1270,67 +1613,88 @@
       "name": "tnl_ingress_routing_acknowledged_revision",
       "semantics": "Last routing-table revision acknowledged by a successful ingress lease renewal.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_routing_applied_revision",
       "semantics": "Last applied routing-table revision.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_routing_caught_up",
       "semantics": "Whether the last successful event response confirmed catch-up, cleared on update failure or resnapshot; not a guarantee about pending updates.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_routing_initialized",
       "semantics": "Whether a routing snapshot has been applied; independent of lease readiness.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_routing_last_acknowledged_timestamp_seconds",
       "semantics": "Unix time of the last routing-table acknowledgment; zero before success.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_routing_last_caught_up_timestamp_seconds",
       "semantics": "Unix time of the last event response confirming catch-up; zero before confirmation.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_routing_last_successful_check_timestamp_seconds",
       "semantics": "Unix time of the last successfully applied snapshot or event response, including empty responses; zero before success.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_routing_latest_observed_revision",
       "semantics": "Highest control revision observed in a successfully applied routing response; pending requests may hide newer revisions.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_routing_resnapshots_total",
       "semantics": "Resnapshot-required responses received from routing event requests.",
       "kind": "counter",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_routing_update_failures_total",
       "semantics": "Routing fetch or apply failures, excluding resnapshot-required responses and controller shutdown cancellation.",
       "kind": "counter",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_traffic_admissions_total",
       "semantics": "Process-local traffic decisions by fixed stage and result; excludes identities and network addresses.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
@@ -1340,13 +1704,16 @@
       "name": "tnl_ingress_usage_retained_buckets",
       "semantics": "Ingress usage buckets retained in memory, including dirty and pending buckets.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_ingress_visitor_connections_total",
       "semantics": "Classified visitor connections by forwarding outcome; forwarded does not imply visitor TLS success.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.outcome",
         "tnl.reason"
       ]
@@ -1356,6 +1723,7 @@
       "semantics": "Time from a classified visitor to a forwarding decision, excluding TLS and copy time.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.outcome",
         "tnl.reason"
       ],
@@ -1384,6 +1752,7 @@
       "semantics": "Failed export batches after bounded retries; never gates readiness.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.signal"
       ]
     },
@@ -1391,19 +1760,24 @@
       "name": "tnl_observability_export_lost_spans_total",
       "semantics": "Spans lost in failed export batches; excludes queue overflow.",
       "kind": "counter",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_observability_queue_dropped_spans_total",
       "semantics": "Sampled spans dropped by the bounded nonblocking export queue.",
       "kind": "counter",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_process_info",
       "semantics": "Process role (one for this process).",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.role"
       ]
     },
@@ -1412,6 +1786,7 @@
       "semantics": "Authorization checks distinguish denial, allowed pending admission, admission and infrastructure failure.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1434,6 +1809,7 @@
       "semantics": "Whether the latest control response matched the current run and approved configuration; target health is separate.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1453,6 +1829,7 @@
       "semantics": "Completed publisher connection races by selected transport and preference.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1476,6 +1853,7 @@
       "semantics": "Authenticated publisher connection establishment and expected or unexpected close events.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.connection_slot",
@@ -1500,6 +1878,7 @@
       "semantics": "Authenticated publisher connections held by this process; sum slots for local redundancy, not control readiness.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.connection_slot",
@@ -1521,6 +1900,7 @@
       "semantics": "HTTP body bytes read for target forwarding or written from accepted target responses, and opaque application copies, observed incrementally; excludes tnl-authored responses, HTTP headers, native authentication and TLS framing.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1543,6 +1923,7 @@
       "dimensions": [
         "http.request.method",
         "http.response.status_code",
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1584,6 +1965,7 @@
       "semantics": "HTTP handlers currently executing, including streaming and upgrades.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1605,6 +1987,7 @@
       "dimensions": [
         "http.request.method",
         "http.response.status_code",
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1646,6 +2029,7 @@
       "semantics": "Last confirmed control lease; failed refresh never extends it.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1665,6 +2049,7 @@
       "semantics": "Finite publisher operations by authenticated identity and bounded outcome.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.connection_slot",
@@ -1710,6 +2095,7 @@
       "semantics": "Most recent readiness decision; timestamp requires freshness checks.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1730,6 +2116,7 @@
       "semantics": "Most recent publisher readiness check, including unsuccessful checks.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1749,6 +2136,7 @@
       "semantics": "Most recent successful publisher readiness check; a failure never advances it.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1768,6 +2156,7 @@
       "semantics": "Current publisher readiness decision; combine with last check and confirmed lease expiration for freshness.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1787,6 +2176,7 @@
       "semantics": "Publisher-local time from unexpected connection loss until an observed target response (HTTP headers or stream bytes); includes waiting for traffic, not visitor delivery or outage duration.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1825,6 +2215,7 @@
       "semantics": "Latest target health decision; independent of publisher lease and configuration validity.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1844,6 +2235,7 @@
       "semantics": "Completed TLS handshakes; negotiated version and resumption only on success.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tls.protocol.version",
         "tls.resumed",
         "tnl.access_path",
@@ -1868,6 +2260,7 @@
       "semantics": "Publisher transport candidate connection and authentication duration; count includes both raced candidates, not only the winner.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1909,6 +2302,7 @@
       "semantics": "Application stream copies completed by outcome.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1930,6 +2324,7 @@
       "semantics": "Publisher application streams currently forwarding.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.access_path",
         "tnl.component",
         "tnl.deployment_id",
@@ -1948,13 +2343,16 @@
       "name": "tnl_relay_earliest_lease_expiration_timestamp_seconds",
       "semantics": "Earliest known relay lease expiration in this process; zero without a lease.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_relay_forwarded_bytes_total",
       "semantics": "Wire bytes copied by relay, including preserved PROXY metadata; recorded at stream close.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.direction",
         "tnl.service_kind"
       ]
@@ -1964,6 +2362,7 @@
       "semantics": "Relay leases held by this process by state; not a control-wide lease count.",
       "kind": "gauge",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.state"
       ]
     },
@@ -1972,6 +2371,7 @@
       "semantics": "Completed relay operation duration by fixed operation and outcome.",
       "kind": "histogram",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
@@ -2001,6 +2401,7 @@
       "semantics": "Ready publisher connections that ended, by expectedness.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.reason"
       ]
     },
@@ -2008,25 +2409,32 @@
       "name": "tnl_relay_publisher_connections_ready",
       "semantics": "Publisher connections marked ready on relays in this process.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_relay_publisher_connections_registered",
       "semantics": "Locally registered publisher connections, including those not yet ready; not authoritative database claims.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_relay_transport_certificate_expiration_timestamp_seconds",
       "semantics": "Earliest locally known relay transport certificate expiry; zero before material is observed.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_relay_visitor_stream_completions_total",
       "semantics": "Opened visitor streams whose relay copy ended, not application request outcomes.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.outcome",
         "tnl.reason",
         "tnl.service_kind"
@@ -2037,6 +2445,7 @@
       "semantics": "Relay stream rejections other than capacity exhaustion, by fixed reason.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.reason"
       ]
     },
@@ -2044,13 +2453,16 @@
       "name": "tnl_relay_visitor_stream_slots_occupied",
       "semantics": "Occupied relay forwarding-stream slots, including opens in progress.",
       "kind": "gauge",
-      "dimensions": []
+      "dimensions": [
+        "otel.metric.overflow"
+      ]
     },
     {
       "name": "tnl_service_audit_events_total",
       "semantics": "Process-local service audit queue and ingestion counts by fixed result; queued observations can be lost on a crash.",
       "kind": "counter",
       "dimensions": [
+        "otel.metric.overflow",
         "tnl.event"
       ]
     }

@@ -41,6 +41,14 @@ func nativeMySQLGreeting() []byte {
 }
 
 func TestManagedMySQLNativeAuthSwitchAndFullAuthentication(t *testing.T) {
+	for _, password := range []string{"testpass", ""} {
+		t.Run(fmt.Sprintf("empty_password=%t", password == ""), func(t *testing.T) {
+			testManagedMySQLNativeAuthSwitch(t, password)
+		})
+	}
+}
+
+func testManagedMySQLNativeAuthSwitch(t *testing.T, password string) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	root, certificate := testutil.TLSCertificate(t, []string{"service.example.test"}, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
@@ -86,8 +94,8 @@ func TestManagedMySQLNativeAuthSwitchAndFullAuthentication(t *testing.T) {
 			backendDone <- err
 			return
 		}
-		response, err := targettransport.ReadMySQLPacket(secured, 512)
-		if err != nil || response[3] != 4 {
+		response, err := targettransport.ReadMySQLAuthResponse(secured, 512)
+		if err != nil || response[3] != 4 || password == "" && len(response) != 4 {
 			backendDone <- fmt.Errorf("auth switch sequence: %v", err)
 			return
 		}
@@ -97,12 +105,12 @@ func TestManagedMySQLNativeAuthSwitchAndFullAuthentication(t *testing.T) {
 			backendDone <- err
 			return
 		}
-		password, err := targettransport.ReadMySQLPacket(secured, 512)
-		if err != nil || password[3] != 6 || string(password[4:]) != "testpass\x00" {
+		passwordPacket, err := targettransport.ReadMySQLPacket(secured, 512)
+		if err != nil || passwordPacket[3] != 6 || string(passwordPacket[4:]) != password+"\x00" {
 			backendDone <- fmt.Errorf("native TLS full authentication: %v", err)
 			return
 		}
-		clear(password)
+		clear(passwordPacket)
 		_, err = secured.Write(nativeMySQLPacket(7, []byte{0, 0, 0, 2, 0, 0, 0}))
 		if err != nil {
 			backendDone <- err
@@ -141,7 +149,7 @@ func TestManagedMySQLNativeAuthSwitchAndFullAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer mysql.DeregisterTLSConfig(key)
-	database, err := sql.Open("mysql", "tnl_client:testpass@tcp("+front.Addr().String()+")/?tls="+key+"&timeout=5s")
+	database, err := sql.Open("mysql", "tnl_client:"+password+"@tcp("+front.Addr().String()+")/?tls="+key+"&timeout=5s")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,5 +169,51 @@ func TestManagedMySQLNativeAuthSwitchAndFullAuthentication(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("native adapter did not join")
+	}
+}
+
+func TestManagedMySQLEmptyAuthSwitchStillRequiresExpectedSequence(t *testing.T) {
+	client, front := net.Pipe()
+	backend, target := net.Pipe()
+	defer client.Close()
+	defer front.Close()
+	defer backend.Close()
+	defer target.Close()
+	for _, conn := range []net.Conn{client, front, backend, target} {
+		_ = conn.SetDeadline(time.Now().Add(time.Second))
+	}
+	request := make([]byte, 36)
+	request[0], request[3] = 32, 1
+	binary.LittleEndian.PutUint32(request[4:], managedMySQLSSL|managedMySQLProtocol41)
+	clientDone := make(chan error, 1)
+	go func() {
+		login := append([]byte{}, request...)
+		login[3] = 2
+		_, err := client.Write(login)
+		if err == nil {
+			_, err = targettransport.ReadMySQLPacket(client, 512)
+		}
+		if err == nil {
+			_, err = client.Write(nativeMySQLPacket(9, nil))
+		}
+		clientDone <- err
+	}()
+	targetDone := make(chan error, 1)
+	go func() {
+		_, err := targettransport.ReadMySQLPacket(target, 512)
+		if err == nil {
+			_, err = target.Write(nativeMySQLPacket(2, []byte("\xfecaching_sha2_password\x00abcdefghijklmnopqrst\x00")))
+		}
+		targetDone <- err
+	}()
+	_, err := connectMySQLTarget(t.Context(), front, backend, &managedMySQLHandshake{request: request, plugin: "caching_sha2_password"}, nil)
+	if !errors.Is(err, ErrManagedTLS) {
+		t.Fatal("wrong-sequence empty auth response accepted", err)
+	}
+	if err := <-clientDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-targetDone; err != nil {
+		t.Fatal(err)
 	}
 }

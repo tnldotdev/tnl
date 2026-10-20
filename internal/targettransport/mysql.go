@@ -38,12 +38,23 @@ func MySQLSSLRequest(greeting []byte) ([]byte, error) {
 }
 
 func ReadMySQLPacket(source io.Reader, limit int) ([]byte, error) {
+	return readMySQLPacket(source, limit, false)
+}
+
+// ReadMySQLAuthResponse permits the empty AuthSwitchResponse used by native
+// clients with an empty password. callers must still check its sequence number.
+// greetings, server responses, and SSLRequests require a nonempty payload.
+func ReadMySQLAuthResponse(source io.Reader, limit int) ([]byte, error) {
+	return readMySQLPacket(source, limit, true)
+}
+
+func readMySQLPacket(source io.Reader, limit int, allowEmpty bool) ([]byte, error) {
 	var header [4]byte
 	if _, err := io.ReadFull(source, header[:]); err != nil {
 		return nil, err
 	}
 	length := int(header[0]) | int(header[1])<<8 | int(header[2])<<16
-	if length < 1 || length > limit {
+	if length == 0 && !allowEmpty || length > limit {
 		return nil, ErrDatabaseTLS
 	}
 	packet := make([]byte, 4+length)

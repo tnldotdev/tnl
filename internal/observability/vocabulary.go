@@ -8,6 +8,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -67,6 +70,7 @@ const (
 	ActorID               Key = "tnl.actor_id"
 	Revision              Key = "tnl.revision"
 	ImageHash             Key = "tnl.image_hash"
+	MetricOverflow        Key = "otel.metric.overflow"
 )
 
 type Role string
@@ -117,13 +121,14 @@ type AttributeDefinition struct {
 	Values          []string `json:"values,omitempty"`
 	Semantics       string   `json:"semantics"`
 	DimensionPolicy string   `json:"dimension_policy"`
+	ValueType       string   `json:"value_type,omitempty"`
 }
 
 // VocabularyAttributes is the shared key/value/semantics/dimension policy model.
 func VocabularyAttributes() []AttributeDefinition {
 	var out []AttributeDefinition
 	add := func(k Key, policy, semantics string, values ...string) {
-		out = append(out, AttributeDefinition{k, slices.Clone(values), semantics, policy})
+		out = append(out, AttributeDefinition{Key: k, Values: slices.Clone(values), Semantics: semantics, DimensionPolicy: policy})
 	}
 	add(ServiceNamespace, "resource", "fixed product namespace", "tnl")
 	add(ServiceName, "resource", "process service, not a tenant or managed service", "tnld", "tnl", "tnl-accounts", "otel-collector")
@@ -149,11 +154,12 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(ConnectionSlot, "bounded", "assigned publisher connection slot; omitted when unknown", "0", "1")
 	add(Direction, "bounded", "byte direction at the named component; wire bytes are distinct from target payload", "visitor_to_target", "target_to_visitor", "visitor_to_publisher", "publisher_to_visitor", "visitor_to_relay", "relay_to_visitor")
 	add(Operation, "bounded", "compiled operation name; never supplied input, SQL, or a path")
+	out = append(out, AttributeDefinition{Key: MetricOverflow, DimensionPolicy: "sdk", ValueType: "bool", Semantics: "SDK cardinality overflow point; only boolean true is valid; replaces all application dimensions and must survive collector filtering"})
 	add(OutcomeKey, "bounded", "operation result; domain detail belongs in reason, state, or event", string(Success), string(Denied), string(Rejected), string(Timeout), string(Canceled), string(Error))
 	add(Reason, "bounded", "closed domain reason from semantic result classification or lifecycle observer; never error text", append(domainReasons(), "expected", "unexpected", "stale_assignment", "publisher_unavailable", "failed_ready")...)
-	add(ErrorType, "trace_log", "owned failure.Reason, diagnostic code, or closed tunnel.<code>; unknown errors use unexpected")
+	add(ErrorType, "trace_log", "exact owned failure.Reason, diagnostic code, or closed tunnel.<code>; unknown errors use "+string(failure.Unexpected), errorTypeValues()...)
 	add(State, "bounded", "closed per-instrument readiness or state-machine value")
-	add(Event, "bounded", "closed per-instrument lifecycle event, including queued, delivered, and dropped")
+	add(Event, "bounded", "closed per-instrument lifecycle event, including queued, delivered, dropped, and operational_failure")
 	add(CertificateKind, "bounded", "certificate worker domain", "public_url", "relay", "managed_service", "control")
 	add(DNSKind, "bounded", "DNS worker domain", "authority", "public_url", "managed_service", "public_url_challenge", "managed_service_challenge", "relay_challenge")
 	add(CleanupKind, "bounded", "cleanup domain", "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state")
@@ -172,6 +178,21 @@ func VocabularyAttributes() []AttributeDefinition {
 	}
 	slices.SortFunc(out, func(a, b AttributeDefinition) int { return strings.Compare(string(a.Key), string(b.Key)) })
 	return out
+}
+
+func errorTypeValues() []string {
+	var values []string
+	for _, reason := range failure.Reasons() {
+		values = append(values, string(reason))
+	}
+	for _, code := range diagnostic.Codes() {
+		values = append(values, string(code))
+	}
+	for _, code := range []tunnelv1.ErrorCode{tunnelv1.Unauthenticated, tunnelv1.InvalidMessage, tunnelv1.StalePublishRunNumber, tunnelv1.StaleConnectionAssignment, tunnelv1.DuplicatePublisherConnection, tunnelv1.DrainingPublisherConnection, tunnelv1.CapacityExceeded, tunnelv1.Unavailable, tunnelv1.Internal} {
+		values = append(values, "tunnel."+string(code))
+	}
+	slices.Sort(values)
+	return slices.Compact(values)
 }
 
 func (k Key) String(value string) attribute.KeyValue { return attribute.String(string(k), value) }

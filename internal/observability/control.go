@@ -18,12 +18,12 @@ func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 		ctx := WithMetrics(r.Context(), m)
 		ctx = extractHTTPTrace(ctx, r.Header)
 		ctx, span := m.tracer().Start(ctx, "tnl."+surface+".request", trace.WithSpanKind(trace.SpanKindServer))
-		defer span.End()
 		decision := &atomic.Int32{}
 		r = r.WithContext(context.WithValue(ctx, decisionKey{}, decision))
 		started := time.Now()
 		response := &controlResponseWriter{ResponseWriter: w, status: http.StatusOK, ctx: r.Context()}
 		m.apiInFlight.WithLabelValues(surface).Inc()
+		completed := false
 		defer func() {
 			m.apiInFlight.WithLabelValues(surface).Dec()
 			operation := r.Pattern
@@ -32,6 +32,8 @@ func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 			}
 			outcome := APIRequestSuccess
 			switch {
+			case !completed:
+				outcome = APIRequestServerError
 			case errors.Is(r.Context().Err(), context.DeadlineExceeded):
 				outcome = APIRequestDeadlineExceeded
 			case r.Context().Err() != nil:
@@ -54,11 +56,16 @@ func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 			if _, template, ok := strings.Cut(operation, " "); ok {
 				route = template
 			}
-			span.SetAttributes(HTTPRoute.String(route), HTTPMethod.String(httpMethod(r.Method)), HTTPStatus.Int(response.status), Component.String(surface))
+			span.SetAttributes(Operation.String("tnl."+surface+".request"), HTTPRoute.String(route), HTTPMethod.String(httpMethod(r.Method)), Component.String(surface))
+			if completed || response.wroteHeader {
+				span.SetAttributes(HTTPStatus.Int(response.status))
+			}
 			finishSpan(span, string(outcome))
+			span.End()
 			m.observeAPIRequest(surface, r.Method, route, outcome, time.Since(started))
 		}()
 		next.ServeHTTP(response, r)
+		completed = true
 	})
 }
 
@@ -131,8 +138,8 @@ func ResponseContext(w http.ResponseWriter) context.Context {
 }
 
 func (w *controlResponseWriter) WriteHeader(status int) {
-	if !w.wroteHeader {
-		w.status, w.wroteHeader = status, status >= 200
+	if !w.wroteHeader && (status >= 200 || status == http.StatusSwitchingProtocols) {
+		w.status, w.wroteHeader = status, true
 	}
 	w.ResponseWriter.WriteHeader(status)
 }

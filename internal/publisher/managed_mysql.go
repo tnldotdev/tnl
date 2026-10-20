@@ -167,7 +167,13 @@ func connectMySQLTarget(ctx context.Context, client net.Conn, backend net.Conn, 
 		if fast {
 			continue
 		}
-		response, err := managedMySQLPacket(client)
+		// only an AuthSwitchResponse may have no payload (empty password).
+		var response []byte
+		if kind == 0xfe {
+			response, err = targettransport.ReadMySQLAuthResponse(client, targettransport.MySQLMaxPacket)
+		} else {
+			response, err = managedMySQLPacket(client)
+		}
 		if err != nil {
 			return backend, err
 		}

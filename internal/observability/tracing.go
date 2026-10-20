@@ -126,6 +126,7 @@ func (m *Metrics) completedSpan(name, outcome string, elapsed time.Duration) {
 	}
 	now := time.Now()
 	_, span := m.tracer().Start(context.Background(), name, trace.WithTimestamp(now.Add(-elapsed)))
+	span.SetAttributes(Operation.String(name))
 	finishSpan(span, outcome)
 	span.End(trace.WithTimestamp(now))
 }
@@ -136,6 +137,7 @@ func (m *Metrics) completedOperation(ctx context.Context, name string, elapsed t
 	}
 	now := time.Now()
 	ctx, span := m.tracer().Start(ctx, name, trace.WithTimestamp(now.Add(-elapsed)), trace.WithAttributes(append(identityAttributes(ctx), fieldAttributes(ctx)...)...))
+	span.SetAttributes(Operation.String(name))
 	return ctx, func(err error) { finishError(span, err); span.End(trace.WithTimestamp(now)) }
 }
 
@@ -166,6 +168,7 @@ func (t ownedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		return t.base.RoundTrip(r)
 	}
 	ctx, span := m.tracer().Start(r.Context(), "tnl."+t.surface+".request", trace.WithSpanKind(trace.SpanKindClient))
+	span.SetAttributes(Operation.String("tnl." + t.surface + ".request"))
 	defer span.End()
 	r = r.Clone(ctx)
 	r.Header.Del("Tracestate")

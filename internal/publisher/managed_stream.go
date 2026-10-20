@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
@@ -66,12 +67,48 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	}
 	setup, cancelSetup := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelSetup()
+	promoted := false
+	defer func() {
+		if !promoted && setup.Err() != nil {
+			result = context.Cause(setup)
+		}
+	}()
 	deadline, _ := setup.Deadline()
 	if err := visitor.SetDeadline(deadline); err != nil {
 		return err
 	}
-	stop := context.AfterFunc(setup, func() { _ = visitor.Close() })
+	// keep the raw target socket separately from TLS wrappers. cancellation may
+	// race with dialing or block in a native read that does not accept a context.
+	var socketsMu sync.Mutex
+	var targetSocket net.Conn
+	stop := context.AfterFunc(setup, func() {
+		socketsMu.Lock()
+		defer socketsMu.Unlock()
+		_ = visitor.Close()
+		if targetSocket != nil {
+			_ = targetSocket.Close()
+		}
+	})
 	defer stop()
+	trackTarget := func(conn net.Conn) {
+		socketsMu.Lock()
+		defer socketsMu.Unlock()
+		targetSocket = conn
+		if setup.Err() != nil {
+			_ = conn.Close()
+		}
+	}
+	promote := func() error {
+		stopped := stop()
+		if setup.Err() != nil {
+			return context.Cause(setup)
+		}
+		if !stopped {
+			return context.Canceled
+		}
+		promoted = true
+		return nil
+	}
 	var backend net.Conn
 	var greeting *managedMySQLHandshake
 	var err error
@@ -93,6 +130,7 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		if err != nil {
 			return err
 		}
+		trackTarget(backend)
 		if err = backend.SetDeadline(deadline); err != nil {
 			return err
 		}
@@ -125,8 +163,8 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		if s.Protocol != config.ProtocolHTTP {
 			return ErrManagedTLS
 		}
-		if !stop() && setup.Err() != nil {
-			return context.Cause(setup)
+		if err := promote(); err != nil {
+			return err
 		}
 		if err := visitor.SetDeadline(time.Time{}); err != nil {
 			return err
@@ -146,8 +184,8 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	}
 	if s.Protocol == config.ProtocolHTTP {
 		admissionDone(nil)
-		if !stop() && setup.Err() != nil {
-			return context.Cause(setup)
+		if err := promote(); err != nil {
+			return err
 		}
 		if err = visitor.SetDeadline(time.Time{}); err != nil {
 			return err
@@ -202,6 +240,7 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		if err != nil {
 			return err
 		}
+		trackTarget(backend)
 		if err = backend.SetDeadline(deadline); err != nil {
 			return err
 		}
@@ -224,8 +263,8 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 			return err
 		}
 	}
-	if !stop() && setup.Err() != nil {
-		return context.Cause(setup)
+	if err := promote(); err != nil {
+		return err
 	}
 	if err = visitor.SetDeadline(time.Time{}); err != nil {
 		return err

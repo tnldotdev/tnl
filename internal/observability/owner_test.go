@@ -16,12 +16,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	collectorlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectormetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -119,6 +121,9 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 	spanCtx, finish := Start(ctx, "local.fixture")
 	OperationalFailure(spanCtx, "fixture operation", failure.Unexpected, "request-fixture", errors.New("secret log cause"))
 	finish(errors.New("secret error body"))
+	for i := range 2010 {
+		m.publisherOperations.Record(ctx, .01, metric.WithAttributes(ServiceID.String(fmt.Sprint("service-", i))))
+	}
 	if err := m.ForceFlush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -127,15 +132,42 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	summaries, err := DurationSummaries(nil, families)
-	if err != nil || len(summaries) != 1 || summaries[0].Count != 1 || summaries[0].SumSeconds != .025 {
-		t.Fatalf("scrape compatibility: %+v %v", summaries, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenScrape := false
+	for _, summary := range summaries {
+		if summary.Name == "tnl_control_operation_duration_seconds" {
+			seenScrape = summary.Count == 1 && summary.SumSeconds == .025
+		}
+	}
+	if !seenScrape {
+		t.Fatal("control scrape compatibility changed")
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	seenDuration, seenRuntime, seenProcess, seenSpan := false, false, false, false
+	var allMetrics []*metricspb.Metric
+	seenOverflow := false
 	for _, r := range metrics.ResourceMetrics {
 		for _, s := range r.ScopeMetrics {
 			for _, metric := range s.Metrics {
+				allMetrics = append(allMetrics, metric)
+				if h := metric.GetHistogram(); h != nil {
+					if h.AggregationTemporality != metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE {
+						t.Fatal("native histogram is not cumulative", metric.Name)
+					}
+					for _, point := range h.DataPoints {
+						for _, a := range point.Attributes {
+							if a.Key == string(MetricOverflow) {
+								if !a.Value.GetBoolValue() || len(point.Attributes) != 1 {
+									t.Fatal("invalid overflow marker", point)
+								}
+								seenOverflow = true
+							}
+						}
+					}
+				}
 				switch metric.Name {
 				case "tnl_control_operation_duration_seconds":
 					points := metric.GetHistogram().GetDataPoints()
@@ -156,6 +188,10 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 			}
 		}
 	}
+	assertRuntimeContract(t, allMetrics)
+	if !seenOverflow {
+		t.Fatal("actual OTLP export lost the SDK overflow marker")
+	}
 	for _, r := range traces.ResourceSpans {
 		for _, s := range r.ScopeSpans {
 			for _, span := range s.Spans {
@@ -172,6 +208,13 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 		t.Fatal("safe operational log missing", &logs)
 	}
 	record := logs.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
+	logAttrs := map[string]string{}
+	for _, a := range record.Attributes {
+		logAttrs[a.Key] = a.Value.GetStringValue()
+	}
+	if logAttrs[string(Operation)] != "fixture_operation" || logAttrs[string(Event)] != "operational_failure" || logAttrs[string(ErrorType)] != string(failure.Unexpected) {
+		t.Fatal("operational log loses safe machine fields", logAttrs)
+	}
 	traceID := trace.SpanContextFromContext(spanCtx).TraceID()
 	if len(record.TraceId) != 16 || len(record.SpanId) != 8 || !bytes.Equal(record.TraceId, traceID[:]) {
 		t.Fatal("log trace correlation missing", record)

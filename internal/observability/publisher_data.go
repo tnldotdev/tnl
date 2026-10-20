@@ -141,6 +141,7 @@ func PublisherAuthorization(ctx context.Context, allowed, admitted bool, err err
 		attrs := append(publisherDataAttributes(ctx), State.String(state), OutcomeKey.String(string(outcome)))
 		m.publisherData.authorization.Add(ctx, 1, metric.WithAttributes(attrs...))
 		_, span := m.tracer().Start(ctx, "publisher.authorization", trace.WithAttributes(attrs...))
+		span.SetAttributes(Operation.String("publisher.authorization"))
 		if err != nil {
 			finishError(span, err)
 		} else {
@@ -209,6 +210,46 @@ func PublisherHTTPResponse(ctx context.Context) {
 	}
 	publisherResponseObserved(ctx)
 }
+
+// PublisherHTTPUpgrade observes backend copy failures without hiding the
+// ReadWriteCloser required by ReverseProxy or its optional write-half close.
+// bytes are counted at the visitor socket, exactly once.
+func PublisherHTTPUpgrade(response *http.Response) {
+	if response.StatusCode == http.StatusSwitchingProtocols {
+		if body, ok := response.Body.(io.ReadWriteCloser); ok {
+			response.Body = &publisherUpgrade{ReadWriteCloser: body, ctx: response.Request.Context()}
+		}
+	}
+}
+
+type publisherUpgrade struct {
+	io.ReadWriteCloser
+	ctx context.Context
+}
+
+func (b *publisherUpgrade) Read(p []byte) (int, error) {
+	n, err := b.ReadWriteCloser.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		PublisherHTTPWriteError(b.ctx, err)
+	}
+	return n, err
+}
+
+func (b *publisherUpgrade) Write(p []byte) (int, error) {
+	n, err := b.ReadWriteCloser.Write(p)
+	PublisherHTTPWriteError(b.ctx, err)
+	return n, err
+}
+
+func (b *publisherUpgrade) CloseWrite() error {
+	if closer, ok := b.ReadWriteCloser.(interface{ CloseWrite() error }); ok {
+		err := closer.CloseWrite()
+		PublisherHTTPWriteError(b.ctx, err)
+		return err
+	}
+	return errors.ErrUnsupported
+}
+
 func PublisherHTTPError(ctx context.Context, err error) {
 	if o, ok := ctx.Value(httpObservationKey{}).(*httpObservation); ok {
 		o.mu.Lock()
@@ -362,10 +403,15 @@ func PublisherHTTPWriteError(ctx context.Context, err error) {
 	}
 }
 func (w *publisherHTTPWriter) Flush() {
+	_ = w.FlushError()
+}
+func (w *publisherHTTPWriter) FlushError() error {
 	if w.status == 0 {
 		w.WriteHeader(200)
 	}
-	PublisherHTTPWriteError(w.ctx, http.NewResponseController(w.ResponseWriter).Flush())
+	err := http.NewResponseController(w.ResponseWriter).Flush()
+	PublisherHTTPWriteError(w.ctx, err)
+	return err
 }
 func (w *publisherHTTPWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	c, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
@@ -389,16 +435,22 @@ type publisherConn struct {
 func (c *publisherConn) Read(p []byte) (int, error) {
 	n, e := c.Conn.Read(p)
 	publisherBytes(c.ctx, c.readDirection, n)
+	if e != nil && !errors.Is(e, io.EOF) {
+		PublisherHTTPWriteError(c.ctx, e)
+	}
 	return n, e
 }
 func (c *publisherConn) Write(p []byte) (int, error) {
 	n, e := c.Conn.Write(p)
 	publisherBytes(c.ctx, c.writeDirection, n)
+	PublisherHTTPWriteError(c.ctx, e)
 	return n, e
 }
 func (c *publisherConn) CloseWrite() error {
-	if c, ok := c.Conn.(interface{ CloseWrite() error }); ok {
-		return c.CloseWrite()
+	if closer, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		err := closer.CloseWrite()
+		PublisherHTTPWriteError(c.ctx, err)
+		return err
 	}
 	return errors.ErrUnsupported
 }

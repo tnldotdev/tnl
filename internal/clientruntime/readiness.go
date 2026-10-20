@@ -37,10 +37,14 @@ func Probe(ctx context.Context, service Service, transport http.RoundTripper) Ob
 
 func ProbeWithProof(ctx context.Context, service Service, transport http.RoundTripper, proof string) (observation Observation) {
 	ctx, finish := observability.PublisherOperation(ctx, "readiness_probe")
+	var probeErr error
 	defer func() {
 		var err error
 		if !observation.Ready {
 			err = errors.New("readiness check failed")
+			if probeErr != nil {
+				err = probeErr
+			}
 			if ctx.Err() != nil {
 				err = ctx.Err()
 			}
@@ -53,9 +57,9 @@ func ProbeWithProof(ctx context.Context, service Service, transport http.RoundTr
 	if path == "" {
 		path = "/"
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, service.PublicURL+path, nil)
+	request, err := http.NewRequestWithContext(probeCtx, http.MethodGet, service.PublicURL+path, nil)
 	if err != nil {
 		observation.Reason = "runtime.probe_failed"
 		return observation
@@ -67,6 +71,7 @@ func ProbeWithProof(ctx context.Context, service Service, transport http.RoundTr
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	if err != nil {
+		probeErr = err
 		observation.Reason = "runtime.probe_failed"
 		return observation
 	}

@@ -429,6 +429,7 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 				hooks.OnForwarded(response.Request)
 			}
 			observability.PublisherHTTPResponse(response.Request.Context())
+			observability.PublisherHTTPUpgrade(response)
 			return nil
 		},
 	}

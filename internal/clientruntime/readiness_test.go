@@ -4,9 +4,13 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 type roundTrip func(*http.Request) (*http.Response, error)
@@ -16,6 +20,67 @@ func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f
 type unreadBody struct {
 	t      *testing.T
 	closed bool
+}
+
+func assertProbeOutcome(t *testing.T, m *observability.Metrics, want string) {
+	t.Helper()
+	families, err := m.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "tnl_publisher_operation_duration_seconds" {
+			continue
+		}
+		for _, point := range family.Metric {
+			for _, label := range point.Label {
+				if label.GetName() == "tnl_outcome" && label.GetValue() == want && point.GetHistogram().GetSampleCount() == 1 {
+					return
+				}
+			}
+		}
+	}
+	t.Fatal("readiness completion lost its outcome", want, families)
+}
+
+func TestReadiness503IsFailureBeforeProbeCleanup(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(503) }))
+	defer server.Close()
+	m := observability.New("publisher")
+	defer m.Shutdown(t.Context())
+	observation := ProbeWithProof(observability.WithMetrics(t.Context(), m), Service{PublicURL: server.URL}, server.Client().Transport, "proof")
+	if observation.Ready || observation.Status != 503 {
+		t.Fatal(observation)
+	}
+	assertProbeOutcome(t, m, "error")
+}
+
+func TestReadinessTimeoutAndParentCancellationRemainDistinct(t *testing.T) {
+	for _, parentCanceled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "probe timeout", true: "parent canceled"}[parentCanceled], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				m := observability.New("publisher")
+				defer m.Shutdown(context.Background())
+				ctx, cancel := context.WithCancel(observability.WithMetrics(t.Context(), m))
+				defer cancel()
+				observation := ProbeWithProof(ctx, Service{PublicURL: "https://fixture.invalid"}, roundTrip(func(r *http.Request) (*http.Response, error) {
+					if parentCanceled {
+						cancel()
+					}
+					<-r.Context().Done()
+					return nil, r.Context().Err()
+				}), "")
+				if observation.Ready {
+					t.Fatal(observation)
+				}
+				want := "timeout"
+				if parentCanceled {
+					want = "canceled"
+				}
+				assertProbeOutcome(t, m, want)
+			})
+		})
+	}
 }
 
 func (b *unreadBody) Read([]byte) (int, error) {

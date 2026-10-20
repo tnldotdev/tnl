@@ -245,6 +245,9 @@ func TestHeartbeatMetricsKeepLastConfirmedLeaseOnFallback(t *testing.T) {
 	metrics := observability.New("publisher")
 	ctx := observability.WithMetrics(t.Context(), metrics)
 	confirmed := time.Now().Add(time.Minute).Truncate(time.Second)
+	// the publication setup already confirmed this lease. a heartbeat response
+	// alone is not accepted until the session validates its connection updates.
+	observability.PublisherLease(ctx, confirmed)
 	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
 		return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{ExpiresAt: confirmed}}, nil
 	}}

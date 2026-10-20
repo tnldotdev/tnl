@@ -49,8 +49,24 @@ func WithMetrics(ctx context.Context, m *Metrics) context.Context {
 }
 func FromContext(ctx context.Context) *Metrics { m, _ := ctx.Value(ownerKey{}).(*Metrics); return m }
 
-func newOwner(role string, config Config) (*Metrics, error) {
-	exports := &exportState{}
+func newOwner(role string, config Config) (_ *Metrics, err error) {
+	if err := validateSDKProviderEnvironment(os.Getenv); err != nil {
+		return nil, err
+	}
+	// SDK constructors parse ambient settings before applying explicit options.
+	// validate even overridden values before allowing those diagnostic paths.
+	if !config.Disabled && (config.Metrics.Endpoint != "" || config.Traces.Endpoint != "" || config.Logs.Endpoint != "") {
+		if err := validateSDKEnvironment(os.Getenv); err != nil {
+			return nil, err
+		}
+	}
+	lifetime, cancelExports := context.WithCancel(context.Background())
+	defer func() {
+		if err != nil {
+			cancelExports()
+		}
+	}()
+	exports := &exportState{lifetime: lifetime}
 	name := config.ServiceName
 	if name == "" {
 		name = "tnld"
@@ -98,7 +114,7 @@ func newOwner(role string, config Config) (*Metrics, error) {
 		}
 		if spec, ok := catalog.definition(i.Name); ok {
 			return sdkmetric.Stream{Name: i.Name, Description: i.Description, Unit: i.Unit, AttributeFilter: func(kv attribute.KeyValue) bool {
-				return slicesContainsKey(spec.Dimensions, Key(kv.Key)) && validMetricValue(kv)
+				return Key(kv.Key) != MetricOverflow && slicesContainsKey(spec.Dimensions, Key(kv.Key)) && validMetricValue(kv)
 			}}, true
 		}
 		return sdkmetric.Stream{}, false
@@ -110,7 +126,7 @@ func newOwner(role string, config Config) (*Metrics, error) {
 		if s.Gzip {
 			compression = otlpmetrichttp.GzipCompression
 		}
-		e, err := otlpmetrichttp.New(context.Background(), otlpmetrichttp.WithEndpointURL(s.Endpoint), otlpmetrichttp.WithHTTPClient(s.client()), otlpmetrichttp.WithHeaders(s.Headers), otlpmetrichttp.WithCompression(compression), otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: true, InitialInterval: 100 * time.Millisecond, MaxInterval: time.Second, MaxElapsedTime: s.Timeout}), otlpmetrichttp.WithAggregationSelector(sdkmetric.DefaultAggregationSelector), otlpmetrichttp.WithMaxResponseSize(64<<10))
+		e, err := otlpmetrichttp.New(context.Background(), otlpmetrichttp.WithEndpointURL(s.Endpoint), otlpmetrichttp.WithHTTPClient(s.client()), otlpmetrichttp.WithHeaders(s.Headers), otlpmetrichttp.WithCompression(compression), otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: true, InitialInterval: 100 * time.Millisecond, MaxInterval: time.Second, MaxElapsedTime: s.Timeout}), otlpmetrichttp.WithTemporalitySelector(sdkmetric.CumulativeTemporalitySelector), otlpmetrichttp.WithAggregationSelector(sdkmetric.DefaultAggregationSelector), otlpmetrichttp.WithMaxResponseSize(64<<10))
 		if err != nil {
 			return nil, err
 		}
@@ -124,7 +140,7 @@ func newOwner(role string, config Config) (*Metrics, error) {
 	}
 	mp := sdkmetric.NewMeterProvider(opts...)
 	catalog.Meter = mp.Meter(scope)
-	m := &Metrics{meterProvider: mp, meter: catalog, registry: registry, runtimeRegistry: runtime, resource: res}
+	m := &Metrics{meterProvider: mp, meter: catalog, registry: registry, runtimeRegistry: runtime, resource: res, cancelExports: cancelExports}
 	m.initInstruments(role)
 	describe(m.meter, "tnl_observability_export_failures_total", "Failed export batches after bounded retries; never gates readiness.", "counter", nil, "signal")
 	_, _ = m.meter.Int64ObservableCounter("tnl_observability_export_failures_total", metric.WithDescription("Failed export batches; export never gates readiness."), metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
@@ -142,7 +158,7 @@ func newOwner(role string, config Config) (*Metrics, error) {
 	}))
 	// raw zero drops all link attributes rather than restoring the SDK default.
 	// links carry bounded causal IDs, never scheduling or tenant payloads.
-	traceOptions := []sdktrace.TracerProviderOption{sdktrace.WithResource(res), sdktrace.WithIDGenerator(xrayIDGenerator{}), sdktrace.WithSampler(sdktrace.NeverSample()), sdktrace.WithRawSpanLimits(sdktrace.SpanLimits{AttributeValueLengthLimit: 256, AttributeCountLimit: 32, EventCountLimit: 8, LinkCountLimit: 8, AttributePerEventCountLimit: 8, AttributePerLinkCountLimit: 0})}
+	traceOptions := []sdktrace.TracerProviderOption{sdktrace.WithoutPanicRecording(), sdktrace.WithResource(res), sdktrace.WithIDGenerator(xrayIDGenerator{}), sdktrace.WithSampler(sdktrace.NeverSample()), sdktrace.WithRawSpanLimits(sdktrace.SpanLimits{AttributeValueLengthLimit: 256, AttributeCountLimit: 32, EventCountLimit: 8, LinkCountLimit: 8, AttributePerEventCountLimit: 8, AttributePerLinkCountLimit: 0})}
 	if config.Traces.Endpoint != "" && !config.Disabled {
 		s := config.Traces
 		compression := otlptracehttp.NoCompression
@@ -172,7 +188,8 @@ func newOwner(role string, config Config) (*Metrics, error) {
 			// parent's decision so one visitor's local spans stay coherent.
 			sampler = sdktrace.ParentBased(sampler, sdktrace.WithRemoteParentSampled(sampler), sdktrace.WithRemoteParentNotSampled(sampler))
 		}
-		traceOptions = append(traceOptions, sdktrace.WithSampler(sampler), sdktrace.WithSpanProcessor(newSpanQueue(exporter, exports, queue, min(batch, queue), delay, s.Timeout)))
+		m.spanQueue = newSpanQueue(exporter, exports, queue, min(batch, queue), delay, s.Timeout)
+		traceOptions = append(traceOptions, sdktrace.WithSampler(sampler), sdktrace.WithSpanProcessor(m.spanQueue))
 	}
 	m.tracerProvider = sdktrace.NewTracerProvider(traceOptions...)
 	if err := m.initLogs(config, res, exports); err != nil {
@@ -191,24 +208,63 @@ func (m *Metrics) Shutdown(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, ShutdownTimeout)
 	defer cancel()
-	var logs error
-	if m.loggerProvider != nil {
-		logs = m.loggerProvider.Shutdown(ctx)
+	if m.cancelExports != nil {
+		stop := context.AfterFunc(ctx, m.cancelExports)
+		defer stop()
+		defer m.cancelExports()
+		if ctx.Err() != nil {
+			m.cancelExports()
+		}
 	}
-	return errors.Join(m.tracerProvider.Shutdown(ctx), logs, m.meterProvider.Shutdown(ctx))
+	return providerWork(ctx, func(ctx context.Context) error {
+		var err error
+		// the SDK can skip processors on an already canceled context. the owner
+		// must stop its workers even in that case.
+		if m.spanQueue != nil {
+			err = m.spanQueue.Shutdown(ctx)
+		}
+		return errors.Join(err, m.tracerProvider.Shutdown(ctx))
+	}, func(ctx context.Context) error {
+		var err error
+		if m.logProcessor != nil {
+			err = m.logProcessor.Shutdown(ctx)
+		}
+		if m.loggerProvider != nil {
+			err = errors.Join(err, m.loggerProvider.Shutdown(ctx))
+		}
+		return err
+	}, m.meterProvider.Shutdown)
 }
 
 func (m *Metrics) ForceFlush(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
+	return providerWork(ctx, m.tracerProvider.ForceFlush, func(ctx context.Context) error {
+		if m.loggerProvider != nil {
+			return m.loggerProvider.ForceFlush(ctx)
+		}
+		return nil
+	}, m.meterProvider.ForceFlush)
+}
+
+// each provider starts independently; one slow signal cannot consume another's
+// entire budget. errors retain all causes but format only authored text.
+func providerWork(ctx context.Context, work ...func(context.Context) error) error {
 	ctx, cancel := context.WithTimeout(ctx, ShutdownTimeout)
 	defer cancel()
-	var logs error
-	if m.loggerProvider != nil {
-		logs = m.loggerProvider.ForceFlush(ctx)
+	results := make(chan error, len(work))
+	for _, fn := range work {
+		go func() { results <- fn(ctx) }()
 	}
-	return errors.Join(m.tracerProvider.ForceFlush(ctx), logs, m.meterProvider.ForceFlush(ctx))
+	var err error
+	for range work {
+		err = errors.Join(err, <-results)
+	}
+	if err != nil {
+		return safeExportError("observability provider operation failed", err)
+	}
+	return nil
 }
 
 // exporters sanitize errors before the SDK can report them. neither endpoint
@@ -218,9 +274,29 @@ type metricExporter struct {
 	state *exportState
 }
 
-type exportState struct{ metricsFailures, traceFailures, logFailures, lostSpans, droppedSpans atomic.Int64 }
+type exportState struct {
+	metricsFailures, traceFailures, logFailures, lostSpans, droppedSpans atomic.Int64
+	lifetime                                                             context.Context
+}
+
+func (s *exportState) exportContext(ctx context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	if s.lifetime == nil {
+		return ctx, cancel
+	}
+	stop := context.AfterFunc(s.lifetime, cancel)
+	if s.lifetime.Err() != nil {
+		cancel()
+	}
+	return ctx, func() { stop(); cancel() }
+}
 
 func (e *metricExporter) Export(ctx context.Context, data *metricdata.ResourceMetrics) error {
+	ctx, cancel := e.state.exportContext(ctx)
+	defer cancel()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err := e.Exporter.Export(ctx, data); err != nil {
 		e.state.metricsFailures.Add(1)
 		return safeExportError("metrics export failed", err)
