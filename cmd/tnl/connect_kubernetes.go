@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/kubeconfig"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -72,11 +71,12 @@ func prepareKubernetesConnection(ctx context.Context, session *teamSession, flag
 			return err
 		}
 	}
-	if key != "" && source.ConfigFile == "" && source.ExistingUser == "" && source.TokenFile == "" {
-		definition := flags.project.Config.Services[key]
-		if config.TargetType(definition) == "eks" {
-			source.EKS = &kubeconfig.EKS{Cluster: *definition.Target.Cluster, Region: *definition.Target.Region}
+	if source.ConfigFile == "" && source.ExistingUser == "" && source.TokenFile == "" && service.KubernetesAuth != nil {
+		hint := service.KubernetesAuth
+		if hint.Provider != controlv1.KubernetesEKS {
+			return kubeconfig.ErrCredential
 		}
+		source.EKS = &kubeconfig.EKS{Cluster: hint.Cluster, Region: hint.Region}
 	}
 	if source.EKS == nil && source.ExistingUser == "" && source.TokenFile == "" {
 		return publisherCLIError("kubernetes requires --kube-token-file or both --kube-user-config and --kube-user")

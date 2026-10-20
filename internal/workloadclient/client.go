@@ -48,6 +48,15 @@ func New(server string, httpClient *http.Client) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewWithKey(server, httpClient, key)
+}
+
+// NewWithKey lets a native connection owner retain its own ephemeral key for
+// protected SDK snapshots. the client copies the key and never exports it.
+func NewWithKey(server string, httpClient *http.Client, key ed25519.PrivateKey) (*Client, error) {
+	if len(key) != ed25519.PrivateKeySize || !ed25519.NewKeyFromSeed(key.Seed()).Equal(key) {
+		return nil, invalidSession()
+	}
 	authority, err := authorityclient.New(server, httpClient, "")
 	if err != nil {
 		return nil, err
@@ -56,7 +65,7 @@ func New(server string, httpClient *http.Client) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{key: key, authority: authority, control: control}, nil
+	return &Client{key: slices.Clone(key), authority: authority, control: control}, nil
 }
 
 func (c *Client) Exchange(ctx context.Context, team, project, ci, assertion string, services []string) (authorityv1.WorkloadSession, error) {

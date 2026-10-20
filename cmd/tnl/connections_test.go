@@ -10,9 +10,11 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/connectionruntime"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
@@ -59,6 +61,26 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 	}
 	if _, _, err := connectionProject(t.Context(), options); !errors.Is(err, connectionruntime.ErrTeam) {
 		t.Fatal("binding crossed project sources", err)
+	}
+}
+
+func TestConnectionKubernetesUsesSavedAuthHint(t *testing.T) {
+	directory, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	team, _ := opaqueid.New(opaqueid.TeamPrefix)
+	service, _ := opaqueid.New(opaqueid.PrivateServicePrefix)
+	localCluster, localRegion := "unapplied-local", "us-west-2"
+	b := nativeConnectionBackend{directory: directory, executable: "/absolute/tnl", scope: connectionruntime.Context{CI: "test", Server: "https://control.example", TeamID: team, SourceID: "source", ProjectLabel: "shop"}}
+	b.project.Config.Services = map[string]config.Service{"cluster": {Target: &config.ServiceTarget{Type: "eks", Cluster: &localCluster, Region: &localRegion}}}
+	p := preparedConnection{service: controlv1.PrivateService{Id: service, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "cluster.example"}, KubernetesAuth: &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: "applied-cluster", Region: "us-east-1"}}, connection: connectionruntime.Connection{URL: "https://cluster.example:25443"}}
+	if err := b.prepareKube(t.Context(), "cluster", &p); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.sessionKubePlan.CleanupSession(t.Context(), b.sessionKubeResult) })
+	if p.kubeSource.EKS == nil || p.kubeSource.EKS.Cluster != "applied-cluster" || p.kubeSource.EKS.Region != "us-east-1" {
+		t.Fatal("native credentials used unapplied local selectors")
 	}
 }
 

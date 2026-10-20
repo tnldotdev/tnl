@@ -204,7 +204,7 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 	}()
 	switch command {
 	case "runtime connections capabilities":
-		return json.NewEncoder(output).Encode(map[string]any{"schema": 1, "capabilities": []string{"context", "start", "status", "stop", "connect", "kube-credential"}, "workload_private": newWorkloadConnectionControl != nil, "opaque_private_preflight": preflightOpaqueConnection != nil, "team_names": "applied_binding"})
+		return json.NewEncoder(output).Encode(map[string]any{"schema": 1, "capabilities": []string{"context", "start", "status", "stop", "connect", "kube-credential"}, "workload_private": true, "opaque_private_preflight": true, "team_names": "applied_binding"})
 	case "runtime connections context":
 		_, scope, err := connectionProject(ctx, flags.Context)
 		if err != nil {

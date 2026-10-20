@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/streamcopy"
@@ -42,6 +43,7 @@ type connectorFixture struct {
 	badCertificate   tls.Certificate
 	finished         chan struct{}
 	serveErr         error
+	wantStartupError bool
 	config           Config
 	reuseIDs         [2]string
 	assignments      [2]atomic.Int64
@@ -187,7 +189,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 		select {
 		case <-f.finished:
 			var reload *MetadataReloadError
-			if f.serveErr != nil && !errors.As(f.serveErr, &reload) {
+			if f.serveErr != nil && !f.wantStartupError && !errors.As(f.serveErr, &reload) {
 				t.Errorf("connector shutdown: %v", f.serveErr)
 			}
 		case <-time.After(3 * time.Second):
@@ -196,11 +198,38 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 	})
 	select {
 	case <-ready:
+		if f.wantStartupError {
+			t.Fatal("reported readiness before rejecting the native TLS probe")
+		}
+	case <-f.finished:
+		if !f.wantStartupError || f.serveErr == nil {
+			t.Fatal("connector failed before readiness", f.serveErr)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("two ingress sessions did not become ready")
 	}
 	f.localAddress = listener.Addr().String()
 	return f
+}
+
+func TestOpaquePreflightVerifiesTLSBeforeReadyWithoutApplicationBytes(t *testing.T) {
+	for _, invalid := range []bool{false, true} {
+		t.Run(map[bool]string{false: "verified", true: "wrong certificate"}[invalid], func(t *testing.T) {
+			f := newConfiguredConnectorFixture(t, "tls_tcp", "", func(f *connectorFixture, c *Config) {
+				c.Preflight = true
+				f.wantStartupError = invalid
+				f.wrongCertificate.Store(invalid)
+			})
+			if f.opened.Load() != 1 || f.application.Load() != 0 {
+				t.Fatal("readiness did not verify exactly one stream without application bytes")
+			}
+			if invalid {
+				if reason, ok := failure.ReasonOf(f.serveErr); !ok || reason != failure.ConnectionTLSRejected {
+					t.Fatal("TLS rejection lost its failure boundary", f.serveErr)
+				}
+			}
+		})
+	}
 }
 
 func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Session, slot uint8) {

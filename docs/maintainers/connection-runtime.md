@@ -56,9 +56,8 @@ version` and normal generated help retain their existing contracts.
 
 `capabilities` returns `schema: 1`, the operation names, `workload_private`,
 `opaque_private_preflight`, and
-`team_names: "applied_binding"`. check this response before requesting an OIDC
-assertion. this branch leaves `workload_private: false` until the separately
-owned transport adapter is merged and installed at the factory below.
+`team_names: "applied_binding"`. both transport capabilities are true. check this
+response before requesting an OIDC assertion.
 
 `context` evaluates configuration and source/worktree identity without opening
 human client state. its nonsecret response contains:
@@ -207,34 +206,28 @@ handle. stopping closes listeners and streams, joins connector workers, removes
 the owned session kubeconfig, and revokes the workload. a nonsecret terminal
 record preserves whether cleanup succeeded.
 
-## transport merge and remaining qualification
+## native transport ownership and qualification
 
-`cmd/tnl/connections_backend.go` deliberately uses the factory
-`newWorkloadConnectionControl`. after the transport commit is available, set it
-to `tcpconnect.NewWorkloadControl`. its actual contract returns
-`(tcpconnect.Control, error)` for `*workloadclient.Client`; `Config.IdentityID`
-is empty for that subject. `ResolvePrivateService` supplies the approved run,
+`cmd/tnl/connections_backend.go` uses `tcpconnect.NewWorkloadControl` with the
+owner's `*workloadclient.Client`; `Config.IdentityID` is empty for that subject.
+`ResolvePrivateService` supplies the approved run,
 trust revision, protocol, and managed TLS endpoint. no human ID substitutes for
 a workload. closing a service adapter releases only its own assignments; the
 owner retains session renewal/revocation.
 
-signed transport tip `7415424f` supplies that adapter. it also changes
-`ClientTLSCertificate` to an opaque TLS signer and keeps certificates valid for
-the fixed session window while checking the renewable lease at admission.
-`workloadCredentialSnapshot(ctx, client, serviceID)` is the separate native-only
-PEM snapshot factory. it must return a current exportable `tls.Certificate` with
-the same workload key and service/session identity. this needs an upstream
-native-only snapshot API or an owner-supplied ephemeral-key constructor; the
-signed transport tip currently exposes neither. do not marshal an opaque signer
-or substitute a second key. preparation checks exportability before reporting
-ready, and all material still travels only over protected IPC.
+the native owner generates one ephemeral key and supplies it through
+`workloadclient.NewWithKey`. the transport adapter still exposes only an opaque
+TLS signer. the owner pairs each validated current service/session certificate
+with its retained key for protected IPC snapshots; no generic key-export API or
+credential file is involved. preparation checks the pair before reporting ready.
+certificates stay within the fixed session window; admission also checks the
+renewable lease.
 
-the private workload native-process fixture and private Drizzle transport
-variant require that merge. opaque private TCP also needs the transport owner's
-verified probe installed as `preflightOpaqueConnection(ctx, tcpconnect.Config)`.
-that capability remains false and preparation fails until the probe is
-available; connector-path readiness alone cannot report complete native TLS
-readiness. the existing helper verifies TLS before forwarding application bytes.
+opaque private TCP sets `tcpconnect.Config.Preflight`. before reporting ready,
+the connector opens one authorized stream through its existing ingress paths,
+verifies managed TLS, and closes it without sending application bytes. a TLS
+rejection fails startup. Kubernetes defaults use control's saved `KubernetesAuth`
+hint, including workload inventory, rather than unapplied local selectors.
 
 ```console
 mise exec -- task go:test:connections

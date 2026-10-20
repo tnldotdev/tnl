@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
@@ -74,6 +75,9 @@ type Config struct {
 	// authoritative; target trust is owned only by the publisher.
 	TrustRevision int64
 	Ready         func() error
+	// Preflight verifies one opaque visitor's managed TLS before Ready, using
+	// these same ingress paths without sending application bytes.
+	Preflight bool
 	// infrastructure trust is independent of the optional target CA bundle.
 	TransportTLS   *tls.Config
 	MaxConnections int
@@ -342,7 +346,7 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 		}
 	}
 	var next atomic.Uint64
-	return consume(serveCtx, func(forwardCtx context.Context, local net.Conn) error {
+	forward := func(forwardCtx context.Context, local net.Conn) error {
 		// resolve approved metadata before opening one publisher stream. native
 		// clients negotiate TLS through it; opaque clients use tnl's TLS helper.
 		run, err := config.Control.ResolvePrivateService(forwardCtx, config.PrivateServiceID)
@@ -381,6 +385,10 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 				continue
 			}
 			defer provider.Close()
+			if local == nil {
+				// the readiness probe ends after openPrivate verifies managed TLS.
+				return nil
+			}
 			connectionCtx, cancelConnection := context.WithCancel(forwardCtx)
 			defer cancelConnection()
 			stopPath := context.AfterFunc(path.lifetime, cancelConnection)
@@ -391,7 +399,24 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 			return err
 		}
 		return ErrPrivateConnection
-	})
+	}
+	if config.Preflight {
+		if config.Protocol != "tcp" {
+			return ErrPrivateConnection
+		}
+		probe, cancel := context.WithTimeout(serveCtx, 10*time.Second)
+		err := forward(probe, nil)
+		cancel()
+		if err != nil {
+			reason := failure.ConnectionUnavailable
+			var certificateError *tls.CertificateVerificationError
+			if errors.As(err, &certificateError) {
+				reason = failure.ConnectionTLSRejected
+			}
+			return failure.Wrap("verify native service TLS", reason, err)
+		}
+	}
+	return consume(serveCtx, forward)
 }
 
 func validProtocol(protocol string) bool {

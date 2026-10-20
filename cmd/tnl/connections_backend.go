@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
 	"errors"
 	"io"
@@ -29,13 +30,6 @@ import (
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
 
-var newWorkloadConnectionControl func(*workloadclient.Client) (tcpconnect.Control, error)
-
-// the native-only snapshot adapter must return an exportable pair, never write
-// it to disk. transport clients may deliberately expose only an opaque signer.
-var workloadCredentialSnapshot func(context.Context, *workloadclient.Client, string) (tls.Certificate, error)
-var preflightOpaqueConnection func(context.Context, tcpconnect.Config) error
-
 type preparedConnection struct {
 	service    controlv1.PrivateService
 	connection connectionruntime.Connection
@@ -50,6 +44,7 @@ type nativeConnectionBackend struct {
 	stateDir, assertion, directory, executable, runnerTemp string
 	human                                                  *teamSession
 	workload                                               *workloadclient.Client
+	workloadKey                                            ed25519.PrivateKey
 	deadline                                               time.Time
 	prepared                                               map[string]*preparedConnection
 	cancel                                                 context.CancelFunc
@@ -76,11 +71,16 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 	metadata := projectmeta.Metadata{Version: projectmeta.Version, Services: map[string]projectmeta.Service{}}
 	services := map[string]controlv1.PrivateService{}
 	if b.scope.CI != "" {
-		client, err := workloadclient.New(b.scope.Server, nil)
+		_, key, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return projectmeta.PublicMetadata{}, time.Time{}, err
+		}
+		client, err := workloadclient.NewWithKey(b.scope.Server, nil, key)
 		if err != nil {
 			return projectmeta.PublicMetadata{}, time.Time{}, err
 		}
 		b.workload = client
+		b.workloadKey = key
 		session, err := exchangeConnectionWorkload(ctx, client, b.scope, b.assertion)
 		b.assertion = "" // neither the assertion nor GitHub's request bearer survives exchange.
 		if err != nil {
@@ -98,7 +98,7 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 			if _, duplicate := services[service.Service]; duplicate {
 				return projectmeta.PublicMetadata{}, time.Time{}, connectionruntime.ErrInvalid
 			}
-			services[service.Service] = controlv1.PrivateService{Id: service.Id, Name: service.Service, TeamId: b.scope.TeamID, Protocol: service.Protocol, Enabled: true, ManagedTls: &service.ManagedTls}
+			services[service.Service] = controlv1.PrivateService{Id: service.Id, Name: service.Service, TeamId: b.scope.TeamID, Protocol: service.Protocol, Enabled: true, ManagedTls: &service.ManagedTls, KubernetesAuth: service.KubernetesAuth}
 		}
 	} else {
 		session, err := openTeamSession(ctx, remoteFlags{ServerURL: b.scope.Server, StateDir: b.stateDir, ProjectTeam: b.scope.TeamID}, "tnl connect", io.Discard)
@@ -140,16 +140,10 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 			return projectmeta.PublicMetadata{}, time.Time{}, err
 		}
 		if !endpoint.Public || service.Protocol == controlv1.Tcp {
-			if !endpoint.Public && service.Protocol == controlv1.Tcp && preflightOpaqueConnection == nil {
-				return projectmeta.PublicMetadata{}, time.Time{}, connectionruntime.ErrTransport
-			}
 			var control tcpconnect.Control
 			identity := ""
 			if b.workload != nil {
-				if newWorkloadConnectionControl == nil {
-					return projectmeta.PublicMetadata{}, time.Time{}, connectionruntime.ErrTransport
-				}
-				control, err = newWorkloadConnectionControl(b.workload)
+				control, err = tcpconnect.NewWorkloadControl(b.workload)
 			} else {
 				identity = b.human.identity.Identity.Id
 				control, err = tcpconnect.NewControl(b.human.authenticated.Control, b.human.store, identity)
@@ -179,7 +173,7 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 			}
 			ready := make(chan struct{})
 			done := make(chan error, 1)
-			configuration := tcpconnect.Config{Control: control, PrivateServiceID: service.Id, IdentityID: identity, Protocol: string(service.Protocol), TrustRevision: run.TrustRevision, ManagedTLS: endpoint, ServiceTLS: verification, Ready: func() error { close(ready); return nil }}
+			configuration := tcpconnect.Config{Control: control, PrivateServiceID: service.Id, IdentityID: identity, Protocol: string(service.Protocol), TrustRevision: run.TrustRevision, ManagedTLS: endpoint, ServiceTLS: verification, Preflight: service.Protocol == controlv1.Tcp && !endpoint.Public, Ready: func() error { close(ready); return nil }}
 			b.workers.Go(func() {
 				defer listener.Close()
 				err := tcpconnect.Serve(lifetime, listener, configuration)
@@ -201,11 +195,6 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (projectmeta.Public
 				return projectmeta.PublicMetadata{}, time.Time{}, ctx.Err()
 			}
 			if service.Protocol == controlv1.Tcp {
-				if !endpoint.Public {
-					if err := preflightOpaqueConnection(ctx, configuration); err != nil {
-						return projectmeta.PublicMetadata{}, time.Time{}, err
-					}
-				}
 				connection.Host = "127.0.0.1"
 			}
 		}
@@ -339,27 +328,12 @@ func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (con
 			if err != nil {
 				return connectionruntime.Connection{}, err
 			}
-			if b.workload != nil && workloadCredentialSnapshot != nil {
-				expectedPublic := pair.Leaf.PublicKey
-				var snapshot tls.Certificate
-				snapshot, err = workloadCredentialSnapshot(ctx, b.workload, p.service.Id)
+			if b.workload != nil {
+				// only this owner retains the exportable key. TLSMaterial checks
+				// it against the already validated service/session certificate.
+				snapshot := *pair
+				snapshot.PrivateKey = b.workloadKey
 				pair = &snapshot
-				if err == nil {
-					var session authorityv1.WorkloadSession
-					session, err = b.workload.Session()
-					if err == nil {
-						err = validateConnectionWorkloadCertificate(snapshot, p.service.Id, session)
-					}
-					if err == nil {
-						public, ok := snapshot.Leaf.PublicKey.(ed25519.PublicKey)
-						if !ok || !public.Equal(expectedPublic) {
-							err = failure.Wrap("read native workload snapshot", failure.ServerResponseInvalid, connectionruntime.ErrInvalid)
-						}
-					}
-				}
-			}
-			if err != nil {
-				return connectionruntime.Connection{}, err
 			}
 			options, err = connectionruntime.TLSMaterial(*pair, options.ServerName, b.deadline)
 			if err != nil {
@@ -466,7 +440,6 @@ func preflightNativeTLS(ctx context.Context, protocol config.ProtocolName, verif
 }
 
 func (b *nativeConnectionBackend) prepareKube(ctx context.Context, name string, p *preparedConnection) error {
-	definition := b.project.Config.Services[name]
 	p.kubeSource = kubeconfig.Source{TokenFile: b.kubeOptions.KubeTokenFile, ConfigFile: b.kubeOptions.KubeUserConfig, ExistingUser: b.kubeOptions.KubeUser}
 	var err error
 	if p.kubeSource.TokenFile != "" {
@@ -481,8 +454,12 @@ func (b *nativeConnectionBackend) prepareKube(ctx context.Context, name string, 
 			return err
 		}
 	}
-	if p.kubeSource.TokenFile == "" && p.kubeSource.ConfigFile == "" && p.kubeSource.ExistingUser == "" && definition.Target != nil && definition.Target.Type == "eks" && definition.Target.Cluster != nil && definition.Target.Region != nil {
-		p.kubeSource.EKS = &kubeconfig.EKS{Cluster: *definition.Target.Cluster, Region: *definition.Target.Region}
+	if p.kubeSource.TokenFile == "" && p.kubeSource.ConfigFile == "" && p.kubeSource.ExistingUser == "" && p.service.KubernetesAuth != nil {
+		hint := p.service.KubernetesAuth
+		if hint.Provider != controlv1.KubernetesEKS {
+			return kubeconfig.ErrCredential
+		}
+		p.kubeSource.EKS = &kubeconfig.EKS{Cluster: hint.Cluster, Region: hint.Region}
 	}
 	if err := p.kubeSource.Validate(); err != nil {
 		return err
