@@ -69,7 +69,7 @@ func TestInitRepeatsManualProjectTypeAction(t *testing.T) {
 				if err := runInit(t.Context(), initCommand{NoInstall: true}, &stdout, &bytes.Buffer{}); err != nil {
 					t.Fatal(err)
 				}
-				if !strings.Contains(stdout.String(), "needs action") || !strings.Contains(stdout.String(), `.tnl/local/project.d.ts`) {
+				if !strings.Contains(stdout.String(), "needs action") || !strings.Contains(stdout.String(), `.tnl/generated/project.d.ts`) {
 					t.Fatalf("run %d stdout = %q", run, stdout.String())
 				}
 				after, err := os.ReadFile(path)

@@ -16,7 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
-func TestConfigPathDoesNotEvaluateTypeScript(t *testing.T) {
+func TestCheckEvaluatesConfigurationWithoutStateOrTelemetry(t *testing.T) {
 	directory := t.TempDir()
 	stateRoot := filepath.Join(directory, "state")
 	t.Setenv("TNL_STATE_DIR", stateRoot)
@@ -32,16 +32,16 @@ export default {};`
 
 	var stdout, stderr bytes.Buffer
 	var events []telemetryPayload
-	if err := run(t.Context(), []string{"config", "path"}, &stdout, &stderr, func(string) telemetryReporter {
+	if err := run(t.Context(), []string{"check"}, &stdout, &stderr, func(string) telemetryReporter {
 		return telemetryReporterFunc(func(event telemetryPayload) { events = append(events, event) })
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 || events[0].Command != "config" || events[0].Action != "path" || events[1].Event != telemetryCommandCompleted {
-		t.Fatalf("config path telemetry = %+v", events)
+	if len(events) != 0 {
+		t.Fatalf("check opened telemetry = %+v", events)
 	}
 	want, err := clioutput.Render(clioutput.Frame{
-		Command: "tnl config path", State: "selected", Blocks: []clioutput.Block{clioutput.Text(configPath)},
+		Command: "tnl check", State: "valid", Blocks: []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "path", Value: configPath})},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -49,18 +49,11 @@ export default {};`
 	if got := stdout.String(); got != want+"\n" {
 		t.Fatalf("config path output = %q, want %q", got, want+"\n")
 	}
-	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
-		t.Fatalf("config path evaluated tnl.config.ts: %v", err)
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("check did not evaluate tnl.config.ts: %v", err)
 	}
 	if _, err := os.Stat(stateRoot); !os.IsNotExist(err) {
 		t.Fatalf("config path created client state: %v", err)
-	}
-	stdout.Reset()
-	if err := run(t.Context(), []string{"config", "check", "--state-dir", stateRoot}, &stdout, &stderr); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(markerPath); err != nil {
-		t.Fatalf("config check did not evaluate tnl.config.ts: %v", err)
 	}
 }
 

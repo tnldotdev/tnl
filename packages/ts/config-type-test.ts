@@ -572,6 +572,63 @@ defineConfig(remoteMount);
 // @ts-expect-error combined byte rates are removed.
 ({ publicURL: { limits: { traffic: { rate: { bytes: 1024, per: "1s" } } } } }) satisfies TnlConfig;
 
+defineConfig({
+  publishers: { production: { aws: { replicas: 2 } } },
+  services: {
+    cluster: {
+      publisher: "production",
+      protocol: "kubernetes",
+      target: { type: "eks", cluster: "development", region: "us-east-1" },
+    },
+    db: {
+      protocol: "postgres",
+      target: { type: "rds", cluster: "orders", region: "us-east-1", endpoint: "reader" },
+    },
+  },
+  ci: {
+    deploy: {
+      github: {
+        workflow: ".github/workflows/deploy.yml",
+        ref: "refs/heads/main",
+        events: ["push"],
+      },
+      services: ["cluster", "db"],
+      maxDuration: "1h",
+    },
+  },
+});
+defineConfig({
+  services: { api: {} },
+  ci: {
+    deploy: {
+      github: {
+        workflow: ".github/workflows/deploy.yml",
+        ref: "refs/heads/main",
+        events: ["push"],
+      },
+      // @ts-expect-error CI policies select existing service keys.
+      services: ["missing"],
+    },
+  },
+});
+defineConfig({
+  services: {
+    cluster: {
+      protocol: "http",
+      // @ts-expect-error EKS targets require the kubernetes protocol.
+      target: { type: "eks", cluster: "development", region: "us-east-1" },
+    },
+  },
+});
+defineConfig({
+  services: {
+    db: {
+      protocol: "postgres",
+      // @ts-expect-error RDS reader endpoints require a cluster.
+      target: { type: "rds", instance: "orders", region: "us-east-1", endpoint: "reader" },
+    },
+  },
+});
 // @ts-expect-error an ordinary factory cannot mix address and Docker fields.
 defineConfig(() => ({
   services: { web: { target: { type: "address", address: 3000, container: "web" } } },

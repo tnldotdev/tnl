@@ -42,7 +42,7 @@ func projectGitignoreActions(ctx context.Context, root string) []string {
 		ignoreRoot = root
 	}
 	paths := []string{
-		".tnl/local/project.json", ".tnl/local/project.d.ts", ".tnl/local/project.lock", ".tnl/local/.project-example",
+		".tnl/local/project.json", ".tnl/local/project.lock", ".tnl/local/.project-example",
 		".tnl/generated/example.ts", ".tnl/config.json", ".tnl/tnl-ignore-probe",
 	}
 	cmd := command(append(prefix, "check-ignore", "--no-index", "--verbose", "--non-matching", "-z", "--stdin")...)

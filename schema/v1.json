@@ -2,6 +2,73 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tnl.dev/schema/v1.json",
   "$defs": {
+    "CI": {
+      "properties": {
+        "github": {
+          "properties": {
+            "repository": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+            },
+            "workflow": {
+              "type": "string",
+              "pattern": "^\\.github/workflows/[^/*?\\[\\]]+\\.ya?ml$"
+            },
+            "environment": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ref": {
+              "type": "string",
+              "pattern": "^refs/(heads|tags)/[^*?\\[\\] ]+$"
+            },
+            "reusable_workflow": {
+              "type": "string",
+              "minLength": 1
+            },
+            "events": {
+              "items": {
+                "type": "string",
+                "enum": [
+                  "push",
+                  "pull_request",
+                  "pull_request_target",
+                  "workflow_dispatch",
+                  "workflow_call",
+                  "schedule",
+                  "release",
+                  "merge_group",
+                  "repository_dispatch",
+                  "workflow_run"
+                ]
+              },
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": ["workflow", "ref", "events"]
+        },
+        "services": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "maxItems": 32,
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "max_duration": {
+          "type": "string",
+          "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["github", "services"]
+    },
     "Inspection": {
       "properties": {
         "mode": {
@@ -297,7 +364,7 @@
                         "target": {
                           "properties": {
                             "type": {
-                              "const": "address"
+                              "enum": ["address", "eks", "rds"]
                             }
                           },
                           "required": ["type"]
@@ -510,7 +577,11 @@
                           "file": false,
                           "service": false,
                           "port": false,
-                          "container": false
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -557,7 +628,11 @@
                           "file": false,
                           "service": false,
                           "port": false,
-                          "container": false
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -606,7 +681,11 @@
                             "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
                           },
                           "address": false,
-                          "container": false
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -648,7 +727,11 @@
                           "address": false,
                           "project": false,
                           "file": false,
-                          "service": false
+                          "service": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -729,7 +812,7 @@
                         "target": {
                           "properties": {
                             "type": {
-                              "const": "address"
+                              "enum": ["address", "eks", "rds"]
                             }
                           },
                           "required": ["type"]
@@ -802,7 +885,11 @@
                           "file": false,
                           "service": false,
                           "port": false,
-                          "container": false
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -849,7 +936,11 @@
                           "file": false,
                           "service": false,
                           "port": false,
-                          "container": false
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -898,7 +989,11 @@
                             "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
                           },
                           "address": false,
-                          "container": false
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -940,7 +1035,11 @@
                           "address": false,
                           "project": false,
                           "file": false,
-                          "service": false
+                          "service": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -994,7 +1093,7 @@
                         "target": {
                           "properties": {
                             "type": {
-                              "const": "address"
+                              "enum": ["address", "eks", "rds"]
                             }
                           },
                           "required": ["type"]
@@ -1079,7 +1178,11 @@
                           "file": false,
                           "service": false,
                           "port": false,
-                          "container": false
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -1128,7 +1231,11 @@
                             "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
                           },
                           "address": false,
-                          "container": false
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -1170,7 +1277,11 @@
                           "address": false,
                           "project": false,
                           "file": false,
-                          "service": false
+                          "service": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -1204,7 +1315,7 @@
                         "target": {
                           "properties": {
                             "type": {
-                              "const": "address"
+                              "enum": ["address", "eks", "rds"]
                             }
                           },
                           "required": ["type"]
@@ -1289,7 +1400,11 @@
                           "file": false,
                           "service": false,
                           "port": false,
-                          "container": false
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -1338,7 +1453,11 @@
                             "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
                           },
                           "address": false,
-                          "container": false
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -1380,11 +1499,78 @@
                           "address": false,
                           "project": false,
                           "file": false,
-                          "service": false
+                          "service": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
                         "required": ["type", "container", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "rds"
+                          },
+                          "region": {
+                            "type": "string",
+                            "pattern": "^[a-z]{2}(?:-[a-z]+)+-[0-9]+$"
+                          },
+                          "cluster": false,
+                          "instance": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,99}$"
+                          },
+                          "endpoint": {
+                            "type": "string",
+                            "const": "writer"
+                          },
+                          "tls": false,
+                          "address": false,
+                          "project": false,
+                          "file": false,
+                          "service": false,
+                          "port": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "region", "instance"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "rds"
+                          },
+                          "region": {
+                            "type": "string",
+                            "pattern": "^[a-z]{2}(?:-[a-z]+)+-[0-9]+$"
+                          },
+                          "cluster": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,99}$"
+                          },
+                          "instance": false,
+                          "endpoint": {
+                            "type": "string",
+                            "enum": ["writer", "reader"],
+                            "default": "writer"
+                          },
+                          "tls": false,
+                          "address": false,
+                          "project": false,
+                          "file": false,
+                          "service": false,
+                          "port": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "region", "cluster"]
                       }
                     ]
                   },
@@ -1414,7 +1600,7 @@
                         "target": {
                           "properties": {
                             "type": {
-                              "const": "address"
+                              "enum": ["address", "eks", "rds"]
                             }
                           },
                           "required": ["type"]
@@ -1499,7 +1685,11 @@
                           "file": false,
                           "service": false,
                           "port": false,
-                          "container": false
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -1548,7 +1738,11 @@
                             "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
                           },
                           "address": false,
-                          "container": false
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
@@ -1590,11 +1784,328 @@
                           "address": false,
                           "project": false,
                           "file": false,
-                          "service": false
+                          "service": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
                         },
                         "additionalProperties": false,
                         "type": "object",
                         "required": ["type", "container", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "rds"
+                          },
+                          "region": {
+                            "type": "string",
+                            "pattern": "^[a-z]{2}(?:-[a-z]+)+-[0-9]+$"
+                          },
+                          "cluster": false,
+                          "instance": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,99}$"
+                          },
+                          "endpoint": {
+                            "type": "string",
+                            "const": "writer"
+                          },
+                          "tls": false,
+                          "address": false,
+                          "project": false,
+                          "file": false,
+                          "service": false,
+                          "port": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "region", "instance"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "rds"
+                          },
+                          "region": {
+                            "type": "string",
+                            "pattern": "^[a-z]{2}(?:-[a-z]+)+-[0-9]+$"
+                          },
+                          "cluster": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,99}$"
+                          },
+                          "instance": false,
+                          "endpoint": {
+                            "type": "string",
+                            "enum": ["writer", "reader"],
+                            "default": "writer"
+                          },
+                          "tls": false,
+                          "address": false,
+                          "project": false,
+                          "file": false,
+                          "service": false,
+                          "port": false,
+                          "container": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "region", "cluster"]
+                      }
+                    ]
+                  },
+                  "tls": false,
+                  "http": false
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["protocol", "target"]
+              },
+              {
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "publisher": {
+                          "not": {
+                            "const": "local"
+                          }
+                        }
+                      },
+                      "required": ["publisher"]
+                    },
+                    "then": {
+                      "properties": {
+                        "http": false,
+                        "target": {
+                          "properties": {
+                            "type": {
+                              "enum": ["address", "eks", "rds"]
+                            }
+                          },
+                          "required": ["type"]
+                        }
+                      },
+                      "required": ["target"]
+                    }
+                  }
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Saved name for either HTTP or private services; defaults to the service key."
+                  },
+                  "publisher": {
+                    "type": "string",
+                    "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+                    "description": "Assigned publisher group; defaults to the built-in local publisher.",
+                    "default": "local"
+                  },
+                  "publisher_pool": false,
+                  "access": {
+                    "properties": {
+                      "team": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["team"]
+                  },
+                  "inspection": {
+                    "$ref": "#/$defs/Inspection"
+                  },
+                  "public_url": false,
+                  "protocol": {
+                    "type": "string",
+                    "enum": ["kubernetes"]
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "address"
+                          },
+                          "address": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "integer",
+                                "maximum": 65535,
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "project": false,
+                          "file": false,
+                          "service": false,
+                          "port": false,
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "address"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "compose"
+                          },
+                          "project": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
+                          },
+                          "file": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^(?!/)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[^\\\\\\u0000]+$"
+                          },
+                          "service": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "address": false,
+                          "container": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "service", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "docker"
+                          },
+                          "container": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+                          },
+                          "port": {
+                            "type": "integer",
+                            "maximum": 65535,
+                            "minimum": 1
+                          },
+                          "tls": {
+                            "properties": {
+                              "server_name": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "minLength": 1,
+                                "description": "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."
+                              },
+                              "ca_file": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Project-relative CA-only PEM file added to system roots; omit for system roots only."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "description": "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."
+                          },
+                          "address": false,
+                          "project": false,
+                          "file": false,
+                          "service": false,
+                          "region": false,
+                          "cluster": false,
+                          "instance": false,
+                          "endpoint": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "container", "port"]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "eks"
+                          },
+                          "region": {
+                            "type": "string",
+                            "pattern": "^[a-z]{2}(?:-[a-z]+)+-[0-9]+$"
+                          },
+                          "cluster": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,99}$"
+                          },
+                          "tls": false,
+                          "address": false,
+                          "project": false,
+                          "file": false,
+                          "service": false,
+                          "port": false,
+                          "container": false,
+                          "instance": false,
+                          "endpoint": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["type", "region", "cluster"]
                       }
                     ]
                   },
@@ -1760,6 +2271,13 @@
           "type": "object",
           "maxProperties": 32,
           "description": "Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."
+        },
+        "ci": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CI"
+          },
+          "type": "object",
+          "description": "Named GitHub workflow policies granting access to exact configured services."
         }
       },
       "additionalProperties": false,

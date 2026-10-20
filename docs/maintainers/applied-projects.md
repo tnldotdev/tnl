@@ -120,8 +120,10 @@ for offline `tnl generate`; detailed cloud settings are deploy-time parameters.
 This AWS declaration is excluded from control assignments and their hash.
 `local` is reserved and cannot be declared. Services default to the built-in
 `local` publisher; an explicit `publisher` must select a declared group. Named
-groups require reachable address targets, not app, Docker, or Compose discovery
-on the applying machine.
+groups accept address, EKS, and RDS selectors. EKS discovery requires protocol
+`kubernetes`; RDS requires `postgres` or `mysql`. Discovery belongs to the
+publisher's AWS credential chain. Config validation and infrastructure generation
+do not contact AWS. App, Docker, and Compose discovery remain local.
 
 For `local`, `publicURL` is opt-in per service (`public_url` in static
 configuration). Root public URL settings supply defaults only to explicit
@@ -140,7 +142,7 @@ for HTTP credentials, target TLS, and native-client boundaries.
 ## apply evaluated declarations
 
 ```console
-tnl config check
+tnl check
 tnl apply
 tnl status --scope=server
 ```

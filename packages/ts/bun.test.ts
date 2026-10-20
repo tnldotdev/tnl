@@ -20,6 +20,8 @@ test(
         services: {
           web: {
             protocol: "http",
+            port: 443,
+            public: true,
             hostname: `web.${label}.example`,
             namespace: `${label}.example`,
             url: `https://web.${label}.example`,

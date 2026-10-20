@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/config"
@@ -88,7 +90,7 @@ const (
 
 // RenderAWS returns deterministic CloudFormation YAML and a nonsecret AWS
 // parameter-file JSON example.
-func RenderAWS(p Publisher, projectKey string) ([]byte, []byte, error) {
+func RenderAWS(p Publisher, projectKey string, configurations ...config.TNL) ([]byte, []byte, error) {
 	if p.Provider != "aws" || p.Name == "local" || !naming.ValidServiceName(p.Name) || !naming.ValidProjectKey(projectKey) {
 		return nil, nil, errors.New("invalid AWS publisher or project identity")
 	}
@@ -183,6 +185,13 @@ func RenderAWS(p Publisher, projectKey string) ([]byte, []byte, error) {
 	t.Outputs["IdentityFileSystemId"] = output(filesystem)
 	for i, r := range p.Replicas {
 		t.addReplica(i+1, r, cluster, taskSG, filesystem, filesystemARN)
+		if len(configurations) != 0 {
+			statements := discoveryStatements(configurations[0], p.Name)
+			if len(statements) != 0 {
+				role := t.Resources[fmt.Sprintf("Replica%dTaskRole", i+1)].(object)["Properties"].(object)
+				role["Policies"] = append(role["Policies"].([]any), policy("target-discovery", statements...))
+			}
+		}
 		for j := 0; j < i; j++ {
 			other := p.Replicas[j]
 			t.Rules[fmt.Sprintf("IndependentReplicas%dAnd%d", j+1, i+1)] = object{"Assertions": []any{
@@ -224,6 +233,39 @@ func RenderAWS(p Publisher, projectKey string) ([]byte, []byte, error) {
 	}
 	parameters, err := encode(example.CloudFormation())
 	return data, parameters, err
+}
+
+// discovery stays on the publisher's normal AWS credential chain. generation
+// scopes describe permissions to declared resources and never reads DB secrets.
+func discoveryStatements(configuration config.TNL, publisher string) []any {
+	result := []any{}
+	seen := map[string]bool{}
+	for _, name := range slices.Sorted(maps.Keys(configuration.Services)) {
+		service := configuration.Services[name]
+		if config.PublisherName(service) != publisher || service.Target == nil {
+			continue
+		}
+		target := service.Target
+		var action, resource string
+		switch target.Type {
+		case "eks":
+			action, resource = "eks:DescribeCluster", "eks:"+*target.Region+":${AWS::AccountId}:cluster/"+*target.Cluster
+		case "rds":
+			if target.Instance != nil {
+				action, resource = "rds:DescribeDBInstances", "rds:"+*target.Region+":${AWS::AccountId}:db:"+*target.Instance
+			} else {
+				action, resource = "rds:DescribeDBClusters", "rds:"+*target.Region+":${AWS::AccountId}:cluster:"+*target.Cluster
+			}
+		default:
+			continue
+		}
+		key := action + resource
+		if !seen[key] {
+			result = append(result, allow(action, sub("arn:${AWS::Partition}:"+resource)))
+			seen[key] = true
+		}
+	}
+	return result
 }
 
 func memoryValues(start, end, step int) []string {

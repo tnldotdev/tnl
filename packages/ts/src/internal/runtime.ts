@@ -1,5 +1,6 @@
 import { TnlError } from "../errors.js";
 import type { TnlWorktreeLabel } from "../config.gen.js";
+import type { TnlProtocolRegistry } from "../project.js";
 const maximumRuntimeBytes = 64 * 1024;
 const maximumServices = 32;
 const serviceNamePattern = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
@@ -7,19 +8,34 @@ const serviceNamePattern = /^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 interface ServiceAddress {
   readonly namespace: string;
   readonly hostname: string;
+  readonly port: number;
+  readonly public: boolean;
 }
 
-export type ServiceProtocol = "http";
+export type ServiceProtocol = keyof TnlProtocolRegistry;
 
 export interface HTTPServiceMetadata extends ServiceAddress {
   readonly protocol: "http";
   readonly url: `https://${string}`;
   readonly paths?: Readonly<Record<string, ProjectPathMetadata | undefined>>;
   readonly address?: never;
-  readonly port?: never;
 }
 
-export type ProjectServiceMetadata = HTTPServiceMetadata;
+export type ProjectServiceMetadata =
+  | HTTPServiceMetadata
+  | (ServiceAddress &
+      (
+        | {
+            readonly protocol: "postgres" | "mysql" | "tcp";
+            readonly url?: never;
+            readonly paths?: never;
+          }
+        | {
+            readonly protocol: "kubernetes";
+            readonly url: `https://${string}`;
+            readonly paths?: never;
+          }
+      ));
 
 export interface ProjectPathMetadata {
   readonly service: string;
@@ -112,12 +128,21 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
         "protocol",
         "hostname",
         "namespace",
-        "url",
+        "port",
+        "public",
+        ...(["http", "kubernetes"].includes(String(service.protocol)) ? ["url"] : []),
         ...["paths"].filter((key) => Object.hasOwn(service, key)),
       ],
       `${description} service ${JSON.stringify(name)}`,
     );
-    if (service.protocol !== "http") {
+    if (
+      !["http", "postgres", "mysql", "tcp", "kubernetes"].includes(String(service.protocol)) ||
+      !Number.isInteger(service.port) ||
+      typeof service.port !== "number" ||
+      service.port < 1 ||
+      service.port > 65535 ||
+      typeof service.public !== "boolean"
+    ) {
       throw new TnlError("sdk.runtime_invalid");
     }
     const serviceNamespace = requiredHostname(
@@ -132,6 +157,21 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       throw new TnlError("sdk.runtime_invalid");
     }
     hostnames.add(hostname);
+    if (
+      service.protocol === "postgres" ||
+      service.protocol === "mysql" ||
+      service.protocol === "tcp"
+    ) {
+      if (service.paths !== undefined) throw new TnlError("sdk.runtime_invalid");
+      services[name] = Object.freeze({
+        protocol: service.protocol,
+        namespace: serviceNamespace,
+        hostname,
+        port: service.port,
+        public: service.public,
+      });
+      continue;
+    }
     if (typeof service.url !== "string") throw new TnlError("sdk.runtime_invalid");
     let endpoint: URL;
     try {
@@ -141,14 +181,11 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
     }
     const port = endpoint.port === "" ? 443 : Number(endpoint.port);
     const url: `https://${string}` = `https://${hostname}${port === 443 ? "" : `:${port}`}`;
-    if (
-      !Number.isInteger(port) ||
-      (port !== 443 && (port < 1024 || port > 65535)) ||
-      service.url !== url
-    )
+    if (!Number.isInteger(port) || port !== service.port || service.url !== url)
       throw new TnlError("sdk.runtime_invalid");
     let paths: Readonly<Record<string, ProjectPathMetadata | undefined>> | undefined;
     if (service.paths !== undefined) {
+      if (service.protocol !== "http") throw new TnlError("sdk.runtime_invalid");
       const pathsObject = record(
         service.paths,
         `${description} service ${JSON.stringify(name)} paths`,
@@ -183,10 +220,23 @@ export function parseProjectMetadata(value: unknown, description: string): Proje
       }
       paths = Object.freeze(parsedPaths);
     }
+    if (service.protocol === "kubernetes") {
+      services[name] = Object.freeze({
+        protocol: "kubernetes",
+        namespace: serviceNamespace,
+        hostname,
+        port: service.port,
+        public: service.public,
+        url,
+      });
+      continue;
+    }
     services[name] = Object.freeze({
       protocol: "http",
       namespace: serviceNamespace,
       hostname,
+      port: service.port,
+      public: service.public,
       url,
       ...(paths === undefined ? {} : { paths }),
     });

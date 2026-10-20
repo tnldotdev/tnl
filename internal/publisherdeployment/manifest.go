@@ -45,6 +45,7 @@ type Manifest struct {
 	DocumentationPath   string      `json:"documentation_path"`
 	DocumentationSHA256 string      `json:"documentation_sha256"`
 	Publishers          []Publisher `json:"publishers"`
+	DeclarationsSHA256  string      `json:"declarations_sha256,omitempty"`
 }
 
 type Publisher struct {
@@ -103,9 +104,9 @@ func encode(value any) ([]byte, error) {
 	return append(data, '\n'), err
 }
 
-// Generate uses only evaluated capacity and stable source identity. service
-// targets, sessions, environment values and checkout paths are not serialized.
-func Generate(configuration config.TNL, source projectconfig.SourceIdentity) (Bundle, error) {
+// Generate uses declared capacity, cloud resource selectors, and stable source
+// identity. discovered addresses, sessions, and checkout paths are not serialized.
+func Generate(configuration config.TNL, source projectconfig.SourceIdentity, declarations ...[]byte) (Bundle, error) {
 	result := Bundle{Manifest: Manifest{SchemaVersion: SchemaVersion, ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, Publishers: []Publisher{}}, Files: map[string][]byte{}}
 	result.Manifest.DocumentationPath, result.Manifest.DocumentationSHA256 = DocumentationPath, digest(instructions)
 	result.Files[DocumentationPath] = bytes.Clone(instructions)
@@ -118,10 +119,17 @@ func Generate(configuration config.TNL, source projectconfig.SourceIdentity) (Bu
 			continue
 		}
 		p := Publisher{Name: name, Provider: "aws", TemplatePath: "aws/" + name + ".yaml", ParametersExamplePath: "aws/" + name + ".parameters.example.json"}
+		targets := map[string]*config.ServiceTarget{}
+		for serviceName, service := range configuration.Services {
+			if config.PublisherName(service) == name && (config.TargetType(service) == "eks" || config.TargetType(service) == "rds") {
+				targets[serviceName] = service.Target
+			}
+		}
 		capacity, err := encode(struct {
-			Name     string `json:"name"`
-			Replicas int    `json:"replicas"`
-		}{name, aws.ReplicaCount()})
+			Name     string                           `json:"name"`
+			Replicas int                              `json:"replicas"`
+			Targets  map[string]*config.ServiceTarget `json:"targets,omitempty"`
+		}{name, aws.ReplicaCount(), targets})
 		if err != nil {
 			return result, err
 		}
@@ -129,13 +137,17 @@ func Generate(configuration config.TNL, source projectconfig.SourceIdentity) (Bu
 		for i := 1; i <= aws.ReplicaCount(); i++ {
 			p.Replicas = append(p.Replicas, replica(i))
 		}
-		template, example, err := RenderAWS(p, source.Key)
+		template, example, err := RenderAWS(p, source.Key, configuration)
 		if err != nil {
 			return result, err
 		}
 		p.TemplateSHA256, p.ParametersExampleSHA256 = digest(template), digest(example)
 		result.Files[p.TemplatePath], result.Files[p.ParametersExamplePath] = template, example
 		result.Manifest.Publishers = append(result.Manifest.Publishers, p)
+	}
+	if len(declarations) != 0 {
+		result.Files["project.d.ts"] = bytes.Clone(declarations[0])
+		result.Manifest.DeclarationsSHA256 = digest(declarations[0])
 	}
 	if err := result.Manifest.Validate(); err != nil {
 		return result, err
@@ -153,7 +165,7 @@ func validHash(value string) bool {
 // Validate bounds and validates the in-memory manifest, including canonical
 // artifact paths and exact per-replica parameter names. Read also checks bytes.
 func (m Manifest) Validate() error {
-	if m.SchemaVersion != SchemaVersion || !naming.ValidProjectKey(m.ProjectKey) || !validHash(m.SourceFingerprint) || m.DocumentationPath != DocumentationPath || !validHash(m.DocumentationSHA256) || m.Publishers == nil || len(m.Publishers) > 32 {
+	if m.SchemaVersion != SchemaVersion || (len(m.Publishers) != 0 || m.ProjectKey != "" || m.SourceFingerprint != "") && (!naming.ValidProjectKey(m.ProjectKey) || !validHash(m.SourceFingerprint)) || m.DocumentationPath != DocumentationPath || !validHash(m.DocumentationSHA256) || m.Publishers == nil || len(m.Publishers) > 32 || m.DeclarationsSHA256 != "" && !validHash(m.DeclarationsSHA256) {
 		return errors.New("invalid publisher manifest version or source identity")
 	}
 	last := ""
@@ -194,7 +206,9 @@ func Validate(outputDir string, configuration config.TNL, source projectconfig.S
 	if err != nil {
 		return m, err
 	}
-	actual, err := encode(m)
+	infra := m
+	infra.DeclarationsSHA256 = ""
+	actual, err := encode(infra)
 	if err != nil {
 		return m, err
 	}

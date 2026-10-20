@@ -148,6 +148,17 @@ func TestResolveFillsComposeTargetDefaultsPerProject(t *testing.T) {
 			t.Fatalf("Compose target defaults = %+v", target)
 		}
 		names = append(names, *target.Project)
+		static, err := project.StaticMap()
+		if err != nil {
+			t.Fatal(err)
+		}
+		declaration := static["services"].(map[string]any)["db"].(map[string]any)["target"].(map[string]any)
+		if _, exists := declaration["project"]; exists {
+			t.Fatal("static API shape contains a worktree Compose project")
+		}
+		if _, exists := declaration["file"]; exists {
+			t.Fatal("static API shape contains a discovered Compose file")
+		}
 	}
 	if names[0] == names[1] {
 		t.Fatalf("distinct project roots selected the same Compose project %q", names[0])

@@ -38,6 +38,50 @@ func TestInitPreservesExistingStaticConfiguration(t *testing.T) {
 	}
 }
 
+func TestInitStaticProjectNeedsNoPackageManifestOrOrigin(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	for range 2 {
+		if err := runInit(t.Context(), initCommand{NoInstall: true}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"tnl.yml", ".tnl/generated/project.d.ts", ".tnl/generated/manifest.json"} {
+		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "package.json")); !os.IsNotExist(err) {
+		t.Fatal("non-JavaScript init created package.json")
+	}
+}
+
+func TestProjectTypeIncludesUseReferencedProjectDirectories(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "apps/web")
+	if err := os.MkdirAll(nested, 0700); err != nil {
+		t.Fatal(err)
+	}
+	rootSource := []byte("{\n// preserve references\n\"files\": [], \"references\": [{\"path\": \"apps/web\"}],\n}\n")
+	nestedSource := []byte(`{"include":["src"]}`)
+	if err := os.WriteFile(filepath.Join(root, "tsconfig.json"), rootSource, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "tsconfig.json"), nestedSource, 0600); err != nil {
+		t.Fatal(err)
+	}
+	actions, err := projectTypeIncludeActions(projectConfiguration{Project: projectconfig.Project{Root: root}})
+	if err != nil || len(actions) != 1 || !strings.Contains(actions[0], "../../.tnl/generated/project.d.ts") || !strings.Contains(actions[0], filepath.Join(nested, "tsconfig.json")) {
+		t.Fatalf("referenced action = %v %v", actions, err)
+	}
+	for name, before := range map[string][]byte{filepath.Join(root, "tsconfig.json"): rootSource, filepath.Join(nested, "tsconfig.json"): nestedSource} {
+		after, err := os.ReadFile(name)
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatal("type include action rewrote custom config", err)
+		}
+	}
+}
+
 func TestProjectTypeIncludeActionsPreserveConfiguration(t *testing.T) {
 	root := t.TempDir()
 	nested := filepath.Join(root, "apps", "api")
@@ -56,8 +100,9 @@ func TestProjectTypeIncludeActionsPreserveConfiguration(t *testing.T) {
 		wantAction   bool
 	}{
 		{"missing_include", "{\n  \"include\": [\"src/**/*.ts\"]\n}\n", true},
-		{"included", "{\n  \"include\": [\"src/**/*.ts\", \".tnl/local/project.d.ts\"]\n}\n", false},
+		{"included", "{\n  \"include\": [\"src/**/*.ts\", \".tnl/generated/project.d.ts\"]\n}\n", false},
 		{"jsonc", "{\n  // preserve this JSONC file\n  \"include\": [\"src\"]\n}\n", true},
+		{"jsonc_included", "{\n  // preserve comments and trailing commas\n  \"include\": [\"src\", \".tnl/generated/project.d.ts\",],\n}\n", false},
 		{"duplicate_keys", "{\n  \"include\": [\"src\"],\n  \"include\": [\"generated\"]\n}\n", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -68,7 +113,7 @@ func TestProjectTypeIncludeActionsPreserveConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if test.wantAction && (len(actions) != 1 || !strings.Contains(actions[0], `".tnl/local/project.d.ts"`) || !strings.Contains(actions[0], path)) || !test.wantAction && len(actions) != 0 {
+			if test.wantAction && (len(actions) != 1 || !strings.Contains(actions[0], `".tnl/generated/project.d.ts"`) || !strings.Contains(actions[0], path)) || !test.wantAction && len(actions) != 0 {
 				t.Fatalf("actions = %v", actions)
 			}
 			after, err := os.ReadFile(path)
@@ -93,7 +138,7 @@ func TestProjectTypeIncludeActionUsesRootWithoutNamedServices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 1 || !strings.Contains(actions[0], `".tnl/local/project.d.ts"`) {
+	if len(actions) != 1 || !strings.Contains(actions[0], `".tnl/generated/project.d.ts"`) {
 		t.Fatalf("actions = %v", actions)
 	}
 	data, err := os.ReadFile(path)
@@ -118,7 +163,7 @@ func TestProjectTypeIncludeActionDoesNotInferNestedServiceDirectory(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 1 || !strings.Contains(actions[0], filepath.Join(root, "tsconfig.json")) || !strings.Contains(actions[0], `".tnl/local/project.d.ts"`) || strings.Contains(actions[0], nestedPath) {
+	if len(actions) != 1 || !strings.Contains(actions[0], filepath.Join(root, "tsconfig.json")) || !strings.Contains(actions[0], `".tnl/generated/project.d.ts"`) || strings.Contains(actions[0], nestedPath) {
 		t.Fatalf("actions = %v", actions)
 	}
 	if got, err := os.ReadFile(nestedPath); err != nil || !bytes.Equal(got, source) {
@@ -181,7 +226,7 @@ func TestInitReportsTypeIncludeForExistingProjectConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(got, source) || !strings.Contains(output.String(), `.tnl/local/project.d.ts`) || !strings.Contains(output.String(), "ignore") {
+	if err != nil || !bytes.Equal(got, source) || !strings.Contains(output.String(), `.tnl/generated/project.d.ts`) || !strings.Contains(output.String(), "ignore") {
 		t.Fatalf("tsconfig = %s, output = %s, err = %v", got, output.String(), err)
 	}
 }

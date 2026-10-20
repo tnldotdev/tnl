@@ -401,28 +401,12 @@ func validateTunnelFlags(flags tunnelFlags) error {
 	return nil
 }
 
-func runConfigPath(ctx context.Context, flags cli, stdout io.Writer) error {
-	selection, _, err := selectProjectConfiguration(ctx, flags)
-	if err != nil {
-		return err
-	}
-	state := "not found"
-	text := "No project configuration file is selected."
-	if selection.Path != "" {
-		state = "selected"
-		text = selection.Path
-	}
-	return clioutput.Write(stdout, clioutput.Frame{
-		Command: "tnl config path", State: state, Blocks: []clioutput.Block{clioutput.Text(text)},
-	})
-}
-
-func runConfigCheck(loaded projectConfiguration, stdout io.Writer) error {
+func runCheck(loaded projectConfiguration, stdout io.Writer) error {
 	if !loaded.Found() {
 		return failure.Wrap("check project configuration", failure.ProjectConfigMissing, errors.New("no project configuration file found"))
 	}
 	return clioutput.Write(stdout, clioutput.Frame{
-		Command: "tnl config check", State: "valid",
+		Command: "tnl check", State: "valid",
 		Blocks: []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "path", Value: loaded.Selection.Path})},
 	})
 }

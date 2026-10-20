@@ -45,6 +45,7 @@ type TNL struct {
 	Services   Services             `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named services. Only an explicit service public_url block enables public HTTPS; all other services are private, including HTTP."`
 	Webhooks   map[string]Webhook   `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
 	Aliases    map[string]Alias     `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
+	CI         map[string]CI        `json:"ci,omitempty" yaml:"ci,omitempty" jsonschema_description:"Named GitHub workflow policies granting access to exact configured services."`
 }
 
 type Services map[string]Service
@@ -82,7 +83,7 @@ type Service struct {
 	Access     *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Team grant intent for this service, whether public or private."`
 	Inspection *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
 	Tunnel     *Tunnel        `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Enable public HTTPS for this HTTP service. Omit this block for a private service, including private HTTP. The saved name belongs on the service."`
-	Protocol   *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=tcp,enum=mysql,enum=postgres" jsonschema_description:"Defaults to http (HTTP-aware). tcp is opaque transport; mysql and postgres are private database labels. Protocol never enables a public URL or TLS."`
+	Protocol   *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=tcp,enum=mysql,enum=postgres,enum=kubernetes" jsonschema_description:"Defaults to http. Protocol selects native client guidance, never public exposure or target TLS."`
 	Target     *ServiceTarget `json:"target,omitempty" yaml:"target,omitempty"`
 	HTTP       *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
 }
@@ -109,7 +110,7 @@ func PrivateServiceName(serviceName string, service Service) string {
 // ServiceTarget describes exactly one private discovery mechanism. an omitted
 // target means an app-reported HTTP listener.
 type ServiceTarget struct {
-	Type      string     `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=compose,enum=docker"`
+	Type      string     `json:"type" yaml:"type" jsonschema:"required,enum=app,enum=address,enum=compose,enum=docker,enum=eks,enum=rds"`
 	Address   *Target    `json:"address,omitempty" yaml:"address,omitempty"`
 	Project   *string    `json:"project,omitempty" yaml:"project,omitempty"`
 	File      *string    `json:"file,omitempty" yaml:"file,omitempty"`
@@ -117,6 +118,10 @@ type ServiceTarget struct {
 	Port      *int       `json:"port,omitempty" yaml:"port,omitempty"`
 	Container *string    `json:"container,omitempty" yaml:"container,omitempty"`
 	TLS       *TargetTLS `json:"tls,omitempty" yaml:"tls,omitempty"`
+	Region    *string    `json:"region,omitempty" yaml:"region,omitempty"`
+	Cluster   *string    `json:"cluster,omitempty" yaml:"cluster,omitempty"`
+	Instance  *string    `json:"instance,omitempty" yaml:"instance,omitempty"`
+	Endpoint  *string    `json:"endpoint,omitempty" yaml:"endpoint,omitempty" jsonschema:"enum=writer,enum=reader"`
 }
 
 type TargetTLS struct {
@@ -331,6 +336,8 @@ var durationSyntax = regexp.MustCompile(strings.ReplaceAll(DurationPattern, `\u0
 type Duration time.Duration
 
 func (d Duration) Value() time.Duration { return time.Duration(d) }
+
+func (d Duration) MarshalJSON() ([]byte, error) { return json.Marshal(d.Value().String()) }
 
 func (d *Duration) UnmarshalJSON(data []byte) error {
 	var value string

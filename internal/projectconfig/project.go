@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,6 +17,7 @@ import (
 type Project struct {
 	Selection Selection
 	Config    config.TNL
+	Declared  *config.TNL
 	Worktree  Worktree
 	Root      string
 }
@@ -56,6 +58,10 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 		return Project{}, err
 	}
 	config.NormalizePublicURLs(&project.Config)
+	// retain evaluated declarations before resolving worktree-local defaults.
+	declared := project.Config
+	project.Declared = &declared
+	project.Config.Services = maps.Clone(project.Config.Services)
 
 	names := make([]string, 0, len(project.Config.Services))
 	for name := range project.Config.Services {

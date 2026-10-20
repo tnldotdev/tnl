@@ -80,7 +80,7 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 
 func TestServiceSchemaKeepsPrivateServicesSeparateFromPublicURLs(t *testing.T) {
 	variants := servicesSchema().AdditionalProperties.OneOf
-	if len(variants) != 5 {
+	if len(variants) != 6 {
 		t.Fatalf("service variants: %d", len(variants))
 	}
 	for index, private := range variants[1:] {
@@ -171,8 +171,8 @@ func TestSchemaHasDisjointTargetsAndNoRetiredPublicFields(t *testing.T) {
 
 func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
 	variants := servicesSchema().AdditionalProperties.OneOf
-	if len(variants) != 5 {
-		t.Fatal("services must distinguish public and private HTTP, TCP, MySQL, and PostgreSQL")
+	if len(variants) != 6 {
+		t.Fatal("services must distinguish public and private HTTP, TCP, MySQL, PostgreSQL, and Kubernetes")
 	}
 	for i, service := range variants {
 		group, found := service.Properties.Get("publisher")
@@ -190,8 +190,9 @@ func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
 				t.Fatal("public HTTPS must require the explicit public URL block")
 			}
 		} else {
-			wantProtocol := []string{"http", "http", "tcp", "mysql", "postgres"}[i]
-			if !reflect.DeepEqual(protocol.Enum, []any{wantProtocol}) || !slices.Contains(service.Required, "protocol") || !slices.Contains(service.Required, "target") || len(target.OneOf) != 3 || http != jsonschema.FalseSchema {
+			wantProtocol := []string{"http", "http", "tcp", "mysql", "postgres", "kubernetes"}[i]
+			wantTargets := []int{4, 4, 3, 5, 5, 4}[i]
+			if !reflect.DeepEqual(protocol.Enum, []any{wantProtocol}) || !slices.Contains(service.Required, "protocol") || !slices.Contains(service.Required, "target") || len(target.OneOf) != wantTargets || http != jsonschema.FalseSchema {
 				t.Fatal("non-HTTP service does not require its protocol and non-app target or forbids HTTP settings")
 			}
 		}
@@ -201,6 +202,15 @@ func TestProtocolDiscriminatedServiceAndPublisherSchemas(t *testing.T) {
 				t.Fatal("non-HTTP service accepts an app target")
 			}
 			tls, _ := variant.Properties.Get("tls")
+			if kind.Const == "eks" || kind.Const == "rds" {
+				if tls != jsonschema.FalseSchema {
+					t.Fatal("cloud target must discover its own trust")
+				}
+				if kind.Const == "eks" && i != 5 || kind.Const == "rds" && i != 3 && i != 4 {
+					t.Fatal("cloud target has an incompatible protocol")
+				}
+				continue
+			}
 			if tls == jsonschema.FalseSchema || tls.AdditionalProperties != jsonschema.FalseSchema {
 				t.Fatal("target TLS must be available for every supported target and protocol")
 			}

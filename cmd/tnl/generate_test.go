@@ -27,6 +27,38 @@ func generationGit(t *testing.T, directory string, args ...string) []byte {
 	return output
 }
 
+func TestGenerateTypesWithoutGitOriginOrRuntimeValues(t *testing.T) {
+	for _, name := range []string{"tnl.yml", "tnl.config.ts"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			source := "version: 1\ntnl:\n  services:\n    api: {}\n"
+			if name == "tnl.config.ts" {
+				source = `import { defineConfig } from "@tnldotdev/tnl/config"; export default defineConfig({ services: { api: {} } });`
+			}
+			if err := os.WriteFile(filepath.Join(root, name), []byte(source), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(root)
+			t.Setenv("TNL_PROJECT_RUNTIME", "invalid-runtime-must-not-be-read")
+			t.Setenv("TNL_STATE_DIR", filepath.Join(root, "unused-state"))
+			for _, args := range [][]string{{"check"}, {"generate"}, {"generate", "--check"}} {
+				if err := run(t.Context(), args, &bytes.Buffer{}, &bytes.Buffer{}, func(string) telemetryReporter { t.Fatal("offline command opened telemetry"); return nil }); err != nil {
+					t.Fatal(args, err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(root, ".tnl/local")); !os.IsNotExist(err) {
+				t.Fatal("generation wrote runtime values")
+			}
+			if _, err := os.Stat(filepath.Join(root, "unused-state")); !os.IsNotExist(err) {
+				t.Fatal("offline command opened client state")
+			}
+			if err := run(t.Context(), []string{"config", "generate"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+				t.Fatal("retired command still accepted")
+			}
+		})
+	}
+}
+
 func TestGenerateOfflineAcrossWorktreesAndReadOnlyCheck(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -88,7 +120,7 @@ func TestGenerateOfflineAcrossWorktreesAndReadOnlyCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 		files := map[string][]byte{}
-		for _, name := range []string{"manifest.json", manifest.DocumentationPath, manifest.Publishers[0].TemplatePath, manifest.Publishers[0].ParametersExamplePath} {
+		for _, name := range []string{"manifest.json", "project.d.ts", manifest.DocumentationPath, manifest.Publishers[0].TemplatePath, manifest.Publishers[0].ParametersExamplePath} {
 			data, err := os.ReadFile(filepath.Join(directory, publisherdeployment.DefaultOutputDir, name))
 			if err != nil {
 				t.Fatal(err)
@@ -110,7 +142,7 @@ func TestGenerateOfflineAcrossWorktreesAndReadOnlyCheck(t *testing.T) {
 			t.Fatal("local metadata not ignored")
 		}
 		tracked := generationGit(t, directory, "ls-files", "--others", "--exclude-standard", ".tnl/generated")
-		if len(strings.Fields(string(tracked))) != 4 {
+		if len(strings.Fields(string(tracked))) != 5 {
 			t.Fatalf("generated outputs are not trackable: %s", tracked)
 		}
 		if err := runCommand("generate", "--output-dir", "infrastructure/generated"); err != nil {

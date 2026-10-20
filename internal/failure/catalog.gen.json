@@ -559,7 +559,7 @@
       "slug": "project-config-invalid",
       "class": "invalid",
       "message": "tnl could not use the project configuration",
-      "action": "run tnl config check and correct the reported setting"
+      "action": "run tnl check and correct the reported setting"
     },
     {
       "code": "TNL_CLIENT_PROJECT_CONFIG_MISSING",
@@ -678,7 +678,7 @@
       "slug": "service-not-configured",
       "class": "not_found",
       "message": "the selected service is not configured",
-      "action": "run tnl config check or select a configured project service"
+      "action": "run tnl check or select a configured project service"
     },
     {
       "code": "TNL_CLIENT_SERVICE_NOT_INSTALLED",

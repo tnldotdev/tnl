@@ -6,6 +6,8 @@ export type TnlErrorCode =
   | "sdk.publisher_setup_required"
   | "sdk.publisher_file_invalid"
   | "sdk.configuration_invalid"
+  | "sdk.service_unprepared"
+  | "sdk.connection_unavailable"
   | "sdk.runtime_invalid"
   | "sdk.protocol_unsupported"
   | "sdk.project_unavailable"
@@ -61,6 +63,18 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     retry: "after_change",
     message:
       "tnl framework configuration is invalid; check the integration options and project configuration",
+  },
+  "sdk.service_unprepared": {
+    class: "unavailable",
+    retry: "after_change",
+    message:
+      "tnl service metadata is unavailable; start the app with its tnl integration before reading tnl.services",
+  },
+  "sdk.connection_unavailable": {
+    class: "unavailable",
+    retry: "after_change",
+    message:
+      "native SDK connections are unavailable in this build; use tnl connect for native client access",
   },
   "sdk.runtime_invalid": {
     class: "invalid",

@@ -127,6 +127,15 @@ func bundleTypeScript(ctx context.Context, path string) (string, func(), error) 
 		Plugins: []api.Plugin{{
 			Name: "external-project-packages",
 			Setup: func(build api.PluginBuild) {
+				// defineConfig is an identity function. configuration loading must
+				// work immediately after init --no-install, before SDK installation.
+				build.OnResolve(api.OnResolveOptions{Filter: `^@tnldotdev/tnl/config$`}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
+					return api.OnResolveResult{Path: args.Path, Namespace: "tnl-config-helper"}, nil
+				})
+				build.OnLoad(api.OnLoadOptions{Filter: `.*`, Namespace: "tnl-config-helper"}, func(api.OnLoadArgs) (api.OnLoadResult, error) {
+					source := "export const defineConfig = (config) => config;"
+					return api.OnLoadResult{Contents: &source, Loader: api.LoaderJS}, nil
+				})
 				build.OnResolve(api.OnResolveOptions{Filter: `^[^./]`}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
 					if args.PluginData == true {
 						return api.OnResolveResult{}, nil
@@ -262,6 +271,8 @@ var typeScriptKeyMappings = map[string]string{
 	"strip_prefix":         "stripPrefix",
 	"public_url":           "publicURL",
 	"publisher_pool":       "publisherPool",
+	"max_duration":         "maxDuration",
+	"reusable_workflow":    "reusableWorkflow",
 }
 
 // TypeScriptKeyMappings returns the static-to-TypeScript property mappings

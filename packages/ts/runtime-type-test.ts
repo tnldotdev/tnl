@@ -2,53 +2,16 @@ import { tnl } from "@tnldotdev/tnl";
 
 tnl.port satisfies number;
 tnl.dev satisfies boolean;
-// @ts-expect-error worktree metadata may be absent until narrowed.
-void tnl.worktree.label;
-if (tnl.worktree) {
-  tnl.worktree.label.project satisfies string;
-  tnl.worktree.label.checkout satisfies string | undefined;
-  tnl.worktree.label.id satisfies string;
-  tnl.worktree.label.fullLabel satisfies string;
-}
-// @ts-expect-error metadata may be absent until narrowed.
-tnl.namespace satisfies string;
-// @ts-expect-error service metadata also requires narrowing.
-void tnl.services.anyService;
-
-if (tnl.namespace && tnl.services) {
-  tnl.namespace satisfies string;
-  tnl.services.anyService satisfies
-    | import("./dist/internal/runtime.js").ProjectServiceMetadata
-    | undefined;
-  tnl.dev satisfies boolean;
-
-  const service = tnl.services.anyService;
-  // @ts-expect-error arbitrary services may be absent even when metadata exists.
-  service.hostname satisfies string;
-  if (service) {
-    service.hostname satisfies string;
-    service.protocol satisfies "http";
-    service.url satisfies `https://${string}`;
-    service.port satisfies undefined;
-    // @ts-expect-error service fields are readonly.
-    service.hostname = "other.example";
-    // @ts-expect-error service URLs are readonly.
-    service.url = "https://other.example";
+const service = tnl.services.anyService;
+if (service) {
+  service.metadata.hostname satisfies string;
+  service.metadata.port satisfies number;
+  service.metadata.public satisfies boolean;
+  if (service.metadata.protocol === "http" || service.metadata.protocol === "kubernetes") {
+    service.metadata.url satisfies `https://${string}`;
   }
-
-  // @ts-expect-error project metadata is readonly.
-  tnl.namespace = "other.example";
-  // @ts-expect-error the services collection is readonly.
-  tnl.services = {};
-  // @ts-expect-error service entries are readonly.
-  tnl.services.anyService = service;
-  // @ts-expect-error runtime lifecycle metadata is readonly.
-  tnl.dev = false;
-
-  // @ts-expect-error project metadata is exposed directly.
-  void tnl.project;
-  // @ts-expect-error services are properties, not a lookup helper.
-  tnl.service("api");
-  // @ts-expect-error there is no separate public tunnel value.
-  void tnl.tunnel;
+  // @ts-expect-error browser-safe metadata never contains native TLS keys.
+  void service.metadata.ssl;
 }
+// @ts-expect-error there is no separate server entrypoint.
+void import("@tnldotdev/tnl/server");

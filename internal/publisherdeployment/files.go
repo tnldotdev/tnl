@@ -131,6 +131,9 @@ func readManifest(root *os.Root) (Manifest, error) {
 
 func (m Manifest) hashes() map[string]string {
 	result := map[string]string{}
+	if m.DeclarationsSHA256 != "" {
+		result["project.d.ts"] = m.DeclarationsSHA256
+	}
 	if m.DocumentationPath != "" {
 		result[m.DocumentationPath] = m.DocumentationSHA256
 	}

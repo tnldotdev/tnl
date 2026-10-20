@@ -157,6 +157,9 @@ func ValidateDocument(document Document) error {
 }
 
 func ValidateTNL(config TNL) error {
+	if err := validateCI(config); err != nil {
+		return err
+	}
 	if err := ValidateInspection(config.Inspection); err != nil {
 		return fmt.Errorf("inspection: %w", err)
 	}
@@ -229,8 +232,8 @@ func ValidateTNL(config TNL) error {
 			if _, found := config.Publishers[group]; !found {
 				return fmt.Errorf("services.%s.publisher: group %q is not configured", name, group)
 			}
-			if TargetType(service) != "address" {
-				return fmt.Errorf("services.%s: remote publisher groups require a reachable address target", name)
+			if kind := TargetType(service); kind != "address" && kind != "eks" && kind != "rds" {
+				return fmt.Errorf("services.%s: remote publishers require an address, eks, or rds target", name)
 			}
 			if service.HTTP != nil {
 				return fmt.Errorf("services.%s.http: remote publisher assignments do not support HTTP settings; use a local service", name)

@@ -37,7 +37,7 @@ type PublisherReference<Config, Service> = Service extends { readonly publisher:
     } & (Group extends "local"
       ? unknown
       : {
-          readonly target: { readonly type: "address" };
+          readonly target: { readonly type: "address" | "eks" | "rds" };
           readonly http?: never;
         })
   : unknown;
@@ -53,6 +53,14 @@ type WebhookService<Config> = Config extends { readonly services: infer Services
   : never;
 
 type TargetReferences<Config> = {
+  [Field in keyof Config as Field extends "ci" ? Field : never]: {
+    [Name in keyof Config[Field]]: {
+      services: readonly (Config extends { services: infer Services }
+        ? Extract<keyof Services, string>
+        : never)[];
+    };
+  };
+} & {
   [Field in keyof Config as Field extends "aliases" | "webhooks" ? Field : never]: {
     [Name in keyof Config[Field]]: ObjectReference<
       Field extends "webhooks" ? WebhookService<Config> : HTTPServiceNames<Config>
@@ -132,7 +140,7 @@ type ServiceForNames<Names extends string, Name extends Names, Member = Service>
  */
 export type TnlConfigForServices<Names extends string> = Omit<
   TnlConfig,
-  "services" | "aliases" | "webhooks"
+  "services" | "aliases" | "webhooks" | "ci"
 > & {
   services?: {
     [Name in Names]: ServiceForNames<Names, Name>;
@@ -141,6 +149,12 @@ export type TnlConfigForServices<Names extends string> = Omit<
   webhooks?: Record<
     string,
     Omit<Webhook, "service"> & { service: NoInfer<[Names] extends [never] ? "" : Names> }
+  >;
+  ci?: Record<
+    string,
+    Omit<NonNullable<NonNullable<TnlConfig["ci"]>[string]>, "services"> & {
+      services: NoInfer<Names>[];
+    }
   >;
 };
 

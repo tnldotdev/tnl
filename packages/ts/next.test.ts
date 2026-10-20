@@ -109,12 +109,16 @@ describe("withTnl", () => {
             services: {
               api: {
                 protocol: "http",
+                port: 443,
+                public: true,
                 hostname: "api.member.example",
                 namespace: "member.example",
                 url: "https://api.member.example",
               },
               web: {
                 protocol: "http",
+                port: 443,
+                public: true,
                 hostname: "web.member.example",
                 namespace: "member.example",
                 url: "https://web.member.example",

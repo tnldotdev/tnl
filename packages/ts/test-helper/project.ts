@@ -28,12 +28,16 @@ export function testProjectDocument() {
     services: {
       api: {
         protocol: "http",
+        port: 443,
+        public: true,
         hostname: "api.member.example",
         namespace: "member.example",
         url: "https://api.member.example",
       },
       web: {
         protocol: "http",
+        port: 443,
+        public: true,
         hostname: "web.member.example",
         namespace: "member.example",
         url: "https://web.member.example",
@@ -66,6 +70,8 @@ export function testAliasAssignment() {
         },
         worker: {
           protocol: "http",
+          port: 443,
+          public: true,
           namespace: "member.example",
           hostname: "worker.member.example",
           url: "https://worker.member.example",

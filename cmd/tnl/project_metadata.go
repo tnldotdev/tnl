@@ -6,56 +6,16 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
-
-func runConfigGenerate(
-	ctx context.Context,
-	stateRoot string,
-	project projectConfiguration,
-	stdout, stderr io.Writer,
-) error {
-	if !project.Found() {
-		return failure.Wrap("generate project metadata", failure.ProjectConfigMissing, errors.New("no project configuration file found"))
-	}
-	state, err := clientstate.Open(ctx, stateRoot)
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-	resolver := newProjectMetadataResolver(state, project, os.Stdin, stderr, "tnl config generate")
-	metadata, err := resolver.Generate(ctx)
-	if err != nil {
-		return err
-	}
-	if err := projectmeta.Write(ctx, project.Root, metadata); err != nil {
-		return err
-	}
-	actions, err := projectTypeIncludeActions(project)
-	if err != nil {
-		return err
-	}
-	fields := []clioutput.Field{
-		clioutput.Field{Label: "metadata", Value: filepath.Join(project.Root, projectmeta.DirectoryName, projectmeta.JSONName)},
-		clioutput.Field{Label: "declarations", Value: filepath.Join(project.Root, projectmeta.DirectoryName, projectmeta.DeclarationsName)},
-	}
-	blocks := []clioutput.Block{clioutput.Fields(fields...)}
-	for _, action := range actions {
-		blocks = append(blocks, clioutput.Section("action", clioutput.Text(action)))
-	}
-	return writeHumanFrame(stdout, "tnl config generate", "generated", "", blocks...)
-}
 
 type projectMetadataResolver struct {
 	state       *clientstate.Database
@@ -100,7 +60,7 @@ func (r *projectMetadataResolver) LoadFallbackServer(ctx context.Context) error 
 func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Metadata, error) {
 	hasPublic := r.project.Config.OAuth || len(r.project.Config.Webhooks) != 0 || len(r.project.Config.Aliases) != 0
 	for _, service := range r.project.Config.Services {
-		hasPublic = hasPublic || config.IsPublicService(service)
+		hasPublic = hasPublic || config.IsPublicService(service) || config.PublisherName(service) != "local"
 	}
 	if !hasPublic {
 		metadata := projectmeta.Metadata{Version: projectmeta.Version, Services: map[string]projectmeta.Service{}}
@@ -145,13 +105,12 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 	}
 	names := make([]string, 0, len(r.project.Config.Services))
 	for name := range r.project.Config.Services {
-		if !config.IsPublicService(r.project.Config.Services[name]) {
+		if !config.IsPublicService(r.project.Config.Services[name]) && config.PublisherName(r.project.Config.Services[name]) == "local" {
 			continue
 		}
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	appliedProjects := map[string]controlv1.ProjectPublicMetadata{}
 	for _, name := range names {
 		effective, err := r.project.EffectiveService(name)
 		if err != nil {
@@ -171,38 +130,25 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 			if sourceErr != nil {
 				return projectmeta.Metadata{}, sourceErr
 			}
-			key := serviceServer + "\x00" + serviceContext.team.Id
-			applied, found := appliedProjects[key]
-			if !found {
-				client, clientErr := r.client(ctx, serviceServer)
-				if clientErr != nil {
-					return projectmeta.Metadata{}, clientErr
-				}
-				applied, err = client.Control.GetProjectPublicMetadata(ctx, serviceContext.team.Id, source.Key)
-				if err != nil {
-					return projectmeta.Metadata{}, fmt.Errorf("read applied remote service %q; run tnl apply: %w", name, err)
-				}
-				if applied.SourceFingerprint != source.Fingerprint {
-					return projectmeta.Metadata{}, errors.New("applied configuration belongs to another project source")
-				}
-				appliedProjects[key] = applied
+			client, clientErr := r.client(ctx, serviceServer)
+			if clientErr != nil {
+				return projectmeta.Metadata{}, clientErr
 			}
-			hostname := ""
-			var port *int
-			for _, assigned := range applied.Services {
-				if assigned.Service == name {
-					hostname = assigned.Hostname
-					port = &assigned.Port
-				}
+			// the source-bound visitor lookup provides the current endpoint and
+			// exposure. never infer managed exposure from protocol or local config.
+			assigned, lookupErr := client.Control.GetProjectPrivateService(ctx, source.Key, name, controlv1.GetProjectPrivateServiceParams{TeamId: serviceContext.team.Id, SourceFingerprint: source.Fingerprint})
+			if lookupErr != nil {
+				return projectmeta.Metadata{}, fmt.Errorf("read applied remote service %q: %w", name, lookupErr)
 			}
-			if hostname == "" {
-				return projectmeta.Metadata{}, fmt.Errorf("remote service %q has no applied public URL; run tnl apply", name)
+			if assigned.TeamId != serviceContext.team.Id || assigned.Id == "" || string(assigned.Name) != config.ServiceName(name, r.project.Config.Services[name]) || assigned.ManagedTls == nil || !assigned.Enabled || string(assigned.Protocol) != config.Protocol(r.project.Config.Services[name]) {
+				return projectmeta.Metadata{}, fmt.Errorf("remote service %q has no matching current endpoint; run tnl apply", name)
 			}
-			domain, domainErr := readyDomainForHostname(serviceContext.domains, hostname)
+			endpoint := assigned.ManagedTls
+			domain, domainErr := readyDomainForHostname(serviceContext.domains, endpoint.Hostname)
 			if domainErr != nil {
 				return projectmeta.Metadata{}, domainErr
 			}
-			serviceMetadata, err = projectmeta.NewService(domain.CanonicalDomain, hostname, "http", port)
+			serviceMetadata, err = projectmeta.NewEndpoint(domain.CanonicalDomain, endpoint.Hostname, string(assigned.Protocol), endpoint.Port, endpoint.Public)
 		} else {
 			serviceMetadata, err = configuredProjectService(name, r.project.Worktree, effective, serviceContext)
 		}

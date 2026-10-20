@@ -102,6 +102,9 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 		return err
 	}
 	plan.actions = append(plan.actions, projectGitignoreActions(ctx, plan.root)...)
+	if err := runGenerate(ctx, cli{ConfigPath: plan.configPath, Generate: generateCommand{OutputDir: ".tnl/generated"}}, io.Discard); err != nil {
+		return err
+	}
 	if plan.generatedService || packageTypeConfigExists(plan.root) {
 		typeActions, err := projectTypeIncludeActions(projectConfiguration{
 			Project: projectconfig.Project{Root: plan.root},
@@ -197,8 +200,14 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 			plan.generatedService = bytes.Equal(data, initConfigSource("app"))
 		}
 	} else {
-		plan.configData = initConfigSource("app")
-		plan.generatedService = true
+		if packageFound {
+			plan.configData = initConfigSource("app")
+			plan.generatedService = true
+		} else {
+			plan.configPath = filepath.Join(root, "tnl.yml")
+			plan.configData = []byte("version: 1\ntnl:\n  services: {}\n")
+			plan.actions = append(plan.actions, "declare services in tnl.yml, then run tnl generate")
+		}
 	}
 	plan.genericDev = packageFound && !frameworkUnclear && plan.framework == "" && apiKind == "" && plan.generatedService
 	if plan.genericDev {
@@ -211,8 +220,6 @@ func planInit(ctx context.Context, cwd string) (initPlan, error) {
 				plan.packages = append(plan.packages, dependency)
 			}
 		}
-	} else {
-		plan.actions = append(plan.actions, "Create package.json, then install @tnldotdev/tnl as a development dependency.")
 	}
 	if plan.framework != "" {
 		if err := planFrameworkConfig(&plan, root); err != nil {

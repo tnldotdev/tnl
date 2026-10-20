@@ -238,7 +238,7 @@ var definitions = map[Reason]Definition{
 	},
 	ServiceNotConfigured: {
 		Class: NotFound, Message: "the selected service is not configured",
-		Action: "run tnl config check or select a configured project service", Retry: RetryAfterChange,
+		Action: "run tnl check or select a configured project service", Retry: RetryAfterChange,
 	},
 	InvalidTunnelFlags: {
 		Class: Invalid, Message: "tunnel options conflict or contain an invalid value",
@@ -392,7 +392,7 @@ var definitions = map[Reason]Definition{
 	},
 	ProjectConfigInvalid: {
 		Class: Invalid, Message: "tnl could not use the project configuration",
-		Action: "run tnl config check and correct the reported setting", Retry: RetryAfterChange,
+		Action: "run tnl check and correct the reported setting", Retry: RetryAfterChange,
 	},
 	ObservabilityConfigInvalid: {
 		Class: Invalid, Message: "operational observability configuration is invalid",

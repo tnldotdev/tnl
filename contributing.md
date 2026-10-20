@@ -183,11 +183,11 @@ the [publisher infrastructure templates](deploy/publishers/readme.md).
 | `internal/failure/reasons.go`                                                             | `internal/failure/catalog.gen.json` and the tnl.dev client-error pages                    |
 | `internal/observability` vocabulary and instrument declarations                           | `api/observability/v1/vocabulary.json`, shared with tnl.dev                               |
 
-`packages/ts/dist` is disposable build output. The CLI generates project-local
-`.tnl/local/project.json` and `.tnl/local/project.d.ts`. Both contain values tied
-to the current worktree and client installation. Ignore only `/.tnl/local/` at
-the selected project root; `.tnl/generated/` contains trackable publisher
-deployment output from `tnl generate`. See the
+`packages/ts/dist` is disposable build output. `tnl generate` writes portable
+`.tnl/generated/project.d.ts` and applicable publisher AWS artifacts for source
+control. The runtime writes ignored `.tnl/local/project.json` values; it never
+writes declarations. Ignore only `/.tnl/local/` at the selected project root.
+See [portable generation](docs/maintainers/portable-generation.md) and the
 [framework guide](https://tnl.dev/docs/frameworks) for their use.
 
 ## try the local stack

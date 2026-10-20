@@ -26,6 +26,8 @@
           "protocol": "http",
           "namespace": "member.example",
           "hostname": "web.member.example",
+          "port": 443,
+          "public": true,
           "url": "https://web.member.example"
         }
       },

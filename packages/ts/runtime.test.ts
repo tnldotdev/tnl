@@ -9,6 +9,8 @@ const project = {
   services: {
     api: {
       protocol: "http",
+      port: 443,
+      public: true,
       hostname: "api.member.example",
       namespace: "member.example",
       url: "https://api.member.example",
@@ -28,7 +30,7 @@ describe("root runtime", () => {
     vi.resetModules();
     const runtime = await import("@tnldotdev/tnl");
     expect(runtime.tnl).toMatchObject({ port: 3000, dev: false });
-    expect(runtime.tnl.services).toBeUndefined();
+    expect(() => runtime.tnl.services).toThrow();
     expect(runtime.tnl.namespace).toBeUndefined();
   });
 
@@ -36,7 +38,8 @@ describe("root runtime", () => {
     vi.stubEnv("TNL_PROJECT_RUNTIME", JSON.stringify({ ...project, dev: running }));
     vi.resetModules();
     const runtime = await import("@tnldotdev/tnl");
-    expect(runtime.tnl).toMatchObject({ ...project, dev: running });
+    expect(runtime.tnl.services.api?.metadata).toEqual(project.services.api);
+    expect(runtime.tnl.dev).toBe(running);
     expect(runtime.tnl.prepare).toBeTypeOf("function");
   });
 
@@ -47,7 +50,9 @@ describe("root runtime", () => {
       `const host = process;
        delete globalThis.process;
        const { tnl } = await import(${JSON.stringify(new URL("./dist/index.js", import.meta.url).href)});
-       host.stdout.write(JSON.stringify({ processAbsent: typeof process === "undefined", metadataAbsent: tnl.services === undefined }));`,
+        let metadataAbsent = false;
+        try { tnl.services; } catch { metadataAbsent = true; }
+        host.stdout.write(JSON.stringify({ processAbsent: typeof process === "undefined", metadataAbsent }));`,
     ]);
     await child.ready();
     await expect.poll(() => child.child.exitCode).toBe(0);
@@ -64,6 +69,8 @@ describe("root runtime", () => {
   test("validates mounted service URLs and freezes their paths", () => {
     const web = {
       protocol: "http",
+      port: 443,
+      public: true,
       hostname: "web.member.example",
       namespace: "member.example",
       url: "https://web.member.example",
@@ -96,6 +103,24 @@ describe("root runtime", () => {
     const runtime = parseRuntimePayload(JSON.stringify({ ...project, dev: true }));
     expect(Object.getPrototypeOf(runtime?.services)).toBeNull();
     expect(runtime?.services.constructor).toBeUndefined();
+  });
+
+  test("missing preparation and missing service metadata have owned diagnostics", async () => {
+    vi.stubEnv("TNL_PROJECT_RUNTIME", undefined);
+    vi.resetModules();
+    const unprepared = await import("@tnldotdev/tnl");
+    expect(() => unprepared.tnl.services).toThrow(
+      expect.objectContaining({ code: "sdk.service_unprepared" }),
+    );
+    await expect(unprepared.tnl.connect("api" as never)).rejects.toMatchObject({
+      code: "sdk.connection_unavailable",
+    });
+    vi.stubEnv("TNL_PROJECT_RUNTIME", JSON.stringify({ ...project, dev: true }));
+    vi.resetModules();
+    const prepared = await import("@tnldotdev/tnl");
+    expect(() => prepared.tnl.services.missing).toThrow(
+      expect.objectContaining({ code: "sdk.service_unprepared" }),
+    );
   });
 
   test("respects Node and Bun port settings", async () => {

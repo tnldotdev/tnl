@@ -31,7 +31,8 @@ type cli struct {
 	NoTelemetry bool             `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand      `cmd:"" help:"Set up tnl for the current project." group:"start"`
 	Apply       applyCommand     `cmd:"" help:"Reconcile this project's declared services and publisher groups with control." group:"manage"`
-	Generate    generateCommand  `cmd:"" help:"Generate trackable publisher infrastructure without contacting a server." group:"manage"`
+	Generate    generateCommand  `cmd:"" help:"Generate portable project types and declared publisher infrastructure offline." group:"manage"`
+	Check       struct{}         `cmd:"" help:"Validate project configuration and show its selected path." group:"manage"`
 	Bootstrap   bootstrapCommand `cmd:"" help:"Prepare durable publisher identity secrets and parameter bindings for a customer deployment." group:"manage"`
 	Audit       auditCommand     `cmd:"" help:"Read team service audit history." group:"manage"`
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
@@ -47,7 +48,6 @@ type cli struct {
 	Inspect     inspectCommand   `cmd:"" help:"Inspect recent local HTTP and supported TCP activity." group:"manage"`
 	Telemetry   telemetryCommand `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
 	Auth        authCommand      `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
-	Config      configCommand    `cmd:"" help:"Inspect project configuration." group:"manage"`
 	Team        teamCommand      `cmd:"" help:"Manage teams and memberships." group:"manage"`
 	Domain      domainCommand    `cmd:"" help:"Manage team domains." group:"manage"`
 	URL         publicURLCommand `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
@@ -110,20 +110,6 @@ func (flags scopedTeamFlags) selection() remoteFlags {
 	selected := flags.remoteFlags
 	selected.SelectedTeam = flags.Team
 	return selected
-}
-
-type configCommand struct {
-	Path     struct{}              `cmd:"" help:"Show the selected project configuration path."`
-	Check    configCheckCommand    `cmd:"" help:"Validate the selected project configuration."`
-	Generate configGenerateCommand `cmd:"" help:"Generate project metadata and TypeScript declarations."`
-}
-
-type configCheckCommand struct {
-	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-}
-
-type configGenerateCommand struct {
-	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 }
 
 type webhookCommand struct {
@@ -351,7 +337,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	if parsedCommand == "generate" {
 		return runGenerate(ctx, flags, stdout)
 	}
-	if native, _ := ctx.Value(nativeProcessKey{}).(bool); native && parsedCommand != "version" && !strings.HasPrefix(parsedCommand, "config ") {
+	if parsedCommand == "check" {
+		project, err := loadProjectConfigurationWithSalt(ctx, flags, [32]byte{})
+		if err != nil {
+			return err
+		}
+		return runCheck(project, stdout)
+	}
+	if native, _ := ctx.Value(nativeProcessKey{}).(bool); native && parsedCommand != "version" {
 		var metrics *observability.Metrics
 		ctx, metrics, err = observability.StartProcess(ctx, string(commandObservabilityRole(parsedCommand, flags)))
 		if err != nil {
@@ -520,7 +513,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runRuntimeServe(ctx, flags.Runtime.Serve)
 	case "wait", "watch":
 		return runAppObservation(ctx, flags, parsedCommand, stdout)
-	case "publish <service-or-target>", "config check", "config generate":
+	case "publish <service-or-target>":
 		if parsedCommand == "publish <service-or-target>" && flags.Publish.Install {
 			if !flags.Publish.System {
 				scope := systemStateFlags{SystemStateDir: flags.Publish.SystemStateDir}
@@ -609,12 +602,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runBootstrap(ctx, flags.Bootstrap, project, stdout, stderr)
 	case "audit list":
 		return runAuditList(ctx, flags.Audit.List, stdout, stderr)
-	case "config path":
-		return runConfigPath(ctx, flags, stdout)
-	case "config check":
-		return runConfigCheck(project, stdout)
-	case "config generate":
-		return runConfigGenerate(ctx, projectStateRoot, project, stdout, stderr)
 	case "telemetry on":
 		return runTelemetryPreference(ctx, flags.Telemetry.On, "on", stdout)
 	case "telemetry off":
@@ -863,7 +850,7 @@ func commandFailureReason(command string) failure.Reason {
 	switch {
 	case command == "tnl init":
 		return failure.InitFailed
-	case strings.HasPrefix(command, "tnl config "):
+	case command == "tnl check", command == "tnl generate":
 		return failure.ProjectConfigInvalid
 	case strings.HasPrefix(command, "tnl telemetry "), command == "tnl status":
 		return failure.ClientStateUnavailable

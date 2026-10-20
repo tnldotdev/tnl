@@ -85,7 +85,7 @@ func TestInitGitignoreActualGitAndSourceState(t *testing.T) {
 			if err := projectmeta.Write(t.Context(), root, projectmeta.Metadata{Version: projectmeta.Version, Services: map[string]projectmeta.Service{}}); err != nil {
 				t.Fatal(err)
 			}
-			for _, path := range []string{".tnl/local/project.json", ".tnl/local/project.d.ts", ".tnl/local/project.lock", ".tnl/local/.project-interrupted"} {
+			for _, path := range []string{".tnl/local/project.json", ".tnl/local/project.lock", ".tnl/local/.project-interrupted"} {
 				assertInitIgnored(t, root, path, true)
 			}
 			for _, path := range []string{".tnl/generated/example.ts", ".tnl/config.json", "apps/other/.tnl/local/project.json"} {
@@ -103,7 +103,7 @@ func TestInitGitignoreActualGitAndSourceState(t *testing.T) {
 				}
 			}
 			initIgnoreGit(t, root, "add", ".tnl/generated/example.ts", ".tnl/config.json")
-			if files := initIgnoreGit(t, root, "ls-files", "--", ".tnl"); files != ".tnl/config.json\n.tnl/generated/example.ts\n" {
+			if files := initIgnoreGit(t, root, "ls-files", "--", ".tnl"); files != ".tnl/config.json\n.tnl/generated/example.ts\n.tnl/generated/manifest.json\n.tnl/generated/project.d.ts\n.tnl/generated/readme.md\n" {
 				t.Fatalf("trackable files = %q", files)
 			}
 		})

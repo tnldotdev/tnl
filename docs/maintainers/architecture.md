@@ -605,9 +605,11 @@ framework integrations receive browser-safe metadata and a service-scoped
 private HTTP endpoint. they never receive control access tokens. they remain
 inactive during builds and previews.
 
-Go validates project metadata before writing `.tnl/local/project.json` and
-`.tnl/local/project.d.ts`. Both files contain worktree- and installation-dependent
-values. The TypeScript package validates metadata received in an app assignment.
+Go validates runtime metadata before writing ignored `.tnl/local/project.json`.
+`tnl generate` separately writes checked-in `.tnl/generated/project.d.ts` from
+the configuration's static type or static YAML/JSON declarations. It never
+captures worktree labels, allocated endpoints, or credentials in those types.
+The TypeScript package validates metadata received in an app assignment.
 Both validators use the shared hostname and project metadata fixtures under
 `api/fixtures/`; private protocol golden fixtures cover requests and assignments.
 

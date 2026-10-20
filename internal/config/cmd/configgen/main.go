@@ -85,6 +85,19 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		return tunnelSchema()
 	case reflect.TypeOf(config.Services{}):
 		return servicesSchema()
+	case reflect.TypeOf(config.CIGitHub{}):
+		properties := jsonschema.NewProperties()
+		properties.Set("repository", &jsonschema.Schema{Type: "string", Pattern: `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`})
+		properties.Set("workflow", &jsonschema.Schema{Type: "string", Pattern: `^\.github/workflows/[^/*?\[\]]+\.ya?ml$`})
+		properties.Set("environment", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
+		properties.Set("ref", &jsonschema.Schema{Type: "string", Pattern: `^refs/(heads|tags)/[^*?\[\] ]+$`})
+		properties.Set("reusable_workflow", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
+		events := []any{}
+		for _, event := range config.CIEvents {
+			events = append(events, event)
+		}
+		properties.Set("events", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), UniqueItems: true, Items: &jsonschema.Schema{Type: "string", Enum: events}})
+		return &jsonschema.Schema{Type: "object", Properties: properties, Required: []string{"workflow", "ref", "events"}, AdditionalProperties: jsonschema.FalseSchema}
 	case reflect.TypeOf(map[string]config.Publisher{}):
 		properties := jsonschema.NewProperties()
 		properties.Set("description", &jsonschema.Schema{Type: "string", MaxLength: integerPointer(1024)})
@@ -121,7 +134,7 @@ func servicesSchema() *jsonschema.Schema {
 		Type: "object", MaxProperties: integerPointer(32),
 		PropertyNames: &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
 		AdditionalProperties: &jsonschema.Schema{OneOf: []*jsonschema.Schema{
-			serviceSchema("http"), privateHTTPServiceSchema(), serviceSchema("tcp"), serviceSchema("mysql"), serviceSchema("postgres"),
+			serviceSchema("http"), privateHTTPServiceSchema(), serviceSchema("tcp"), serviceSchema("mysql"), serviceSchema("postgres"), serviceSchema("kubernetes"),
 		}},
 	}
 }
@@ -151,10 +164,7 @@ func serviceSchema(protocol string) *jsonschema.Schema {
 		properties.Set("public_url", tunnel)
 	}
 	protocols := []any{protocol}
-	target := targetSchema()
-	if protocol != "http" {
-		target.OneOf = target.OneOf[1:]
-	}
+	target := targetSchema(protocol)
 	properties.Set("protocol", &jsonschema.Schema{Type: "string", Enum: protocols})
 	properties.Set("target", target)
 	properties.Set("tls", jsonschema.FalseSchema)
@@ -200,7 +210,7 @@ func remotePublisherRestrictions() *jsonschema.Schema {
 	restrictions := jsonschema.NewProperties()
 	restrictions.Set("http", jsonschema.FalseSchema)
 	target := jsonschema.NewProperties()
-	target.Set("type", &jsonschema.Schema{Const: "address"})
+	target.Set("type", &jsonschema.Schema{Enum: []any{"address", "eks", "rds"}})
 	restrictions.Set("target", &jsonschema.Schema{Properties: target, Required: []string{"type"}})
 	return &jsonschema.Schema{
 		If:   &jsonschema.Schema{Required: []string{"publisher"}, Properties: selector},
@@ -282,9 +292,12 @@ func rateSchema(count, burst string) *jsonschema.Schema {
 	return &jsonschema.Schema{Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema}
 }
 
-func targetSchema() *jsonschema.Schema {
+func targetSchema(protocol string) *jsonschema.Schema {
 	variants := []*jsonschema.Schema{}
-	for _, kind := range []string{"app", "address", "compose", "docker"} {
+	for _, kind := range []string{"app", "address", "compose", "docker", "eks", "rds"} {
+		if kind == "app" && protocol != "http" || kind == "eks" && protocol != "kubernetes" || kind == "rds" && protocol != "postgres" && protocol != "mysql" {
+			continue
+		}
 		properties := jsonschema.NewProperties()
 		properties.Set("type", &jsonschema.Schema{Type: "string", Const: kind})
 		required := []string{"type"}
@@ -300,6 +313,16 @@ func targetSchema() *jsonschema.Schema {
 		case "docker":
 			properties.Set("container", &jsonschema.Schema{Type: "string", Pattern: `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`})
 			required = append(required, "container", "port")
+		case "eks", "rds":
+			properties.Set("region", &jsonschema.Schema{Type: "string", Pattern: `^[a-z]{2}(?:-[a-z]+)+-[0-9]+$`})
+			properties.Set("cluster", &jsonschema.Schema{Type: "string", Pattern: `^[A-Za-z][A-Za-z0-9_-]{0,99}$`})
+			required = append(required, "region")
+			if kind == "eks" {
+				required = append(required, "cluster")
+			} else {
+				properties.Set("instance", &jsonschema.Schema{Type: "string", Pattern: `^[A-Za-z][A-Za-z0-9_-]{0,99}$`})
+				properties.Set("endpoint", &jsonschema.Schema{Type: "string", Enum: []any{"writer", "reader"}, Default: "writer"})
+			}
 		}
 		if kind == "compose" || kind == "docker" {
 			properties.Set("port", &jsonschema.Schema{Type: "integer", Minimum: "1", Maximum: "65535"})
@@ -308,14 +331,33 @@ func targetSchema() *jsonschema.Schema {
 		tls.Set("server_name", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Target certificate hostname or IP; defaults to the resolved target host. Required when applying an app target before its listener is known."})
 		tls.Set("ca_file", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), Description: "Project-relative CA-only PEM file added to system roots; omit for system roots only."})
 		properties.Set("tls", &jsonschema.Schema{Type: "object", Properties: tls, AdditionalProperties: jsonschema.FalseSchema, Description: "Verified publisher-to-target TLS. The protocol selects PostgreSQL or MySQL native negotiation, or direct TLS for HTTP/TCP. Independent of mandatory managed visitor TLS; never falls back to plaintext or unverified TLS."})
+		if kind == "eks" || kind == "rds" {
+			properties.Set("tls", jsonschema.FalseSchema)
+		}
 		// explicit forbidden fields also reject structurally inferred mixed targets
 		// in defineConfig, rather than relying on fresh-object excess checks.
-		for _, field := range []string{"address", "project", "file", "service", "port", "container", "tls"} {
+		for _, field := range []string{"address", "project", "file", "service", "port", "container", "tls", "region", "cluster", "instance", "endpoint"} {
 			if _, found := properties.Get(field); !found {
 				properties.Set(field, jsonschema.FalseSchema)
 			}
 		}
-		variants = append(variants, &jsonschema.Schema{Type: "object", Properties: properties, Required: required, AdditionalProperties: jsonschema.FalseSchema})
+		if kind == "rds" {
+			for _, selector := range []string{"instance", "cluster"} {
+				copyProperties := jsonschema.NewProperties()
+				for pair := properties.Oldest(); pair != nil; pair = pair.Next() {
+					copyProperties.Set(pair.Key, pair.Value)
+				}
+				other := "instance"
+				if selector == "instance" {
+					other = "cluster"
+					copyProperties.Set("endpoint", &jsonschema.Schema{Type: "string", Const: "writer"})
+				}
+				copyProperties.Set(other, jsonschema.FalseSchema)
+				variants = append(variants, &jsonschema.Schema{Type: "object", Properties: copyProperties, Required: append(append([]string{}, required...), selector), AdditionalProperties: jsonschema.FalseSchema})
+			}
+		} else {
+			variants = append(variants, &jsonschema.Schema{Type: "object", Properties: properties, Required: required, AdditionalProperties: jsonschema.FalseSchema})
+		}
 	}
 	return &jsonschema.Schema{OneOf: variants}
 }

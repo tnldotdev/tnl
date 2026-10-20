@@ -3,340 +3,96 @@ package projectmeta
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 
 	"github.com/tnldotdev/tnl/internal/filelock"
 )
 
 const (
-	DirectoryName    = ".tnl/local"
-	JSONName         = "project.json"
-	DeclarationsName = "project.d.ts"
-	MaxFileBytes     = 64 << 10
+	DirectoryName = ".tnl/local"
+	JSONName      = "project.json"
+	MaxFileBytes  = 64 << 10
 )
 
-// Write validates project metadata and replaces both generated files while
-// holding the writer lock. each file replacement is atomic, but both files do
-// not become visible at the same instant. if the second replacement fails,
-// Write tries to restore the first file.
+// Render serializes runtime values only. portable declarations use Declarations.
+func Render(metadata Metadata) ([]byte, error) {
+	if err := metadata.Validate(); err != nil {
+		return nil, err
+	}
+	data, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	data = append(data, '\n')
+	if len(data) > MaxFileBytes {
+		return nil, fmt.Errorf("generated project metadata exceeds %d bytes", MaxFileBytes)
+	}
+	return data, nil
+}
+
+// Write atomically replaces runtime JSON, leaving every declaration untouched.
 func Write(ctx context.Context, projectRoot string, metadata Metadata) error {
-	if cause := context.Cause(ctx); cause != nil {
-		return cause
+	if err := context.Cause(ctx); err != nil {
+		return err
 	}
 	if !filepath.IsAbs(projectRoot) {
 		return errors.New("project metadata root must be absolute")
 	}
-	jsonData, declarations, err := Render(metadata)
+	data, err := Render(metadata)
 	if err != nil {
 		return err
 	}
-	directory := filepath.Join(filepath.Clean(projectRoot), DirectoryName)
-	if err := prepareDirectory(filepath.Dir(directory)); err != nil {
-		return err
-	}
-	if err := prepareDirectory(directory); err != nil {
-		return err
-	}
-	lock, err := filelock.AcquireContext(ctx, filepath.Join(directory, "project.lock"), os.Geteuid())
+	root, err := os.OpenRoot(projectRoot)
 	if err != nil {
-		return fmt.Errorf("lock project metadata: %w", err)
+		return err
+	}
+	defer root.Close()
+	for _, name := range []string{".tnl", DirectoryName} {
+		if err := root.Mkdir(name, 0755); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		info, err := root.Lstat(name)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return errors.New("project metadata directories must not be symlinks")
+		}
+	}
+	local, err := root.OpenRoot(DirectoryName)
+	if err != nil {
+		return err
+	}
+	defer local.Close()
+	lock, err := filelock.AcquireContext(ctx, filepath.Join(projectRoot, DirectoryName, "project.lock"), os.Geteuid())
+	if err != nil {
+		return err
 	}
 	defer lock.Close()
-	declarationsPath := filepath.Join(directory, DeclarationsName)
-	jsonPath := filepath.Join(directory, JSONName)
-	if err := validateOutputPath(declarationsPath); err != nil {
+	info, err := local.Lstat(JSONName)
+	if err == nil && !info.Mode().IsRegular() {
+		return errors.New("project metadata must be a regular file")
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := validateOutputPath(jsonPath); err != nil {
-		return err
+	if previous, err := local.ReadFile(JSONName); err == nil && bytes.Equal(previous, data) {
+		return nil
 	}
-	declarationWrite, err := stageWrite(declarationsPath, declarations)
-	if err != nil {
-		return err
-	}
-	defer declarationWrite.cleanup()
-	jsonWrite, err := stageWrite(jsonPath, jsonData)
+	temporary := ".project-" + rand.Text()
+	file, err := local.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return err
 	}
-	defer jsonWrite.cleanup()
-	if err := declarationWrite.commit(); err != nil {
+	defer local.Remove(temporary)
+	_, writeErr := file.Write(data)
+	if err := errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
 		return err
 	}
-	if err := jsonWrite.commit(); err != nil {
-		return errors.Join(err, declarationWrite.restore())
-	}
-	return nil
-}
-
-func validateOutputPath(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect generated project metadata: %w", err)
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("generated project metadata path %s must be a regular file", path)
-	}
-	return nil
-}
-
-func Render(metadata Metadata) ([]byte, []byte, error) {
-	if err := metadata.Validate(); err != nil {
-		return nil, nil, err
-	}
-	jsonData, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		return nil, nil, fmt.Errorf("encode project metadata: %w", err)
-	}
-	jsonData = append(jsonData, '\n')
-	declarations := renderDeclarations(metadata)
-	if len(jsonData) > MaxFileBytes || len(declarations) > MaxFileBytes {
-		return nil, nil, fmt.Errorf("generated project metadata exceeds %d bytes", MaxFileBytes)
-	}
-	return jsonData, declarations, nil
-}
-
-func renderDeclarations(metadata Metadata) []byte {
-	var output strings.Builder
-	output.WriteString("import \"@tnldotdev/tnl\";\n\ndeclare module \"@tnldotdev/tnl\" {\n")
-	output.WriteString("  interface TnlProjectMetadata {\n")
-	if metadata.Worktree != nil {
-		label := metadata.Worktree.Label
-		output.WriteString("    readonly worktree: {\n      readonly label: {\n")
-		output.WriteString("        readonly project: " + typeScriptString(label.Project) + ";\n")
-		if label.Checkout != "" {
-			output.WriteString("        readonly checkout: " + typeScriptString(label.Checkout) + ";\n")
-		}
-		output.WriteString("        readonly id: " + typeScriptString(label.ID) + ";\n")
-		output.WriteString("        readonly fullLabel: " + typeScriptString(label.FullLabel) + ";\n")
-		output.WriteString("      };\n    };\n")
-	}
-	output.WriteString("    readonly namespace: ")
-	if commonNamespace(metadata) {
-		output.WriteString(typeScriptString(metadata.Namespace))
-	} else {
-		output.WriteString("string")
-	}
-	output.WriteString(";\n    readonly services: {\n")
-	names := make([]string, 0, len(metadata.Services))
-	for name := range metadata.Services {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	for _, name := range names {
-		service := metadata.Services[name]
-		output.WriteString("      readonly ")
-		output.WriteString(typeScriptPropertyName(name))
-		output.WriteString(": {\n        readonly namespace: ")
-		output.WriteString(typeScriptString(service.Namespace))
-		output.WriteString(";\n        readonly hostname: ")
-		output.WriteString(typeScriptString(service.Hostname))
-		output.WriteString(";\n        readonly protocol: ")
-		output.WriteString(typeScriptString(service.Protocol))
-		output.WriteString(";\n        readonly url: ")
-		output.WriteString(typeScriptString(service.URL))
-		output.WriteString(";\n")
-		if len(service.Paths) > 0 {
-			output.WriteString("        readonly paths: {\n")
-			prefixes := make([]string, 0, len(service.Paths))
-			for prefix := range service.Paths {
-				prefixes = append(prefixes, prefix)
-			}
-			slices.Sort(prefixes)
-			for _, prefix := range prefixes {
-				mount := service.Paths[prefix]
-				output.WriteString("          readonly ")
-				output.WriteString(typeScriptString(prefix))
-				output.WriteString(": { readonly service: ")
-				output.WriteString(typeScriptString(mount.Service))
-				output.WriteString("; readonly url: ")
-				output.WriteString(typeScriptString(mount.URL))
-				output.WriteString("; readonly stripPrefix: ")
-				if mount.StripPrefix {
-					output.WriteString("true")
-				} else {
-					output.WriteString("false")
-				}
-				output.WriteString("; };\n")
-			}
-			output.WriteString("        };\n")
-		}
-		output.WriteString("      };\n")
-	}
-	output.WriteString("    };\n")
-	if metadata.OAuth != nil {
-		writeOriginDeclaration(&output, "    ", *metadata.OAuth)
-	}
-	if len(metadata.Aliases) != 0 {
-		output.WriteString("    readonly aliases: {\n")
-		names := make([]string, 0, len(metadata.Aliases))
-		for name := range metadata.Aliases {
-			names = append(names, name)
-		}
-		slices.Sort(names)
-		for _, name := range names {
-			alias := metadata.Aliases[name]
-			output.WriteString("      readonly " + typeScriptPropertyName(name) + ": { readonly hostname: " + typeScriptString(alias.Hostname) + "; readonly url: " + typeScriptString(alias.URL) + "; readonly service: " + typeScriptString(alias.Service) + "; };\n")
-		}
-		output.WriteString("    };\n")
-	}
-	if len(metadata.Webhooks) != 0 {
-		output.WriteString("    readonly webhooks: {\n")
-		names := make([]string, 0, len(metadata.Webhooks))
-		for name := range metadata.Webhooks {
-			names = append(names, name)
-		}
-		slices.Sort(names)
-		for _, name := range names {
-			endpoint := metadata.Webhooks[name]
-			output.WriteString("      readonly " + typeScriptPropertyName(name) + ": { readonly hostname: " + typeScriptString(endpoint.Hostname) + "; readonly url: " + typeScriptString(endpoint.URL) + "; readonly service: " + typeScriptString(endpoint.Service) + "; readonly path: " + typeScriptString(endpoint.Path) + "; readonly methods: readonly [")
-			for index, method := range endpoint.Methods {
-				if index != 0 {
-					output.WriteString(", ")
-				}
-				output.WriteString(typeScriptString(method))
-			}
-			output.WriteString("]; };\n")
-		}
-		output.WriteString("    };\n")
-	}
-	output.WriteString("  }\n}\n")
-	return []byte(output.String())
-}
-
-func writeOriginDeclaration(output *strings.Builder, indent string, origin IntegrationOrigin) {
-	output.WriteString(indent + "readonly oauth: { readonly hostname: ")
-	output.WriteString(typeScriptString(origin.Hostname))
-	output.WriteString("; readonly url: ")
-	output.WriteString(typeScriptString(origin.URL))
-	output.WriteString("; };\n")
-}
-
-func commonNamespace(metadata Metadata) bool {
-	for _, service := range metadata.Services {
-		if service.Namespace != metadata.Namespace {
-			return false
-		}
-	}
-	return true
-}
-
-func typeScriptString(value string) string {
-	encoded, _ := json.Marshal(value)
-	return string(encoded)
-}
-
-func typeScriptPropertyName(value string) string {
-	if strings.Contains(value, "-") {
-		return typeScriptString(value)
-	}
-	return value
-}
-
-func prepareDirectory(path string) error {
-	if info, err := os.Lstat(path); err == nil {
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("project metadata directory must be a real directory")
-		}
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect project metadata directory: %w", err)
-	}
-	if err := os.Mkdir(path, 0o755); err != nil {
-		return fmt.Errorf("create project metadata directory: %w", err)
-	}
-	return nil
-}
-
-type stagedWrite struct {
-	path        string
-	temporary   string
-	previous    []byte
-	hadPrevious bool
-	changed     bool
-}
-
-func stageWrite(path string, data []byte) (*stagedWrite, error) {
-	write := &stagedWrite{path: path}
-	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, data) {
-		return write, nil
-	} else if err == nil {
-		write.previous, write.hadPrevious = current, true
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("read generated project metadata: %w", err)
-	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".project-*")
-	if err != nil {
-		return nil, fmt.Errorf("create temporary project metadata: %w", err)
-	}
-	write.temporary = temporary.Name()
-	if err := temporary.Chmod(0o644); err != nil {
-		temporary.Close()
-		write.cleanup()
-		return nil, fmt.Errorf("set project metadata permissions: %w", err)
-	}
-	if _, err := temporary.Write(data); err != nil {
-		temporary.Close()
-		write.cleanup()
-		return nil, fmt.Errorf("write project metadata: %w", err)
-	}
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		write.cleanup()
-		return nil, fmt.Errorf("sync project metadata: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		write.cleanup()
-		return nil, fmt.Errorf("close project metadata: %w", err)
-	}
-	write.changed = true
-	return write, nil
-}
-
-func (w *stagedWrite) commit() error {
-	if !w.changed {
-		return nil
-	}
-	if err := os.Rename(w.temporary, w.path); err != nil {
-		return fmt.Errorf("replace project metadata: %w", err)
-	}
-	w.temporary = ""
-	return nil
-}
-
-func (w *stagedWrite) restore() error {
-	if !w.changed || w.temporary != "" {
-		return nil
-	}
-	if !w.hadPrevious {
-		if err := os.Remove(w.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("restore generated project metadata: %w", err)
-		}
-		return nil
-	}
-	restore, err := stageWrite(w.path, w.previous)
-	if err != nil {
-		return fmt.Errorf("restore generated project metadata: %w", err)
-	}
-	defer restore.cleanup()
-	if err := restore.commit(); err != nil {
-		return fmt.Errorf("restore generated project metadata: %w", err)
-	}
-	return nil
-}
-
-func (w *stagedWrite) cleanup() {
-	if w != nil && w.temporary != "" {
-		_ = os.Remove(w.temporary)
-		w.temporary = ""
-	}
+	return local.Rename(temporary, JSONName)
 }

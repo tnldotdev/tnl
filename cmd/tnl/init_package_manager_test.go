@@ -21,7 +21,7 @@ func TestInitInstallsMissingPackageWithDetectedManager(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "pnpm"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("TNL_INIT_MARKER", marker)
 	t.Chdir(root)
 	var stdout, stderr bytes.Buffer

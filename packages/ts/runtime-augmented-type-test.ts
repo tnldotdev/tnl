@@ -1,87 +1,61 @@
-import { tnl } from "@tnldotdev/tnl";
+import { tnl, type TnlProjectFromConfig } from "@tnldotdev/tnl";
 import { defineConfig } from "@tnldotdev/tnl/config";
 
+const configuration = defineConfig(({ worktree }) => ({
+  services: {
+    api: { protocol: "http", publicURL: {} },
+    db: { protocol: "postgres", target: { type: "rds", instance: "orders", region: "us-east-1" } },
+    mysql: { protocol: "mysql", target: { type: "address", address: "db.internal:3306" } },
+    cluster: {
+      protocol: "kubernetes",
+      target: { type: "eks", cluster: "development", region: "us-east-1" },
+    },
+    ...(worktree.label.checkout
+      ? {
+          worker: {
+            protocol: "tcp" as const,
+            target: { type: "address" as const, address: "worker:9000" },
+          },
+        }
+      : {}),
+  },
+}));
+
 declare module "@tnldotdev/tnl" {
-  interface TnlProjectMetadata {
-    readonly worktree: {
-      readonly label: {
-        readonly project: "shop";
-        readonly id: "k7n2p9";
-        readonly fullLabel: "shop-k7n2p9";
-      };
-    };
-    readonly namespace: "member.example";
-    readonly services: {
-      readonly api: {
-        readonly protocol: "http";
-        readonly hostname: "api.member.example";
-        readonly namespace: "member.example";
-        readonly url: "https://api.member.example";
-      };
-      readonly web: {
-        readonly protocol: "http";
-        readonly hostname: "web.member.example";
-        readonly namespace: "member.example";
-        readonly url: "https://web.member.example";
-      };
-      readonly db: {
-        readonly protocol: "postgres";
-        readonly hostname: "db.member.example";
-        readonly namespace: "member.example";
-        readonly port: 15432;
-        readonly address: "db.member.example:15432";
-      };
-    };
+  interface TnlProjectConfig {
+    config: typeof configuration;
   }
 }
 
-defineConfig(({ worktree, project }) => {
-  worktree.label.project satisfies "shop";
-  worktree.label.id satisfies "k7n2p9";
-  worktree.label.fullLabel satisfies "shop-k7n2p9";
-  project.relativeDirectory satisfies string;
-  // @ts-expect-error the generated primary-checkout label has no checkout property.
-  void worktree.label.checkout;
+defineConfig(({ worktree }) => {
+  worktree.label.project satisfies string;
+  worktree.label.checkout satisfies string | undefined;
   return {};
 });
+tnl.services.api.metadata.url satisfies `https://${string}`;
+tnl.services.db.metadata.protocol satisfies "postgres";
+tnl.services.db.metadata.hostname satisfies string;
+tnl.services.db.metadata.port satisfies number;
+tnl.services.db.metadata.public satisfies boolean;
+tnl.services.cluster.metadata.url satisfies `https://${string}`;
+// @ts-expect-error optional factory services stay optional in every checkout.
+void tnl.services.worker.metadata;
+if (tnl.services.worker) tnl.services.worker.metadata.protocol satisfies "tcp";
+// @ts-expect-error service names are exact.
+void tnl.services.missing;
+// @ts-expect-error database metadata has no URL.
+void tnl.services.db.metadata.url;
+// @ts-expect-error unknown connection name.
+tnl.connect("missing");
+const db = await tnl.connect("db");
+db.host satisfies string;
+db.port satisfies number;
+db.ssl.rejectUnauthorized satisfies true;
+const mysql = await tnl.connect("mysql");
+mysql.ssl.key satisfies string;
 
-if (tnl.worktree) {
-  tnl.worktree.label.fullLabel satisfies "shop-k7n2p9";
-  // @ts-expect-error generated primary-checkout metadata omits checkout.
-  void tnl.worktree.label.checkout;
-}
-
-// @ts-expect-error augmentation does not make metadata always present.
-tnl.namespace satisfies "member.example";
-// @ts-expect-error known services still require narrowing the root value.
-void tnl.services.api;
-
-if (tnl.namespace && tnl.services) {
-  tnl.namespace satisfies "member.example";
-  tnl.services.api.hostname satisfies "api.member.example";
-  tnl.services.api.namespace satisfies "member.example";
-  tnl.services.api.url satisfies "https://api.member.example";
-  tnl.services.db.protocol satisfies "postgres";
-  tnl.services.db.port satisfies 15432;
-  tnl.services.db.address satisfies "db.member.example:15432";
-  // @ts-expect-error saved TCP metadata has no HTTP URL.
-  void tnl.services.db.url;
-  tnl.dev satisfies boolean;
-
-  // assign valid literal values so these errors specifically check readonly ownership.
-  // @ts-expect-error project metadata is readonly after augmentation.
-  tnl.namespace = "member.example";
-  // @ts-expect-error the services collection is readonly.
-  tnl.services = { ...tnl.services };
-  // @ts-expect-error generated service entries are readonly.
-  tnl.services.api = { ...tnl.services.api };
-  // @ts-expect-error generated service fields are readonly.
-  tnl.services.api.hostname = "api.member.example";
-  // @ts-expect-error generated service URLs are readonly.
-  tnl.services.api.url = "https://api.member.example";
-  // @ts-expect-error runtime lifecycle metadata is readonly.
-  tnl.dev = false;
-
-  // @ts-expect-error generated project declarations reject unknown services.
-  void tnl.services.worker;
-}
+type Union = TnlProjectFromConfig<{
+  services: { choice: { protocol: "postgres" } | { protocol: "mysql" } };
+}>;
+declare const union: Union;
+union.services.choice.metadata.protocol satisfies "postgres" | "mysql";

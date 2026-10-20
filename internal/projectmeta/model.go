@@ -54,6 +54,8 @@ type Service struct {
 	Protocol  string          `json:"protocol"`
 	Namespace string          `json:"namespace"`
 	Hostname  string          `json:"hostname"`
+	Port      int             `json:"port"`
+	Public    bool            `json:"public"`
 	URL       string          `json:"url,omitempty"`
 	Paths     map[string]Path `json:"paths,omitempty"`
 }
@@ -71,31 +73,47 @@ func (service *Service) UnmarshalJSON(data []byte) error {
 	if err := config.RejectNullValues(fields); err != nil {
 		return err
 	}
-	for _, key := range []string{"namespace", "hostname", "protocol"} {
+	for _, key := range []string{"namespace", "hostname", "protocol", "port", "public"} {
 		if _, found := fields[key]; !found {
 			return fmt.Errorf("service %s is required", key)
 		}
 	}
-	if _, found := fields["url"]; !found {
+	if _, found := fields["url"]; !found && (value.Protocol == "http" || value.Protocol == "kubernetes") {
 		return errors.New("HTTP service url is required")
 	}
 	*service = Service(value)
 	return nil
 }
 
-// NewService builds HTTP-only browser metadata. private targets and trust never
-// enter this type. managed HTTP endpoints retain their allocated port.
+// NewService builds browser-safe endpoint metadata. target addresses, trust,
+// and credentials never enter this type. private protocols need an assigned port.
 func NewService(namespace, hostname, protocol string, port *int) (Service, error) {
-	service := Service{Namespace: namespace, Hostname: hostname, Protocol: protocol, URL: "https://" + hostname}
-	if port != nil && *port != 443 {
-		if *port < 1024 || *port > 65535 {
-			return Service{}, errors.New("managed HTTP port is invalid")
+	service := Service{Namespace: namespace, Hostname: hostname, Protocol: protocol, Public: protocol == "http"}
+	if port != nil {
+		service.Port = *port
+	} else if protocol == "http" {
+		service.Port = 443
+	}
+	if protocol == "http" || protocol == "kubernetes" {
+		service.URL = "https://" + hostname
+		if service.Port != 443 {
+			service.URL = "https://" + net.JoinHostPort(hostname, strconv.Itoa(service.Port))
 		}
-		service.URL = "https://" + net.JoinHostPort(hostname, strconv.Itoa(*port))
 	}
 	if err := validateServiceAddress(service); err != nil {
 		return Service{}, err
 	}
+	return service, nil
+}
+
+// NewEndpoint requires the runtime's current exposure fact, independent of
+// protocol. native database and Kubernetes endpoints may be directly exposed.
+func NewEndpoint(namespace, hostname, protocol string, port int, public bool) (Service, error) {
+	service, err := NewService(namespace, hostname, protocol, &port)
+	if err != nil {
+		return Service{}, err
+	}
+	service.Public = public
 	return service, nil
 }
 
@@ -106,8 +124,17 @@ func validateServiceAddress(service Service) error {
 	if err := canonicalHostname("service hostname", service.Hostname); err != nil {
 		return err
 	}
-	if service.Protocol != "http" {
-		return errors.New("browser metadata contains HTTP public URLs only")
+	if !config.ValidProtocol(service.Protocol) || service.Port < 1 || service.Port > 65535 {
+		return errors.New("service metadata needs a supported protocol, allocated port, and valid public exposure")
+	}
+	if service.Protocol != "http" && len(service.Paths) != 0 {
+		return errors.New("path metadata requires protocol http")
+	}
+	if service.Protocol != "http" && service.Protocol != "kubernetes" {
+		if service.URL != "" {
+			return errors.New("native database and TCP metadata cannot have a URL")
+		}
+		return nil
 	}
 	u, err := url.Parse(service.URL)
 	if err != nil || u.Scheme != "https" || u.Hostname() != service.Hostname || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
@@ -115,10 +142,10 @@ func validateServiceAddress(service Service) error {
 	}
 	if u.Port() != "" {
 		port, err := strconv.Atoi(u.Port())
-		if err != nil || port < 1024 || port > 65535 || service.URL != "https://"+net.JoinHostPort(service.Hostname, strconv.Itoa(port)) {
+		if err != nil || port != service.Port || service.URL != "https://"+net.JoinHostPort(service.Hostname, strconv.Itoa(port)) {
 			return errors.New("managed HTTP port is invalid")
 		}
-	} else if service.URL != "https://"+service.Hostname {
+	} else if service.URL != "https://"+service.Hostname || service.Port != 443 {
 		return errors.New("HTTP service needs its exact HTTPS URL")
 	}
 	return nil

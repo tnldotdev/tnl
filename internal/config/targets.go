@@ -37,7 +37,7 @@ func MatchesDockerIdentifier(identifier, id, name string) bool {
 // guidance, not a public URL or a different tunnel transport.
 func ValidProtocol(protocol string) bool {
 	switch protocol {
-	case "http", "tcp", "mysql", "postgres":
+	case "http", "tcp", "mysql", "postgres", "kubernetes":
 		return true
 	}
 	return false
@@ -46,7 +46,7 @@ func ValidProtocol(protocol string) bool {
 // PrivateProtocol identifies non-HTTP labels. HTTP services can also be private;
 // use IsPublicService to decide whether a declaration enables public HTTPS.
 func PrivateProtocol(protocol string) bool {
-	return protocol == "tcp" || protocol == "mysql" || protocol == "postgres"
+	return protocol == "tcp" || protocol == "mysql" || protocol == "postgres" || protocol == "kubernetes"
 }
 
 // ResolveServiceTarget turns a configured address or a discovered private
@@ -114,9 +114,18 @@ func NormalizeHTTPServiceTarget(service Service, value string) (string, error) {
 func validateTarget(service Service) error {
 	protocol := Protocol(service)
 	if !ValidProtocol(protocol) {
-		return errors.New("protocol must be http, tcp, mysql, or postgres; use tcp for an existing sshd")
+		return errors.New("protocol must be http, tcp, mysql, postgres, or kubernetes; use tcp for an existing sshd")
 	}
 	target := service.Target
+	if target != nil {
+		cloud := target.Region != nil || target.Cluster != nil || target.Instance != nil || target.Endpoint != nil
+		if target.Type != "eks" && target.Type != "rds" && cloud {
+			return errors.New("region, cluster, instance, and endpoint require an eks or rds target")
+		}
+		if target.Type == "eks" || target.Type == "rds" {
+			return validateCloudTarget(protocol, *target)
+		}
+	}
 	if target == nil || target.Type == "app" {
 		if protocol != "http" {
 			return errors.New("target.type app requires protocol http")
@@ -163,7 +172,7 @@ func validateTarget(service Service) error {
 			return errors.New("target.type docker requires an exact container identifier, port, and optional tls")
 		}
 	default:
-		return errors.New("target.type must be app, address, compose, or docker")
+		return errors.New("target.type must be app, address, compose, docker, eks, or rds")
 	}
 	if target.Port != nil && (*target.Port < 1 || *target.Port > 65535) {
 		return errors.New("target.port must be between 1 and 65535")
@@ -187,6 +196,35 @@ func validateTarget(service Service) error {
 		if tls.CAFile != nil && validateProjectRelativeFile(*tls.CAFile) != nil {
 			return errors.New("target.tls.ca_file must be a project-relative CA-only PEM file")
 		}
+	}
+	return nil
+}
+
+var awsRegion = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-[0-9]+$`)
+var awsResourceName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,99}$`)
+
+func validateCloudTarget(protocol string, target ServiceTarget) error {
+	if target.Region == nil || !awsRegion.MatchString(*target.Region) || target.Address != nil || target.Project != nil || target.File != nil || target.Service != nil || target.Port != nil || target.Container != nil || target.TLS != nil {
+		return errors.New("cloud targets require region and an exact resource selector; discovered TLS and addresses belong to the publisher")
+	}
+	if target.Type == "eks" {
+		if protocol != "kubernetes" || target.Cluster == nil || !awsResourceName.MatchString(*target.Cluster) || target.Instance != nil || target.Endpoint != nil {
+			return errors.New("target.type eks requires protocol kubernetes, cluster, and region only")
+		}
+		return nil
+	}
+	if protocol != "postgres" && protocol != "mysql" || (target.Instance == nil) == (target.Cluster == nil) {
+		return errors.New("target.type rds requires protocol postgres or mysql, region, and exactly one of instance or cluster")
+	}
+	selector := target.Instance
+	if selector == nil {
+		selector = target.Cluster
+	}
+	if !awsResourceName.MatchString(*selector) {
+		return errors.New("rds resource must be an exact resource identifier")
+	}
+	if target.Endpoint != nil && (*target.Endpoint != "writer" && *target.Endpoint != "reader" || *target.Endpoint == "reader" && target.Cluster == nil) {
+		return errors.New("rds endpoint must be writer (default), or reader for a cluster")
 	}
 	return nil
 }

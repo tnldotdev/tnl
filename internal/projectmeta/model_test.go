@@ -38,9 +38,13 @@ func TestProjectMetadataConformance(t *testing.T) {
 
 func TestSavedAddressesRenderWithoutPrivateData(t *testing.T) {
 	port := 15432
-	for _, protocol := range []string{"tcp", "mysql", "postgres", "ssh"} {
-		if _, err := NewService("member.example", "db.member.example", protocol, &port); err == nil {
-			t.Fatalf("private %s received browser metadata", protocol)
+	endpoint, err := NewEndpoint("member.example", "db.member.example", "postgres", port, true)
+	if err != nil || !endpoint.Public || endpoint.URL != "" {
+		t.Fatal("native exposure must come from runtime state", err)
+	}
+	for _, protocol := range []string{"tcp", "mysql", "postgres", "kubernetes"} {
+		if service, err := NewService("member.example", "db.member.example", protocol, &port); err != nil || service.Port != port || service.Public {
+			t.Fatalf("private %s metadata is invalid: %+v %v", protocol, service, err)
 		}
 	}
 	service, err := NewService("member.example", "web.member.example", "http", nil)
@@ -48,20 +52,20 @@ func TestSavedAddressesRenderWithoutPrivateData(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadata := Metadata{Version: Version, Namespace: "member.example", Services: map[string]Service{"web": service}}
-	file, declarations, err := Render(metadata)
+	file, err := Render(metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, data := range []string{string(file), string(declarations)} {
-		if strings.Contains(data, "address") || strings.Contains(data, "port:") || strings.Contains(data, "target") || !strings.Contains(data, "https://web.member.example") {
+	for _, data := range []string{string(file)} {
+		if strings.Contains(data, "address") || strings.Contains(data, "target") || !strings.Contains(data, "https://web.member.example") {
 			t.Fatalf("unsafe HTTP metadata: %s", data)
 		}
 	}
 	if _, err := NewService("member.example", "db.member.example", "tcp", nil); err == nil {
 		t.Fatal("private TCP service received a public hostname and shared port")
 	}
-	if _, err := NewService("member.example", "db.member.example", "tcp", &port); err == nil {
-		t.Fatal("private TCP service received a public port")
+	if service, err := NewService("member.example", "db.member.example", "tcp", &port); err != nil || service.Public {
+		t.Fatal("private TCP endpoint metadata failed")
 	}
 	if _, err := NewService("member.example", "db.member.example", "ssh", nil); err == nil {
 		t.Fatal("ssh metadata was built before port assignment")
@@ -81,7 +85,7 @@ func TestPublicPathMountDoesNotNeedPrivateTargetMetadata(t *testing.T) {
 	}
 	service.Paths = map[string]Path{"/api": {Service: "private-api", URL: service.URL + "/api", StripPrefix: true}}
 	metadata := Metadata{Version: Version, Namespace: "member.example", Services: map[string]Service{"web": service}}
-	file, _, err := Render(metadata)
+	file, err := Render(metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
