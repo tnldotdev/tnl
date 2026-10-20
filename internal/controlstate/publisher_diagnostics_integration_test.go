@@ -75,7 +75,7 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 		t.Fatal(err)
 	}
 	status = read()
-	if status.Healthy || !status.Runtime.Active || !status.AcknowledgedAt.Equal(now) {
+	if status.Healthy || status.Runtime == nil || !status.Runtime.Active || status.AcknowledgedAt != nil {
 		t.Fatal("replacement runtime inherited its predecessor's healthy acknowledgement", status)
 	}
 	r.ExpectedRevision = project.Revision
@@ -84,7 +84,7 @@ func TestIntegrationPublisherDiagnosticsFreshness(t *testing.T) {
 		t.Fatal(err)
 	}
 	status = read()
-	if status.Healthy || status.CurrentRevision != 2 || status.ObservedRevision != 1 || !status.AcknowledgedAt.Equal(now) {
+	if status.Healthy || status.CurrentRevision != 2 || status.ObservedRevision != 1 || status.AcknowledgedAt != nil {
 		t.Fatal("old acknowledgement became current", status)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.publisher_runtimes SET lease_expires_at=$2 WHERE publisher_identity_id=$1`, replica.member.PublisherIdentityID, restartedAt.Add(time.Second)); err != nil {

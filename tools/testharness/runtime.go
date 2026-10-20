@@ -309,6 +309,11 @@ func (h *runtimeHarness) waitForExit(ctx context.Context, name string) error {
 		}
 		if !state.Running {
 			if state.ExitCode != 0 {
+				logs, err := container.Logs(ctx)
+				if err == nil {
+					defer logs.Close()
+					_, _ = io.Copy(os.Stderr, io.LimitReader(logs, 1<<20))
+				}
 				return fmt.Errorf("runtime %s exited with status %d", name, state.ExitCode)
 			}
 			return nil
