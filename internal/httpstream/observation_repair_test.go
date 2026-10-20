@@ -143,7 +143,9 @@ func TestNativeProxyHEADAndInformationalHeadersHaveNoInventedBody(t *testing.T) 
 				scheme = "https"
 			}
 			request, _ := http.NewRequestWithContext(t.Context(), "HEAD", scheme+"://"+address+"/secret", nil)
-			request.Host, request.Close = "proxy.example.test", true
+			// keep the connection open through the completion observation; closing
+			// it first races this framing assertion with visitor cancellation.
+			request.Host = "proxy.example.test"
 			transport := &http.Transport{TLSClientConfig: verifier}
 			defer transport.CloseIdleConnections()
 			client := &http.Client{Timeout: time.Second, Transport: transport}
