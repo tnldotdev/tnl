@@ -400,8 +400,26 @@ func applyPrivateOwnershipRevision(t *testing.T, d *Database, r ApplyProjectConf
 	}
 	before := privateOwnershipSnapshot(t, d)
 	retry, err := d.ApplyProjectConfiguration(t.Context(), r)
-	if err != nil || !reflect.DeepEqual(status, retry) || !reflect.DeepEqual(before, privateOwnershipSnapshot(t, d)) {
-		t.Fatal("same-hash retry changed resources, grants, runs, or desired state", err)
+	if err != nil {
+		t.Fatal("retry ownership transition", err)
+	}
+	if !reflect.DeepEqual(before, privateOwnershipSnapshot(t, d)) {
+		t.Fatal("same-hash retry changed resources, grants, runs, or saved state")
+	}
+	// observation time is fresh on each read; all saved and derived facts must
+	// remain equal. clone members so this comparison does not alter the result.
+	first, repeated := status, retry
+	first.Members, repeated.Members = slices.Clone(status.Members), slices.Clone(retry.Members)
+	for _, members := range [][]PublisherGroupMemberStatus{first.Members, repeated.Members} {
+		for i := range members {
+			if members[i].SnapshotAt.IsZero() {
+				t.Fatal("member status omitted its observation time")
+			}
+			members[i].SnapshotAt = time.Time{}
+		}
+	}
+	if !reflect.DeepEqual(first, repeated) {
+		t.Fatal("same-hash retry changed publisher or configuration facts")
 	}
 	return status
 }
