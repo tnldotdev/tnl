@@ -83,11 +83,11 @@ services:
       - -ec
       - |
         go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
-        go build -o /artifacts/dnsdev ./internal/devdns/cmd/dnsdev
+        go build -buildvcs=false -o /artifacts/dnsdev ./internal/devdns/cmd/dnsdev
         if [ "$${RACE}" = 1 ]; then
-          go test -race -c -o /artifacts/runtime.test ./internal/tnldruntime
+          go test -buildvcs=false -race -c -o /artifacts/runtime.test ./internal/tnldruntime
         else
-          go test -c -o /artifacts/runtime.test ./internal/tnldruntime
+          go test -buildvcs=false -c -o /artifacts/runtime.test ./internal/tnldruntime
         fi
 
   postgres:
