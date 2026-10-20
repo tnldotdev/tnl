@@ -230,16 +230,19 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		active := len(bound.active)
 		bound.mu.Unlock()
 		status.TargetHealthy = config.Healthy(ctx)
-		return config.Control.HeartbeatPrivateServiceRunHealth(ctx, config.PrivateServiceID, setup.PrivateRunId, runToken,
+		state, err = config.Control.HeartbeatPrivateServiceRunHealth(ctx, config.PrivateServiceID, setup.PrivateRunId, runToken,
 			controlv1.PrivateServiceRunHeartbeat{Healthy: status.TargetHealthy, StreamCapacity: config.StreamCapacity, ActiveStreams: int32(active)})
+		if err == nil {
+			err = bound.ApplyHeartbeat(state)
+			if err != nil {
+				status.ConfigurationCurrent = false
+			}
+		}
+		return state, err
 	}
 	state, err := heartbeat(ctx)
 	if err != nil {
 		return errors.Join(ErrPrivateStream, err)
-	}
-	if err := bound.ApplyHeartbeat(state); err != nil {
-		status.ConfigurationCurrent = false
-		return err
 	}
 	paths, err := tunnel.NewSlots(context.WithoutCancel(ctx), tunnel.SlotsConfig{SingleUse: true, Connect: func(ctx context.Context, slot uint8, preferTCP bool) (tunnel.SlotSession, error) {
 		if config.Connect != nil {
@@ -329,10 +332,6 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 				// a surviving slot remains usable only until the last confirmed
 				// publisher deadline; retry without reviving stale authority.
 				continue
-			}
-			if err := bound.ApplyHeartbeat(next); err != nil {
-				status.ConfigurationCurrent = false
-				return err
 			}
 			state = next
 			heartbeatOK = true

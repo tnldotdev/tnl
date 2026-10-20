@@ -18,6 +18,47 @@ type failingHeartbeatControl struct {
 	fail atomic.Bool
 }
 
+type invalidLeaseControl struct{ *lifecycleControl }
+
+func (c *invalidLeaseControl) HeartbeatPrivateServiceRunHealth(ctx context.Context, id, run string, token credentials.PublishRunToken, h controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error) {
+	state, err := c.lifecycleControl.HeartbeatPrivateServiceRunHealth(ctx, id, run, token, h)
+	if state.State == "closed" {
+		state.PublisherExpiresAt = time.Now().Add(2 * time.Hour)
+	}
+	return state, err
+}
+
+func TestRejectedHeartbeatCannotAdvanceConfirmedLeaseMeasurement(t *testing.T) {
+	config, control := lifecycleFixture(t)
+	control.revoke = true
+	config.Control = &invalidLeaseControl{lifecycleControl: control}
+	config.Connect = func(context.Context, *Bound, uint8) (SlotSession, error) {
+		return &heldSlot{stopped: make(chan struct{})}, nil
+	}
+	metrics := observability.New("publisher")
+	t.Cleanup(func() { _ = metrics.Shutdown(context.Background()) })
+	ctx, cancel := context.WithTimeout(observability.WithMetrics(t.Context(), metrics), 3*time.Second)
+	defer cancel()
+	if err := Publish(ctx, config); !errors.Is(err, ErrPrivateStream) {
+		t.Fatal("invalid heartbeat did not stop the run", err)
+	}
+	families, err := metrics.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lease float64
+	for _, family := range families {
+		if family.GetName() == "tnl_publisher_lease_expiration_timestamp_seconds" {
+			for _, point := range family.Metric {
+				lease = point.GetGauge().GetValue()
+			}
+		}
+	}
+	if lease <= float64(time.Now().Unix()) || lease > float64(time.Now().Add(2*time.Minute).Unix()) {
+		t.Fatal("rejected heartbeat extended the last confirmed lease", lease)
+	}
+}
+
 func (c *failingHeartbeatControl) HeartbeatPrivateServiceRunHealth(ctx context.Context, id, run string, token credentials.PublishRunToken, h controlv1.PrivateServiceRunHeartbeat) (controlv1.PrivateServiceRunState, error) {
 	if c.fail.Swap(false) {
 		return controlv1.PrivateServiceRunState{}, failure.Wrap("refresh publisher", failure.ServerUnavailable, errors.New("fixture heartbeat failed"))
