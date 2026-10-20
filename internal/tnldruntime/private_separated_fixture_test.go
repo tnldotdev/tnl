@@ -133,7 +133,7 @@ func newPrivateRuntimeFixtureTiming(t *testing.T, standalone bool, opened chan<-
 		settings.relayTransportTLS = privateRuntimeTLS(t, ca, settings.relayHostname)
 		settings.configurePrivate = func(id string, config *ingress.PrivateConnectorConfig) {
 			if !defaults {
-				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 100*time.Millisecond, 500*time.Millisecond, 3*time.Second
+				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
 				config.Control = acceleratedPrivateRecheck{config.Control}
 			}
 			config.Forwarder = observingPrivateForwarder{PrivateForwarder: config.Forwarder, id: id, opened: opened}
