@@ -90,7 +90,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	device, err := control.PrivateConnectorDevice(t.Context(), person.Identity.Id)
+	device, err := control.PrivateConnectorSigner(t.Context(), person.Identity.Id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-opened
-	if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.ID); err != nil {
+	if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 		t.Fatal(err)
 	}
 	assertClosed := func(c net.Conn, deadline time.Time) {

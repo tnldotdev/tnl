@@ -1,6 +1,7 @@
 package tunnelv1
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,30 @@ const (
 	VisitorWorkloadSession = "workload_session"
 )
 
+var ErrInvalidVisitorSubject = errors.New("invalid visitor subject")
+
+// UnmarshalJSON rejects fields from another variant even when empty. the same
+// tagged contract is used in hello, acceptance and forwarding frames.
+func (s *VisitorSubject) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return ErrInvalidVisitorSubject
+	}
+	type plain VisitorSubject
+	var value plain
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&value) != nil {
+		return ErrInvalidVisitorSubject
+	}
+	r := VisitorSubject(value)
+	if r.Validate() != nil || r.Kind == VisitorHumanDevice && len(fields) != 3 || r.Kind == VisitorWorkloadSession && len(fields) != 2 {
+		return ErrInvalidVisitorSubject
+	}
+	*s = r
+	return nil
+}
+
 func (s VisitorSubject) Validate() error {
 	switch s.Kind {
 	case VisitorHumanDevice:
@@ -33,7 +58,7 @@ func (s VisitorSubject) Validate() error {
 			return nil
 		}
 	}
-	return errors.New("invalid visitor subject")
+	return ErrInvalidVisitorSubject
 }
 
 // VisitorConnectorClaim is the subject-aware private authentication source
@@ -48,7 +73,7 @@ type VisitorConnectorClaim struct {
 }
 
 func (c VisitorConnectorClaim) Digest() ([]byte, error) {
-	if c.Subject.Validate() != nil || !opaqueid.Valid(c.ServiceID, opaqueid.PrivateServicePrefix) || !opaqueid.Valid(c.SessionID, opaqueid.PrivateConnectorSessionPrefix) || len(c.Nonce) != 32 || len(c.Credential) != 43 {
+	if c.Subject.Validate() != nil || !opaqueid.Valid(c.ServiceID, opaqueid.PrivateServicePrefix) || !opaqueid.Valid(c.SessionID, opaqueid.PrivateConnectorSessionPrefix) || len(c.Nonce) != 32 || len(c.Credential) != 43 || !validCredential(c.Credential) {
 		return nil, errors.New("invalid visitor connector claim")
 	}
 	data, _ := json.Marshal([]any{"tnl-visitor-connector/v1", c.Subject, c.ServiceID, c.SessionID, c.Credential, c.Nonce})

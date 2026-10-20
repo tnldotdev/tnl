@@ -106,10 +106,10 @@ func TestIntegrationPrivateAssignmentReplayValidity(t *testing.T) {
 				err = d.ReleaseVisitorIngressAssignment(ctx, r.ActingIdentityID, first.ID, now)
 			case "bound":
 				hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: 1, Kind: "private_connector_session", PrivateServiceID: service.ID,
-					SessionID: first.ID, Credential: first.Credential, DeviceID: device.ID, IdentityID: r.ActingIdentityID, Nonce: make([]byte, 32)}
-				digest, _ := tunnelv1.PrivateConnectorHelloDigest(hello)
+					SessionID: first.ID, Credential: first.Credential, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device.ID, IdentityID: r.ActingIdentityID}, Nonce: make([]byte, 32)}
+				digest, _ := hello.Claim().Digest()
 				hello.Signature = ed25519.Sign(key, digest)
-				_, err = d.AuthenticatePrivateConnector(ctx, lease.IngressLeaseIdentity, hello, netip.MustParseAddr("192.0.2.10"), now)
+				_, err = d.AuthenticateVisitorConnector(ctx, lease.IngressLeaseIdentity, hello.Claim(), netip.MustParseAddr("192.0.2.10"), now)
 			case "expired":
 				at = first.ExpiresAt
 			case "lease-expired":
@@ -184,13 +184,13 @@ func TestIntegrationPrivateVisitorSingleAssignmentRenewalAtCapacity(t *testing.T
 		t.Fatal("startup pair failed", sessions, err)
 	}
 	a, b := sessions[0], sessions[1]
-	hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", PrivateServiceID: service.ID, SessionID: a.ID, Credential: a.Credential, DeviceID: device.ID, IdentityID: r.ActingIdentityID, Nonce: make([]byte, 32), Signature: make([]byte, 64)}
-	digest, err := tunnelv1.PrivateConnectorHelloDigest(hello)
+	hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", PrivateServiceID: service.ID, SessionID: a.ID, Credential: a.Credential, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device.ID, IdentityID: r.ActingIdentityID}, Nonce: make([]byte, 32), Signature: make([]byte, 64)}
+	digest, err := hello.Claim().Digest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	hello.Signature = ed25519.Sign(key, digest)
-	if _, err = d.AuthenticatePrivateConnector(ctx, leases[a.IngressID].IngressLeaseIdentity, hello, netip.MustParseAddr("192.0.2.10"), now); err != nil {
+	if _, err = d.AuthenticateVisitorConnector(ctx, leases[a.IngressID].IngressLeaseIdentity, hello.Claim(), netip.MustParseAddr("192.0.2.10"), now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = d.RenewIngress(ctx, IngressRenewal{IngressLeaseIdentity: leases[a.IngressID].IngressLeaseIdentity, ReportedConnections: 1}, now, time.Hour); err != nil {

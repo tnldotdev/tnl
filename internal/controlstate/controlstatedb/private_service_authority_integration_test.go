@@ -281,13 +281,13 @@ func TestIntegrationPrivateServiceAuthority(t *testing.T) {
 	source := netip.MustParseAddr("192.0.2.10")
 	authenticate := func(session controlstate.PrivateConnectorSession) error {
 		hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", PrivateServiceID: service.ID,
-			SessionID: session.ID, Credential: session.Credential, DeviceID: session.DeviceID, IdentityID: session.IdentityID, Nonce: bytes.Repeat([]byte{9}, 32), Signature: make([]byte, 64)}
-		digest, err := tunnelv1.PrivateConnectorHelloDigest(hello)
+			SessionID: session.ID, Credential: session.Credential, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: session.DeviceID, IdentityID: session.IdentityID}, Nonce: bytes.Repeat([]byte{9}, 32), Signature: make([]byte, 64)}
+		digest, err := hello.Claim().Digest()
 		if err != nil {
 			return err
 		}
 		hello.Signature = ed25519.Sign(deviceKeys[session.IdentityID], digest)
-		_, err = d.AuthenticatePrivateConnector(ctx, ingress, hello, source, now)
+		_, err = d.AuthenticateVisitorConnector(ctx, ingress, hello.Claim(), source, now)
 		return err
 	}
 	if err = authenticate(session); err != nil {
@@ -324,6 +324,14 @@ func TestIntegrationPrivateServiceAuthority(t *testing.T) {
 	}
 	if err := claim(session.ID, source); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
 		t.Fatalf("visitor connection ID admitted twice: %v", err)
+	}
+	subject := tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: visitorID, DeviceID: deviceIDs[visitorID]}
+	if decision, err := d.RecheckVisitorServiceStream(ctx, ingress, service.ID, prepared.RunID, session.ID, admittedVisitorID, subject, prepared.RunNumber, source, now); err != nil || !decision.Allowed {
+		t.Fatal("tagged human recheck lost the actual device path", err)
+	}
+	subject.DeviceID = newID(opaqueid.VisitorDevicePrefix)
+	if _, err := d.RecheckVisitorServiceStream(ctx, ingress, service.ID, prepared.RunID, session.ID, admittedVisitorID, subject, prepared.RunNumber, source, now); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
+		t.Fatal("tagged human recheck accepted another device", err)
 	}
 	var admittedBefore int
 	if err = conn.QueryRow(ctx, `SELECT count(*) FROM control.private_visitor_streams WHERE private_run_id=$1`, prepared.RunID).Scan(&admittedBefore); err != nil {

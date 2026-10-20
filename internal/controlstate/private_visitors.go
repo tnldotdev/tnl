@@ -224,7 +224,7 @@ func (d *Database) createVisitorIngressAssignments(ctx context.Context, identity
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, PrivateConnectorSession{ID: id, PrivateServiceID: serviceID, IdentityID: identityID, DeviceID: deviceID, Credential: credential, ExpiresAt: expires,
+		result = append(result, PrivateConnectorSession{ID: id, PrivateServiceID: serviceID, IdentityID: identityID, DeviceID: deviceID, Subject: VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: identityID, DeviceID: deviceID}, Credential: credential, ExpiresAt: expires,
 			IngressID: placement.id, IngressAddress: placement.address, TLSServerName: placement.serverName})
 	}
 	plaintext, err := json.Marshal(result)
@@ -245,57 +245,6 @@ func (d *Database) createVisitorIngressAssignments(ctx context.Context, identity
 		return nil, err
 	}
 	return result, nil
-}
-
-func (d *Database) AuthenticatePrivateConnector(ctx context.Context, lease IngressLeaseIdentity, hello tunnelv1.PrivateConnectorSessionHello, source netip.Addr, now time.Time) (result PrivateConnectorSession, retErr error) {
-	if hello.Validate() != nil || !source.IsValid() || source.Zone() != "" {
-		return result, ErrPrivateServiceAccess
-	}
-	digest, err := privateSecretDigest(hello.Credential)
-	if err != nil {
-		return result, err
-	}
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		return result, err
-	}
-	defer rollback(ctx, tx, "authenticate private connector", &retErr)()
-	current, err := lockCurrentIngressLease(ctx, controlstatedb.New(tx), lease, now)
-	if err != nil {
-		return result, err
-	}
-	if current.Draining {
-		return result, ErrPrivateServiceAccess
-	}
-	var key, stored []byte
-	var device, identity, service string
-	var expires time.Time
-	err = tx.QueryRow(ctx, `SELECT session.credential_digest,device.public_key,device.id,device.identity_id,session.private_service_id,session.expires_at
-	    FROM control.private_connector_sessions session JOIN control.visitor_devices device ON device.id=session.device_id
-	    JOIN control.identities person ON person.id=device.identity_id
-	    WHERE session.id=$1 AND session.identity_id=device.identity_id AND session.bound_at IS NULL
-	    AND session.revoked_at IS NULL AND session.expires_at>$2 AND device.revoked_at IS NULL AND person.disabled_at IS NULL
-	    AND session.assigned_ingress_id=$3 AND session.assigned_ingress_run_id=$4 AND session.assigned_ingress_lease_revision=$5
-	    FOR UPDATE OF session FOR SHARE OF device,person`, hello.SessionID, now, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision)).Scan(&stored, &key, &device, &identity, &service, &expires)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return result, ErrPrivateServiceAccess
-	}
-	if err != nil {
-		return result, err
-	}
-	proof, err := tunnelv1.PrivateConnectorHelloDigest(hello)
-	if err != nil || !bytes.Equal(stored, digest) || device != hello.DeviceID || identity != hello.IdentityID || service != hello.PrivateServiceID ||
-		!ed25519.Verify(ed25519.PublicKey(key), proof, hello.Signature) {
-		return result, ErrPrivateServiceAccess
-	}
-	_, err = tx.Exec(ctx, `UPDATE control.private_connector_sessions SET bound_at=$2,source_ip=$3,ingress_id=$4,ingress_run_id=$5,ingress_lease_revision=$6 WHERE id=$1`, hello.SessionID, now, source.Unmap(), lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision))
-	if err != nil {
-		return result, err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return result, err
-	}
-	return PrivateConnectorSession{ID: hello.SessionID, PrivateServiceID: service, IdentityID: identity, DeviceID: device, SourceIP: source.Unmap(), ExpiresAt: expires}, nil
 }
 
 type PrivateServiceSelection struct {

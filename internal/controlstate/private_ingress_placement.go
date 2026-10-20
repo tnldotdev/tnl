@@ -46,10 +46,10 @@ func privateIngressPlacements(ctx context.Context, tx pgx.Tx, now time.Time, cou
 		p := &candidates[index]
 		var assigned int64
 		if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.private_connector_sessions session
-		    JOIN control.visitor_devices device ON device.id=session.device_id AND device.revoked_at IS NULL
-		    JOIN control.identities person ON person.id=device.identity_id AND person.disabled_at IS NULL
 		    WHERE session.assigned_ingress_id=$1 AND session.assigned_ingress_run_id=$2
-		    AND session.assigned_ingress_lease_revision=$3 AND session.bound_at IS NULL AND session.revoked_at IS NULL AND session.expires_at>$4`, p.id, p.run, p.revision, now).Scan(&assigned); err != nil {
+		    AND session.assigned_ingress_lease_revision=$3 AND session.bound_at IS NULL AND session.revoked_at IS NULL AND session.expires_at>$4
+		    AND (EXISTS(SELECT 1 FROM control.visitor_devices device JOIN control.identities person ON person.id=device.identity_id AND person.disabled_at IS NULL WHERE device.id=session.device_id AND device.identity_id=session.identity_id AND device.revoked_at IS NULL)
+		      OR EXISTS(SELECT 1 FROM control.workload_sessions workload JOIN control.workload_session_services rights ON rights.workload_session_id=workload.id AND rights.private_service_id=session.private_service_id WHERE workload.id=session.workload_session_id AND workload.revoked_at IS NULL AND workload.lease_expires_at>$4 AND workload.expires_at>$4))`, p.id, p.run, p.revision, now).Scan(&assigned); err != nil {
 			return nil, err
 		}
 		if p.load >= p.capacity || assigned >= p.capacity-p.load {

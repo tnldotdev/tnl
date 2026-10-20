@@ -4,6 +4,7 @@ package workloadclient
 
 import (
 	"context"
+	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -12,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"io"
 	"net/http"
 	"slices"
 	"sync"
@@ -35,6 +37,9 @@ type Client struct {
 	control   *controlclient.Client
 	session   authorityv1.WorkloadSession
 }
+
+func (*Client) String() string   { return "workload visitor client" }
+func (*Client) GoString() string { return "workload visitor client" }
 
 // New creates one ephemeral execution key. retain this adapter across exchange
 // retries: a replacement key cannot take over an already-started execution.
@@ -149,6 +154,35 @@ func (c *Client) CreateIngressAssignments(ctx context.Context, service, key stri
 	}
 	return c.control.CreateWorkloadIngressAssignments(ctx, r.Credential, service, key)
 }
+
+func (c *Client) CreateIngressAssignment(ctx context.Context, service, key, exclude string) (controlv1.WorkloadIngressAssignments, error) {
+	r, err := c.Session()
+	if err != nil {
+		return controlv1.WorkloadIngressAssignments{}, err
+	}
+	return c.control.CreateWorkloadIngressAssignmentSet(ctx, r.Credential, service, key, 1, exclude)
+}
+func (c *Client) SelectServiceRun(ctx context.Context, service string) (controlv1.PrivateServiceSelection, error) {
+	r, err := c.Session()
+	if err != nil {
+		return controlv1.PrivateServiceSelection{}, err
+	}
+	return c.control.SelectWorkloadServiceRun(ctx, r.Credential, service)
+}
+func (c *Client) IngressTransportTrust(ctx context.Context, session string) (controlv1.IngressTransportTrust, error) {
+	r, err := c.Session()
+	if err != nil {
+		return controlv1.IngressTransportTrust{}, err
+	}
+	return c.control.GetWorkloadIngressTransportTrust(ctx, r.Credential, session)
+}
+func (c *Client) ReleaseIngressAssignment(ctx context.Context, session string) error {
+	r, err := c.Session()
+	if err != nil {
+		return err
+	}
+	return c.control.ReleaseWorkloadIngressAssignment(ctx, r.Credential, session)
+}
 func (c *Client) ServiceClientCertificate(ctx context.Context, service string) (controlv1.ServiceClientCertificate, error) {
 	r, err := c.Session()
 	if err != nil {
@@ -183,8 +217,21 @@ func (c *Client) ClientTLSCertificate(ctx context.Context, service string) (tls.
 	if !ok || !public.Equal(c.key.Public()) || !leaf.NotAfter.Equal(issued.ExpiresAt) {
 		return tls.Certificate{}, invalidSession()
 	}
-	return tls.Certificate{Certificate: [][]byte{block.Bytes}, PrivateKey: slices.Clone(c.key), Leaf: leaf}, nil
+	return tls.Certificate{Certificate: [][]byte{block.Bytes}, PrivateKey: workloadSigner{c}, Leaf: leaf}, nil
 }
+
+// TLS gets a signing operation, not an exportable raw private key.
+type workloadSigner struct{ client *Client }
+
+func (s workloadSigner) Public() crypto.PublicKey { return s.client.PublicKey() }
+func (s workloadSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if opts.HashFunc() != crypto.Hash(0) {
+		return nil, errors.New("unsupported workload signature hash")
+	}
+	return s.client.Sign(digest), nil
+}
+func (workloadSigner) String() string   { return "workload TLS signer" }
+func (workloadSigner) GoString() string { return "workload TLS signer" }
 
 func cloneSession(r authorityv1.WorkloadSession) authorityv1.WorkloadSession {
 	r.ServiceIds = slices.Clone(r.ServiceIds)
@@ -209,3 +256,8 @@ func (c *Client) Subject() (tunnelv1.VisitorSubject, error) {
 
 // Sign proves workload key possession for the private connector hello digest.
 func (c *Client) Sign(digest []byte) []byte { return ed25519.Sign(c.key, digest) }
+
+// PublicKey returns only the proof verifier, never the ephemeral signing key.
+func (c *Client) PublicKey() ed25519.PublicKey {
+	return slices.Clone(c.key.Public().(ed25519.PublicKey))
+}

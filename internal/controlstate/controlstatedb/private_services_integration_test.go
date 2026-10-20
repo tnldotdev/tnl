@@ -164,12 +164,12 @@ func TestIntegrationPrivateServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T)
 		if session.IngressID == otherIngress.IngressID {
 			assigned = otherIngress
 		}
-		hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", PrivateServiceID: service.ID, SessionID: session.ID, Credential: session.Credential, DeviceID: device.ID, IdentityID: person, Nonce: bytes.Repeat([]byte{1}, 32), Signature: make([]byte, 64)}
-		proof, err := tunnelv1.PrivateConnectorHelloDigest(hello)
+		hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", PrivateServiceID: service.ID, SessionID: session.ID, Credential: session.Credential, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device.ID, IdentityID: person}, Nonce: bytes.Repeat([]byte{1}, 32), Signature: make([]byte, 64)}
+		proof, err := hello.Claim().Digest()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = d.AuthenticatePrivateConnector(ctx, assigned, hello, source, now); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
+		if _, err = d.AuthenticateVisitorConnector(ctx, assigned, hello.Claim(), source, now); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
 			t.Fatalf("invalid device signature admitted: %v", err)
 		}
 		hello.Signature = ed25519.Sign(deviceKey, proof)
@@ -177,10 +177,10 @@ func TestIntegrationPrivateServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T)
 		if assigned.IngressID == ingress.IngressID {
 			wrongIngress = otherIngress
 		}
-		if _, err = d.AuthenticatePrivateConnector(ctx, wrongIngress, hello, source, now); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
+		if _, err = d.AuthenticateVisitorConnector(ctx, wrongIngress, hello.Claim(), source, now); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
 			t.Fatalf("assignment crossed ingress leases: %v", err)
 		}
-		if _, err = d.AuthenticatePrivateConnector(ctx, assigned, hello, source, now); err != nil {
+		if _, err = d.AuthenticateVisitorConnector(ctx, assigned, hello.Claim(), source, now); err != nil {
 			t.Fatal(err)
 		}
 	}

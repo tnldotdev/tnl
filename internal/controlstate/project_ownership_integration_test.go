@@ -295,13 +295,13 @@ func TestIntegrationPrivateVisitorAssignmentReleaseIsExact(t *testing.T) {
 		t.Fatal("release did not free reservation", pending, err)
 	}
 	sibling := sessions[1]
-	hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", SessionID: sibling.ID, PrivateServiceID: service.ID, IdentityID: r.ActingIdentityID, DeviceID: device.ID, Credential: sibling.Credential, Nonce: make([]byte, 32), Signature: make([]byte, ed25519.SignatureSize)}
-	digest, err := tunnelv1.PrivateConnectorHelloDigest(hello)
+	hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", SessionID: sibling.ID, PrivateServiceID: service.ID, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: r.ActingIdentityID, DeviceID: device.ID}, Credential: sibling.Credential, Nonce: make([]byte, 32), Signature: make([]byte, ed25519.SignatureSize)}
+	digest, err := hello.Claim().Digest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	hello.Signature = ed25519.Sign(key, digest)
-	if _, err = d.AuthenticatePrivateConnector(t.Context(), leases[sibling.IngressID].IngressLeaseIdentity, hello, netip.MustParseAddr("192.0.2.10"), now); err != nil {
+	if _, err = d.AuthenticateVisitorConnector(t.Context(), leases[sibling.IngressID].IngressLeaseIdentity, hello.Claim(), netip.MustParseAddr("192.0.2.10"), now); err != nil {
 		t.Fatal("release invalidated healthy sibling", err)
 	}
 	if err = d.ReleaseVisitorIngressAssignment(t.Context(), r.ActingIdentityID, sibling.ID, now); err != nil {

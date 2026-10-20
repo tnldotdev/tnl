@@ -17,6 +17,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/workloadproof"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -40,6 +41,108 @@ func signWorkloadRequest(r *ExchangeGitHubWorkloadRequest, key ed25519.PrivateKe
 	data, _ := json.Marshal(r.Execution)
 	r.Execution.AssertionDigest = sha256.Sum256(data)
 	r.Signature = ed25519.Sign(key, workloadproof.Digest(r.TeamID, r.ProjectKey, r.CI, r.Execution.AssertionDigest, r.Services))
+}
+
+func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "workload_handles")
+	ctx := t.Context()
+	r := appliedProjectRequest(t, d, now)
+	r.Configuration = workloadConfiguration()
+	applied, err := d.ApplyProjectConfiguration(ctx, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"workload-a", "workload-b"} {
+		if _, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: name, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 1, PrivateConnectorAddress: name + ".example.test:9443", PrivateConnectorTLSServerName: name + ".example.test", IngressPoolID: PrimaryIngressPoolID}, now, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exchange, _ := workloadExchange(t, r, now)
+	first, err := d.ExchangeGitHubWorkload(ctx, exchange, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := applied.Services[0].ServiceID
+	assignments, err := d.CreateWorkloadIngressAssignments(ctx, first.Credential, service, "pair", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range assignments.Assignments {
+		if !a.ExpiresAt.Equal(first.ExpiresAt) {
+			t.Fatal("handle was clipped to renewable lease")
+		}
+	}
+	if _, err := d.CreateWorkloadIngressAssignmentSet(ctx, first.Credential, service, "overbook", 1, "", now); !errors.Is(err, ErrPrivateIngressUnavailable) {
+		t.Fatal("workload reservations did not count against ingress capacity", err)
+	}
+	renewed, err := d.RenewWorkloadSession(ctx, first.ID, first.Credential, now.Add(31*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := d.CreateWorkloadIngressAssignments(ctx, first.Credential, service, "pair", now.Add(32*time.Second))
+	if err != nil || !reflect.DeepEqual(replayed, assignments) {
+		t.Fatal("handle replay changed transport lifetime", err)
+	}
+	expired := renewed.LeaseExpiresAt.Add(time.Second)
+	if _, err := d.CreateWorkloadIngressAssignments(ctx, first.Credential, service, "pair", expired); !errors.Is(err, ErrWorkloadDenied) {
+		t.Fatal("replayed handle revived expired lease", err)
+	}
+	secondRequest, key := workloadExchange(t, r, expired)
+	secondRequest.Execution.CheckRunID, secondRequest.Execution.JTI = "333", "second"
+	signWorkloadRequest(&secondRequest, key)
+	second, err := d.ExchangeGitHubWorkload(ctx, secondRequest, expired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondAssignments, err := d.CreateWorkloadIngressAssignments(ctx, second.Credential, service, "pair", expired)
+	if err != nil {
+		t.Fatal("expired workload retained pending capacity", err)
+	}
+	if err := d.ReleaseWorkloadIngressAssignment(ctx, second.Credential, assignments.Assignments[0].ID, expired); !errors.Is(err, ErrPrivateServiceAccess) {
+		t.Fatal("another workload released a handle", err)
+	}
+	for _, a := range assignments.Assignments {
+		if err := d.ReleaseWorkloadIngressAssignment(ctx, first.Credential, a.ID, expired); err != nil {
+			t.Fatal("expired exact-handle cleanup", err)
+		}
+	}
+	for _, a := range secondAssignments.Assignments {
+		if err := d.ReleaseWorkloadIngressAssignment(ctx, second.Credential, a.ID, expired); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.ExpectedRevision = applied.Revision
+	policy := r.Configuration.CI["test"]
+	policy.MaxDurationSeconds = 6 * 60 * 60
+	r.Configuration.CI["test"] = policy
+	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	maximumRequest, key := workloadExchange(t, r, expired)
+	maximumRequest.Execution.CheckRunID, maximumRequest.Execution.JTI = "444", "maximum"
+	signWorkloadRequest(&maximumRequest, key)
+	maximum, err := d.ExchangeGitHubWorkload(ctx, maximumRequest, expired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maximumHandles, err := d.CreateWorkloadIngressAssignments(ctx, maximum.Credential, service, "maximum", expired)
+	if err != nil {
+		t.Fatal("six-hour handle", err)
+	}
+	if !maximumHandles.Assignments[0].ExpiresAt.Equal(expired.Add(6 * time.Hour)) {
+		t.Fatal("six-hour fixed window changed")
+	}
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := d.IssueWorkloadServiceClientCertificate(ctx, maximum.Credential, service, csr, expired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !certificate.ExpiresAt.Equal(maximum.ExpiresAt.Truncate(time.Second)) {
+		t.Fatal("maximum certificate clipped to renewable lease")
+	}
 }
 
 func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
@@ -228,11 +331,14 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if decision, err := d.RecheckVisitorServiceStream(ctx, lease.IngressLeaseIdentity, service.ID, run.RunID, assignment.ID, visitor, session.Subject, run.RunNumber, source, now.Add(time.Second)); err != nil || !decision.Allowed {
 		t.Fatal("private workload recheck", decision, err)
 	}
-	if decision, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, run.Token, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source}, now); err != nil || !decision.Allowed {
+	if decision, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, run.Token, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision}, now); err != nil || !decision.Allowed {
 		t.Fatal("publisher did not recheck workload connector", decision, err)
 	}
-	if _, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, session.Credential, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source}, now); !errors.Is(err, ErrPrivateServiceAccess) {
+	if _, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, session.Credential, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision}, now); !errors.Is(err, ErrPrivateServiceAccess) {
 		t.Fatal("workload credential authenticated as publisher run", err)
+	}
+	if _, err := d.AuthorizeVisitorServiceConnector(ctx, service.ID, run.RunID, run.Token, run.RunNumber, SubjectConnectorVisitor{Subject: session.Subject, SessionID: assignment.ID, ConnectionID: visitor, Source: source, GrantRevision: stream.GrantRevision + 1}, now); !errors.Is(err, ErrPrivateServiceAccess) {
+		t.Fatal("spoofed grant revision", err)
 	}
 	csr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
 	certificate, err := d.IssueWorkloadServiceClientCertificate(ctx, session.Credential, service.ID, csr, now)
@@ -265,6 +371,15 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	status, err := d.DirectServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, direct, now.Add(time.Second))
 	if err != nil || status.State != DirectVisitorAllowed {
 		t.Fatal("public active recheck", status, err)
+	}
+	for _, connector := range []bool{false, true} {
+		observation := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "private_service", EventType: "connection.open", OccurredAt: now, RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: direct, SourceIP: source.String(), Outcome: "allowed"}
+		if connector {
+			observation.VisitorConnectionID, observation.ConnectorSessionID = visitor, assignment.ID
+		}
+		if _, err := d.IngestIngressServiceObservations(ctx, lease.IngressLeaseIdentity, serviceaudit.Batch{Events: []serviceaudit.Observation{observation}}, now); err != nil {
+			t.Fatal("audit scanned workload as a human", err)
+		}
 	}
 	if decision, err := d.RecheckVisitorServiceStream(ctx, lease.IngressLeaseIdentity, service.ID, run.RunID, assignment.ID, visitor, session.Subject, run.RunNumber, source, session.ExpiresAt); err != nil || decision.Allowed {
 		t.Fatal("private stream outlived job", decision, err)

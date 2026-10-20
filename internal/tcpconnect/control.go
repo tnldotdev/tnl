@@ -2,6 +2,7 @@ package tcpconnect
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"sort"
 	"sync"
@@ -11,7 +12,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/visitorsubject"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type controlAdapter struct {
@@ -53,33 +56,34 @@ func NewControl(client *controlclient.Client, profile *clientstate.Store, identi
 	return &controlAdapter{client: client, profile: profile, identityID: identityID, pairs: make(map[assignmentKey]*assignmentPair), owned: make(map[string]bool)}, nil
 }
 
-func (c *controlAdapter) PrivateConnectorDevice(ctx context.Context, identity string) (Device, error) {
+func (c *controlAdapter) PrivateConnectorSigner(ctx context.Context, identity string) (Signer, error) {
 	if identity != c.identityID {
-		return Device{}, ErrPrivateConnection
+		return Signer{}, ErrPrivateConnection
 	}
 	c.deviceMu.Lock()
 	defer c.deviceMu.Unlock()
 	device, err := c.profile.EnsureEnrolledVisitorDevice(ctx, identity, c.client.EnrollVisitorDevice)
 	if err != nil {
 		if errors.Is(err, clientstate.ErrPublisherStateConflict) {
-			return Device{}, errors.Join(ErrPrivateConnection, err)
+			return Signer{}, errors.Join(ErrPrivateConnection, err)
 		}
-		return Device{}, err
+		return Signer{}, err
 	}
-	return Device{ID: device.ID, IdentityID: identity, SigningKey: device.SigningKey}, nil
+	return Signer{Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: identity, DeviceID: device.ID}, PublicKey: device.SigningKey.Public().(ed25519.PublicKey), Sign: func(digest []byte) []byte { return ed25519.Sign(device.SigningKey, digest) }}, nil
 }
 
-func (c *controlAdapter) PrivateConnectorAssignment(ctx context.Context, service, device string, slot uint8) (Assignment, error) {
+func (c *controlAdapter) PrivateConnectorAssignment(ctx context.Context, service string, subject tunnelv1.VisitorSubject, slot uint8) (Assignment, error) {
 	if slot > 1 || !opaqueid.Valid(service, opaqueid.PrivateServicePrefix) {
 		return Assignment{}, ErrPrivateConnection
 	}
-	local, err := c.PrivateConnectorDevice(ctx, c.identityID)
+	local, err := c.PrivateConnectorSigner(ctx, c.identityID)
 	if err != nil {
 		return Assignment{}, err
 	}
-	if device != local.ID {
+	if subject != local.Subject {
 		return Assignment{}, ErrPrivateConnection
 	}
+	device := subject.DeviceID
 	// serialize assignment allocation and consumption, including failures fetching
 	// trust. an attempted token is never handed out a second time, and renewing
 	// one slot never releases its sibling's bound session.
@@ -186,7 +190,7 @@ func (c *controlAdapter) PrivateConnectorAssignment(ctx context.Context, service
 	}
 	pair.ingress[slot], pair.assigned[slot] = a.IngressId, a.ConnectorSessionId
 	c.owned[a.ConnectorSessionId] = false
-	return Assignment{SessionID: a.ConnectorSessionId, PrivateServiceID: a.PrivateServiceId, DeviceID: a.DeviceId, IdentityID: a.IdentityId,
+	return Assignment{SessionID: a.ConnectorSessionId, PrivateServiceID: a.PrivateServiceId, Subject: subject,
 		IngressID: a.IngressId, Endpoint: muxsession.Endpoint{Address: a.IngressAddress, ServerName: a.TlsServerName},
 		Credential: a.SessionCredential, ExpiresAt: a.ExpiresAt, TransportTLS: verification}, nil
 }
@@ -201,7 +205,7 @@ func (c *controlAdapter) adoptAssignmentsLocked(ctx context.Context, service, de
 		if !existing && opaqueid.Valid(a.ConnectorSessionId, opaqueid.PrivateConnectorSessionPrefix) {
 			c.owned[a.ConnectorSessionId] = true
 		}
-		if existing || a.PrivateServiceId != service || a.DeviceId != device || a.IdentityId != c.identityID ||
+		if existing || a.PrivateServiceId != service || !visitorsubject.Equal(a.Subject, tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: c.identityID}) ||
 			!opaqueid.Valid(a.ConnectorSessionId, opaqueid.PrivateConnectorSessionPrefix) || a.IngressId == "" || a.IngressAddress == "" ||
 			a.TlsServerName == "" || a.SessionCredential == "" || !a.ExpiresAt.After(time.Now()) {
 			valid = false
@@ -270,16 +274,16 @@ func (c *controlAdapter) ResolvePrivateService(ctx context.Context, service stri
 	if !opaqueid.Valid(service, opaqueid.PrivateServicePrefix) {
 		return Run{}, ErrPrivateConnection
 	}
-	device, err := c.PrivateConnectorDevice(ctx, c.identityID)
+	signer, err := c.PrivateConnectorSigner(ctx, c.identityID)
 	if err != nil {
 		return Run{}, err
 	}
-	selected, err := c.client.SelectPrivateServiceRun(ctx, service, device.ID)
+	selected, err := c.client.SelectPrivateServiceRun(ctx, service, signer.Subject.DeviceID)
 	if err != nil {
 		return Run{}, err
 	}
 	if selected.ManagedTls == nil ||
-		selected.PrivateServiceId != service || selected.DeviceId != device.ID || selected.IdentityId != c.identityID ||
+		selected.PrivateServiceId != service || !visitorsubject.Equal(selected.Subject, signer.Subject) ||
 		!opaqueid.Valid(selected.PrivateRunId, opaqueid.PrivateRunPrefix) || selected.RunNumber < 1 || selected.TrustRevision < 1 ||
 		!selected.ExpiresAt.After(time.Now()) || !validProtocol(string(selected.Protocol)) {
 		return Run{}, ErrPrivateConnection

@@ -220,7 +220,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal("released assignment still authorized trust", err)
 	}
 	single, err := owner.CreateVisitorIngressAssignment(ctx, local.ServiceId, device.Id, sessions[1].IngressId, "renewal")
-	if err != nil || single.IngressId != sessions[0].IngressId || single.DeviceId != device.Id || single.PrivateServiceId != local.ServiceId {
+	if err != nil || single.IngressId != sessions[0].IngressId || single.Subject.DeviceId == nil || *single.Subject.DeviceId != device.Id || single.PrivateServiceId != local.ServiceId {
 		t.Fatal("single assignment wire required replacing its sibling", single, err)
 	}
 	if _, err = owner.CreateVisitorIngressAssignment(ctx, local.ServiceId, device.Id, sessions[1].IngressId, "over-capacity"); !errors.Is(err, controlclient.ErrUnavailable) {

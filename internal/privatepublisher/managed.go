@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/targettransport"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
+	"github.com/tnldotdev/tnl/internal/visitorsubject"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -134,7 +135,7 @@ func configureManagedRun(ctx context.Context, config RunConfig, prepared *Prepar
 		if header.Connector != nil && header.Direct == nil {
 			return publisher.ConnectorVisitor{Check: func(check context.Context) (publisher.ManagedVisitorDecision, error) {
 				return awaitAdmission(check, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
-					return control.AuthorizeServiceConnector(ctx, setup.PrivateServiceId, setup.PrivateRunId, credentials.PublishRunToken(setup.RunToken), controlv1.AuthorizeServiceConnectorRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, ConnectorSessionId: header.Connector.SessionID, IdentityId: header.Connector.IdentityID, DeviceId: header.Connector.DeviceID})
+					return control.AuthorizeServiceConnector(ctx, setup.PrivateServiceId, setup.PrivateRunId, credentials.PublishRunToken(setup.RunToken), controlv1.AuthorizeServiceConnectorRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, ConnectorSessionId: header.Connector.SessionID, Subject: visitorsubject.Wire(header.Connector.Subject), GrantRevision: int64(header.Connector.GrantRevision)})
 				})
 			}}
 		}

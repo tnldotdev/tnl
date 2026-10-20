@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type privateSelectionResponseStore struct {
@@ -31,6 +32,7 @@ func TestPrivateSelectionReturnsManagedEndpointWithoutStreamCrypto(t *testing.T)
 	service, _ := opaqueid.New(opaqueid.PrivateServicePrefix)
 	device, _ := opaqueid.New("vdev_")
 	store := privateSelectionResponseStore{issued: controlstate.PrivateServiceSelection{
+		Subject:                tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device, IdentityID: testPublicURLReadPrincipal().identityID},
 		PrivateServiceMetadata: controlstate.PrivateServiceMetadata{Protocol: "tcp", TrustRevision: 1, ManagedTLS: &controlstate.ManagedServiceTLS{Hostname: "service.worktree.member.example.test", Port: 25443}},
 		PrivateServiceID:       service, DeviceID: device, IdentityID: testPublicURLReadPrincipal().identityID,
 		PrivateRunID: "psrun_0123456789ABCDEFGHIJKL",

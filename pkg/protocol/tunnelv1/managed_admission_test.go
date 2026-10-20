@@ -41,7 +41,7 @@ func TestManagedAdmissionGoldenFrames(t *testing.T) {
 }
 
 func TestManagedAdmissionValidatesExactKindsAndIdentities(t *testing.T) {
-	header := PrivateStreamHeader{ProtocolVersion: Version, Kind: PrivateVisitorStream, PrivateServiceID: testOpaqueID(opaqueid.PrivateServicePrefix), PrivateRunID: testOpaqueID(opaqueid.PrivateRunPrefix), RunNumber: 1, Connector: &ConnectorAdmission{SessionID: testOpaqueID(opaqueid.PrivateConnectorSessionPrefix), IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: "device-1", GrantRevision: 3}, SourceIP: "192.0.2.10", VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 2, ExpiresAt: time.Now().Add(time.Minute)}
+	header := PrivateStreamHeader{ProtocolVersion: Version, Kind: PrivateVisitorStream, PrivateServiceID: testOpaqueID(opaqueid.PrivateServicePrefix), PrivateRunID: testOpaqueID(opaqueid.PrivateRunPrefix), RunNumber: 1, Connector: &ConnectorAdmission{SessionID: testOpaqueID(opaqueid.PrivateConnectorSessionPrefix), Subject: VisitorSubject{Kind: VisitorHumanDevice, IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: testOpaqueID(opaqueid.VisitorDevicePrefix)}, GrantRevision: 3}, SourceIP: "192.0.2.10", VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 2, ExpiresAt: time.Now().Add(time.Minute)}
 	for name, mutate := range map[string]func(*PrivateStreamHeader){"public-service": func(h *PrivateStreamHeader) { h.PrivateServiceID = testOpaqueID(opaqueid.PublicURLPrefix) }, "public-run": func(h *PrivateStreamHeader) { h.PrivateRunID = testOpaqueID(opaqueid.PublishRunPrefix) }, "missing-run": func(h *PrivateStreamHeader) { h.RunNumber = 0 }, "grant": func(h *PrivateStreamHeader) { c := *h.Connector; c.GrantRevision = 0; h.Connector = &c }, "session": func(h *PrivateStreamHeader) {
 		c := *h.Connector
 		c.SessionID = testOpaqueID(opaqueid.ControlSessionPrefix)
@@ -82,7 +82,7 @@ func TestManagedAdmissionValidatesExactKindsAndIdentities(t *testing.T) {
 }
 
 func TestConnectorSessionCredentialNeverBecomesApplicationAdmission(t *testing.T) {
-	hello := PrivateConnectorSessionHello{ProtocolVersion: Version, Kind: "private_connector_session", PrivateServiceID: testOpaqueID(opaqueid.PrivateServicePrefix), SessionID: testOpaqueID(opaqueid.PrivateConnectorSessionPrefix), Credential: "one-use-session-credential", IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: "device-1", Nonce: make([]byte, 32), Signature: make([]byte, ed25519.SignatureSize)}
+	hello := PrivateConnectorSessionHello{ProtocolVersion: Version, Kind: "private_connector_session", PrivateServiceID: testOpaqueID(opaqueid.PrivateServicePrefix), SessionID: testOpaqueID(opaqueid.PrivateConnectorSessionPrefix), Credential: strings.Repeat("a", 43), Subject: VisitorSubject{Kind: VisitorHumanDevice, IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: testOpaqueID(opaqueid.VisitorDevicePrefix)}, Nonce: make([]byte, 32), Signature: make([]byte, ed25519.SignatureSize)}
 	var framed bytes.Buffer
 	if err := WritePrivateConnectorSessionHello(&framed, hello); err != nil {
 		t.Fatal(err)

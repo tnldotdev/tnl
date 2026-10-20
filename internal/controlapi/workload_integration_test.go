@@ -88,6 +88,14 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 		t.Fatal("native workload inventory", services, err)
 	}
 	service := services.Services[0].Id
+	hint := services.Services[0].KubernetesAuth
+	if hint == nil || hint.Provider != controlv1.KubernetesEKS || hint.Cluster != "production" || hint.Region != "us-east-1" {
+		t.Fatal("missing approved native Kubernetes auth hint")
+	}
+	humanServices, err := owner.ListAvailablePrivateServices(ctx)
+	if err != nil || len(humanServices) != 1 || humanServices[0].KubernetesAuth == nil || *humanServices[0].KubernetesAuth != *hint {
+		t.Fatal("human inventory lost approved auth hint", err)
+	}
 	if decision, err := job.CheckService(ctx, service); err != nil || decision.Subject.WorkloadSessionId == nil || *decision.Subject.WorkloadSessionId != session.Id {
 		t.Fatal("native workload authorization", decision, err)
 	}

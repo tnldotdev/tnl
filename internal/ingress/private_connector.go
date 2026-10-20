@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/tunnel"
+	"github.com/tnldotdev/tnl/internal/visitorsubject"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -385,19 +386,19 @@ func (p *PrivateConnector) AcceptSession(ctx context.Context, transport muxsessi
 			IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
 			PrivateServiceId: hello.PrivateServiceID, ConnectorSessionId: hello.SessionID,
 			SessionCredential: hello.Credential, ObservedSourceIp: source.Addr().Unmap().String(),
-			DeviceId: hello.DeviceID, IdentityId: hello.IdentityID, Nonce: hex.EncodeToString(hello.Nonce), Signature: base64.RawURLEncoding.EncodeToString(hello.Signature),
+			Subject: visitorsubject.Wire(hello.Subject), Nonce: hex.EncodeToString(hello.Nonce), Signature: base64.RawURLEncoding.EncodeToString(hello.Signature),
 		})
 		if err != nil {
 			return tunnelv1.PrivateConnectorSessionAccepted{}, err
 		}
-		if bound.ConnectorSessionId != hello.SessionID || bound.PrivateServiceId != hello.PrivateServiceID || bound.DeviceId != hello.DeviceID || bound.IdentityId != hello.IdentityID ||
-			!opaqueid.Valid(bound.IdentityId, opaqueid.IdentityPrefix) || bound.ObservedSourceIp != source.Addr().Unmap().String() ||
+		if bound.ConnectorSessionId != hello.SessionID || bound.PrivateServiceId != hello.PrivateServiceID || !visitorsubject.Equal(bound.Subject, hello.Subject) ||
+			bound.ObservedSourceIp != source.Addr().Unmap().String() ||
 			!bound.ExpiresAt.After(time.Now()) {
 			return tunnelv1.PrivateConnectorSessionAccepted{}, ErrPrivateAdmission
 		}
 		authenticated = lease
 		return tunnelv1.PrivateConnectorSessionAccepted{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session_accepted", PrivateServiceID: bound.PrivateServiceId,
-			SessionID: bound.ConnectorSessionId, IdentityID: bound.IdentityId, DeviceID: bound.DeviceId, SourceIP: bound.ObservedSourceIp, ExpiresAt: bound.ExpiresAt}, nil
+			SessionID: bound.ConnectorSessionId, Subject: hello.Subject, SourceIP: bound.ObservedSourceIp, ExpiresAt: bound.ExpiresAt}, nil
 	})
 	if err != nil {
 		return err
@@ -613,9 +614,9 @@ func (p *PrivateConnector) handleStream(ctx context.Context, visitor muxsession.
 		_ = p.config.Control.ClosePrivateServiceStream(closeCtx, lease.IngressId, visitorID, ingressv1.ClosePrivateServiceStreamJSONRequestBody{
 			IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, ConnectorSessionId: bound.ConnectorSessionId})
 	}()
-	if claimed.PrivateServiceId != entry.PrivateServiceID || claimed.PrivateRunId != entry.PrivateRunID || claimed.DeviceId != bound.DeviceId || claimed.GrantRevision < 1 ||
+	if claimed.PrivateServiceId != entry.PrivateServiceID || claimed.PrivateRunId != entry.PrivateRunID || !visitorsubject.Same(claimed.Subject, bound.Subject) || claimed.GrantRevision < 1 ||
 		claimed.RunNumber != int64(entry.RunNumber) || claimed.ConnectorSessionId != bound.ConnectorSessionId ||
-		claimed.IdentityId != bound.IdentityId || claimed.ObservedSourceIp != source.Addr().Unmap().String() ||
+		claimed.ObservedSourceIp != source.Addr().Unmap().String() ||
 		claimed.VisitorConnectionId != visitorID || !claimed.ExpiresAt.After(time.Now()) ||
 		!claimed.ValidUntil.After(time.Now()) || claimed.ValidUntil.After(claimedAt.Add(2*time.Minute+time.Second)) {
 		return ErrPrivateAdmission
@@ -634,9 +635,10 @@ func (p *PrivateConnector) handleStream(ctx context.Context, visitor muxsession.
 		return ErrPrivateAdmission
 	}
 	accepted := tunnelv1.PrivateVisitorAccepted{ProtocolVersion: tunnelv1.Version, Kind: "private_visitor_accepted",
-		ConnectorSessionID: bound.ConnectorSessionId, IdentityID: claimed.IdentityId,
-		SourceIP: claimed.ObservedSourceIp, VisitorConnectionID: visitorID}
-	accepted.DeviceID, accepted.GrantRevision = claimed.DeviceId, uint64(claimed.GrantRevision)
+		ConnectorSessionID: bound.ConnectorSessionId,
+		SourceIP:           claimed.ObservedSourceIp, VisitorConnectionID: visitorID}
+	accepted.Subject, _ = visitorsubject.Parse(claimed.Subject)
+	accepted.GrantRevision = uint64(claimed.GrantRevision)
 	proxy, err := proxyproto.Encode(proxyproto.Header{Source: source, Destination: destination})
 	if err != nil {
 		return err
@@ -650,7 +652,7 @@ func (p *PrivateConnector) handleStream(ctx context.Context, visitor muxsession.
 		header := tunnelv1.PrivateForwardingHeader{PrivateStreamHeader: tunnelv1.PrivateStreamHeader{
 			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.PrivateForwardingStream,
 			PrivateServiceID: entry.PrivateServiceID, PrivateRunID: entry.PrivateRunID, RunNumber: entry.RunNumber,
-			Connector: &tunnelv1.ConnectorAdmission{SessionID: bound.ConnectorSessionId, IdentityID: claimed.IdentityId, DeviceID: claimed.DeviceId, GrantRevision: uint64(claimed.GrantRevision)}, SourceIP: claimed.ObservedSourceIp,
+			Connector: &tunnelv1.ConnectorAdmission{SessionID: bound.ConnectorSessionId, Subject: accepted.Subject, GrantRevision: uint64(claimed.GrantRevision)}, SourceIP: claimed.ObservedSourceIp,
 			VisitorConnectionID: visitorID, PublisherConnectionID: relay.PublisherConnectionId,
 			ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision),
 			ExpiresAt:                    claimed.ExpiresAt,

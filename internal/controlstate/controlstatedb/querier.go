@@ -606,6 +606,7 @@ type Querier interface {
 	VisitorCurrentMembership(ctx context.Context, arg VisitorCurrentMembershipParams) (string, error)
 	VisitorFeedbackPolicy(ctx context.Context, id string) (string, error)
 	VisitorPermission(ctx context.Context, arg VisitorPermissionParams) (VisitorPermissionRow, error)
+	VisitorServiceConfiguration(ctx context.Context, privateServiceID pgtype.Text) (VisitorServiceConfigurationRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

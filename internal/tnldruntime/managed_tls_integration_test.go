@@ -172,12 +172,12 @@ func TestIntegrationManagedTLSProductionPath(t *testing.T) {
 			}
 			// the authenticated connector is sufficient, but its device revocation
 			// still prevents a fresh native HTTPS connection without client mTLS.
-			device, err := production.PrivateConnectorDevice(t.Context(), person.Identity.Id)
+			device, err := production.PrivateConnectorSigner(t.Context(), person.Identity.Id)
 			if err != nil {
 				t.Fatal(err)
 			}
-			checkManagedDirectTLS(t, f, directIngress, applied, service, device.ID, person.Identity.Id)
-			if err = f.identity.routes.RevokeVisitorDevice(t.Context(), device.ID); err != nil {
+			checkManagedDirectTLS(t, f, directIngress, applied, service, device.Subject.DeviceID, person.Identity.Id)
+			if err = f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 				t.Fatal(err)
 			}
 			transport.CloseIdleConnections()

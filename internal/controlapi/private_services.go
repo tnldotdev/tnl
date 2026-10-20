@@ -10,7 +10,9 @@ import (
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/visitorsubject"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type privateVisitorStore interface {
@@ -416,6 +418,7 @@ func (h *handler) ListAvailablePrivateServices(w http.ResponseWriter, r *http.Re
 	for _, row := range rows {
 		entry := privateRecord(controlstate.PrivateServiceRecord{ID: row.ID, TeamID: row.TeamID, Name: row.Name, Enabled: true, CreatedAt: row.CreatedAt, PrivateServiceMetadata: row.PrivateServiceMetadata})
 		entry.TargetTls = nil
+		entry.KubernetesAuth = row.KubernetesAuth
 		if row.PrivateRunID != "" {
 			entry.PrivateRunId, entry.RunNumber = &row.PrivateRunID, &row.RunNumber
 		}
@@ -451,7 +454,7 @@ func (h *handler) CreateVisitorIngressAssignments(w http.ResponseWriter, r *http
 }
 
 func privateConnectorSessionSetup(session controlstate.PrivateConnectorSession) controlv1.PrivateConnectorSessionSetup {
-	return controlv1.PrivateConnectorSessionSetup{ConnectorSessionId: session.ID, PrivateServiceId: session.PrivateServiceID, SessionCredential: session.Credential, IngressId: session.IngressID, IngressAddress: session.IngressAddress, TlsServerName: session.TLSServerName, DeviceId: session.DeviceID, IdentityId: session.IdentityID, ExpiresAt: session.ExpiresAt}
+	return controlv1.PrivateConnectorSessionSetup{ConnectorSessionId: session.ID, PrivateServiceId: session.PrivateServiceID, SessionCredential: session.Credential, IngressId: session.IngressID, IngressAddress: session.IngressAddress, TlsServerName: session.TLSServerName, Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: session.IdentityID, DeviceID: session.DeviceID}), ExpiresAt: session.ExpiresAt}
 }
 
 func (h *handler) CreateVisitorIngressAssignment(w http.ResponseWriter, r *http.Request, id controlv1.PrivateServiceID) {
@@ -496,11 +499,7 @@ func (h *handler) SelectPrivateServiceRun(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 201, controlv1.PrivateServiceSelection{
-		PrivateServiceId: selected.PrivateServiceID, PrivateRunId: selected.PrivateRunID, RunNumber: selected.RunNumber,
-		IdentityId: selected.IdentityID, DeviceId: selected.DeviceID,
-		ExpiresAt: selected.ExpiresAt, Protocol: controlv1.PrivateServiceProtocol(selected.Protocol), TrustRevision: selected.TrustRevision, ManagedTls: managedTLSResponse(selected.ManagedTLS),
-	})
+	writeJSON(w, 201, privateSelectionResponse(selected))
 }
 
 func (h *handler) EnrollVisitorDevice(w http.ResponseWriter, r *http.Request) {

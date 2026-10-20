@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,7 +25,7 @@ import (
 )
 
 type connectorFixture struct {
-	device           Device
+	device           Signer
 	run              Run
 	endpoints        [2]muxsession.Endpoint
 	localAddress     string
@@ -55,7 +56,7 @@ func connectorID(t *testing.T, prefix string) string {
 	return id
 }
 
-func (f *connectorFixture) PrivateConnectorDevice(context.Context, string) (Device, error) {
+func (f *connectorFixture) PrivateConnectorSigner(context.Context, string) (Signer, error) {
 	return f.device, nil
 }
 func (f *connectorFixture) ResolvePrivateService(context.Context, string) (Run, error) {
@@ -64,7 +65,7 @@ func (f *connectorFixture) ResolvePrivateService(context.Context, string) (Run, 
 	f.mu.Unlock()
 	return run, nil
 }
-func (f *connectorFixture) PrivateConnectorAssignment(ctx context.Context, service, device string, slot uint8) (Assignment, error) {
+func (f *connectorFixture) PrivateConnectorAssignment(ctx context.Context, service string, subject tunnelv1.VisitorSubject, slot uint8) (Assignment, error) {
 	f.assignments[slot].Add(1)
 	f.mu.Lock()
 	failed := f.failed[slot]
@@ -79,9 +80,9 @@ func (f *connectorFixture) PrivateConnectorAssignment(ctx context.Context, servi
 	if f.reuseIDs[slot] != "" {
 		id = f.reuseIDs[slot]
 	}
-	return Assignment{PrivateServiceID: service, SessionID: id, DeviceID: device, IdentityID: f.device.IdentityID,
+	return Assignment{PrivateServiceID: service, SessionID: id, Subject: subject,
 		IngressID: []string{"ingress-a", "ingress-b"}[slot],
-		Endpoint:  f.endpoints[slot], Credential: "one-short-lived-infrastructure-assignment", ExpiresAt: f.expires}, nil
+		Endpoint:  f.endpoints[slot], Credential: strings.Repeat("a", 43), ExpiresAt: f.expires}, nil
 }
 
 func newConnectorFixture(t *testing.T, transport string, targets ...string) *connectorFixture {
@@ -100,7 +101,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 		t.Fatal(err)
 	}
 	now := time.Now()
-	f := &connectorFixture{device: Device{ID: "vdev_aaaaaaaaaaaaaaaaaaaaaa", IdentityID: connectorID(t, opaqueid.IdentityPrefix), SigningKey: deviceKey},
+	f := &connectorFixture{device: Signer{Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: "vdev_aaaaaaaaaaaaaaaaaaaaaa", IdentityID: connectorID(t, opaqueid.IdentityPrefix)}, PublicKey: deviceKey.Public().(ed25519.PublicKey), Sign: func(d []byte) []byte { return ed25519.Sign(deviceKey, d) }},
 		run:     Run{PrivateServiceID: connectorID(t, opaqueid.PrivateServicePrefix), PrivateRunID: connectorID(t, opaqueid.PrivateRunPrefix), RunNumber: 3, ValidUntil: now.Add(time.Minute), Protocol: "tcp", TrustRevision: 1, ManagedTLS: &controlv1.ManagedServiceTLS{Hostname: "db.example", Port: 25443}},
 		expires: now.Add(time.Minute)}
 	f.target = target
@@ -170,7 +171,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 	t.Cleanup(func() { _ = listener.Close() })
 	ready := make(chan struct{})
 	f.finished = make(chan struct{})
-	configuration := Config{Control: f, PrivateServiceID: f.run.PrivateServiceID, IdentityID: f.device.IdentityID, Protocol: "tcp", TrustRevision: 1, TransportTLS: &tls.Config{RootCAs: roots}, Ready: func() error { close(ready); return nil }}
+	configuration := Config{Control: f, PrivateServiceID: f.run.PrivateServiceID, IdentityID: f.device.Subject.IdentityID, Protocol: "tcp", TrustRevision: 1, TransportTLS: &tls.Config{RootCAs: roots}, Ready: func() error { close(ready); return nil }}
 	configuration.ManagedTLS = f.run.ManagedTLS
 	configuration.ServiceTLS = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: "db.example"}
 	if configure != nil {
@@ -205,12 +206,12 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Session, slot uint8) {
 	defer transport.Close()
 	session, err := tunnel.AcceptPrivateConnector(ctx, transport, func(_ context.Context, hello tunnelv1.PrivateConnectorSessionHello) (tunnelv1.PrivateConnectorSessionAccepted, error) {
-		digest, err := tunnelv1.PrivateConnectorHelloDigest(hello)
-		if err != nil || hello.DeviceID != f.device.ID || hello.IdentityID != f.device.IdentityID || !ed25519.Verify(f.device.SigningKey.Public().(ed25519.PublicKey), digest, hello.Signature) {
+		digest, err := hello.Claim().Digest()
+		if err != nil || hello.Subject != f.device.Subject || !ed25519.Verify(f.device.PublicKey, digest, hello.Signature) {
 			return tunnelv1.PrivateConnectorSessionAccepted{}, ErrPrivateConnection
 		}
 		return tunnelv1.PrivateConnectorSessionAccepted{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session_accepted",
-			PrivateServiceID: hello.PrivateServiceID, SessionID: hello.SessionID, IdentityID: hello.IdentityID, DeviceID: hello.DeviceID, SourceIP: "127.0.0.1", ExpiresAt: f.expires}, nil
+			PrivateServiceID: hello.PrivateServiceID, SessionID: hello.SessionID, Subject: hello.Subject, SourceIP: "127.0.0.1", ExpiresAt: f.expires}, nil
 	})
 	if err != nil {
 		return
@@ -244,10 +245,10 @@ func (f *connectorFixture) visitor(ctx context.Context, stream muxsession.Stream
 	f.opened.Add(1)
 	visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	connection, _ := opaqueid.New(opaqueid.PublisherConnectionPrefix)
-	accepted := tunnelv1.PrivateVisitorAccepted{ProtocolVersion: tunnelv1.Version, Kind: "private_visitor_accepted", ConnectorSessionID: session.SessionID, IdentityID: session.IdentityID, DeviceID: session.DeviceID,
+	accepted := tunnelv1.PrivateVisitorAccepted{ProtocolVersion: tunnelv1.Version, Kind: "private_visitor_accepted", ConnectorSessionID: session.SessionID, Subject: session.Subject,
 		SourceIP: session.SourceIP, VisitorConnectionID: visitor, GrantRevision: 7, PublisherConnectionID: connection, ConnectionAssignmentRevision: 2}
 	if f.wrongAdmission.Load() {
-		accepted.DeviceID = "another-device"
+		accepted.Subject.DeviceID = "vdev_bbbbbbbbbbbbbbbbbbbbbb"
 	}
 	if tunnelv1.WritePrivateVisitorAccepted(stream, accepted) != nil {
 		return

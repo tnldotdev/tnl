@@ -252,8 +252,8 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		t.Fatal(err)
 	}
 	hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", PrivateServiceID: service.ID, SessionID: assignment.ID,
-		Credential: assignment.Credential, IdentityID: actor, DeviceID: device.ID, Nonce: bytes.Repeat([]byte{3}, 32)}
-	proof, err := tunnelv1.PrivateConnectorHelloDigest(hello)
+		Credential: assignment.Credential, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: actor, DeviceID: device.ID}, Nonce: bytes.Repeat([]byte{3}, 32)}
+	proof, err := hello.Claim().Digest()
 	if err != nil {
 		t.Fatal(err)
 	}

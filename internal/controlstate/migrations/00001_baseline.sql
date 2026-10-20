@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment-workload-visitors')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment-workload-visitors');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2049,7 +2049,7 @@ CREATE TABLE control.private_connector_sessions (
     revoked_at timestamptz,
     CHECK ((workload_session_id IS NOT NULL AND identity_id IS NULL AND device_id IS NULL AND control_session_id IS NULL)
         OR (workload_session_id IS NULL AND identity_id IS NOT NULL AND device_id IS NOT NULL)),
-    CHECK (expires_at > created_at AND expires_at <= created_at + interval '15 minutes'),
+    CHECK (expires_at > created_at AND expires_at <= created_at + CASE WHEN workload_session_id IS NULL THEN interval '15 minutes' ELSE interval '6 hours' END),
     CHECK ((bound_at IS NULL AND source_ip IS NULL AND ingress_id IS NULL AND ingress_run_id IS NULL AND ingress_lease_revision IS NULL)
         OR (bound_at IS NOT NULL AND source_ip IS NOT NULL AND ingress_id IS NOT NULL AND ingress_run_id IS NOT NULL AND ingress_lease_revision >= 1)),
     CHECK (source_ip IS NULL OR masklen(source_ip) = CASE family(source_ip) WHEN 4 THEN 32 ELSE 128 END),

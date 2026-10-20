@@ -13,15 +13,18 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/visitorcert"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 type WorkloadService struct {
-	ID         string             `json:"id"`
-	Service    string             `json:"service"`
-	Protocol   string             `json:"protocol"`
-	ManagedTLS *ManagedServiceTLS `json:"managed_tls"`
+	ID             string                    `json:"id"`
+	Service        string                    `json:"service"`
+	Protocol       string                    `json:"protocol"`
+	ManagedTLS     *ManagedServiceTLS        `json:"managed_tls"`
+	KubernetesAuth *controlv1.KubernetesAuth `json:"kubernetes_auth,omitempty"`
 }
 
 func (d *Database) ListWorkloadServices(ctx context.Context, credential string, now time.Time) (result []WorkloadService, retErr error) {
@@ -53,6 +56,14 @@ func (d *Database) ListWorkloadServices(ctx context.Context, credential string, 
 	if err != nil {
 		return nil, err
 	}
+	for i := range result {
+		if result[i].Protocol == "kubernetes" {
+			result[i].KubernetesAuth, err = d.visitorKubernetesAuth(ctx, controlstatedb.New(tx), result[i].ID)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	return result, tx.Commit(ctx)
 }
 
@@ -71,7 +82,11 @@ type WorkloadIngressAssignments struct {
 }
 
 func (d *Database) CreateWorkloadIngressAssignments(ctx context.Context, credential, service, key string, now time.Time) (result WorkloadIngressAssignments, retErr error) {
-	if !validIdempotencyKey(key) {
+	return d.CreateWorkloadIngressAssignmentSet(ctx, credential, service, key, 2, "", now)
+}
+
+func (d *Database) CreateWorkloadIngressAssignmentSet(ctx context.Context, credential, service, key string, count int, exclude string, now time.Time) (result WorkloadIngressAssignments, retErr error) {
+	if !validIdempotencyKey(key) || count < 1 || count > 2 || len(exclude) > 256 || count == 2 && exclude != "" {
 		return result, ErrWorkloadDenied
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -83,8 +98,14 @@ func (d *Database) CreateWorkloadIngressAssignments(ctx context.Context, credent
 	if err != nil {
 		return result, err
 	}
-	until, _, err := VisitorSubjectAccess(ctx, tx, service, workloadSubject(id), now)
+	_, _, err = VisitorSubjectAccess(ctx, tx, service, workloadSubject(id), now)
 	if err != nil {
+		return result, err
+	}
+	// a handle proves key possession until the fixed session deadline. it never
+	// grants a new or active stream without checking the current renewable lease.
+	var until time.Time
+	if err = tx.QueryRow(ctx, `SELECT expires_at FROM control.workload_sessions WHERE id=$1`, id).Scan(&until); err != nil {
 		return result, err
 	}
 	scope := workloadRequestScope(id, key)
@@ -102,13 +123,19 @@ func (d *Database) CreateWorkloadIngressAssignments(ctx context.Context, credent
 		if err = json.Unmarshal(data, &result); err != nil {
 			return result, err
 		}
+		if len(result.Assignments) != count {
+			return result, ErrWorkloadConflict
+		}
 		for _, a := range result.Assignments {
+			if a.IngressID == exclude {
+				return result, ErrWorkloadConflict
+			}
 			var current bool
 			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.private_connector_sessions s JOIN control.ingress_leases i ON i.ingress_id=s.assigned_ingress_id AND i.ingress_run_id=s.assigned_ingress_run_id AND i.ingress_lease_revision=s.assigned_ingress_lease_revision WHERE s.id=$1 AND s.workload_session_id=$2 AND s.private_service_id=$3 AND s.revoked_at IS NULL AND s.bound_at IS NULL AND s.expires_at>$4 AND i.lease_expires_at>$4 AND NOT i.draining)`, a.ID, id, service, now).Scan(&current); err != nil {
 				return result, err
 			}
 			if !current {
-				return result, ErrWorkloadDenied
+				return result, ErrPrivateServiceConflict
 			}
 		}
 		return result, tx.Commit(ctx)
@@ -116,7 +143,7 @@ func (d *Database) CreateWorkloadIngressAssignments(ctx context.Context, credent
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
-	placements, err := privateIngressPlacements(ctx, tx, now, 2, "")
+	placements, err := privateIngressPlacements(ctx, tx, now, count, exclude)
 	if err != nil {
 		return result, err
 	}
@@ -168,12 +195,13 @@ func (d *Database) IssueWorkloadServiceClientCertificate(ctx context.Context, cr
 	if err != nil {
 		return result, err
 	}
-	until, _, err := VisitorSubjectAccess(ctx, tx, service, workloadSubject(id), now)
+	_, _, err = VisitorSubjectAccess(ctx, tx, service, workloadSubject(id), now)
 	if err != nil {
 		return result, err
 	}
 	var public []byte
-	if err = tx.QueryRow(ctx, `SELECT public_key FROM control.workload_sessions WHERE id=$1`, id).Scan(&public); err != nil {
+	var until time.Time
+	if err = tx.QueryRow(ctx, `SELECT public_key,expires_at FROM control.workload_sessions WHERE id=$1`, id).Scan(&public, &until); err != nil {
 		return result, err
 	}
 	key, ok := csr.PublicKey.(ed25519.PublicKey)

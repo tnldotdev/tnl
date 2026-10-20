@@ -82,6 +82,10 @@ func (f ManagedHTTP) Forward(ctx context.Context, client *tls.Conn, target Manag
 			// authentication endpoints cannot consume unbounded bodies or promote
 			// application capacity. ingress bounds their bytes and total lifetime.
 			if strings.HasPrefix(r.URL.Path, "/__tnl/") {
+				if workloadClientCertificate(client.ConnectionState()) {
+					managedHTTPDenied(w, http.StatusForbidden)
+					return
+				}
 				if r.ContentLength != 0 || len(r.TransferEncoding) != 0 || r.Header.Get("Upgrade") != "" {
 					managedHTTPDenied(w, http.StatusBadRequest)
 					return
@@ -155,6 +159,16 @@ func managedHTTPDecisionStatus(err error) int {
 }
 
 func managedHTTPCredential(r *http.Request, state tls.ConnectionState) (controlv1.ManagedHTTPCredential, error) {
+	// a workload certificate is the final visitor credential, including after
+	// revocation. browser cookies and HTTP tokens cannot replace that subject.
+	// this URI selects validation only; control still verifies the issuer/scope.
+	if workloadClientCertificate(state) {
+		der := state.PeerCertificates[0].Raw
+		if len(der) == 0 || len(der) > 16<<10 {
+			return controlv1.ManagedHTTPCredential{}, ErrManagedTLS
+		}
+		return controlv1.ManagedHTTPCredential{Kind: "certificate", Certificate: &der}, nil
+	}
 	// a supplied explicit credential is final, even when invalid. application
 	// Authorization remains application-owned; tnl uses scoped dedicated headers.
 	for _, header := range []struct{ name, kind string }{{"Tnl-Access-Token", "token"}, {shareAccessHeaderName, "share"}} {
@@ -195,6 +209,18 @@ func managedHTTPCredential(r *http.Request, state tls.ConnectionState) (controlv
 		return controlv1.ManagedHTTPCredential{Kind: "certificate", Certificate: &der}, nil
 	}
 	return controlv1.ManagedHTTPCredential{Kind: "none"}, nil
+}
+
+func workloadClientCertificate(state tls.ConnectionState) bool {
+	if len(state.PeerCertificates) == 0 || state.PeerCertificates[0] == nil {
+		return false
+	}
+	for _, uri := range state.PeerCertificates[0].URIs {
+		if uri.Scheme == "tnl" && uri.Host == "workload-client" {
+			return true
+		}
+	}
+	return false
 }
 
 // net/http omits malformed cookies during parsing. a supplied tnl credential

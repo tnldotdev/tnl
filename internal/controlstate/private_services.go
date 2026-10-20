@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
 var ErrPrivateServiceAccess = errors.New("private service access denied or no current run")
@@ -476,6 +477,7 @@ func privateRunRoutingTombstone(ctx context.Context, q *controlstatedb.Queries, 
 
 type PrivateServiceInventory struct {
 	PrivateServiceMetadata
+	KubernetesAuth                 *controlv1.KubernetesAuth
 	ID, TeamID, Name, PrivateRunID string
 	RunNumber                      int64
 	CreatedAt                      time.Time
@@ -671,8 +673,15 @@ func (d *Database) ListAvailablePrivateServices(ctx context.Context, identityID,
 			return nil, "", err
 		}
 		metadata.ManagedTLS = managedServiceTLS(row.CertificateHostname, int(row.ServicePort.Int32), row.Public)
+		var kube *controlv1.KubernetesAuth
+		if row.Protocol == "kubernetes" {
+			kube, err = d.visitorKubernetesAuth(ctx, controlstatedb.New(d.pool), row.ID)
+			if err != nil {
+				return nil, "", err
+			}
+		}
 		page = append(page, PrivateServiceInventory{PrivateServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID, Name: row.Name, CreatedAt: row.CreatedAt.Time,
-			PrivateRunID: row.PrivateRunID.String, RunNumber: row.RunNumber.Int64})
+			PrivateRunID: row.PrivateRunID.String, RunNumber: row.RunNumber.Int64, KubernetesAuth: kube})
 	}
 	return page, next, nil
 }

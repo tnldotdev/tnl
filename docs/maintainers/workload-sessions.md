@@ -64,27 +64,87 @@ expand an existing session. apply and exchange serialize on the same team lock.
 
 the control API accepts the workload credential only at:
 
-| method | endpoint                                                 |
-| ------ | -------------------------------------------------------- |
-| `GET`  | `/v1/workload/services`                                  |
-| `POST` | `/v1/workload/services/{service_id}/authorization`       |
-| `POST` | `/v1/workload/services/{service_id}/ingress-assignments` |
-| `POST` | `/v1/workload/services/{service_id}/client-certificate`  |
+| method   | endpoint                                                        |
+| -------- | --------------------------------------------------------------- |
+| `GET`    | `/v1/workload/services`                                         |
+| `POST`   | `/v1/workload/services/{service_id}/authorization`              |
+| `POST`   | `/v1/workload/services/{service_id}/ingress-assignments`        |
+| `POST`   | `/v1/workload/services/{service_id}/client-certificate`         |
+| `POST`   | `/v1/workload/services/{service_id}/run`                        |
+| `GET`    | `/v1/workload/ingress-assignments/{session_id}/transport-trust` |
+| `DELETE` | `/v1/workload/ingress-assignments/{session_id}`                 |
 
-inventory contains visitor endpoints, not publisher targets or application
-credentials. certificate issuance requires a CSR signed by the already-bound
-workload key and produces a short, service-scoped workload certificate. the
-existing public certificate authorization path recognizes that subject and
-rechecks its current rights. active decisions end at the workload lease or
-absolute deadline, or an earlier infrastructure deadline.
+inventory contains each authorized configuration service key, its exact saved
+service ID, protocol, and visitor endpoint. EKS services also expose the approved
+nonsecret `kubernetes_auth: {provider: "eks", cluster, region}` descriptor for
+native client authentication. human visitor inventory exposes the same hint.
+neither inventory exposes RDS selectors, publisher target addresses, CA bundles,
+or application credentials. the job cannot read management configuration.
+
+certificate issuance requires a CSR signed by the already-bound workload key.
+the service-scoped certificate and private connector handle expire at the fixed
+session deadline, at most six hours. they prove key possession; every admission
+and active authorization still checks the current renewable 90-second lease,
+service rights, revocation, and infrastructure deadlines. renewing a lease does
+not replace the certificate or disconnect admitted streams. an expired lease
+cannot admit a new stream even while its certificate remains valid. active
+streams recheck within 30 seconds and close by their last successful decision's
+deadline if control is unavailable. cleanup may release only an exact owned
+connector handle after session expiry or revocation.
 
 `internal/workloadclient.New` owns the ephemeral key. `Exchange`, `Renew`,
 `Revoke`, `ListServices`, `CheckService`, `CreateIngressAssignments`, and
-`ServiceClientCertificate` return generated contract types. `Session`, `Subject`,
-and `Sign` let the native job runtime retain execution state and prove connector
-key possession. it stores no JWT or human session.
-`ClientTLSCertificate` returns the short certificate paired with the in-memory
-workload key for a native public service client.
+`ServiceClientCertificate` return generated contract types. `SelectServiceRun`
+returns the selected publisher run and approved protocol, trust revision, and
+managed endpoint. `CreateIngressAssignment` replaces one failed connection slot,
+excluding its healthy sibling's ingress. an idempotency key recovers only its
+original still-unclaimed handles; it cannot renew their deadlines.
+
+`Session`, `Subject`, `PublicKey`, and `Sign` let the native job runtime retain
+execution state and prove connector key possession. `ClientTLSCertificate`
+returns the service certificate with an opaque TLS signer. raw private keys do
+not leave `workloadclient`. the caller owns the session's renewal and revocation
+loop. a named CI policy and optional subset select only that policy's exact
+service IDs; inventory never unions other CI policies or human membership.
+
+## connect from a native job
+
+`internal/tcpconnect.NewWorkloadControl` supplies the production control adapter:
+
+```go
+control, err := tcpconnect.NewWorkloadControl(job)
+if err != nil {
+    return err
+}
+run, err := control.ResolvePrivateService(ctx, serviceID)
+if err != nil {
+    return err
+}
+return tcpconnect.Serve(ctx, listener, tcpconnect.Config{
+    Control: control,
+    PrivateServiceID: serviceID,
+    IdentityID: "",
+    Protocol: run.Protocol,
+    TrustRevision: run.TrustRevision,
+    ManagedTLS: run.ManagedTLS,
+    ServiceTLS: visitorTLS,
+})
+```
+
+the caller owns the loopback listener. `visitorTLS` verifies the control-owned
+service hostname with normal roots. opaque TCP uses the connector's TLS helper;
+HTTP, PostgreSQL, MySQL and Kubernetes clients negotiate native TLS through the
+connector. public native clients connect directly with the workload's
+`ClientTLSCertificate`. public HTTP selects that certificate as its credential;
+a denied workload never falls back to browser approval or another credential.
+
+`tcpconnect.NewControl` remains the human adapter. both adapters implement
+`PrivateConnectorSigner`, `PrivateConnectorAssignment`, and
+`ResolvePrivateService`. `tcpconnect.Signer` carries `Subject`, `PublicKey`, and
+`Sign`, with no raw signing key. `NewControlWithConfig(ControlConfig)` exposes
+the `Signer`, `Assignment`, `Resolve`, `Release`, and `Close` hooks for native
+connection owners. `Serve` closes its adapter and releases only its own handles;
+it does not revoke a shared workload session.
 
 ## subject and data-plane boundary
 
@@ -103,10 +163,13 @@ the state APIs available to transport adapters are `AuthenticateVisitorConnector
 `SelectVisitorServiceRun`, `AuthorizePrivateServiceStream`,
 `RecheckVisitorServiceStream`, and `AuthorizeVisitorServiceConnector`.
 `VisitorSubjectAccess` and `AuthenticateVisitorSubjectKey` share current permission
-and key checks across both variants. the current private transport's hello,
-forwarding, ingress HTTP projections, and publisher connector request still use
-human fields; their subject-aware wire mapping and the job runtime are the next
-data-plane integration boundary. no workload substitutes fake human IDs there.
+and key checks across both variants. protocol version 1 carries the tagged
+subject through private hello, acceptance, ingress HTTP projections, relay
+forwarding, and the publisher's control request. removed human-only fields are
+rejected. ingress binds the observed source and one-use assignment; the
+publisher rechecks that subject, source, admitted grant revision, exact service
+and run before opening the target. human visitors use the same transport path
+with their actual enrolled device subject.
 
 workload audit rows identify the session; its durable execution references identify
 the run, attempt, and check-run. authenticated trace-only attributes carry the
@@ -126,12 +189,24 @@ verification before dialing.
 
 ## verify
 
+the fresh PostgreSQL baseline and control's matching identity are
+`tnl-control-fresh-v1-services-oidc-company-managed-http-dns-egress-deployment-workload-visitors`.
+its connector constraint allows workload auth material through six hours;
+current authorization remains bounded by the renewable lease. it requires the
+same fresh-database, coordinated-baseline rollout as the assembled services work.
+
 ```console
 mise exec -- task go:test:integration:workload
+mise exec -- task go:test:integration:workload-runtime
 ```
 
 the target uses disposable PostgreSQL, real control/authority HTTP handlers,
 signed local GitHub JWKS fixtures with the fixed production issuer, and the
 native adapter. state tests cover concurrent exchange/apply, replay recovery,
 key/scope takeover rejection, narrowing, fixed expiry, and public/private visitor
-admission. they do not claim private wire or job-runtime qualification.
+admission. the runtime target uses two ingress and two relay processes over
+QUIC and TLS/TCP, publisher-owned service TLS, public mTLS, private/public HTTP
+streams, and a native PostgreSQL client. it crosses two real 90-second lease
+cycles with the same key and connections, then checks fixed expiry, lease loss,
+active revocation, subject spoofing, and connector replay. it takes about four
+minutes with both transports running in parallel and needs Docker and Pebble.

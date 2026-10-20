@@ -237,6 +237,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/controlapi -run='^TestIntegrationWorkload' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
+  go:test:integration:workload-runtime:
+    desc: Check real workload QUIC and TLS/TCP paths, native PostgreSQL, HTTP, renewal, revocation and fixed expiry
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/tnldruntime -run='^TestIntegrationWorkloadTransport' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
   go:test:aws-bootstrap:
     desc: Check publisher bootstrap with signed local AWS HTTPS fixtures
     cmds:

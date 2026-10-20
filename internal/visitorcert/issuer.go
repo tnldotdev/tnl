@@ -24,6 +24,7 @@ import (
 )
 
 const MaxLifetime = 7 * 24 * time.Hour
+const MaxWorkloadLifetime = 6 * time.Hour
 
 var ErrInvalidCertificate = errors.New("invalid service client certificate")
 
@@ -146,8 +147,11 @@ func (i *Issuer) IssueWorkload(der []byte, service, session string, expires, now
 	if err != nil {
 		return nil, err
 	}
-	if expires.After(now.Add(90 * time.Second)) {
-		expires = now.Add(90 * time.Second)
+	if expires.After(now.Add(MaxWorkloadLifetime)) {
+		expires = now.Add(MaxWorkloadLifetime)
+	}
+	if expires.After(i.root.NotAfter) {
+		expires = i.root.NotAfter
 	}
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 159))
 	if err != nil {
@@ -169,7 +173,7 @@ func (i *Issuer) Subject(leaf *x509.Certificate, service string, now time.Time) 
 	if identity, device, err := i.Identity(leaf, service, now); err == nil {
 		return tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: identity, DeviceID: device}, nil
 	}
-	if i == nil || leaf == nil || leaf.IsCA || len(leaf.URIs) != 1 || leaf.NotAfter.Sub(leaf.NotBefore) > 91*time.Second {
+	if i == nil || leaf == nil || leaf.IsCA || len(leaf.URIs) != 1 || leaf.NotAfter.Sub(leaf.NotBefore) > MaxWorkloadLifetime+time.Second {
 		return tunnelv1.VisitorSubject{}, ErrInvalidCertificate
 	}
 	roots := x509.NewCertPool()

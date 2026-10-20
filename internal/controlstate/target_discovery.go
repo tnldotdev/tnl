@@ -1,6 +1,14 @@
 package controlstate
 
-import "github.com/tnldotdev/tnl/internal/config"
+import (
+	"context"
+	"errors"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+)
 
 // ProjectTargetDiscovery is handed unchanged to the assigned publisher. no
 // resolved address, provider credential, application credential or local CA path
@@ -28,4 +36,32 @@ func (t *ProjectTargetDiscovery) Validate(protocol string) error {
 		t.Endpoint = new("writer")
 	}
 	return nil
+}
+
+// only this allowlisted projection crosses the visitor boundary. RDS metadata,
+// target addresses, trust bundles and publisher credentials never leave control.
+func (d *Database) visitorKubernetesAuth(ctx context.Context, q *controlstatedb.Queries, service string) (*controlv1.KubernetesAuth, error) {
+	row, err := q.VisitorServiceConfiguration(ctx, text(service))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c, err := d.openAppliedProject(controlstatedb.ControlAppliedProject{TeamID: row.TeamID, ProjectKey: row.ProjectKey, ConfigurationCiphertext: row.ConfigurationCiphertext, StorageKeyID: row.StorageKeyID})
+	if err != nil {
+		return nil, err
+	}
+	s, ok := c.Services[row.Service]
+	if !ok {
+		return nil, ErrPrivateServiceAccess
+	}
+	target := s.TargetDiscovery
+	if s.Protocol != "kubernetes" || target == nil || target.Type != "eks" {
+		return nil, nil
+	}
+	if target.Validate(s.Protocol) != nil || target.Cluster == nil {
+		return nil, ErrPrivateServiceAccess
+	}
+	return &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: *target.Cluster, Region: target.Region}, nil
 }

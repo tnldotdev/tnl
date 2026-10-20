@@ -391,7 +391,7 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 				AND host(c.source_ip)=$6 AND c.bound_at IS NOT NULL AND c.bound_at<=$7::timestamptz+interval '1 minute'
 				AND NOT EXISTS(SELECT 1 FROM control.private_visitor_streams WHERE visitor_connection_id=$8)`,
 				o.ConnectorSessionID, o.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.OccurredAt, o.VisitorConnectionID).
-				Scan(&e.TeamID, &e.ActorIdentityID, &e.DeviceID)
+				Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID))
 		} else if o.ConnectorSessionID == "" {
 			// direct admissions have no connector session. identity is recovered
 			// only from the publisher-authenticated record, never the report.
@@ -399,7 +399,7 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 				JOIN control.private_services s ON s.id=v.private_service_id JOIN control.private_service_runs r ON r.id=v.private_run_id
 				WHERE v.visitor_connection_id=$1 AND v.private_service_id=$2 AND v.private_run_id=$3 AND v.run_number=$4
 				AND v.ingress_id=$5 AND v.ingress_run_id=$6 AND v.ingress_lease_revision=$7 AND host(v.source_ip)=$8
-				AND($9<>'allowed' OR v.identity_id IS NOT NULL)`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.Outcome).Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
+				AND($9<>'allowed' OR v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL)`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.Outcome).Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
 		} else {
 			// the admitted stream is the source of identity and IP. a current
 			// ingress lease cannot report another ingress's private visitor.
@@ -408,7 +408,7 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 				JOIN control.private_connector_sessions c ON c.id=v.connector_session_id
 				WHERE v.visitor_connection_id=$1 AND v.private_service_id=$2 AND v.private_run_id=$3 AND v.run_number=$4
 				AND c.ingress_id=$5 AND c.ingress_run_id=$6 AND c.ingress_lease_revision=$7 AND host(v.source_ip)=$8
-				AND c.id=$9`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.ConnectorSessionID).Scan(&e.TeamID, &e.ActorIdentityID, &e.DeviceID, &e.PublisherIdentityID)
+				AND c.id=$9`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.ConnectorSessionID).Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ServiceObservationResult{}, ErrServiceAuditAccess

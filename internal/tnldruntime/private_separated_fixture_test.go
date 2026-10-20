@@ -40,6 +40,8 @@ type privateRuntimeIdentity struct {
 
 type privateSeparatedFixture struct {
 	publicControlAddress        string
+	publicHTTP                  *http.Client
+	databaseURL                 string
 	database                    *controlstate.Database
 	certificateAuthority        *testCertificateAuthority
 	inspect                     *sql.DB
@@ -194,7 +196,7 @@ func newPrivateRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &privateSeparatedFixture{publicControlAddress: publicControlAddress, inspect: inspect, roots: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, controlConfig: config, serviceHTTP: serviceHTTP,
+	f := &privateSeparatedFixture{publicControlAddress: publicControlAddress, publicHTTP: &http.Client{Transport: publicTransport, Timeout: 10 * time.Second}, databaseURL: databaseURL, inspect: inspect, roots: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, controlConfig: config, serviceHTTP: serviceHTTP,
 		database: database, certificateAuthority: ca,
 		identity: privateRuntimeIdentity{teamID: identity.PersonalTeamId, state: profile, routes: authenticated.Control, authority: authenticated.Authority}, tcpAddresses: make(map[string]string), quicAddresses: make(map[string]string)}
 	f.defaultTiming = defaults

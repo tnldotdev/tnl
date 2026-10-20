@@ -8,6 +8,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/visitorsubject"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
@@ -74,20 +75,25 @@ func (h *handler) AuthorizeServiceConnector(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var body controlv1.AuthorizeServiceConnectorRequest
-	if decodeJSONLimited(w, r, &body, 4096) != nil || body.RunNumber < 1 || !validVisitorSource(body.SourceIp) {
+	if decodeJSONLimited(w, r, &body, 4096) != nil || body.RunNumber < 1 || body.GrantRevision < 1 || !validVisitorSource(body.SourceIp) {
 		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid service connector decision")
 		return
 	}
 	store, ok := h.store.(interface {
-		AuthorizeServiceConnector(context.Context, string, string, string, int64, controlstate.ConnectorVisitor, time.Time) (controlstate.PrivateVisitorValidity, error)
+		AuthorizeVisitorServiceConnector(context.Context, string, string, string, int64, controlstate.SubjectConnectorVisitor, time.Time) (controlstate.PrivateVisitorValidity, error)
 	})
 	if !ok {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "service connector authorization is unavailable")
 		return
 	}
 	source, _ := netip.ParseAddr(body.SourceIp)
-	visitor := controlstate.ConnectorVisitor{SessionID: body.ConnectorSessionId, IdentityID: body.IdentityId, DeviceID: body.DeviceId, ConnectionID: body.VisitorConnectionId, Source: source}
-	decision, err := store.AuthorizeServiceConnector(r.Context(), service, run, token, body.RunNumber, visitor, time.Now())
+	subject, err := visitorsubject.Parse(body.Subject)
+	if err != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor subject")
+		return
+	}
+	visitor := controlstate.SubjectConnectorVisitor{SessionID: body.ConnectorSessionId, Subject: subject, ConnectionID: body.VisitorConnectionId, Source: source, GrantRevision: body.GrantRevision}
+	decision, err := store.AuthorizeVisitorServiceConnector(r.Context(), service, run, token, body.RunNumber, visitor, time.Now())
 	if err != nil {
 		writeManagedCertificateProblem(w, "authorize service connector", err)
 		return

@@ -151,14 +151,14 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 	}
 	adapter := control.(*controlAdapter)
 	t.Cleanup(func() { _ = adapter.Close() })
-	device, err := adapter.PrivateConnectorDevice(t.Context(), f.identity)
+	device, err := adapter.PrivateConnectorSigner(t.Context(), f.identity)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// a pending sibling occupies its ingress's entire capacity. repeated
 	// failure must reserve only the requested slot on the other ingress.
 	for range 8 {
-		if _, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.ID, 0); !errors.Is(err, controlclient.ErrUnavailable) {
+		if _, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0); !errors.Is(err, controlclient.ErrUnavailable) {
 			t.Fatalf("trust failure: %v", err)
 		}
 		if count := f.reservations(t); count != 1 {
@@ -167,14 +167,14 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 	}
 	// expire the pending sibling in both the saved response and PostgreSQL.
 	adapter.mu.Lock()
-	pending := adapter.pairs[assignmentKey{f.service.Id, device.ID}].pending[1]
+	pending := adapter.pairs[assignmentKey{f.service.Id, device.Subject.DeviceID}].pending[1]
 	pending.ExpiresAt = time.Now().Add(-time.Second)
 	adapter.mu.Unlock()
 	if _, err := f.inspect.ExecContext(t.Context(), `UPDATE control.private_connector_sessions SET created_at=now()-interval '2 minutes',expires_at=now()-interval '1 second' WHERE id=$1`, pending.ConnectorSessionId); err != nil {
 		t.Fatal(err)
 	}
 	failTrust.Store(false)
-	healthy, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.ID, 1)
+	healthy, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,10 +184,10 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 	}
 	nonce, _ := tunnelv1.NewConnectorSessionNonce()
 	hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: 1, Kind: "private_connector_session", PrivateServiceID: f.service.Id, SessionID: healthy.SessionID,
-		Credential: healthy.Credential, DeviceID: device.ID, IdentityID: device.IdentityID, Nonce: nonce}
-	digest, _ := tunnelv1.PrivateConnectorHelloDigest(hello)
-	hello.Signature = ed25519.Sign(device.SigningKey, digest)
-	if _, err := f.database.AuthenticatePrivateConnector(t.Context(), leases[healthy.IngressID], hello, netip.MustParseAddr("127.0.0.1"), time.Now()); err != nil {
+		Credential: healthy.Credential, Subject: device.Subject, Nonce: nonce}
+	digest, _ := hello.Claim().Digest()
+	hello.Signature = device.Sign(digest)
+	if _, err := f.database.AuthenticateVisitorConnector(t.Context(), leases[healthy.IngressID], hello.Claim(), netip.MustParseAddr("127.0.0.1"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.database.RenewIngress(t.Context(), controlstate.IngressRenewal{IngressLeaseIdentity: leases[healthy.IngressID], ReportedConnections: 1}, time.Now(), time.Minute); err != nil {
@@ -203,7 +203,7 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 	failTrust.Store(true)
 	for range 8 {
 		before := trustCalls.Load()
-		if _, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.ID, 0); !errors.Is(err, controlclient.ErrUnavailable) {
+		if _, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0); !errors.Is(err, controlclient.ErrUnavailable) {
 			t.Fatalf("renewal failed before trust lookup: %v", err)
 		}
 		if trustCalls.Load() != before+1 {
@@ -224,7 +224,7 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 		t.Fatalf("refresh allocated %d startup pairs", pairCalls.Load())
 	}
 	failTrust.Store(false)
-	recovered, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.ID, 0)
+	recovered, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,12 +233,12 @@ func TestIntegrationPrivateConnectorReleasesLowCapacityReservations(t *testing.T
 	}
 	nonce, _ = tunnelv1.NewConnectorSessionNonce()
 	hello.SessionID, hello.Credential, hello.Nonce = recovered.SessionID, recovered.Credential, nonce
-	digest, _ = tunnelv1.PrivateConnectorHelloDigest(hello)
-	hello.Signature = ed25519.Sign(device.SigningKey, digest)
-	if _, err := f.database.AuthenticatePrivateConnector(t.Context(), leases[recovered.IngressID], hello, netip.MustParseAddr("127.0.0.1"), time.Now()); err != nil {
+	digest, _ = hello.Claim().Digest()
+	hello.Signature = device.Sign(digest)
+	if _, err := f.database.AuthenticateVisitorConnector(t.Context(), leases[recovered.IngressID], hello.Claim(), netip.MustParseAddr("127.0.0.1"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.database.AuthenticatePrivateConnector(t.Context(), leases[recovered.IngressID], hello, netip.MustParseAddr("127.0.0.1"), time.Now()); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
+	if _, err := f.database.AuthenticateVisitorConnector(t.Context(), leases[recovered.IngressID], hello.Claim(), netip.MustParseAddr("127.0.0.1"), time.Now()); !errors.Is(err, controlstate.ErrPrivateServiceAccess) {
 		t.Fatalf("recovered credential was not single-use: %v", err)
 	}
 	if err := adapter.ReleasePrivateConnectorAssignment(t.Context(), recovered.SessionID); err != nil {

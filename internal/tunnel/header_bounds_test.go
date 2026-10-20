@@ -165,7 +165,7 @@ func maximumPublicHeader(text string) tunnelv1.InternalForwardingHeader {
 func maximumPrivateHeader(text string, direct bool) tunnelv1.PrivateForwardingHeader {
 	h := tunnelv1.PrivateForwardingHeader{PrivateStreamHeader: tunnelv1.PrivateStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.PrivateForwardingStream,
 		PrivateServiceID: boundsID(opaqueid.PrivateServicePrefix), PrivateRunID: boundsID(opaqueid.PrivateRunPrefix), RunNumber: math.MaxUint64,
-		Connector: &tunnelv1.ConnectorAdmission{SessionID: boundsID(opaqueid.PrivateConnectorSessionPrefix), IdentityID: boundsID(opaqueid.IdentityPrefix), DeviceID: text[:128], GrantRevision: math.MaxUint64},
+		Connector: &tunnelv1.ConnectorAdmission{SessionID: boundsID(opaqueid.PrivateConnectorSessionPrefix), Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: boundsID(opaqueid.IdentityPrefix), DeviceID: boundsID(opaqueid.VisitorDevicePrefix)}, GrantRevision: math.MaxUint64},
 		SourceIP:  "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", VisitorConnectionID: boundsID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: boundsID(opaqueid.PublisherConnectionPrefix),
 		ConnectionAssignmentRevision: math.MaxUint64, ExpiresAt: boundsTimestamp()}, ConnectionSlot: 1, RelayServiceID: text, RelayID: text,
 		RelayRunID: boundsID(opaqueid.RelayRunPrefix), RelayLeaseRevision: math.MaxUint64, LeaseExpiresAt: boundsTimestamp()}

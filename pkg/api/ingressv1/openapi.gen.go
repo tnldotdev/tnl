@@ -450,8 +450,6 @@ type IngressUsageReportBatch struct {
 // PrivateConnectorSessionClaim defines model for PrivateConnectorSessionClaim.
 type PrivateConnectorSessionClaim struct {
 	ConnectorSessionId   PrivateConnectorSessionID `json:"connector_session_id"`
-	DeviceId             string                    `json:"device_id"`
-	IdentityId           Identifier                `json:"identity_id"`
 	IngressLeaseRevision int64                     `json:"ingress_lease_revision"`
 	IngressRunId         Identifier                `json:"ingress_run_id"`
 	Nonce                string                    `json:"nonce"`
@@ -461,6 +459,9 @@ type PrivateConnectorSessionClaim struct {
 	PrivateServiceId  PrivateServiceID `json:"private_service_id"`
 	SessionCredential string           `json:"session_credential"`
 	Signature         string           `json:"signature"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject externalRef0.VisitorSubject `json:"subject"`
 }
 
 // PrivateConnectorSessionID defines model for PrivateConnectorSessionID.
@@ -469,11 +470,12 @@ type PrivateConnectorSessionID = string
 // PrivateConnectorSessionResult defines model for PrivateConnectorSessionResult.
 type PrivateConnectorSessionResult struct {
 	ConnectorSessionId PrivateConnectorSessionID `json:"connector_session_id"`
-	DeviceId           string                    `json:"device_id"`
 	ExpiresAt          time.Time                 `json:"expires_at"`
-	IdentityId         Identifier                `json:"identity_id"`
 	ObservedSourceIp   string                    `json:"observed_source_ip"`
 	PrivateServiceId   PrivateServiceID          `json:"private_service_id"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject externalRef0.VisitorSubject `json:"subject"`
 }
 
 // PrivateRunID defines model for PrivateRunID.
@@ -533,14 +535,15 @@ type PrivateServiceStreamClaim struct {
 // PrivateServiceStreamResult defines model for PrivateServiceStreamResult.
 type PrivateServiceStreamResult struct {
 	ConnectorSessionId PrivateConnectorSessionID `json:"connector_session_id"`
-	DeviceId           string                    `json:"device_id"`
 	ExpiresAt          time.Time                 `json:"expires_at"`
 	GrantRevision      int64                     `json:"grant_revision"`
-	IdentityId         Identifier                `json:"identity_id"`
 	ObservedSourceIp   string                    `json:"observed_source_ip"`
 	PrivateRunId       PrivateRunID              `json:"private_run_id"`
 	PrivateServiceId   PrivateServiceID          `json:"private_service_id"`
 	RunNumber          int64                     `json:"run_number"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject externalRef0.VisitorSubject `json:"subject"`
 
 	// ValidUntil Hard deadline bounded by the current grant, connector session, publisher run, ingress and live relay leases, and at most two minutes from this decision.
 	ValidUntil          time.Time           `json:"valid_until"`
@@ -550,16 +553,18 @@ type PrivateServiceStreamResult struct {
 // PrivateServiceVisitorRecheck defines model for PrivateServiceVisitorRecheck.
 type PrivateServiceVisitorRecheck struct {
 	ConnectorSessionId   PrivateConnectorSessionID `json:"connector_session_id"`
-	IdentityId           Identifier                `json:"identity_id"`
 	IngressLeaseRevision int64                     `json:"ingress_lease_revision"`
 	IngressRunId         Identifier                `json:"ingress_run_id"`
 
 	// ObservedSourceIp Copied from the original ingress-observed mux source; never supplied by a visitor.
-	ObservedSourceIp    string              `json:"observed_source_ip"`
-	PrivateRunId        PrivateRunID        `json:"private_run_id"`
-	PrivateServiceId    PrivateServiceID    `json:"private_service_id"`
-	RunNumber           int64               `json:"run_number"`
-	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
+	ObservedSourceIp string           `json:"observed_source_ip"`
+	PrivateRunId     PrivateRunID     `json:"private_run_id"`
+	PrivateServiceId PrivateServiceID `json:"private_service_id"`
+	RunNumber        int64            `json:"run_number"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject             externalRef0.VisitorSubject `json:"subject"`
+	VisitorConnectionId VisitorConnectionID         `json:"visitor_connection_id"`
 }
 
 // PrivateServiceVisitorRecheckResult defines model for PrivateServiceVisitorRecheckResult.

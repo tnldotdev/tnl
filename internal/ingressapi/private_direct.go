@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
+	"github.com/tnldotdev/tnl/internal/visitorsubject"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -58,19 +59,20 @@ func (s *service) ClaimPrivateConnectorSession(ctx context.Context, id string, b
 	source, sourceOK := privateSource(body.ObservedSourceIp)
 	nonce, nerr := hex.DecodeString(body.Nonce)
 	signature, serr := base64.RawURLEncoding.Strict().DecodeString(body.Signature)
-	if !ok || !sourceOK || nerr != nil || serr != nil {
-		return result, serviceapi.NewProblemError(400, "invalid_request", "invalid private device proof")
+	subject, subjectErr := visitorsubject.Parse(body.Subject)
+	if !ok || !sourceOK || nerr != nil || serr != nil || subjectErr != nil {
+		return result, serviceapi.NewProblemError(400, "invalid_request", "invalid visitor key proof")
 	}
 	store, err := s.privateState()
 	if err != nil {
 		return result, err
 	}
-	bound, err := store.AuthenticatePrivateConnector(ctx, identity, tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", PrivateServiceID: body.PrivateServiceId,
-		SessionID: body.ConnectorSessionId, Credential: body.SessionCredential, DeviceID: body.DeviceId, IdentityID: body.IdentityId, Nonce: nonce, Signature: signature}, source, s.now())
+	bound, err := store.AuthenticateVisitorConnector(ctx, identity, tunnelv1.VisitorConnectorClaim{ServiceID: body.PrivateServiceId,
+		SessionID: body.ConnectorSessionId, Credential: body.SessionCredential, Subject: subject, Nonce: nonce, Signature: signature}, source, s.now())
 	if err != nil {
 		return result, s.privateStateError(ctx, err)
 	}
-	return ingressv1.PrivateConnectorSessionResult{ConnectorSessionId: bound.ID, PrivateServiceId: bound.PrivateServiceID, IdentityId: bound.IdentityID, DeviceId: bound.DeviceID, ObservedSourceIp: bound.SourceIP.String(), ExpiresAt: bound.ExpiresAt}, nil
+	return ingressv1.PrivateConnectorSessionResult{ConnectorSessionId: bound.ID, PrivateServiceId: bound.PrivateServiceID, Subject: visitorsubject.Wire(bound.Subject), ObservedSourceIp: bound.SourceIP.String(), ExpiresAt: bound.ExpiresAt}, nil
 }
 
 func (s *service) AuthorizePrivateServiceStream(ctx context.Context, id string, body ingressv1.PrivateServiceStreamClaim) (ingressv1.PrivateServiceStreamResult, error) {
@@ -89,7 +91,7 @@ func (s *service) AuthorizePrivateServiceStream(ctx context.Context, id string, 
 		return result, s.privateStateError(ctx, err)
 	}
 	return ingressv1.PrivateServiceStreamResult{PrivateServiceId: bound.PrivateServiceID, PrivateRunId: bound.PrivateRunID, RunNumber: bound.RunNumber,
-		ConnectorSessionId: bound.ConnectorSessionID, IdentityId: bound.IdentityID, DeviceId: bound.DeviceID, GrantRevision: bound.GrantRevision,
+		ConnectorSessionId: bound.ConnectorSessionID, Subject: visitorsubject.Wire(bound.Subject), GrantRevision: bound.GrantRevision,
 		ObservedSourceIp: bound.SourceIP.String(), VisitorConnectionId: bound.VisitorConnectionID, ExpiresAt: bound.ExpiresAt, ValidUntil: bound.ValidUntil}, nil
 }
 
@@ -141,7 +143,8 @@ func (s *service) RecheckPrivateServiceVisitor(ctx context.Context, id string, b
 	var result ingressv1.PrivateServiceVisitorRecheckResult
 	identity, ok := ingressLeaseIdentity(id, body.IngressRunId, body.IngressLeaseRevision)
 	source, sourceOK := privateSource(body.ObservedSourceIp)
-	if !ok || !sourceOK {
+	subject, subjectErr := visitorsubject.Parse(body.Subject)
+	if !ok || !sourceOK || subjectErr != nil {
 		return result, serviceapi.NewProblemError(400, "invalid_request", "invalid private visitor identity")
 	}
 	store, err := s.privateState()
@@ -149,7 +152,7 @@ func (s *service) RecheckPrivateServiceVisitor(ctx context.Context, id string, b
 		return result, err
 	}
 	now := s.now()
-	decision, err := store.RecheckPrivateServiceVisitor(ctx, identity, body.PrivateServiceId, body.PrivateRunId, body.ConnectorSessionId, body.IdentityId, body.VisitorConnectionId, body.RunNumber, source, now)
+	decision, err := store.RecheckVisitorServiceStream(ctx, identity, body.PrivateServiceId, body.PrivateRunId, body.ConnectorSessionId, body.VisitorConnectionId, subject, body.RunNumber, source, now)
 	if errors.Is(err, controlstate.ErrPrivateServiceAccess) {
 		decision = controlstate.PrivateVisitorValidity{ValidUntil: now}
 		err = nil

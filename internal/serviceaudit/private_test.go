@@ -4,14 +4,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/visitorsubject"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func privateBinding() (ingressv1.PrivateConnectorSessionResult, ingressv1.PrivateServiceStreamResult) {
 	bound := ingressv1.PrivateConnectorSessionResult{PrivateServiceId: "psvc_0123456789ABCDEFGHIJKL", ConnectorSessionId: "pcs_0123456789ABCDEFGHIJKL",
-		IdentityId: "identity_test", DeviceId: "vdev_0123456789ABCDEFGHIJKL", ObservedSourceIp: "192.0.2.9", ExpiresAt: time.Now().Add(time.Minute)}
+		Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: "ident_0123456789ABCDEFGHIJKL", DeviceID: "vdev_0123456789ABCDEFGHIJKL"}), ObservedSourceIp: "192.0.2.9", ExpiresAt: time.Now().Add(time.Minute)}
 	admitted := ingressv1.PrivateServiceStreamResult{PrivateServiceId: bound.PrivateServiceId, ConnectorSessionId: bound.ConnectorSessionId,
-		IdentityId: bound.IdentityId, DeviceId: bound.DeviceId, ObservedSourceIp: bound.ObservedSourceIp, ExpiresAt: bound.ExpiresAt,
+		Subject: bound.Subject, ObservedSourceIp: bound.ObservedSourceIp, ExpiresAt: bound.ExpiresAt,
 		PrivateRunId: "psrun_0123456789ABCDEFGHIJKL", RunNumber: 1, GrantRevision: 1, ValidUntil: bound.ExpiresAt, VisitorConnectionId: "vc_0123456789ABCDEFGHIJKL"}
 	return bound, admitted
 }
@@ -32,8 +34,10 @@ func TestPrivateConstructorsSeparateSessionDenialFromAdmittedStream(t *testing.T
 	}
 	for _, change := range []func(*ingressv1.PrivateServiceStreamResult){
 		func(a *ingressv1.PrivateServiceStreamResult) { a.ConnectorSessionId = "pcs_ABCDEFGHIJKL0123456789" },
-		func(a *ingressv1.PrivateServiceStreamResult) { a.IdentityId = "identity_other" },
-		func(a *ingressv1.PrivateServiceStreamResult) { a.DeviceId = "vdev_ABCDEFGHIJKL0123456789" },
+		func(a *ingressv1.PrivateServiceStreamResult) {
+			a.Subject.IdentityId = new("ident_ABCDEFGHIJKL0123456789")
+		},
+		func(a *ingressv1.PrivateServiceStreamResult) { a.Subject.DeviceId = new("vdev_ABCDEFGHIJKL0123456789") },
 		func(a *ingressv1.PrivateServiceStreamResult) { a.ObservedSourceIp = "192.0.2.10" },
 		func(a *ingressv1.PrivateServiceStreamResult) { a.PrivateRunId = "" },
 		func(a *ingressv1.PrivateServiceStreamResult) { a.RunNumber = 0 },

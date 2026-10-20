@@ -49,7 +49,7 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.PrivateForwardingStream,
 		PrivateServiceID: ref.PrivateServiceID, PrivateRunID: ref.PrivateRunID, RunNumber: ref.RunNumber,
 		PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-		Connector: &tunnelv1.ConnectorAdmission{SessionID: id(opaqueid.PrivateConnectorSessionPrefix), IdentityID: id(opaqueid.IdentityPrefix), DeviceID: "device-1", GrantRevision: 1},
+		Connector: &tunnelv1.ConnectorAdmission{SessionID: id(opaqueid.PrivateConnectorSessionPrefix), Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: id(opaqueid.IdentityPrefix), DeviceID: id(opaqueid.VisitorDevicePrefix)}, GrantRevision: 1},
 		SourceIP:  "192.0.2.1", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix),
 		ExpiresAt: time.Now().Add(time.Minute),
 	}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID,

@@ -3,7 +3,6 @@ package tnldruntime
 import (
 	"bufio"
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"io"
@@ -34,8 +33,8 @@ type separatedVisitorControl struct {
 	dialAddress string
 }
 
-func (c *separatedVisitorControl) PrivateConnectorAssignment(ctx context.Context, service, device string, slot uint8) (tcpconnect.Assignment, error) {
-	a, err := c.Control.PrivateConnectorAssignment(ctx, service, device, slot)
+func (c *separatedVisitorControl) PrivateConnectorAssignment(ctx context.Context, service string, subject tunnelv1.VisitorSubject, slot uint8) (tcpconnect.Assignment, error) {
+	a, err := c.Control.PrivateConnectorAssignment(ctx, service, subject, slot)
 	if err != nil {
 		return tcpconnect.Assignment{}, err
 	}
@@ -302,7 +301,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			device, err := production.PrivateConnectorDevice(t.Context(), person.Identity.Id)
+			device, err := production.PrivateConnectorSigner(t.Context(), person.Identity.Id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -336,7 +335,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 					finish, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 					defer cancel()
 					var reservations int
-					if err := f.inspect.QueryRowContext(finish, `SELECT count(*) FROM control.private_connector_sessions WHERE device_id=$1 AND revoked_at IS NULL`, device.ID).Scan(&reservations); err != nil || reservations != 0 {
+					if err := f.inspect.QueryRowContext(finish, `SELECT count(*) FROM control.private_connector_sessions WHERE device_id=$1 AND revoked_at IS NULL`, device.Subject.DeviceID).Scan(&reservations); err != nil || reservations != 0 {
 						t.Errorf("connector shutdown retained assignments: count=%d err=%v", reservations, err)
 					}
 				case <-time.After(5 * time.Second):
@@ -349,7 +348,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 				t.Fatal("visitor did not authenticate both ingresses")
 			}
 			var boundSessions, distinctIngresses, readyRelays, distinctRelays int
-			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),count(DISTINCT ingress_id) FROM control.private_connector_sessions WHERE device_id=$1 AND bound_at IS NOT NULL`, device.ID).Scan(&boundSessions, &distinctIngresses); err != nil || boundSessions != 2 || distinctIngresses != 2 {
+			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),count(DISTINCT ingress_id) FROM control.private_connector_sessions WHERE device_id=$1 AND bound_at IS NOT NULL`, device.Subject.DeviceID).Scan(&boundSessions, &distinctIngresses); err != nil || boundSessions != 2 || distinctIngresses != 2 {
 				t.Fatalf("visitor did not bind two ingress identities: %d/%d %v", boundSessions, distinctIngresses, err)
 			}
 			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),count(DISTINCT relay_service_id) FROM control.private_service_connection_slots WHERE private_run_id=$1 AND state='ready' AND session_open`, selected.PrivateRunID).Scan(&readyRelays, &distinctRelays); err != nil || readyRelays != 2 || distinctRelays != 2 {
@@ -424,7 +423,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 				}
 				privateWait(t, 8*time.Second, func(context.Context) (bool, error) { return time.Now().After(previous.Add(50 * time.Millisecond)), nil })
 				for slot := range uint8(2) {
-					assignment, err := control.PrivateConnectorAssignment(t.Context(), service.Id, device.ID, slot)
+					assignment, err := control.PrivateConnectorAssignment(t.Context(), service.Id, device.Subject, slot)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -433,12 +432,12 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 						t.Fatal(err)
 					}
 					hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", PrivateServiceID: service.Id, SessionID: assignment.SessionID,
-						Credential: assignment.Credential, DeviceID: device.ID, IdentityID: person.Identity.Id, Nonce: nonce}
-					digest, err := tunnelv1.PrivateConnectorHelloDigest(hello)
+						Credential: assignment.Credential, Subject: device.Subject, Nonce: nonce}
+					digest, err := hello.Claim().Digest()
 					if err != nil {
 						t.Fatal(err)
 					}
-					hello.Signature = ed25519.Sign(device.SigningKey, digest)
+					hello.Signature = device.Sign(digest)
 					var connector muxsession.Connector = muxsession.PrivateQUICConnector{TLSConfig: assignment.TransportTLS}
 					if transport == "tls-tcp" {
 						connector = muxsession.PrivateMuxTLSConnector{TLSConfig: assignment.TransportTLS}
@@ -512,7 +511,7 @@ func privateRuntimeLifecycle(t *testing.T, standalone bool) {
 			if err != nil || after.PrivateRunID != selected.PrivateRunID || after.ManagedTLS == nil || selected.ManagedTLS == nil || *after.ManagedTLS != *selected.ManagedTLS {
 				t.Fatalf("slot replacement restarted the run or rotated its pin: %v", err)
 			}
-			if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.ID); err != nil {
+			if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 				t.Fatal(err)
 			}
 			assertClosed(survivor.conn)

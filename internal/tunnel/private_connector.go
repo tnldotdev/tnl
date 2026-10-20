@@ -48,7 +48,7 @@ func DialPrivateConnector(ctx context.Context, transport muxsession.Session, hel
 		return nil, err
 	}
 	if accepted.PrivateServiceID != hello.PrivateServiceID || accepted.SessionID != hello.SessionID ||
-		accepted.DeviceID != hello.DeviceID || accepted.IdentityID != hello.IdentityID || !accepted.ExpiresAt.After(time.Now()) {
+		accepted.Subject != hello.Subject || !accepted.ExpiresAt.After(time.Now()) {
 		return nil, errors.New("tunnel: private connector acceptance changed identity")
 	}
 	return &PrivateConnectorSession{Session: transport, Accepted: accepted, control: stream}, nil
@@ -89,7 +89,7 @@ func AcceptPrivateConnector(ctx context.Context, transport muxsession.Session, a
 	if err != nil {
 		return nil, err
 	}
-	if accepted.SessionID != hello.SessionID || accepted.PrivateServiceID != hello.PrivateServiceID || accepted.DeviceID != hello.DeviceID || accepted.IdentityID != hello.IdentityID || !accepted.ExpiresAt.After(time.Now()) {
+	if accepted.SessionID != hello.SessionID || accepted.PrivateServiceID != hello.PrivateServiceID || accepted.Subject != hello.Subject || !accepted.ExpiresAt.After(time.Now()) {
 		return nil, errors.New("tunnel: private connector authenticator changed identity")
 	}
 	if err = tunnelv1.WritePrivateConnectorSessionAccepted(stream, accepted); err != nil {

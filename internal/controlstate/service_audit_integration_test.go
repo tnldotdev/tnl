@@ -14,7 +14,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/visitorsubject"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationServiceAuditTransactionalManagement(t *testing.T) {
@@ -402,7 +404,7 @@ func TestIntegrationServiceAuditCrossTeamClockOrder(t *testing.T) {
 				t.Fatal(err)
 			}
 			o, err := serviceaudit.NewPrivateSessionDenial(ingressv1.PrivateConnectorSessionResult{PrivateServiceId: s.ID, ConnectorSessionId: session,
-				IdentityId: creation.ActingIdentityID, DeviceId: device.ID, ObservedSourceIp: "192.0.2.9", ExpiresAt: now.Add(time.Minute)}, visitor)
+				Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: creation.ActingIdentityID, DeviceID: device.ID}), ObservedSourceIp: "192.0.2.9", ExpiresAt: now.Add(time.Minute)}, visitor)
 			if err != nil {
 				t.Fatal(err)
 			}

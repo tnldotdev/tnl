@@ -2,7 +2,6 @@ package tcpconnect
 
 import (
 	"bytes"
-	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -75,32 +74,32 @@ func TestIntegrationPrivateConnectorRecoversCommittedAssignments(t *testing.T) {
 	}
 	adapter := control.(*controlAdapter)
 	t.Cleanup(func() { _ = adapter.Close() })
-	device, err := adapter.PrivateConnectorDevice(t.Context(), f.identity)
+	device, err := adapter.PrivateConnectorSigner(t.Context(), f.identity)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.ID, 0); err == nil {
+		if _, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0); err == nil {
 			t.Fatal("lost startup response succeeded")
 		}
 		if f.reservations(t) != 2 {
 			t.Fatal("startup retry changed reserved capacity")
 		}
 	}
-	healthy, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.ID, 0)
+	healthy, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.ID, 1)
+	other, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	nonce, _ := tunnelv1.NewConnectorSessionNonce()
 	hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: 1, Kind: "private_connector_session", PrivateServiceID: f.service.Id,
-		SessionID: healthy.SessionID, Credential: healthy.Credential, DeviceID: device.ID, IdentityID: device.IdentityID, Nonce: nonce}
-	digest, _ := tunnelv1.PrivateConnectorHelloDigest(hello)
-	hello.Signature = ed25519.Sign(device.SigningKey, digest)
-	if _, err := f.database.AuthenticatePrivateConnector(t.Context(), leases[healthy.IngressID], hello, netip.MustParseAddr("127.0.0.1"), time.Now()); err != nil {
+		SessionID: healthy.SessionID, Credential: healthy.Credential, Subject: device.Subject, Nonce: nonce}
+	digest, _ := hello.Claim().Digest()
+	hello.Signature = device.Sign(digest)
+	if _, err := f.database.AuthenticateVisitorConnector(t.Context(), leases[healthy.IngressID], hello.Claim(), netip.MustParseAddr("127.0.0.1"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.database.RenewIngress(t.Context(), controlstate.IngressRenewal{IngressLeaseIdentity: leases[healthy.IngressID], ReportedConnections: 1}, time.Now(), time.Minute); err != nil {
@@ -110,14 +109,14 @@ func TestIntegrationPrivateConnectorRecoversCommittedAssignments(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.ID, 1); err == nil {
+		if _, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 1); err == nil {
 			t.Fatal("lost renewal response succeeded")
 		}
 		if f.reservations(t) != 2 {
 			t.Fatal("renewal retry changed reserved capacity")
 		}
 	}
-	renewed, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.ID, 1)
+	renewed, err := adapter.PrivateConnectorAssignment(t.Context(), f.service.Id, device.Subject, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -38,27 +38,28 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 
 ### choose a test tier
 
-| When you need to check                    | Command after `mise exec --`                                 | What you need                                                                                                 |
-| ----------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| Routine behavior                          | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages                                             |
-| Go races                                  | `task go:test:race`                                          | No database                                                                                                   |
-| Database and service boundaries           | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                                                    |
-| CI workload authority and saved selectors | `task go:test:integration:workload`                          | Docker; disposable PostgreSQL and signed local GitHub fixtures, without live GitHub or AWS                    |
-| Private services and groups               | `task go:test:integration:private-services`                  | Docker; saved services, applied groups, grants, and audit in PostgreSQL                                       |
-| Publisher egress evidence                 | `task go:test:integration:publisher-egress`                  | Docker; signed runtime leases and trusted proxy metadata, without public IP lookups                           |
-| Private runtime topology                  | `task go:test:integration:private-topology`                  | Docker and Pebble; separated and standalone private visitor lifecycle                                         |
-| Real database clients                     | `task go:test:integration:tcp-clients`                       | Docker CLI; disposable TLS providers also run psql and mysql                                                  |
-| CLI and OpenSSH stdio                     | `task go:test:integration:cli`                               | Isolated Linux, Docker, sshd/ssh/ssh-keygen, writable `/etc/hosts` or passwordless sudo for that fixture only |
-| Existing OpenSSH target                   | `task go:test:integration:private-sshd`                      | System `sshd`, `ssh`, and `ssh-keygen`; no root tnl process                                                   |
-| Binary behavior                           | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available                                      |
-| Compose target discovery                  | `task go:test:integration:compose`                           | Docker; disposable HTTP and TCP targets with container replacement                                            |
-| Authoritative DNS                         | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers                                                   |
-| Public Route 53 and ACME staging          | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in                                       |
-| Fuzz targets                              | `task go:test:fuzz`                                          | Go toolchain                                                                                                  |
-| npm exports and tarballs                  | `pnpm run pack`                                              | Built package dependencies                                                                                    |
-| Python ASGI and socket contract           | `task py:check`                                              | Pinned Python and uv; uses the locked dependencies in `packages/py`                                           |
-| Local release snapshot                    | `task package`                                               | Builds and checks packages; does not publish                                                                  |
-| Deployed release check                    | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain                                                   |
+| When you need to check                    | Command after `mise exec --`                                 | What you need                                                                                                        |
+| ----------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| Routine behavior                          | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages                                                    |
+| Go races                                  | `task go:test:race`                                          | No database                                                                                                          |
+| Database and service boundaries           | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                                                           |
+| CI workload authority and saved selectors | `task go:test:integration:workload`                          | Docker; disposable PostgreSQL and signed local GitHub fixtures, without live GitHub or AWS                           |
+| CI workload visitor transports            | `task go:test:integration:workload-runtime`                  | Docker and Pebble; two ingress/two relay topology, native PostgreSQL, HTTP/mTLS, and two real 90-second lease cycles |
+| Private services and groups               | `task go:test:integration:private-services`                  | Docker; saved services, applied groups, grants, and audit in PostgreSQL                                              |
+| Publisher egress evidence                 | `task go:test:integration:publisher-egress`                  | Docker; signed runtime leases and trusted proxy metadata, without public IP lookups                                  |
+| Private runtime topology                  | `task go:test:integration:private-topology`                  | Docker and Pebble; separated and standalone private visitor lifecycle                                                |
+| Real database clients                     | `task go:test:integration:tcp-clients`                       | Docker CLI; disposable TLS providers also run psql and mysql                                                         |
+| CLI and OpenSSH stdio                     | `task go:test:integration:cli`                               | Isolated Linux, Docker, sshd/ssh/ssh-keygen, writable `/etc/hosts` or passwordless sudo for that fixture only        |
+| Existing OpenSSH target                   | `task go:test:integration:private-sshd`                      | System `sshd`, `ssh`, and `ssh-keygen`; no root tnl process                                                          |
+| Binary behavior                           | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available                                             |
+| Compose target discovery                  | `task go:test:integration:compose`                           | Docker; disposable HTTP and TCP targets with container replacement                                                   |
+| Authoritative DNS                         | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers                                                          |
+| Public Route 53 and ACME staging          | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in                                              |
+| Fuzz targets                              | `task go:test:fuzz`                                          | Go toolchain                                                                                                         |
+| npm exports and tarballs                  | `pnpm run pack`                                              | Built package dependencies                                                                                           |
+| Python ASGI and socket contract           | `task py:check`                                              | Pinned Python and uv; uses the locked dependencies in `packages/py`                                                  |
+| Local release snapshot                    | `task package`                                               | Builds and checks packages; does not publish                                                                         |
+| Deployed release check                    | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain                                                          |
 
 Use `RUN` to select an integration test, for example:
 

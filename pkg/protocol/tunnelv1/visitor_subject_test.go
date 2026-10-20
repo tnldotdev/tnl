@@ -1,9 +1,14 @@
 package tunnelv1
 
 import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
@@ -28,5 +33,101 @@ func TestVisitorSubjectVariants(t *testing.T) {
 		if bad.Validate() == nil {
 			t.Fatal("accepted mixed or invalid visitor subject")
 		}
+	}
+}
+
+func TestVisitorSubjectRejectsMixedWireVariants(t *testing.T) {
+	for _, raw := range []string{
+		`{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa","identity_id":""}`,
+		`{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa","device_id":null}`,
+		`{"kind":"human_device","identity_id":"ident_aaaaaaaaaaaaaaaaaaaaaa","device_id":"vdev_aaaaaaaaaaaaaaaaaaaaaa","workload_session_id":""}`,
+		`{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa","publisher_id":"pub_aaaaaaaaaaaaaaaaaaaaaa"}`,
+		`{"kind":"workload_session","workload_session_id":"wls_` + strings.Repeat("a", 10000) + `"}`,
+	} {
+		var subject VisitorSubject
+		if json.Unmarshal([]byte(raw), &subject) == nil {
+			t.Fatal("mixed or unbounded wire subject accepted")
+		}
+	}
+}
+
+func TestVisitorSubjectPrivateFrameProofsAndBounds(t *testing.T) {
+	public, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		subject VisitorSubject
+		golden  string
+	}{
+		{VisitorSubject{Kind: VisitorHumanDevice, IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: testOpaqueID(opaqueid.VisitorDevicePrefix)}, `{"session_id":"pcs_aaaaaaaaaaaaaaaaaaaaaa","subject":{"kind":"human_device","identity_id":"ident_aaaaaaaaaaaaaaaaaaaaaa","device_id":"vdev_aaaaaaaaaaaaaaaaaaaaaa"},"grant_revision":7}`},
+		{VisitorSubject{Kind: VisitorWorkloadSession, WorkloadSessionID: testOpaqueID("wls_")}, `{"session_id":"pcs_aaaaaaaaaaaaaaaaaaaaaa","subject":{"kind":"workload_session","workload_session_id":"wls_aaaaaaaaaaaaaaaaaaaaaa"},"grant_revision":7}`},
+	} {
+		t.Run(test.subject.Kind, func(t *testing.T) {
+			hello := PrivateConnectorSessionHello{ProtocolVersion: 1, Kind: "private_connector_session", PrivateServiceID: testOpaqueID(opaqueid.PrivateServicePrefix), SessionID: testOpaqueID(opaqueid.PrivateConnectorSessionPrefix), Credential: strings.Repeat("a", 43), Subject: test.subject, Nonce: bytes.Repeat([]byte{1}, 32)}
+			digest, err := hello.Claim().Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			hello.Signature = ed25519.Sign(key, digest)
+			var frame bytes.Buffer
+			if err = WritePrivateConnectorSessionHello(&frame, hello); err != nil {
+				t.Fatal(err)
+			}
+			wire := bytes.Clone(frame.Bytes())
+			if len(wire)-4 > MaxPrivateHeaderBytes || int(binary.BigEndian.Uint32(wire[:4])) != len(wire)-4 {
+				t.Fatal("hello framing bound")
+			}
+			decoded, err := ReadPrivateConnectorSessionHello(&frame)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proof, err := decoded.Claim().Digest()
+			if err != nil || decoded.Subject != test.subject || !ed25519.Verify(public, proof, decoded.Signature) {
+				t.Fatal("subject proof lost across frame", err)
+			}
+			for _, mutate := range []func(*VisitorConnectorClaim){func(c *VisitorConnectorClaim) {
+				c.Subject = VisitorSubject{Kind: VisitorWorkloadSession, WorkloadSessionID: "wls_bbbbbbbbbbbbbbbbbbbbbb"}
+			}, func(c *VisitorConnectorClaim) { c.Credential = strings.Repeat("b", 43) }, func(c *VisitorConnectorClaim) { c.SessionID = "pcs_bbbbbbbbbbbbbbbbbbbbbb" }, func(c *VisitorConnectorClaim) { c.Nonce = bytes.Repeat([]byte{2}, 32) }} {
+				claim := decoded.Claim()
+				mutate(&claim)
+				changed, err := claim.Digest()
+				if err != nil || ed25519.Verify(public, changed, decoded.Signature) {
+					t.Fatal("proof did not bind exact claim")
+				}
+			}
+			admission := ConnectorAdmission{SessionID: hello.SessionID, Subject: test.subject, GrantRevision: 7}
+			data, err := json.Marshal(admission)
+			if err != nil || string(data) != test.golden {
+				t.Fatalf("admission golden: %s %v", data, err)
+			}
+			accepted := PrivateConnectorSessionAccepted{ProtocolVersion: 1, Kind: "private_connector_session_accepted", PrivateServiceID: hello.PrivateServiceID, SessionID: hello.SessionID, Subject: test.subject, SourceIP: "192.0.2.1", ExpiresAt: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)}
+			if err := WritePrivateConnectorSessionAccepted(&frame, accepted); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := ReadPrivateConnectorSessionAccepted(&frame); err != nil || got != accepted {
+				t.Fatal("accepted subject", err)
+			}
+			// removed human fields are never an alternative to the tagged subject.
+			for _, field := range []string{"identity_id", "device_id", "workload_session_id"} {
+				body := append(bytes.Clone(wire[4:len(wire)-1]), []byte(`,"`+field+`":"legacy"}`)...)
+				frame.Reset()
+				_ = binary.Write(&frame, binary.BigEndian, uint32(len(body)))
+				frame.Write(body)
+				if _, err := ReadPrivateConnectorSessionHello(&frame); err == nil {
+					t.Fatal("legacy field accepted")
+				}
+			}
+			hello.Subject.WorkloadSessionID = strings.Repeat("a", MaxPrivateHeaderBytes)
+			frame.Reset()
+			if err := WritePrivateConnectorSessionHello(&frame, hello); err == nil || frame.Len() != 0 {
+				t.Fatal("unbounded subject wrote bytes")
+			}
+			frame.Reset()
+			_ = binary.Write(&frame, binary.BigEndian, uint32(MaxPrivateHeaderBytes+1))
+			if _, err := ReadPrivateConnectorSessionHello(&frame); err == nil {
+				t.Fatal("unbounded frame accepted")
+			}
+		})
 	}
 }

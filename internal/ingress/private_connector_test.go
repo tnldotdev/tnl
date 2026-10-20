@@ -22,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/internal/proxyproto"
 	"github.com/tnldotdev/tnl/internal/tunnel"
+	"github.com/tnldotdev/tnl/internal/visitorsubject"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -53,8 +54,12 @@ type privateControlFixture struct {
 	projection        ingressv1.PrivateServiceProjection
 }
 
-const privateTestSessionCredential = "session-secret-for-this-private-test-credential"
-const privateTestRotatedCredential = "next-session-secret-for-this-private-test"
+const privateTestSessionCredential = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const privateTestRotatedCredential = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+func (f *privateControlFixture) subject() tunnelv1.VisitorSubject {
+	return tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: f.identity, DeviceID: f.device}
+}
 
 func (f *privateControlFixture) expectedSourceIP() string {
 	if f.sourceIP != "" {
@@ -82,7 +87,7 @@ func (f *privateControlFixture) ClaimPrivateConnectorSession(_ context.Context, 
 	if duration == 0 {
 		duration = time.Minute
 	}
-	return ingressv1.PrivateConnectorSessionResult{ConnectorSessionId: body.ConnectorSessionId, PrivateServiceId: f.service, IdentityId: f.identity, DeviceId: f.device, ObservedSourceIp: body.ObservedSourceIp, ExpiresAt: time.Now().Add(duration)}, nil
+	return ingressv1.PrivateConnectorSessionResult{ConnectorSessionId: body.ConnectorSessionId, PrivateServiceId: f.service, Subject: visitorsubject.Wire(f.subject()), ObservedSourceIp: body.ObservedSourceIp, ExpiresAt: time.Now().Add(duration)}, nil
 }
 func (f *privateControlFixture) AuthorizePrivateServiceStream(ctx context.Context, id string, body ingressv1.PrivateServiceStreamClaim) (ingressv1.PrivateServiceStreamResult, error) {
 	if body.PrivateServiceId != f.service {
@@ -114,7 +119,7 @@ func (f *privateControlFixture) AuthorizePrivateServiceStream(ctx context.Contex
 	if validUntil.IsZero() {
 		validUntil = time.Now().Add(2 * time.Minute)
 	}
-	return ingressv1.PrivateServiceStreamResult{PrivateServiceId: body.PrivateServiceId, PrivateRunId: body.PrivateRunId, ConnectorSessionId: body.ConnectorSessionId, IdentityId: f.identity, DeviceId: f.device, GrantRevision: 1, ObservedSourceIp: body.ObservedSourceIp, VisitorConnectionId: body.VisitorConnectionId, RunNumber: body.RunNumber, ExpiresAt: time.Now().Add(time.Minute), ValidUntil: validUntil}, nil
+	return ingressv1.PrivateServiceStreamResult{PrivateServiceId: body.PrivateServiceId, PrivateRunId: body.PrivateRunId, ConnectorSessionId: body.ConnectorSessionId, Subject: visitorsubject.Wire(f.subject()), GrantRevision: 1, ObservedSourceIp: body.ObservedSourceIp, VisitorConnectionId: body.VisitorConnectionId, RunNumber: body.RunNumber, ExpiresAt: time.Now().Add(time.Minute), ValidUntil: validUntil}, nil
 }
 
 func (f *privateControlFixture) ClosePrivateServiceStream(context.Context, string, string, ingressv1.ClosePrivateServiceStreamJSONRequestBody) error {
@@ -142,7 +147,7 @@ func (f *privateControlFixture) RecheckPrivateServiceVisitor(ctx context.Context
 		}
 	}
 	if id != "ingress-a" || body.PrivateServiceId != f.service || body.PrivateRunId != f.run ||
-		(body.ConnectorSessionId != f.session && body.ConnectorSessionId != f.nextSession) || body.IdentityId != f.identity || body.RunNumber != 1 ||
+		(body.ConnectorSessionId != f.session && body.ConnectorSessionId != f.nextSession) || !visitorsubject.Equal(body.Subject, f.subject()) || body.RunNumber != 1 ||
 		!opaqueid.Valid(body.VisitorConnectionId, opaqueid.VisitorConnectionPrefix) || body.ObservedSourceIp != f.expectedSourceIP() || body.IngressLeaseRevision != 1 {
 		return ingressv1.PrivateServiceVisitorRecheckResult{}, ErrPrivateAdmission
 	}
@@ -427,7 +432,7 @@ func TestPrivateConnectorQUICAuthenticatesDeviceAndPreservesSocketSource(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.Accepted.SourceIP != control.sourceIP || session.Accepted.DeviceID != control.device {
+	if session.Accepted.SourceIP != control.sourceIP || session.Accepted.Subject != control.subject() {
 		t.Fatal("QUIC session changed the enrolled device or socket source")
 	}
 	stream, err := session.OpenStream(ctx)
@@ -456,7 +461,7 @@ func TestPrivateConnectorQUICAuthenticatesDeviceAndPreservesSocketSource(t *test
 
 func privateTestHello(control *privateControlFixture, session, credential string) tunnelv1.PrivateConnectorSessionHello {
 	return tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", PrivateServiceID: control.service, SessionID: session, Credential: credential,
-		DeviceID: control.device, IdentityID: control.identity, Nonce: bytes.Repeat([]byte{1}, 32), Signature: make([]byte, 64)}
+		Subject: control.subject(), Nonce: bytes.Repeat([]byte{1}, 32), Signature: make([]byte, 64)}
 }
 
 func TestPrivateConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T) {
@@ -503,7 +508,7 @@ func TestPrivateConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T)
 	close(control.allowClaim)
 	_ = stream2.SetReadDeadline(time.Now().Add(2 * time.Second))
 	accepted, err := tunnelv1.ReadPrivateVisitorAccepted(stream2)
-	if err != nil || accepted.IdentityID != control.identity || accepted.SourceIP != "192.0.2.4" {
+	if err != nil || accepted.Subject != control.subject() || accepted.SourceIP != "192.0.2.4" {
 		t.Fatalf("claimed visitor acceptance: %+v, %v", accepted, err)
 	}
 	if _, err := stream2.Write([]byte("ping")); err != nil {
@@ -519,7 +524,7 @@ func TestPrivateConnectorAuthenticatesBeforeMuxAndBeforeForwarding(t *testing.T)
 	}
 	select {
 	case header := <-forwarder.observed:
-		if header.VisitorConnectionID != accepted.VisitorConnectionID || header.Connector.SessionID != control.session || header.Connector.DeviceID != control.device || header.Connector.GrantRevision != 1 {
+		if header.VisitorConnectionID != accepted.VisitorConnectionID || header.Connector.SessionID != control.session || header.Connector.Subject != control.subject() || header.Connector.GrantRevision != 1 {
 			t.Fatalf("forwarded binding=%+v", header)
 		}
 	case <-time.After(time.Second):

@@ -168,7 +168,7 @@ func TestTracePrivateMaximumFieldsFitFrameCap(t *testing.T) {
 	h := PrivateForwardingHeader{PrivateStreamHeader: PrivateStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: 1, Kind: PrivateForwardingStream,
 		PrivateServiceID: testOpaqueID(opaqueid.PrivateServicePrefix), PrivateRunID: testOpaqueID(opaqueid.PrivateRunPrefix), RunNumber: math.MaxUint64,
 		SourceIP: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: math.MaxUint64, ExpiresAt: now,
-		Connector: &ConnectorAdmission{SessionID: testOpaqueID(opaqueid.PrivateConnectorSessionPrefix), IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: strings.Repeat("\x01", 128), GrantRevision: math.MaxUint64}},
+		Connector: &ConnectorAdmission{SessionID: testOpaqueID(opaqueid.PrivateConnectorSessionPrefix), Subject: VisitorSubject{Kind: VisitorHumanDevice, IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: testOpaqueID(opaqueid.VisitorDevicePrefix)}, GrantRevision: math.MaxUint64}},
 		ConnectionSlot: 1, RelayServiceID: strings.Repeat("\x01", 256), RelayID: strings.Repeat("\x01", 256), RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayLeaseRevision: math.MaxUint64, LeaseExpiresAt: now}
 	for _, direct := range []bool{false, true} {
 		if direct {
@@ -203,7 +203,7 @@ func TestTracePrivateMaximumFieldsFitFrameCap(t *testing.T) {
 					bad.Direct = &admission
 				} else {
 					admission := *bad.Connector
-					admission.DeviceID += "x"
+					admission.Subject.DeviceID += "x"
 					bad.Connector = &admission
 				}
 			},

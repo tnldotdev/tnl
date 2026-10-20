@@ -220,11 +220,11 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				if line, err := reader.ReadString('\n'); err != nil || line != "data: ready\n" {
 					t.Fatalf("private SSE was buffered: %q %v", line, err)
 				}
-				device, err := control.PrivateConnectorDevice(t.Context(), person.Identity.Id)
+				device, err := control.PrivateConnectorSigner(t.Context(), person.Identity.Id)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.ID); err != nil {
+				if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := io.Copy(io.Discard, reader); err == nil {

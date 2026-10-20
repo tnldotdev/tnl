@@ -491,8 +491,7 @@ components:
           connector_session_id,
           session_credential,
           observed_source_ip,
-          device_id,
-          identity_id,
+          subject,
           nonce,
           signature,
         ]
@@ -502,8 +501,7 @@ components:
         private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
         connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
         session_credential: { type: string, minLength: 32, maxLength: 512 }
-        device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
-        identity_id: { $ref: "#/components/schemas/Identifier" }
+        subject: { $ref: "../../control/v1/openapi.yaml#/components/schemas/VisitorSubject" }
         nonce: { type: string, pattern: "^[0-9a-f]{64}$" }
         signature: { type: string, pattern: "^[A-Za-z0-9_-]{86}$" }
         observed_source_ip:
@@ -516,20 +514,11 @@ components:
     PrivateConnectorSessionResult:
       type: object
       additionalProperties: false
-      required:
-        [
-          connector_session_id,
-          private_service_id,
-          identity_id,
-          device_id,
-          observed_source_ip,
-          expires_at,
-        ]
+      required: [connector_session_id, private_service_id, subject, observed_source_ip, expires_at]
       properties:
         connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
         private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
-        identity_id: { $ref: "#/components/schemas/Identifier" }
-        device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+        subject: { $ref: "../../control/v1/openapi.yaml#/components/schemas/VisitorSubject" }
         observed_source_ip: { type: string, minLength: 3, maxLength: 45 }
         expires_at: { type: string, format: date-time }
     DirectServiceVisitorClaim:
@@ -691,12 +680,11 @@ components:
           private_run_id,
           run_number,
           connector_session_id,
-          identity_id,
+          subject,
           observed_source_ip,
           visitor_connection_id,
           expires_at,
           valid_until,
-          device_id,
           grant_revision,
         ]
       properties:
@@ -704,7 +692,7 @@ components:
         private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
         run_number: { type: integer, format: int64, minimum: 1 }
         connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
-        identity_id: { $ref: "#/components/schemas/Identifier" }
+        subject: { $ref: "../../control/v1/openapi.yaml#/components/schemas/VisitorSubject" }
         observed_source_ip: { type: string, minLength: 3, maxLength: 45 }
         visitor_connection_id: { $ref: "#/components/schemas/VisitorConnectionID" }
         expires_at: { type: string, format: date-time }
@@ -712,7 +700,6 @@ components:
           type: string
           format: date-time
           description: Hard deadline bounded by the current grant, connector session, publisher run, ingress and live relay leases, and at most two minutes from this decision.
-        device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
         grant_revision: { type: integer, format: int64, minimum: 1 }
     PrivateServiceVisitorRecheck:
       type: object
@@ -725,7 +712,7 @@ components:
           private_run_id,
           run_number,
           connector_session_id,
-          identity_id,
+          subject,
           observed_source_ip,
           visitor_connection_id,
         ]
@@ -736,7 +723,7 @@ components:
         private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
         run_number: { type: integer, format: int64, minimum: 1 }
         connector_session_id: { $ref: "#/components/schemas/PrivateConnectorSessionID" }
-        identity_id: { $ref: "#/components/schemas/Identifier" }
+        subject: { $ref: "../../control/v1/openapi.yaml#/components/schemas/VisitorSubject" }
         observed_source_ip:
           {
             type: string,

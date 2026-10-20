@@ -7,6 +7,8 @@ package controlstatedb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getWorkloadSession = `-- name: GetWorkloadSession :one
@@ -67,4 +69,32 @@ func (q *Queries) ListWorkloadSessionServices(ctx context.Context, workloadSessi
 		return nil, err
 	}
 	return items, nil
+}
+
+const visitorServiceConfiguration = `-- name: VisitorServiceConfiguration :one
+SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service
+FROM control.applied_project_services service
+JOIN control.applied_projects project ON project.team_id=service.team_id AND project.project_key=service.project_key
+WHERE service.private_service_id=$1
+`
+
+type VisitorServiceConfigurationRow struct {
+	TeamID                  string
+	ProjectKey              string
+	ConfigurationCiphertext []byte
+	StorageKeyID            string
+	Service                 string
+}
+
+func (q *Queries) VisitorServiceConfiguration(ctx context.Context, privateServiceID pgtype.Text) (VisitorServiceConfigurationRow, error) {
+	row := q.db.QueryRow(ctx, visitorServiceConfiguration, privateServiceID)
+	var i VisitorServiceConfigurationRow
+	err := row.Scan(
+		&i.TeamID,
+		&i.ProjectKey,
+		&i.ConfigurationCiphertext,
+		&i.StorageKeyID,
+		&i.Service,
+	)
+	return i, err
 }

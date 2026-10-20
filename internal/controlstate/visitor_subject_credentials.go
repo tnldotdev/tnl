@@ -55,14 +55,16 @@ func (d *Database) AuthenticateVisitorConnector(ctx context.Context, lease Ingre
 	if err != nil {
 		return result, err
 	}
-	if !ed25519.Verify(key, proof, claim.Signature) {
+	if len(key) != ed25519.PublicKeySize || len(claim.Signature) != ed25519.SignatureSize || !ed25519.Verify(key, proof, claim.Signature) {
 		return result, ErrPrivateServiceAccess
 	}
 	if _, err = tx.Exec(ctx, `UPDATE control.private_connector_sessions SET bound_at=$2,source_ip=$3,ingress_id=$4,ingress_run_id=$5,ingress_lease_revision=$6 WHERE id=$1`, claim.SessionID, now, source.Unmap(), lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision)); err != nil {
 		return result, err
 	}
 	result.ID, result.PrivateServiceID, result.Subject, result.IdentityID, result.DeviceID, result.SourceIP = claim.SessionID, claim.ServiceID, claim.Subject, identity, device, source.Unmap()
-	result.ExpiresAt = minTime(result.ExpiresAt, until)
+	if claim.Subject.Kind == tunnelv1.VisitorHumanDevice {
+		result.ExpiresAt = minTime(result.ExpiresAt, until)
+	}
 	return result, tx.Commit(ctx)
 }
 
@@ -73,6 +75,15 @@ func (d *Database) RecheckVisitorServiceStream(ctx context.Context, lease Ingres
 		return result, ErrPrivateServiceAccess
 	}
 	if subject.WorkloadSessionID == "" {
+		// the human decision also binds the device carried by the new tagged
+		// request. session identity/device fields are immutable after creation.
+		var matches bool
+		if err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.private_connector_sessions WHERE id=$1 AND identity_id=$2 AND device_id=$3 AND workload_session_id IS NULL)`, session, subject.IdentityID, subject.DeviceID).Scan(&matches); err != nil {
+			return result, err
+		}
+		if !matches {
+			return result, ErrPrivateServiceAccess
+		}
 		return d.RecheckPrivateServiceVisitor(ctx, lease, service, run, session, subject.IdentityID, visitor, number, source, now)
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -123,17 +134,15 @@ type SubjectConnectorVisitor struct {
 	Subject                 VisitorSubject
 	SessionID, ConnectionID string
 	Source                  netip.Addr
+	GrantRevision           int64
 }
 
 // AuthorizeVisitorServiceConnector is the publisher-facing subject-aware
 // authorization API. a current run token and the exact admitted stream are both
 // required; a workload credential cannot impersonate a publisher.
 func (d *Database) AuthorizeVisitorServiceConnector(ctx context.Context, service, run, token string, number int64, v SubjectConnectorVisitor, now time.Time) (result PrivateVisitorValidity, retErr error) {
-	if v.Subject.Validate() != nil || !opaqueid.Valid(v.ConnectionID, opaqueid.VisitorConnectionPrefix) || !opaqueid.Valid(v.SessionID, opaqueid.PrivateConnectorSessionPrefix) || !v.Source.IsValid() || v.Source.Zone() != "" {
+	if v.Subject.Validate() != nil || v.GrantRevision < 1 || !opaqueid.Valid(v.ConnectionID, opaqueid.VisitorConnectionPrefix) || !opaqueid.Valid(v.SessionID, opaqueid.PrivateConnectorSessionPrefix) || !v.Source.IsValid() || v.Source.Zone() != "" {
 		return result, ErrPrivateServiceAccess
-	}
-	if v.Subject.WorkloadSessionID == "" {
-		return d.AuthorizeServiceConnector(ctx, service, run, token, number, ConnectorVisitor{IdentityID: v.Subject.IdentityID, DeviceID: v.Subject.DeviceID, SessionID: v.SessionID, ConnectionID: v.ConnectionID, Source: v.Source}, now)
 	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
@@ -153,6 +162,21 @@ func (d *Database) AuthorizeVisitorServiceConnector(ctx context.Context, service
 	}
 	if current.RunNumber != number {
 		return result, ErrPrivateServiceAccess
+	}
+	var revisionMatch bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.private_visitor_streams WHERE visitor_connection_id=$1 AND private_service_id=$2 AND private_run_id=$3 AND connector_session_id=$4 AND run_number=$5 AND grant_revision=$6)`, v.ConnectionID, service, run, v.SessionID, number, v.GrantRevision).Scan(&revisionMatch); err != nil {
+		return result, err
+	}
+	if !revisionMatch {
+		return result, ErrPrivateServiceAccess
+	}
+	if v.Subject.Kind == tunnelv1.VisitorHumanDevice {
+		result, err = recheckServiceConnector(ctx, tx, service, run, number, ConnectorVisitor{IdentityID: v.Subject.IdentityID, DeviceID: v.Subject.DeviceID, SessionID: v.SessionID, ConnectionID: v.ConnectionID, Source: v.Source}, now)
+		if err != nil {
+			return result, err
+		}
+		result.Admitted = result.Allowed
+		return result, tx.Commit(ctx)
 	}
 	var lease IngressLeaseIdentity
 	var revision int64

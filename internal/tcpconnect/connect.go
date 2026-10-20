@@ -2,7 +2,6 @@
 package tcpconnect
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
@@ -23,23 +22,25 @@ import (
 
 var ErrPrivateConnection = errors.New("private service: authenticated connection is unavailable")
 
-// Device is loaded from encrypted client state by the control adapter. it is
-// enrolled for exactly one signed-in identity; it is never a stream credential.
-type Device struct {
-	ID, IdentityID string
-	SigningKey     ed25519.PrivateKey `json:"-"`
+// Signer binds one tagged subject to its public key and proof operation. the
+// workload adapter retains its ephemeral private key in workloadclient.
+type Signer struct {
+	Subject   tunnelv1.VisitorSubject
+	PublicKey ed25519.PublicKey
+	Sign      func([]byte) []byte `json:"-"`
 }
 
-func (Device) String() string   { return "private connector device" }
-func (Device) GoString() string { return "private connector device" }
+func (Signer) String() string   { return "private connector signer" }
+func (Signer) GoString() string { return "private connector signer" }
 
 type Assignment struct {
-	SessionID, PrivateServiceID, DeviceID, IdentityID string
-	IngressID                                         string
-	Endpoint                                          muxsession.Endpoint
-	Credential                                        string
-	ExpiresAt                                         time.Time
-	TransportTLS                                      *tls.Config
+	SessionID, PrivateServiceID string
+	Subject                     tunnelv1.VisitorSubject
+	IngressID                   string
+	Endpoint                    muxsession.Endpoint
+	Credential                  string
+	ExpiresAt                   time.Time
+	TransportTLS                *tls.Config
 }
 
 func (Assignment) String() string   { return "private connector assignment" }
@@ -61,8 +62,8 @@ func (Run) String() string   { return "selected private service run" }
 func (Run) GoString() string { return "selected private service run" }
 
 type Control interface {
-	PrivateConnectorDevice(context.Context, string) (Device, error)
-	PrivateConnectorAssignment(context.Context, string, string, uint8) (Assignment, error)
+	PrivateConnectorSigner(context.Context, string) (Signer, error)
+	PrivateConnectorAssignment(context.Context, string, tunnelv1.VisitorSubject, uint8) (Assignment, error)
 	ResolvePrivateService(context.Context, string) (Run, error)
 }
 
@@ -187,7 +188,7 @@ type connectionConsumer func(context.Context, func(context.Context, net.Conn) er
 
 func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, single bool, consume connectionConsumer) (result error) {
 	if config.Control == nil || !opaqueid.Valid(config.PrivateServiceID, opaqueid.PrivateServicePrefix) ||
-		!opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix) || !validProtocol(config.Protocol) || config.TrustRevision < 1 {
+		(config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix)) || !validProtocol(config.Protocol) || config.TrustRevision < 1 {
 		return ErrPrivateConnection
 	}
 	if config.TransportTLS != nil && config.TransportTLS.InsecureSkipVerify {
@@ -214,19 +215,18 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 	}
 	serveCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	device, err := config.Control.PrivateConnectorDevice(ctx, config.IdentityID)
+	signer, err := config.Control.PrivateConnectorSigner(ctx, config.IdentityID)
 	if err != nil {
 		return err
 	}
-	if device.IdentityID != config.IdentityID || device.ID == "" || len(device.SigningKey) != ed25519.PrivateKeySize ||
-		!bytes.Equal(ed25519.NewKeyFromSeed(device.SigningKey.Seed()), device.SigningKey) {
+	if signer.Subject.Validate() != nil || signer.Subject.IdentityID != config.IdentityID || len(signer.PublicKey) != ed25519.PublicKeySize || signer.Sign == nil {
 		return ErrPrivateConnection
 	}
 	var assignmentMu sync.Mutex
 	var assignedIngress [2]string
 	attempted := make(map[string]bool)
 	paths, err := tunnel.NewSlots(serveCtx, tunnel.SlotsConfig{Connect: func(ctx context.Context, slot uint8, preferTCP bool) (tunnel.SlotSession, error) {
-		assignment, err := config.Control.PrivateConnectorAssignment(ctx, config.PrivateServiceID, device.ID, slot)
+		assignment, err := config.Control.PrivateConnectorAssignment(ctx, config.PrivateServiceID, signer.Subject, slot)
 		if err != nil {
 			if single {
 				cancel(err)
@@ -254,7 +254,7 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 				_ = release()
 			}
 		}()
-		if !opaqueid.Valid(assignment.SessionID, opaqueid.PrivateConnectorSessionPrefix) || assignment.PrivateServiceID != config.PrivateServiceID || assignment.DeviceID != device.ID || assignment.IdentityID != config.IdentityID ||
+		if !opaqueid.Valid(assignment.SessionID, opaqueid.PrivateConnectorSessionPrefix) || assignment.PrivateServiceID != config.PrivateServiceID || assignment.Subject != signer.Subject ||
 			!assignment.ExpiresAt.After(time.Now()) || assignment.IngressID == "" || assignment.Endpoint.ServerName == "" || assignment.Endpoint.Address == "" {
 			return nil, ErrPrivateConnection
 		}
@@ -283,12 +283,15 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 		}
 		hello := tunnelv1.PrivateConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session",
 			PrivateServiceID: config.PrivateServiceID, SessionID: assignment.SessionID, Credential: assignment.Credential,
-			DeviceID: device.ID, IdentityID: device.IdentityID, Nonce: nonce}
-		digest, err := tunnelv1.PrivateConnectorHelloDigest(hello)
+			Subject: signer.Subject, Nonce: nonce}
+		digest, err := hello.Claim().Digest()
 		if err != nil {
 			return nil, err
 		}
-		hello.Signature = ed25519.Sign(device.SigningKey, digest)
+		hello.Signature = signer.Sign(digest)
+		if !ed25519.Verify(signer.PublicKey, digest, hello.Signature) {
+			return nil, ErrPrivateConnection
+		}
 		primary := tunnel.Candidate{Connector: muxsession.PrivateQUICConnector{TLSConfig: roots}, Endpoint: assignment.Endpoint, Transport: tunnel.TransportQUIC}
 		fallback := tunnel.Candidate{Connector: muxsession.PrivateMuxTLSConnector{TLSConfig: roots}, Endpoint: assignment.Endpoint, Transport: tunnel.TransportTLSTCP}
 		if preferTCP {
@@ -436,8 +439,7 @@ func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.
 	if err != nil {
 		return nil, false, err
 	}
-	if accepted.ConnectorSessionID != path.Accepted.SessionID || accepted.IdentityID != path.Accepted.IdentityID ||
-		accepted.DeviceID != path.Accepted.DeviceID || accepted.SourceIP != path.Accepted.SourceIP {
+	if accepted.ConnectorSessionID != path.Accepted.SessionID || accepted.Subject != path.Accepted.Subject || accepted.SourceIP != path.Accepted.SourceIP {
 		return nil, true, ErrPrivateConnection
 	}
 	if run.ManagedTLS == nil {

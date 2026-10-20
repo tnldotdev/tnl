@@ -12,17 +12,18 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
+	"github.com/tnldotdev/tnl/internal/visitorsubject"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type privateServiceStore interface {
-	AuthenticatePrivateConnector(context.Context, controlstate.IngressLeaseIdentity, tunnelv1.PrivateConnectorSessionHello, netip.Addr, time.Time) (controlstate.PrivateConnectorSession, error)
+	AuthenticateVisitorConnector(context.Context, controlstate.IngressLeaseIdentity, tunnelv1.VisitorConnectorClaim, netip.Addr, time.Time) (controlstate.PrivateConnectorSession, error)
 	AuthorizePrivateServiceStream(context.Context, controlstate.IngressLeaseIdentity, string, string, string, string, int64, netip.Addr, time.Time) (controlstate.PrivateStreamAuthorization, error)
 	ClosePrivateServiceStream(context.Context, controlstate.IngressLeaseIdentity, string, string, time.Time) error
 	ReadPrivateServiceSnapshot(context.Context, controlstate.IngressLeaseIdentity, time.Time) (controlstate.PrivateServiceRoutingSnapshot, error)
 	ReadPrivateServiceEvents(context.Context, controlstate.IngressLeaseIdentity, int64, time.Time) (controlstate.PrivateServiceRoutingSnapshot, error)
-	RecheckPrivateServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, string, string, string, string, int64, netip.Addr, time.Time) (controlstate.PrivateVisitorValidity, error)
+	RecheckVisitorServiceStream(context.Context, controlstate.IngressLeaseIdentity, string, string, string, string, controlstate.VisitorSubject, int64, netip.Addr, time.Time) (controlstate.PrivateVisitorValidity, error)
 }
 
 func (h *handler) closePrivateServiceStream(w http.ResponseWriter, r *http.Request, ingressID, visitorID string) {
@@ -52,8 +53,9 @@ func (h *handler) recheckPrivateServiceVisitor(w http.ResponseWriter, r *http.Re
 	}
 	lease, ok := ingressLeaseIdentity(ingressID, body.IngressRunId, body.IngressLeaseRevision)
 	source, sourceOK := privateSource(body.ObservedSourceIp)
+	subject, subjectErr := visitorsubject.Parse(body.Subject)
 	if !ok || !sourceOK || body.RunNumber < 1 || body.VisitorConnectionId == "" ||
-		body.PrivateServiceId == "" || body.PrivateRunId == "" || body.ConnectorSessionId == "" || body.IdentityId == "" {
+		body.PrivateServiceId == "" || body.PrivateRunId == "" || body.ConnectorSessionId == "" || subjectErr != nil {
 		serviceapi.WriteProblem(w, http.StatusBadRequest, "invalid_request", "Private visitor recheck identity is invalid")
 		return
 	}
@@ -62,8 +64,8 @@ func (h *handler) recheckPrivateServiceVisitor(w http.ResponseWriter, r *http.Re
 		return
 	}
 	now := h.service.now()
-	validity, err := store.RecheckPrivateServiceVisitor(r.Context(), lease, body.PrivateServiceId,
-		body.PrivateRunId, body.ConnectorSessionId, body.IdentityId, body.VisitorConnectionId,
+	validity, err := store.RecheckVisitorServiceStream(r.Context(), lease, body.PrivateServiceId,
+		body.PrivateRunId, body.ConnectorSessionId, body.VisitorConnectionId, subject,
 		body.RunNumber, source, now)
 	if errors.Is(err, controlstate.ErrPrivateServiceAccess) {
 		validity, err = controlstate.PrivateVisitorValidity{ValidUntil: now}, nil
@@ -105,13 +107,14 @@ func (h *handler) claimPrivateConnectorSession(w http.ResponseWriter, r *http.Re
 	}
 	nonce, nerr := hex.DecodeString(body.Nonce)
 	sig, serr := base64.RawURLEncoding.Strict().DecodeString(body.Signature)
-	if nerr != nil || serr != nil {
-		serviceapi.WriteProblem(w, 400, "invalid_request", "invalid device proof")
+	subject, subjectErr := visitorsubject.Parse(body.Subject)
+	if nerr != nil || serr != nil || subjectErr != nil {
+		serviceapi.WriteProblem(w, 400, "invalid_request", "invalid visitor key proof")
 		return
 	}
-	session, err := store.AuthenticatePrivateConnector(r.Context(), lease, tunnelv1.PrivateConnectorSessionHello{
-		ProtocolVersion: tunnelv1.Version, Kind: "private_connector_session", PrivateServiceID: body.PrivateServiceId, SessionID: body.ConnectorSessionId,
-		Credential: body.SessionCredential, DeviceID: body.DeviceId, IdentityID: body.IdentityId, Nonce: nonce, Signature: sig}, source, h.service.now())
+	session, err := store.AuthenticateVisitorConnector(r.Context(), lease, tunnelv1.VisitorConnectorClaim{
+		ServiceID: body.PrivateServiceId, SessionID: body.ConnectorSessionId,
+		Credential: body.SessionCredential, Subject: subject, Nonce: nonce, Signature: sig}, source, h.service.now())
 	if errors.Is(err, controlstate.ErrPrivateServiceAccess) {
 		serviceapi.WriteProblem(w, 403, "forbidden", "Private connector session is not current")
 		return
@@ -120,8 +123,7 @@ func (h *handler) claimPrivateConnectorSession(w http.ResponseWriter, r *http.Re
 		return
 	}
 	serviceapi.WriteJSON(w, 200, ingressv1.PrivateConnectorSessionResult{
-		ConnectorSessionId: session.ID, PrivateServiceId: session.PrivateServiceID, IdentityId: session.IdentityID,
-		DeviceId:         session.DeviceID,
+		ConnectorSessionId: session.ID, PrivateServiceId: session.PrivateServiceID, Subject: visitorsubject.Wire(session.Subject),
 		ObservedSourceIp: session.SourceIP.String(), ExpiresAt: session.ExpiresAt,
 	})
 }
@@ -152,11 +154,11 @@ func (h *handler) authorizePrivateServiceStream(w http.ResponseWriter, r *http.R
 	}
 	serviceapi.WriteJSON(w, 200, ingressv1.PrivateServiceStreamResult{
 		PrivateServiceId: claimed.PrivateServiceID, PrivateRunId: claimed.PrivateRunID,
-		ConnectorSessionId: claimed.ConnectorSessionID, IdentityId: claimed.IdentityID,
+		ConnectorSessionId: claimed.ConnectorSessionID, Subject: visitorsubject.Wire(claimed.Subject),
 		RunNumber: claimed.RunNumber, ObservedSourceIp: claimed.SourceIP.String(),
 		ExpiresAt: claimed.ExpiresAt, VisitorConnectionId: body.VisitorConnectionId,
-		ValidUntil: claimed.ValidUntil,
-		DeviceId:   claimed.DeviceID, GrantRevision: claimed.GrantRevision,
+		ValidUntil:    claimed.ValidUntil,
+		GrantRevision: claimed.GrantRevision,
 	})
 }
 

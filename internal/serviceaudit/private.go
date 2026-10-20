@@ -3,7 +3,7 @@ package serviceaudit
 import (
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/visitorsubject"
 	"github.com/tnldotdev/tnl/pkg/api/ingressv1"
 )
 
@@ -15,7 +15,8 @@ func NewPrivateSessionDenial(bound ingressv1.PrivateConnectorSessionResult, visi
 		ServiceKind: "private_service", ConnectorSessionID: bound.ConnectorSessionId,
 		VisitorConnectionID: visitorID, SourceIP: bound.ObservedSourceIp,
 		EventType: "connection.open", Outcome: "denied", Reason: "authorization"}
-	if !ValidReference(bound.IdentityId) || !opaqueid.Valid(bound.DeviceId, "vdev_") || bound.ExpiresAt.IsZero() || o.Validate() != nil {
+	_, subjectErr := visitorsubject.Parse(bound.Subject)
+	if subjectErr != nil || bound.ExpiresAt.IsZero() || o.Validate() != nil {
 		return Observation{}, ErrInvalid
 	}
 	return o, nil
@@ -26,8 +27,8 @@ func NewPrivateSessionDenial(bound ingressv1.PrivateConnectorSessionResult, visi
 // its session, identity, device and observed source must still match exactly.
 func NewPrivateStreamObservation(bound ingressv1.PrivateConnectorSessionResult, admitted ingressv1.PrivateServiceStreamResult, eventType, outcome, reason string) (Observation, error) {
 	o, err := NewPrivateSessionDenial(bound, admitted.VisitorConnectionId)
-	if err != nil || admitted.ConnectorSessionId != bound.ConnectorSessionId || admitted.IdentityId != bound.IdentityId ||
-		admitted.DeviceId != bound.DeviceId || admitted.ObservedSourceIp != bound.ObservedSourceIp ||
+	if err != nil || admitted.ConnectorSessionId != bound.ConnectorSessionId || !visitorsubject.Same(admitted.Subject, bound.Subject) ||
+		admitted.ObservedSourceIp != bound.ObservedSourceIp ||
 		admitted.GrantRevision < 1 || admitted.ExpiresAt.IsZero() || admitted.ValidUntil.IsZero() {
 		return Observation{}, ErrInvalid
 	}

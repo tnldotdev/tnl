@@ -360,6 +360,21 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for KubernetesAuthProvider.
+const (
+	KubernetesEKS KubernetesAuthProvider = "eks"
+)
+
+// Valid indicates whether the value is a known member of the KubernetesAuthProvider enum.
+func (e KubernetesAuthProvider) Valid() bool {
+	switch e {
+	case KubernetesEKS:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for LocalProjectServiceServiceKind.
 const (
 	LocalProjectServiceServiceKindPrivateService LocalProjectServiceServiceKind = "private_service"
@@ -1580,11 +1595,13 @@ type AuthorizeServiceClientCertificateRequest struct {
 
 // AuthorizeServiceConnectorRequest defines model for AuthorizeServiceConnectorRequest.
 type AuthorizeServiceConnectorRequest struct {
-	ConnectorSessionId  string              `json:"connector_session_id"`
-	DeviceId            string              `json:"device_id"`
-	IdentityId          string              `json:"identity_id"`
-	RunNumber           int64               `json:"run_number"`
-	SourceIp            string              `json:"source_ip"`
+	ConnectorSessionId string `json:"connector_session_id"`
+	GrantRevision      int64  `json:"grant_revision"`
+	RunNumber          int64  `json:"run_number"`
+	SourceIp           string `json:"source_ip"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject             VisitorSubject      `json:"subject"`
 	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
 }
 
@@ -2156,6 +2173,16 @@ type IssueServiceClientCertificateRequest struct {
 	DeviceId string `json:"device_id"`
 }
 
+// KubernetesAuth Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
+type KubernetesAuth struct {
+	Cluster  string                 `json:"cluster"`
+	Provider KubernetesAuthProvider `json:"provider"`
+	Region   string                 `json:"region"`
+}
+
+// KubernetesAuthProvider defines model for KubernetesAuth.Provider.
+type KubernetesAuthProvider string
+
 // LocalProjectService defines model for LocalProjectService.
 type LocalProjectService struct {
 	Hostname       *string                        `json:"hostname,omitempty"`
@@ -2302,16 +2329,17 @@ type PrivateConnectorSessionID = string
 // PrivateConnectorSessionSetup defines model for PrivateConnectorSessionSetup.
 type PrivateConnectorSessionSetup struct {
 	ConnectorSessionId PrivateConnectorSessionID `json:"connector_session_id"`
-	DeviceId           string                    `json:"device_id"`
 	ExpiresAt          time.Time                 `json:"expires_at"`
-	IdentityId         IdentityID                `json:"identity_id"`
 
 	// IngressAddress Shared ingress infrastructure TLS endpoint
 	IngressAddress    string           `json:"ingress_address"`
 	IngressId         string           `json:"ingress_id"`
 	PrivateServiceId  PrivateServiceID `json:"private_service_id"`
 	SessionCredential string           `json:"session_credential"`
-	TlsServerName     string           `json:"tls_server_name"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject       VisitorSubject `json:"subject"`
+	TlsServerName string         `json:"tls_server_name"`
 }
 
 // PrivateRunID defines model for PrivateRunID.
@@ -2326,6 +2354,9 @@ type PrivateService struct {
 	// HttpLimits Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
 	HttpLimits *ProjectHTTPApplicationLimits `json:"http_limits,omitempty"`
 	Id         PrivateServiceID              `json:"id"`
+
+	// KubernetesAuth Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
+	KubernetesAuth *KubernetesAuth `json:"kubernetes_auth,omitempty"`
 
 	// ManagedTls Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
 	ManagedTls *ManagedServiceTLS       `json:"managed_tls,omitempty"`
@@ -2475,9 +2506,7 @@ type PrivateServiceRunStateState string
 
 // PrivateServiceSelection defines model for PrivateServiceSelection.
 type PrivateServiceSelection struct {
-	DeviceId   string     `json:"device_id"`
-	ExpiresAt  time.Time  `json:"expires_at"`
-	IdentityId IdentityID `json:"identity_id"`
+	ExpiresAt time.Time `json:"expires_at"`
 
 	// ManagedTls Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
 	ManagedTls       *ManagedServiceTLS     `json:"managed_tls,omitempty"`
@@ -2485,7 +2514,10 @@ type PrivateServiceSelection struct {
 	PrivateServiceId PrivateServiceID       `json:"private_service_id"`
 	Protocol         PrivateServiceProtocol `json:"protocol"`
 	RunNumber        int64                  `json:"run_number"`
-	TrustRevision    int64                  `json:"trust_revision"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject       VisitorSubject `json:"subject"`
+	TrustRevision int64          `json:"trust_revision"`
 }
 
 // PrivateServiceTLS Approved publisher-to-target trust. This never selects or disables visitor TLS.
@@ -3477,6 +3509,9 @@ type WorkloadServices struct {
 	Services []struct {
 		Id string `json:"id"`
 
+		// KubernetesAuth Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
+		KubernetesAuth *KubernetesAuth `json:"kubernetes_auth,omitempty"`
+
 		// ManagedTls Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
 		ManagedTls ManagedServiceTLS      `json:"managed_tls"`
 		Protocol   PrivateServiceProtocol `json:"protocol"`
@@ -3766,7 +3801,9 @@ type IssueWorkloadServiceClientCertificateJSONBody struct {
 
 // CreateWorkloadIngressAssignmentsJSONBody defines parameters for CreateWorkloadIngressAssignments.
 type CreateWorkloadIngressAssignmentsJSONBody struct {
-	IdempotencyKey string `json:"idempotency_key"`
+	Count            *int    `json:"count,omitempty"`
+	ExcludeIngressId *string `json:"exclude_ingress_id,omitempty"`
+	IdempotencyKey   string  `json:"idempotency_key"`
 }
 
 // SetMaintenanceControlJSONRequestBody defines body for SetMaintenanceControl for application/json ContentType.
@@ -5202,6 +5239,12 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
 	GetWebhookProviderSource(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReleaseWorkloadIngressAssignment performs a DELETE /v1/workload/ingress-assignments/{session_id} (the `ReleaseWorkloadIngressAssignment` operationId) request.
+	ReleaseWorkloadIngressAssignment(ctx context.Context, sessionId PrivateConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWorkloadIngressTransportTrust performs a GET /v1/workload/ingress-assignments/{session_id}/transport-trust (the `GetWorkloadIngressTransportTrust` operationId) request.
+	GetWorkloadIngressTransportTrust(ctx context.Context, sessionId PrivateConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListWorkloadServices List only the workload session's currently authorized saved services
 	//
 	// Corresponds with GET /v1/workload/services (the `ListWorkloadServices` operationId).
@@ -5225,6 +5268,9 @@ type ClientInterface interface {
 	// CreateWorkloadIngressAssignments performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request.
 	// Takes a body of the `application/json` content type.
 	CreateWorkloadIngressAssignments(ctx context.Context, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SelectWorkloadServiceRun performs a POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId) request.
+	SelectWorkloadServiceRun(ctx context.Context, serviceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListMaintenanceControls List maintenance controls
@@ -8298,6 +8344,32 @@ func (c *Client) GetWebhookProviderSource(ctx context.Context, provider WebhookP
 	return c.Client.Do(req)
 }
 
+// ReleaseWorkloadIngressAssignment performs a DELETE /v1/workload/ingress-assignments/{session_id} (the `ReleaseWorkloadIngressAssignment` operationId) request.
+func (c *Client) ReleaseWorkloadIngressAssignment(ctx context.Context, sessionId PrivateConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseWorkloadIngressAssignmentRequest(c.Server, sessionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetWorkloadIngressTransportTrust performs a GET /v1/workload/ingress-assignments/{session_id}/transport-trust (the `GetWorkloadIngressTransportTrust` operationId) request.
+func (c *Client) GetWorkloadIngressTransportTrust(ctx context.Context, sessionId PrivateConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWorkloadIngressTransportTrustRequest(c.Server, sessionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListWorkloadServices List only the workload session's currently authorized saved services
 //
 // Corresponds with GET /v1/workload/services (the `ListWorkloadServices` operationId).
@@ -8372,6 +8444,19 @@ func (c *Client) CreateWorkloadIngressAssignmentsWithBody(ctx context.Context, s
 // Takes a body of the `application/json` content type.
 func (c *Client) CreateWorkloadIngressAssignments(ctx context.Context, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateWorkloadIngressAssignmentsRequest(c.Server, serviceId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SelectWorkloadServiceRun performs a POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId) request.
+func (c *Client) SelectWorkloadServiceRun(ctx context.Context, serviceId PrivateServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSelectWorkloadServiceRunRequest(c.Server, serviceId)
 	if err != nil {
 		return nil, err
 	}
@@ -14610,6 +14695,74 @@ func NewGetWebhookProviderSourceRequest(server string, provider WebhookProvider)
 	return req, nil
 }
 
+// NewReleaseWorkloadIngressAssignmentRequest constructs an http.Request for the ReleaseWorkloadIngressAssignment method
+func NewReleaseWorkloadIngressAssignmentRequest(server string, sessionId PrivateConnectorSessionID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workload/ingress-assignments/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetWorkloadIngressTransportTrustRequest constructs an http.Request for the GetWorkloadIngressTransportTrust method
+func NewGetWorkloadIngressTransportTrustRequest(server string, sessionId PrivateConnectorSessionID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workload/ingress-assignments/%s/transport-trust", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListWorkloadServicesRequest constructs an http.Request for the ListWorkloadServices method
 func NewListWorkloadServicesRequest(server string) (*http.Request, error) {
 	var err error
@@ -14761,6 +14914,40 @@ func NewCreateWorkloadIngressAssignmentsRequestWithBody(server string, serviceId
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSelectWorkloadServiceRunRequest constructs an http.Request for the SelectWorkloadServiceRun method
+func NewSelectWorkloadServiceRunRequest(server string, serviceId PrivateServiceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workload/services/%s/run", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -16086,6 +16273,16 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
 	GetWebhookProviderSourceWithResponse(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*GetWebhookProviderSourceResponse, error)
 
+	// ReleaseWorkloadIngressAssignmentWithResponse performs a DELETE /v1/workload/ingress-assignments/{session_id} (the `ReleaseWorkloadIngressAssignment` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ReleaseWorkloadIngressAssignmentWithResponse(ctx context.Context, sessionId PrivateConnectorSessionID, reqEditors ...RequestEditorFn) (*ReleaseWorkloadIngressAssignmentResponse, error)
+
+	// GetWorkloadIngressTransportTrustWithResponse performs a GET /v1/workload/ingress-assignments/{session_id}/transport-trust (the `GetWorkloadIngressTransportTrust` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetWorkloadIngressTransportTrustWithResponse(ctx context.Context, sessionId PrivateConnectorSessionID, reqEditors ...RequestEditorFn) (*GetWorkloadIngressTransportTrustResponse, error)
+
 	// ListWorkloadServicesWithResponse List only the workload session's currently authorized saved services
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -16117,6 +16314,11 @@ type ClientWithResponsesInterface interface {
 	// CreateWorkloadIngressAssignmentsWithResponse performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	CreateWorkloadIngressAssignmentsWithResponse(ctx context.Context, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWorkloadIngressAssignmentsResponse, error)
+
+	// SelectWorkloadServiceRunWithResponse performs a POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	SelectWorkloadServiceRunWithResponse(ctx context.Context, serviceId PrivateServiceID, reqEditors ...RequestEditorFn) (*SelectWorkloadServiceRunResponse, error)
 }
 
 type ListMaintenanceControlsResponse struct {
@@ -22165,6 +22367,95 @@ func (r GetWebhookProviderSourceResponse) ContentType() string {
 	return ""
 }
 
+type ReleaseWorkloadIngressAssignmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReleaseWorkloadIngressAssignmentResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReleaseWorkloadIngressAssignmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReleaseWorkloadIngressAssignmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReleaseWorkloadIngressAssignmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReleaseWorkloadIngressAssignmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetWorkloadIngressTransportTrustResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *IngressTransportTrust
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetWorkloadIngressTransportTrustResponse) GetJSON200() *IngressTransportTrust {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetWorkloadIngressTransportTrustResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetWorkloadIngressTransportTrustResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWorkloadIngressTransportTrustResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWorkloadIngressTransportTrustResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetWorkloadIngressTransportTrustResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListWorkloadServicesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -22351,6 +22642,54 @@ func (r CreateWorkloadIngressAssignmentsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateWorkloadIngressAssignmentsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SelectWorkloadServiceRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PrivateServiceSelection
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SelectWorkloadServiceRunResponse) GetJSON200() *PrivateServiceSelection {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SelectWorkloadServiceRunResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SelectWorkloadServiceRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SelectWorkloadServiceRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SelectWorkloadServiceRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SelectWorkloadServiceRunResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -24828,6 +25167,28 @@ func (c *ClientWithResponses) GetWebhookProviderSourceWithResponse(ctx context.C
 	return ParseGetWebhookProviderSourceResponse(rsp)
 }
 
+// ReleaseWorkloadIngressAssignmentWithResponse performs a DELETE /v1/workload/ingress-assignments/{session_id} (the `ReleaseWorkloadIngressAssignment` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ReleaseWorkloadIngressAssignmentWithResponse(ctx context.Context, sessionId PrivateConnectorSessionID, reqEditors ...RequestEditorFn) (*ReleaseWorkloadIngressAssignmentResponse, error) {
+	rsp, err := c.ReleaseWorkloadIngressAssignment(ctx, sessionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseWorkloadIngressAssignmentResponse(rsp)
+}
+
+// GetWorkloadIngressTransportTrustWithResponse performs a GET /v1/workload/ingress-assignments/{session_id}/transport-trust (the `GetWorkloadIngressTransportTrust` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetWorkloadIngressTransportTrustWithResponse(ctx context.Context, sessionId PrivateConnectorSessionID, reqEditors ...RequestEditorFn) (*GetWorkloadIngressTransportTrustResponse, error) {
+	rsp, err := c.GetWorkloadIngressTransportTrust(ctx, sessionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWorkloadIngressTransportTrustResponse(rsp)
+}
+
 // ListWorkloadServicesWithResponse List only the workload session's currently authorized saved services
 //
 // Returns a wrapper object for the known response body format(s).
@@ -24894,6 +25255,17 @@ func (c *ClientWithResponses) CreateWorkloadIngressAssignmentsWithResponse(ctx c
 		return nil, err
 	}
 	return ParseCreateWorkloadIngressAssignmentsResponse(rsp)
+}
+
+// SelectWorkloadServiceRunWithResponse performs a POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) SelectWorkloadServiceRunWithResponse(ctx context.Context, serviceId PrivateServiceID, reqEditors ...RequestEditorFn) (*SelectWorkloadServiceRunResponse, error) {
+	rsp, err := c.SelectWorkloadServiceRun(ctx, serviceId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSelectWorkloadServiceRunResponse(rsp)
 }
 
 // ParseListMaintenanceControlsResponse parses an HTTP response from a ListMaintenanceControlsWithResponse call
@@ -29091,6 +29463,68 @@ func ParseGetWebhookProviderSourceResponse(rsp *http.Response) (*GetWebhookProvi
 	return response, nil
 }
 
+// ParseReleaseWorkloadIngressAssignmentResponse parses an HTTP response from a ReleaseWorkloadIngressAssignmentWithResponse call
+func ParseReleaseWorkloadIngressAssignmentResponse(rsp *http.Response) (*ReleaseWorkloadIngressAssignmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReleaseWorkloadIngressAssignmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetWorkloadIngressTransportTrustResponse parses an HTTP response from a GetWorkloadIngressTransportTrustWithResponse call
+func ParseGetWorkloadIngressTransportTrustResponse(rsp *http.Response) (*GetWorkloadIngressTransportTrustResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWorkloadIngressTransportTrustResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IngressTransportTrust
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListWorkloadServicesResponse parses an HTTP response from a ListWorkloadServicesWithResponse call
 func ParseListWorkloadServicesResponse(rsp *http.Response) (*ListWorkloadServicesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -29206,6 +29640,39 @@ func ParseCreateWorkloadIngressAssignmentsResponse(rsp *http.Response) (*CreateW
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest WorkloadIngressAssignments
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSelectWorkloadServiceRunResponse parses an HTTP response from a SelectWorkloadServiceRunWithResponse call
+func ParseSelectWorkloadServiceRunResponse(rsp *http.Response) (*SelectWorkloadServiceRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SelectWorkloadServiceRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrivateServiceSelection
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -29612,6 +30079,12 @@ type ServerInterface interface {
 	// GetWebhookProviderSource Read one webhook provider source policy
 	// (GET /v1/webhook-providers/{provider}/source)
 	GetWebhookProviderSource(w http.ResponseWriter, r *http.Request, provider WebhookProvider)
+
+	// (DELETE /v1/workload/ingress-assignments/{session_id})
+	ReleaseWorkloadIngressAssignment(w http.ResponseWriter, r *http.Request, sessionId PrivateConnectorSessionID)
+
+	// (GET /v1/workload/ingress-assignments/{session_id}/transport-trust)
+	GetWorkloadIngressTransportTrust(w http.ResponseWriter, r *http.Request, sessionId PrivateConnectorSessionID)
 	// ListWorkloadServices List only the workload session's currently authorized saved services
 	// (GET /v1/workload/services)
 	ListWorkloadServices(w http.ResponseWriter, r *http.Request)
@@ -29624,6 +30097,9 @@ type ServerInterface interface {
 
 	// (POST /v1/workload/services/{service_id}/ingress-assignments)
 	CreateWorkloadIngressAssignments(w http.ResponseWriter, r *http.Request, serviceId string)
+
+	// (POST /v1/workload/services/{service_id}/run)
+	SelectWorkloadServiceRun(w http.ResponseWriter, r *http.Request, serviceId PrivateServiceID)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -33975,6 +34451,58 @@ func (siw *ServerInterfaceWrapper) GetWebhookProviderSource(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
+// ReleaseWorkloadIngressAssignment operation middleware
+func (siw *ServerInterfaceWrapper) ReleaseWorkloadIngressAssignment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId PrivateConnectorSessionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReleaseWorkloadIngressAssignment(w, r, sessionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetWorkloadIngressTransportTrust operation middleware
+func (siw *ServerInterfaceWrapper) GetWorkloadIngressTransportTrust(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId PrivateConnectorSessionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetWorkloadIngressTransportTrust(w, r, sessionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListWorkloadServices operation middleware
 func (siw *ServerInterfaceWrapper) ListWorkloadServices(w http.ResponseWriter, r *http.Request) {
 
@@ -34058,6 +34586,32 @@ func (siw *ServerInterfaceWrapper) CreateWorkloadIngressAssignments(w http.Respo
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateWorkloadIngressAssignments(w, r, serviceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SelectWorkloadServiceRun operation middleware
+func (siw *ServerInterfaceWrapper) SelectWorkloadServiceRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId PrivateServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SelectWorkloadServiceRun(w, r, serviceId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -34187,6 +34741,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/run", wrapper.SelectWorkloadServiceRun)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/workload/ingress-assignments/{session_id}", wrapper.ReleaseWorkloadIngressAssignment)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/workload/ingress-assignments/{session_id}/transport-trust", wrapper.GetWorkloadIngressTransportTrust)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/workload/services", wrapper.ListWorkloadServices)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/authorization", wrapper.CheckWorkloadService)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/ingress-assignments", wrapper.CreateWorkloadIngressAssignments)

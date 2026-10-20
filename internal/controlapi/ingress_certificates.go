@@ -32,7 +32,11 @@ func (h *handler) GetVisitorIngressTransportTrust(w http.ResponseWriter, r *http
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 200, controlv1.IngressTransportTrust{IngressId: trust.IngressID, IngressRunId: trust.IngressRunID, IngressLeaseRevision: int64(trust.IngressLeaseRevision),
+	writeJSON(w, 200, ingressTransportTrustResponse(trust))
+}
+
+func ingressTransportTrustResponse(trust controlstate.IngressTransportTrust) controlv1.IngressTransportTrust {
+	return controlv1.IngressTransportTrust{IngressId: trust.IngressID, IngressRunId: trust.IngressRunID, IngressLeaseRevision: int64(trust.IngressLeaseRevision),
 		TlsServerName: trust.TLSServerName, CertificatePem: trust.CertificatePEM, IssuerPem: trust.IssuerPEM, IssuerRevision: trust.IssuerRevision,
-		PublicKeySha256: trust.PublicKeySHA256, LeaseUri: trust.LeaseURI, NotBefore: trust.NotBefore, NotAfter: trust.NotAfter, ValidUntil: trust.ValidUntil})
+		PublicKeySha256: trust.PublicKeySHA256, LeaseUri: trust.LeaseURI, NotBefore: trust.NotBefore, NotAfter: trust.NotAfter, ValidUntil: trust.ValidUntil}
 }

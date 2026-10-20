@@ -9,6 +9,56 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/workload/services/{service_id}/run:
+    parameters:
+      - {
+          name: service_id,
+          in: path,
+          required: true,
+          schema: { $ref: "#/components/schemas/PrivateServiceID" },
+        }
+    post:
+      operationId: selectWorkloadServiceRun
+      security: [{ workloadAuth: [] }]
+      responses:
+        "200":
+          description: Current publisher selection for the workload subject
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivateServiceSelection" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/workload/ingress-assignments/{session_id}:
+    parameters:
+      - {
+          name: session_id,
+          in: path,
+          required: true,
+          schema: { $ref: "#/components/schemas/PrivateConnectorSessionID" },
+        }
+    delete:
+      operationId: releaseWorkloadIngressAssignment
+      security: [{ workloadAuth: [] }]
+      responses:
+        "204": { description: This workload's exact assignment is released }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/workload/ingress-assignments/{session_id}/transport-trust:
+    parameters:
+      - {
+          name: session_id,
+          in: path,
+          required: true,
+          schema: { $ref: "#/components/schemas/PrivateConnectorSessionID" },
+        }
+    get:
+      operationId: getWorkloadIngressTransportTrust
+      security: [{ workloadAuth: [] }]
+      responses:
+        "200":
+          description: Current trust for the workload-owned assigned ingress process
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IngressTransportTrust" }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/workload/services:
     get:
       operationId: listWorkloadServices
@@ -50,9 +100,11 @@ paths:
               required: [idempotency_key]
               properties:
                 idempotency_key: { type: string, minLength: 1, maxLength: 128 }
+                count: { type: integer, minimum: 1, maximum: 2, default: 2 }
+                exclude_ingress_id: { type: string, minLength: 1, maxLength: 256 }
       responses:
         "200":
-          description: Two independently claimable workload-owned assignments
+          description: Independently claimable workload-owned assignments; a replacement reserves only its failed slot
           content:
             application/json:
               schema: { $ref: "#/components/schemas/WorkloadIngressAssignments" }
@@ -75,7 +127,7 @@ paths:
                 csr: { type: string, format: byte, maxLength: 11000 }
       responses:
         "200":
-          description: Short service-scoped certificate for the workload's existing key
+          description: Service-scoped certificate for the workload's existing key, bounded by its fixed absolute expiry; current authorization always checks the live lease
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ServiceClientCertificate" }
@@ -2783,6 +2835,15 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    KubernetesAuth:
+      type: object
+      additionalProperties: false
+      required: [provider, cluster, region]
+      description: Approved nonsecret native client authentication hint. Contains no publisher target address, CA, or credentials.
+      properties:
+        provider: { type: string, enum: [eks], x-enum-varnames: [KubernetesEKS] }
+        cluster: { type: string, minLength: 1, maxLength: 100 }
+        region: { type: string, minLength: 1, maxLength: 64 }
     VisitorSubject:
       type: object
       additionalProperties: false
@@ -2819,6 +2880,7 @@ components:
               service: { type: string }
               protocol: { $ref: "#/components/schemas/PrivateServiceProtocol" }
               managed_tls: { $ref: "#/components/schemas/ManagedServiceTLS" }
+              kubernetes_auth: { $ref: "#/components/schemas/KubernetesAuth" }
     WorkloadIngressAssignments:
       type: object
       additionalProperties: false
@@ -2827,7 +2889,7 @@ components:
         subject: { $ref: "#/components/schemas/VisitorSubject" }
         assignments:
           type: array
-          minItems: 2
+          minItems: 1
           maxItems: 2
           items:
             type: object
@@ -3606,8 +3668,7 @@ components:
           private_service_id,
           private_run_id,
           run_number,
-          identity_id,
-          device_id,
+          subject,
           expires_at,
           protocol,
           trust_revision,
@@ -3616,8 +3677,7 @@ components:
         private_service_id: { $ref: "#/components/schemas/PrivateServiceID" }
         private_run_id: { $ref: "#/components/schemas/PrivateRunID" }
         run_number: { type: integer, format: int64, minimum: 1 }
-        identity_id: { $ref: "#/components/schemas/IdentityID" }
-        device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+        subject: { $ref: "#/components/schemas/VisitorSubject" }
         expires_at: { type: string, format: date-time }
         protocol: { $ref: "#/components/schemas/PrivateServiceProtocol" }
         trust_revision: { type: integer, format: int64, minimum: 1 }
@@ -3724,14 +3784,21 @@ components:
       type: object
       additionalProperties: false
       required:
-        [run_number, visitor_connection_id, source_ip, connector_session_id, identity_id, device_id]
+        [
+          run_number,
+          visitor_connection_id,
+          source_ip,
+          connector_session_id,
+          subject,
+          grant_revision,
+        ]
       properties:
         run_number: { type: integer, format: int64, minimum: 1 }
         visitor_connection_id: { $ref: "#/components/schemas/VisitorConnectionID" }
         source_ip: { type: string, maxLength: 64 }
         connector_session_id: { type: string, pattern: "^pcs_[A-Za-z0-9]{22}$" }
-        identity_id: { type: string, minLength: 1, maxLength: 128 }
-        device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+        subject: { $ref: "#/components/schemas/VisitorSubject" }
+        grant_revision: { type: integer, format: int64, minimum: 1 }
     AuthorizeServiceClientCertificateRequest:
       type: object
       additionalProperties: false
@@ -3782,6 +3849,7 @@ components:
           $ref: "#/components/schemas/ProjectHTTPApplicationLimits"
           description: Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.
         protocol: { $ref: "#/components/schemas/PrivateServiceProtocol" }
+        kubernetes_auth: { $ref: "#/components/schemas/KubernetesAuth" }
         target_tls: { $ref: "#/components/schemas/PrivateServiceTLS" }
         publisher_pool: { type: boolean }
         trust_revision: { type: integer, format: int64, minimum: 1 }
@@ -3862,8 +3930,7 @@ components:
           ingress_id,
           ingress_address,
           tls_server_name,
-          device_id,
-          identity_id,
+          subject,
           expires_at,
         ]
       properties:
@@ -3880,8 +3947,7 @@ components:
         ingress_id: { type: string, minLength: 1 }
         tls_server_name: { type: string, minLength: 1, maxLength: 253 }
         expires_at: { type: string, format: date-time }
-        device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
-        identity_id: { $ref: "#/components/schemas/IdentityID" }
+        subject: { $ref: "#/components/schemas/VisitorSubject" }
     PrivateServiceRunPreparation:
       type: object
       additionalProperties: false

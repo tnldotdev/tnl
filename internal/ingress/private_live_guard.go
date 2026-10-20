@@ -70,7 +70,7 @@ func (p *PrivateConnector) copyLivePrivateVisitor(ctx context.Context, visitor m
 					IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
 					PrivateServiceId: claimed.PrivateServiceId, PrivateRunId: claimed.PrivateRunId,
 					RunNumber: claimed.RunNumber, ConnectorSessionId: bound.ConnectorSessionId,
-					IdentityId: claimed.IdentityId, VisitorConnectionId: claimed.VisitorConnectionId,
+					Subject: claimed.Subject, VisitorConnectionId: claimed.VisitorConnectionId,
 					ObservedSourceIp: source.Addr().Unmap().String(),
 				})
 			finish()

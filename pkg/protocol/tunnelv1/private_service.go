@@ -3,8 +3,6 @@ package tunnelv1
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"io"
 	"net/netip"
@@ -17,29 +15,25 @@ import (
 // each of which may expand sixfold in JSON, plus fixed opaque IDs and metadata.
 const MaxPrivateHeaderBytes = 8 << 10
 
-func validPrivateIdentifier(value string) bool { return validIdentifier(value) && len(value) <= 128 }
-
 // PrivateConnectorSessionHello authenticates one TLS-protected infrastructure
 // mux session. ingress binds the claimed session to its observed source IP;
 // this credential never admits a visitor stream by itself.
 type PrivateConnectorSessionHello struct {
-	ProtocolVersion  uint32 `json:"protocol_version"`
-	Kind             string `json:"kind"`
-	PrivateServiceID string `json:"private_service_id"`
-	SessionID        string `json:"connector_session_id"`
-	Credential       string `json:"session_credential"`
-	DeviceID         string `json:"device_id"`
-	IdentityID       string `json:"identity_id"`
-	Nonce            []byte `json:"nonce"`
-	Signature        []byte `json:"signature"`
+	ProtocolVersion  uint32         `json:"protocol_version"`
+	Kind             string         `json:"kind"`
+	PrivateServiceID string         `json:"private_service_id"`
+	SessionID        string         `json:"connector_session_id"`
+	Credential       string         `json:"session_credential"`
+	Subject          VisitorSubject `json:"subject"`
+	Nonce            []byte         `json:"nonce"`
+	Signature        []byte         `json:"signature"`
 }
 
 func (h PrivateConnectorSessionHello) Validate() error {
 	if h.ProtocolVersion != Version || h.Kind != "private_connector_session" ||
 		!opaqueid.Valid(h.PrivateServiceID, opaqueid.PrivateServicePrefix) ||
 		!opaqueid.Valid(h.SessionID, opaqueid.PrivateConnectorSessionPrefix) ||
-		!validCredential(h.Credential) || len(h.Credential) > 512 ||
-		!validPrivateIdentifier(h.DeviceID) || !opaqueid.Valid(h.IdentityID, opaqueid.IdentityPrefix) ||
+		!validCredential(h.Credential) || len(h.Credential) != 43 || h.Subject.Validate() != nil ||
 		len(h.Nonce) != 32 || len(h.Signature) != ed25519.SignatureSize {
 		return errors.New("tunnelv1: invalid private connector session hello")
 	}
@@ -67,20 +61,19 @@ func ReadPrivateConnectorSessionHello(r io.Reader) (PrivateConnectorSessionHello
 // PrivateConnectorSessionAccepted is ingress-authenticated session state. the
 // observed source comes from ingress's socket or verified PROXY metadata.
 type PrivateConnectorSessionAccepted struct {
-	ProtocolVersion  uint32    `json:"protocol_version"`
-	Kind             string    `json:"kind"`
-	PrivateServiceID string    `json:"private_service_id"`
-	SessionID        string    `json:"connector_session_id"`
-	DeviceID         string    `json:"device_id"`
-	IdentityID       string    `json:"identity_id"`
-	SourceIP         string    `json:"source_ip"`
-	ExpiresAt        time.Time `json:"expires_at"`
+	ProtocolVersion  uint32         `json:"protocol_version"`
+	Kind             string         `json:"kind"`
+	PrivateServiceID string         `json:"private_service_id"`
+	SessionID        string         `json:"connector_session_id"`
+	Subject          VisitorSubject `json:"subject"`
+	SourceIP         string         `json:"source_ip"`
+	ExpiresAt        time.Time      `json:"expires_at"`
 }
 
 func (a PrivateConnectorSessionAccepted) Validate() error {
 	if a.ProtocolVersion != Version || a.Kind != "private_connector_session_accepted" ||
 		!opaqueid.Valid(a.PrivateServiceID, opaqueid.PrivateServicePrefix) || !opaqueid.Valid(a.SessionID, opaqueid.PrivateConnectorSessionPrefix) ||
-		!validPrivateIdentifier(a.DeviceID) || !opaqueid.Valid(a.IdentityID, opaqueid.IdentityPrefix) || !validPrivateSourceIP(a.SourceIP) || a.ExpiresAt.IsZero() {
+		a.Subject.Validate() != nil || !validPrivateSourceIP(a.SourceIP) || a.ExpiresAt.IsZero() {
 		return errors.New("tunnelv1: invalid private connector session acceptance")
 	}
 	return nil
@@ -132,23 +125,22 @@ func (e PrivateVisitorEntry) Validate() error {
 // source with the authenticated session. the publisher receives the
 // same admitted identity in PrivateStreamHeader and rechecks it with control.
 type PrivateVisitorAccepted struct {
-	ProtocolVersion              uint32 `json:"protocol_version"`
-	Kind                         string `json:"kind"`
-	ConnectorSessionID           string `json:"connector_session_id"`
-	IdentityID                   string `json:"identity_id"`
-	SourceIP                     string `json:"source_ip"`
-	VisitorConnectionID          string `json:"visitor_connection_id"`
-	DeviceID                     string `json:"device_id"`
-	GrantRevision                uint64 `json:"grant_revision"`
-	PublisherConnectionID        string `json:"publisher_connection_id"`
-	ConnectionAssignmentRevision uint64 `json:"connection_assignment_revision"`
+	ProtocolVersion              uint32         `json:"protocol_version"`
+	Kind                         string         `json:"kind"`
+	ConnectorSessionID           string         `json:"connector_session_id"`
+	Subject                      VisitorSubject `json:"subject"`
+	SourceIP                     string         `json:"source_ip"`
+	VisitorConnectionID          string         `json:"visitor_connection_id"`
+	GrantRevision                uint64         `json:"grant_revision"`
+	PublisherConnectionID        string         `json:"publisher_connection_id"`
+	ConnectionAssignmentRevision uint64         `json:"connection_assignment_revision"`
 }
 
 func (a PrivateVisitorAccepted) Validate() error {
 	if a.ProtocolVersion != Version || a.Kind != "private_visitor_accepted" ||
 		!opaqueid.Valid(a.ConnectorSessionID, opaqueid.PrivateConnectorSessionPrefix) ||
-		!opaqueid.Valid(a.IdentityID, opaqueid.IdentityPrefix) || !validPrivateSourceIP(a.SourceIP) ||
-		!opaqueid.Valid(a.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || !validPrivateIdentifier(a.DeviceID) || a.GrantRevision == 0 ||
+		a.Subject.Validate() != nil || !validPrivateSourceIP(a.SourceIP) ||
+		!opaqueid.Valid(a.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || a.GrantRevision == 0 ||
 		!opaqueid.Valid(a.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || a.ConnectionAssignmentRevision == 0 {
 		return errors.New("tunnelv1: invalid private visitor acceptance")
 	}
@@ -213,10 +205,9 @@ type PrivateStreamHeader struct {
 // ConnectorAdmission is an authenticated identity selected by ingress. direct
 // admission has no visitor identity until the publisher authenticates the client.
 type ConnectorAdmission struct {
-	SessionID     string `json:"session_id"`
-	IdentityID    string `json:"identity_id"`
-	DeviceID      string `json:"device_id"`
-	GrantRevision uint64 `json:"grant_revision"`
+	SessionID     string         `json:"session_id"`
+	Subject       VisitorSubject `json:"subject"`
+	GrantRevision uint64         `json:"grant_revision"`
 }
 
 type DirectAdmission struct {
@@ -228,7 +219,7 @@ type DirectAdmission struct {
 
 func (a ConnectorAdmission) valid() bool {
 	return opaqueid.Valid(a.SessionID, opaqueid.PrivateConnectorSessionPrefix) &&
-		opaqueid.Valid(a.IdentityID, opaqueid.IdentityPrefix) && validPrivateIdentifier(a.DeviceID) && a.GrantRevision > 0
+		a.Subject.Validate() == nil && a.GrantRevision > 0
 }
 
 func (a DirectAdmission) valid() bool {
@@ -262,7 +253,7 @@ func validPrivateSourceIP(value string) bool {
 }
 
 // PrivateForwardingHeader carries the current relay lease along with the
-// already authorized service/run/device binding. it never accepts public URL IDs.
+// already authorized service/run/subject binding. it never accepts public URL IDs.
 type PrivateForwardingHeader struct {
 	PrivateStreamHeader
 	ConnectionSlot     uint8     `json:"connection_slot"`
@@ -320,24 +311,10 @@ func ReadPrivateStreamHeader(r io.Reader) (PrivateStreamHeader, error) {
 	return h, nil
 }
 
-// PrivateConnectorHelloDigest proves possession of the enrolled device key for
-// the exact short-lived assignment. control consumes that assignment once;
-// ingress supplies the observed source, never the connector.
-func PrivateConnectorHelloDigest(hello PrivateConnectorSessionHello) ([]byte, error) {
-	unsigned := hello
-	unsigned.Signature = make([]byte, ed25519.SignatureSize)
-	if err := unsigned.Validate(); err != nil {
-		return nil, err
-	}
-	h := sha256.New()
-	h.Write([]byte("tnl/private-connector-session/v1\x00"))
-	for _, field := range [][]byte{[]byte(hello.PrivateServiceID), []byte(hello.SessionID), []byte(hello.Credential), []byte(hello.DeviceID), []byte(hello.IdentityID), hello.Nonce} {
-		var length [4]byte
-		binary.BigEndian.PutUint32(length[:], uint32(len(field)))
-		h.Write(length[:])
-		h.Write(field)
-	}
-	return h.Sum(nil), nil
+// Claim binds the proof to the subject and exact one-use assignment.
+func (hello PrivateConnectorSessionHello) Claim() VisitorConnectorClaim {
+	return VisitorConnectorClaim{Subject: hello.Subject, ServiceID: hello.PrivateServiceID,
+		SessionID: hello.SessionID, Credential: hello.Credential, Nonce: hello.Nonce, Signature: hello.Signature}
 }
 
 func NewConnectorSessionNonce() ([]byte, error) {

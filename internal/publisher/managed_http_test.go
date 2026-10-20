@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 )
 
@@ -40,5 +41,24 @@ func TestManagedHTTPCredentialPrecedenceFailsClosed(t *testing.T) {
 				t.Fatalf("selected %q, error=%v", credential.Kind, err)
 			}
 		})
+	}
+}
+
+func TestManagedHTTPWorkloadCertificateNeverFallsBackToHumanCredentials(t *testing.T) {
+	uri, _ := url.Parse("tnl://workload-client/psvc_aaaaaaaaaaaaaaaaaaaaaa/wls_aaaaaaaaaaaaaaaaaaaaaa")
+	state := tls.ConnectionState{PeerCertificates: []*x509.Certificate{{Raw: []byte("workload leaf"), URIs: []*url.URL{uri}}}}
+	for _, headers := range []http.Header{nil,
+		{"Cookie": {"__Host-tnl-browser=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}},
+		{"Tnl-Access-Token": {"mhg_0123456789abcdefghijkl.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}},
+		{"Tnl-Access-Token": {"invalid"}, "Cookie": {"__Host-tnl-browser=invalid"}},
+	} {
+		r := httptest.NewRequest("GET", "https://app.example:12000/", nil)
+		if headers != nil {
+			r.Header = headers
+		}
+		credential, err := managedHTTPCredential(r, state)
+		if err != nil || credential.Kind != "certificate" || credential.Secret != nil || credential.Certificate == nil {
+			t.Fatal("workload credential changed", err)
+		}
 	}
 }
