@@ -113,9 +113,9 @@ func (metrics *Metrics) initInstruments(role string) {
 	metrics.initPublisherReadiness()
 	metrics.initPublisherData()
 	metrics.publisherOperations = newHistogram(m, "tnl_publisher_operation_duration_seconds", "Finite publisher operations by authenticated identity and bounded outcome.", DurationBucketsSeconds(), "operation", "outcome", string(Component), string(ServiceProtocol), string(AccessPath), string(Exposure), string(TLSLeg), string(Transport), string(TransportPreference), string(ConnectionSlot)).instrument
-	describe(m, "tnl_publisher_lease_expiration_timestamp_seconds", "Last confirmed control lease; failed refresh never extends it.", "gauge", nil)
-	describe(m, "tnl_publisher_readiness_check_timestamp_seconds", "Most recent readiness decision; timestamp requires freshness checks.", "gauge", nil, "state")
-	describe(m, "tnl_publisher_connection_attempts_total", "Completed publisher connection races by selected transport and preference.", "counter", nil, "transport", "transport_preference", "outcome")
+	describe(m, "tnl_publisher_lease_expiration_timestamp_seconds", "Last confirmed control lease; failed refresh never extends it.", "gauge", nil, string(Component), string(ServiceProtocol), string(AccessPath), string(Exposure))
+	describe(m, "tnl_publisher_readiness_check_timestamp_seconds", "Most recent readiness decision; timestamp requires freshness checks.", "gauge", nil, "state", string(Component), string(ServiceProtocol), string(AccessPath), string(Exposure))
+	describe(m, "tnl_publisher_connection_attempts_total", "Completed publisher connection races by selected transport and preference.", "counter", nil, "transport", "transport_preference", "outcome", string(Component), string(ServiceProtocol), string(AccessPath), string(Exposure))
 	metrics.publisherLease, _ = m.Float64Gauge("tnl_publisher_lease_expiration_timestamp_seconds", metric.WithDescription("Last confirmed control lease expiration, not locally extended on failed refreshes."))
 	metrics.publisherReadiness, _ = m.Float64Gauge("tnl_publisher_readiness_check_timestamp_seconds", metric.WithDescription("Most recent readiness decision by outcome; use its timestamp to check freshness."))
 	metrics.publisherConnectionAttempts, _ = m.Int64Counter("tnl_publisher_connection_attempts_total", metric.WithDescription("Completed connection races by selected transport and initial preference; replacements and failed attempts count independently."))

@@ -28,6 +28,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // PublicURLServerConfig configures publisher TLS termination and local HTTP forwarding.
@@ -185,6 +186,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	}
 	base = observability.NarrowIdentity(base, observability.Identity{PublicURLID: config.PublicURLID})
 	base = observability.WithFields(base, observability.Fields{Component: "publisher", ServiceProtocol: "http", AccessPath: "direct", Exposure: "public"})
+	base = observability.WithPublisherRecovery(base)
 	life, cancelLife := context.WithCancel(context.WithoutCancel(base))
 	route := &PublicURLServer{
 		hostname:  hostname,
@@ -431,7 +433,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				if secured, ok := connection.(*tls.Conn); ok {
 					if tracked, ok := secured.NetConn().(*doneConn); ok {
 						if metadata, ok := tracked.Conn.(*metadataConn); ok {
-							ctx = metadata.session.life
+							// retain net/http's server values and request cancellation;
+							// only the visitor's span parent belongs on this context.
+							ctx = trace.ContextWithSpan(ctx, trace.SpanFromContext(metadata.session.life))
 							ctx = observability.WithVisitor(ctx, metadata.session.visitor.Header.VisitorConnectionID)
 							ctx = context.WithValue(ctx, shareConnectionKey{}, secured)
 							ctx = context.WithValue(ctx, visitorSessionKey{}, metadata.session)

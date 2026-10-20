@@ -15,6 +15,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 func TestPreflightNegotiatesOnceWithoutApplicationBytes(t *testing.T) {
@@ -84,7 +85,9 @@ func TestPreflightNegotiatesOnceWithoutApplicationBytes(t *testing.T) {
 				if !valid {
 					name = "wrong.target.test"
 				}
-				err = (Transport{Protocol: protocol, TLS: &tls.Config{RootCAs: roots, ServerName: name}}).Preflight(t.Context(), listener.Addr().String())
+				metrics := observability.New("publisher")
+				defer metrics.Shutdown(context.Background())
+				err = (Transport{Protocol: protocol, TLS: &tls.Config{RootCAs: roots, ServerName: name}}).Preflight(observability.WithMetrics(t.Context(), metrics), listener.Addr().String())
 				if valid && err != nil {
 					t.Fatal(err)
 				}
@@ -97,6 +100,38 @@ func TestPreflightNegotiatesOnceWithoutApplicationBytes(t *testing.T) {
 				}
 				if err := <-done; err != nil {
 					t.Fatal(err)
+				}
+				families, err := metrics.Gather()
+				if err != nil {
+					t.Fatal(err)
+				}
+				seen := map[string]bool{}
+				for _, family := range families {
+					if family.GetName() != "tnl_publisher_operation_duration_seconds" && family.GetName() != "tnl_publisher_tls_handshakes_total" {
+						continue
+					}
+					for _, point := range family.Metric {
+						labels := map[string]string{}
+						for _, label := range point.Label {
+							labels[label.GetName()] = label.GetValue()
+						}
+						if labels["tnl_service_protocol"] != string(protocol) || labels["tnl_component"] != "publisher" {
+							t.Fatal("real preflight or handshake omitted its known protocol", family.GetName(), labels)
+						}
+						if family.GetName() == "tnl_publisher_tls_handshakes_total" {
+							wantOutcome := "rejected"
+							if valid {
+								wantOutcome = "success"
+							}
+							if labels["tnl_outcome"] != wantOutcome || labels["tnl_tls_leg"] != "target" {
+								t.Fatal("TLS facts lost their owned trust outcome", labels)
+							}
+						}
+						seen[family.GetName()] = true
+					}
+				}
+				if len(seen) != 2 {
+					t.Fatal("preflight did not reach its operation and TLS instruments", seen)
 				}
 			})
 		}

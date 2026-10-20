@@ -10,7 +10,7 @@ import (
 
 func PublisherLease(ctx context.Context, expires time.Time) {
 	if m := FromContext(ctx); m != nil {
-		m.publisherLease.Record(ctx, routingTimestamp(expires), metric.WithAttributes(identityAttributes(ctx)...))
+		m.publisherLease.Record(ctx, routingTimestamp(expires), metric.WithAttributes(publisherDataAttributes(ctx)...))
 	}
 }
 
@@ -20,7 +20,7 @@ func PublisherReadiness(ctx context.Context, ready bool) {
 		if ready {
 			outcome = "ready"
 		}
-		attrs := append(identityAttributes(ctx), State.String(outcome))
+		attrs := append(publisherDataAttributes(ctx), State.String(outcome))
 		m.publisherReadiness.Record(ctx, routingTimestamp(time.Now()), metric.WithAttributes(attrs...))
 	}
 }
@@ -34,12 +34,20 @@ func PublisherConnection(ctx context.Context, transport string, preferTCP bool, 
 		if preferTCP {
 			preference = "tls-tcp"
 		}
-		attrs := append(identityAttributes(ctx), TransportPreference.String(preference), OutcomeKey.String(durationOutcome(err)))
+		attrs := append(publisherDataAttributes(ctx), TransportPreference.String(preference), OutcomeKey.String(durationOutcome(err)))
 		if transport != "" {
 			attrs = append(attrs, Transport.String(transport))
 		}
 		m.publisherConnectionAttempts.Add(ctx, 1, metric.WithAttributes(attrs...))
 	}
+}
+
+// WithPublisherProtocol adds known publisher protocol scope without clearing
+// the caller's access path, exposure, connection slot, or other bounded fields.
+func WithPublisherProtocol(ctx context.Context, protocol string) context.Context {
+	fields, _ := ctx.Value(fieldsKey{}).(Fields)
+	fields.Component, fields.ServiceProtocol = "publisher", protocol
+	return WithFields(ctx, fields)
 }
 
 // DialTarget observes the connection boundary without recording the address or

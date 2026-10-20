@@ -29,7 +29,15 @@ func ErrorOutcome(err error) Outcome {
 			return Denied
 		case failure.Invalid, failure.Conflict, failure.NotFound, failure.Stale, failure.RateLimited:
 			return Rejected
+		default:
+			return Error
 		}
+	}
+	if code, ok := diagnostic.CodeOf(err); ok {
+		return diagnosticErrorOutcome(code)
+	}
+	if outcome, _, ok := tunnelErrorResult(err); ok {
+		return outcome
 	}
 	return Error
 }
@@ -44,6 +52,9 @@ func FailureCode(err error) string {
 	}
 	if code, ok := diagnostic.CodeOf(err); ok {
 		return string(code)
+	}
+	if _, code, ok := tunnelErrorResult(err); ok {
+		return code
 	}
 	return string(failure.Unexpected)
 }

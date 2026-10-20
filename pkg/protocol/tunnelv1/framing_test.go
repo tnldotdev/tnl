@@ -179,28 +179,56 @@ func TestFrameWritersPropagateErrorsAndShortWrites(t *testing.T) {
 	}
 }
 
-func TestStreamWriterRejectsOversizeBeforeWriting(t *testing.T) {
+func TestStreamWritersAcceptSupportedIdentifierBounds(t *testing.T) {
 	h, err := ReadInternalForwardingHeader(bytes.NewReader(goldenWire(t, "internal-forwarding-header")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.PublicURLID, h.PublishRunID, h.VisitorConnectionID = strings.Repeat("r", 256), strings.Repeat("s", 256), strings.Repeat("v", 256)
+	maximum := strings.Repeat("\x01", 256)
+	h.PublicURLID, h.PublishRunID, h.VisitorConnectionID = maximum, maximum, maximum
+	h.PublisherConnectionID, h.RelayServiceID, h.RelayID, h.RelayRunID = maximum, maximum, maximum, maximum
+	h.TraceContext = TraceContext{TraceParent: goldenTraceParent}
 	if err := h.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := WriteInternalForwardingHeader(&out, h); err == nil || out.Len() != 0 {
-		t.Fatalf("oversized write: %v, %d bytes", err, out.Len())
+	if err := WriteInternalForwardingHeader(&out, h); err != nil {
+		t.Fatal("supported forwarding identifiers exceeded aggregate cap", err)
+	}
+	if got, err := ReadInternalForwardingHeader(&out); err != nil || got != h {
+		t.Fatal("maximum forwarding header did not round trip", err)
 	}
 	publisher, err := ReadVisitorStreamHeader(bytes.NewReader(goldenWire(t, "visitor-stream-header")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	publisher.PublicURLID, publisher.PublishRunID, publisher.VisitorConnectionID, publisher.PublisherConnectionID = strings.Repeat("r", 256), strings.Repeat("s", 256), strings.Repeat("v", 256), strings.Repeat("p", 256)
+	publisher.PublicURLID, publisher.PublishRunID, publisher.VisitorConnectionID, publisher.PublisherConnectionID = maximum, maximum, maximum, maximum
+	publisher.TraceContext = TraceContext{TraceParent: goldenTraceParent}
 	if err := publisher.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	if err := WriteVisitorStreamHeader(&out, publisher); err != nil {
+		t.Fatal("supported visitor identifiers exceeded aggregate cap", err)
+	}
+	if got, err := ReadVisitorStreamHeader(&out); err != nil || got != publisher {
+		t.Fatal("maximum visitor header did not round trip", err)
+	}
+	h.VisitorConnectionID += "x"
+	if err := WriteInternalForwardingHeader(&out, h); err == nil || out.Len() != 0 {
+		t.Fatal("oversized forwarding identifier wrote bytes")
+	}
+	publisher.VisitorConnectionID += "x"
 	if err := WriteVisitorStreamHeader(&out, publisher); err == nil || out.Len() != 0 {
-		t.Fatalf("oversized publisher write: %v, %d bytes", err, out.Len())
+		t.Fatal("oversized visitor identifier wrote bytes")
+	}
+}
+
+func TestFrameWriterRejectsOversizeBeforeWriting(t *testing.T) {
+	for _, limit := range []int{MaxHeaderBytes, MaxPrivateHeaderBytes} {
+		var out bytes.Buffer
+		// JSON's two quotes make this one byte larger than the frame cap.
+		if err := writeJSONFrame(&out, strings.Repeat("x", limit-1), limit); err == nil || out.Len() != 0 {
+			t.Fatal("overcap frame wrote bytes", err, out.Len())
+		}
 	}
 }

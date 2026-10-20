@@ -25,7 +25,7 @@
     },
     {
       "key": "error.type",
-      "semantics": "owned failure.Reason or diagnostic code only; unknown errors use unexpected",
+      "semantics": "owned failure.Reason, diagnostic code, or closed tunnel.\u003ccode\u003e; unknown errors use unexpected",
       "dimension_policy": "trace_log"
     },
     {
@@ -1410,13 +1410,17 @@
       "semantics": "Whether the latest control response matched the current run and approved configuration; target health is separate.",
       "kind": "gauge",
       "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
         "tnl.deployment_id",
+        "tnl.exposure",
         "tnl.public_url_id",
         "tnl.publisher_group_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.service_id",
         "tnl.service_kind",
+        "tnl.service_protocol",
         "tnl.team_id"
       ]
     },
@@ -1425,7 +1429,10 @@
       "semantics": "Completed publisher connection races by selected transport and preference.",
       "kind": "counter",
       "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
         "tnl.deployment_id",
+        "tnl.exposure",
         "tnl.outcome",
         "tnl.public_url_id",
         "tnl.publisher_group_id",
@@ -1434,6 +1441,7 @@
         "tnl.replica_key",
         "tnl.service_id",
         "tnl.service_kind",
+        "tnl.service_protocol",
         "tnl.team_id",
         "tnl.transport",
         "tnl.transport_preference"
@@ -1614,13 +1622,17 @@
       "semantics": "Last confirmed control lease; failed refresh never extends it.",
       "kind": "gauge",
       "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
         "tnl.deployment_id",
+        "tnl.exposure",
         "tnl.public_url_id",
         "tnl.publisher_group_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.service_id",
         "tnl.service_kind",
+        "tnl.service_protocol",
         "tnl.team_id"
       ]
     },
@@ -1674,13 +1686,17 @@
       "semantics": "Most recent readiness decision; timestamp requires freshness checks.",
       "kind": "gauge",
       "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
         "tnl.deployment_id",
+        "tnl.exposure",
         "tnl.public_url_id",
         "tnl.publisher_group_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.service_id",
         "tnl.service_kind",
+        "tnl.service_protocol",
         "tnl.state",
         "tnl.team_id"
       ]
@@ -1690,13 +1706,17 @@
       "semantics": "Most recent publisher readiness check, including unsuccessful checks.",
       "kind": "gauge",
       "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
         "tnl.deployment_id",
+        "tnl.exposure",
         "tnl.public_url_id",
         "tnl.publisher_group_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.service_id",
         "tnl.service_kind",
+        "tnl.service_protocol",
         "tnl.team_id"
       ]
     },
@@ -1705,13 +1725,17 @@
       "semantics": "Most recent successful publisher readiness check; a failure never advances it.",
       "kind": "gauge",
       "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
         "tnl.deployment_id",
+        "tnl.exposure",
         "tnl.public_url_id",
         "tnl.publisher_group_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.service_id",
         "tnl.service_kind",
+        "tnl.service_protocol",
         "tnl.team_id"
       ]
     },
@@ -1720,13 +1744,17 @@
       "semantics": "Current publisher readiness decision; combine with last check and confirmed lease expiration for freshness.",
       "kind": "gauge",
       "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
         "tnl.deployment_id",
+        "tnl.exposure",
         "tnl.public_url_id",
         "tnl.publisher_group_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.service_id",
         "tnl.service_kind",
+        "tnl.service_protocol",
         "tnl.team_id"
       ]
     },
@@ -1773,13 +1801,17 @@
       "semantics": "Latest target health decision; independent of publisher lease and configuration validity.",
       "kind": "gauge",
       "dimensions": [
+        "tnl.access_path",
+        "tnl.component",
         "tnl.deployment_id",
+        "tnl.exposure",
         "tnl.public_url_id",
         "tnl.publisher_group_id",
         "tnl.publisher_identity_id",
         "tnl.replica_key",
         "tnl.service_id",
         "tnl.service_kind",
+        "tnl.service_protocol",
         "tnl.team_id"
       ]
     },

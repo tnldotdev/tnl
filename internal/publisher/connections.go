@@ -71,7 +71,7 @@ func newPublisherConnectionManager(
 		config: config, route: route, publishRunID: publishRunID,
 		publicURLID: publicURLID, publishRunNumber: publishRunNumber, fallback: make(chan struct{}),
 	}
-	ctx = observability.WithPublisherRecovery(ctx)
+	ctx = observability.WithPublisherRecoveryFrom(ctx, route.life)
 	ctx = observability.WithFields(ctx, observability.Fields{Component: "publisher", ServiceProtocol: "http", AccessPath: "direct", Exposure: "public"})
 	paths, err := tunnel.NewSlots(ctx, tunnel.SlotsConfig{
 		Connect: m.connect, SingleUse: true, BackoffMin: config.ReconnectDelay, BackoffMax: config.ReconnectDelay,

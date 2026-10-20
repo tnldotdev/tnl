@@ -69,6 +69,7 @@ func LoadTargetRootCAs(path string) (*x509.CertPool, error) {
 
 // PreflightWithOptions checks target reachability and HTTPS certificate trust.
 func PreflightWithOptions(ctx context.Context, target string, options TargetOptions) (result error) {
+	ctx = observability.WithPublisherProtocol(ctx, "http")
 	ctx, finish := observability.PublisherOperation(ctx, "target_preflight")
 	defer func() { finish(result) }()
 	canonicalTarget, err := NormalizeTarget(target)

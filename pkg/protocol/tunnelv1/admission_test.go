@@ -23,16 +23,26 @@ func TestAdmissionIdentityAndFrameBounds(t *testing.T) {
 			t.Fatalf("accepted %+v", bad)
 		}
 	}
-	h.VisitorConnectionID = strings.Repeat("v", 256)
-	h.PublishRunID = strings.Repeat("r", 256)
-	h.PublisherConnectionID = strings.Repeat("p", 256)
-	h.PublicURLID = strings.Repeat("u", 256)
+	h.VisitorConnectionID = strings.Repeat("\x01", 256)
+	h.PublishRunID = strings.Repeat("\x01", 256)
+	h.PublisherConnectionID = strings.Repeat("\x01", 256)
+	h.PublicURLID = strings.Repeat("\x01", 256)
+	h.RelayServiceID = strings.Repeat("\x01", 256)
+	h.RelayID = strings.Repeat("\x01", 256)
+	h.RelayRunID = strings.Repeat("\x01", 256)
 	var out bytes.Buffer
 	if h.Validate() != nil {
 		t.Fatal("valid long identifiers rejected before aggregate bound")
 	}
-	if WriteAdmissionHeader(&out, h) == nil || out.Len() != 0 {
-		t.Fatal("oversized admission wrote bytes")
+	if err := WriteAdmissionHeader(&out, h); err != nil {
+		t.Fatal("supported admission identifiers exceeded aggregate cap", err)
+	}
+	if got, err := ReadAdmissionHeader(&out); err != nil || got != h {
+		t.Fatal("maximum admission header did not round trip", err)
+	}
+	h.RelayID += "x"
+	if err := WriteAdmissionHeader(&out, h); err == nil || out.Len() != 0 {
+		t.Fatal("oversized admission identifier wrote bytes")
 	}
 	for _, payload := range []string{
 		`{"type":"accepted","code":"capacity_exceeded"}`, `{"type":"rejected"}`, `{"type":"rejected","code":"unknown"}`, `{"type":"accepted","extra":true}`,

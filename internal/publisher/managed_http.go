@@ -222,13 +222,14 @@ func validManagedGrantSecret(value string) bool {
 }
 
 func (f ManagedHTTP) authorize(ctx context.Context, credential controlv1.ManagedHTTPCredential) (controlv1.ServiceClientCertificateDecision, error) {
+	ctx = observability.WithPublisherProtocol(ctx, "http")
 	ctx, finish := observability.PublisherOperation(ctx, "visitor_authorization")
 	input := controlv1.ManagedHTTPVisitorRequest{RunNumber: f.Number, VisitorConnectionId: f.Header.VisitorConnectionID, SourceIp: f.Header.SourceIP, DestinationPort: int(f.Port), Credential: credential}
 	for {
 		decision, err := f.Control.AuthorizeManagedHTTPVisitor(ctx, f.Subject.ID, f.RunID, f.Token, input)
 		observability.PublisherAuthorization(ctx, decision.Allowed, decision.Admitted, err)
 		if err != nil || !decision.Allowed || decision.Admitted {
-			finish(err)
+			finish(managedAuthorizationError(ManagedVisitorDecision{Allowed: decision.Allowed && decision.Admitted, ValidUntil: decision.ValidUntil}, err))
 			return decision, err
 		}
 		timer := time.NewTimer(25 * time.Millisecond)

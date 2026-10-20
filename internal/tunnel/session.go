@@ -22,6 +22,9 @@ type ProtocolError struct {
 
 func (e *ProtocolError) Error() string { return "tunnel: " + string(e.Code) }
 
+// TunnelCode exposes the owned wire classification without parsing Error text.
+func (e *ProtocolError) TunnelCode() tunnelv1.ErrorCode { return e.Code }
+
 // StreamHeaderError belongs to one rejected stream, not its authenticated
 // publisher connection. the acceptor may keep serving other streams.
 type StreamHeaderError struct {

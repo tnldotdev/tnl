@@ -169,7 +169,8 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 	}
 	_ = relayAwait(t, denied)
 	assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "success", 1)
-	assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "error", 1)
+	assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "rejected", 1)
+	assertRelayOperation(t, metrics, "RelayOpenVisitorStream", "error", 0)
 	registry.remove(connection)
 	registry.remove(connection) // duplicate removal cannot make the gauge negative.
 	families, err := metrics.Gather()

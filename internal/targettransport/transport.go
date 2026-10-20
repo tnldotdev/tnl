@@ -32,6 +32,7 @@ func (t Transport) Validate() error {
 }
 
 func (t Transport) Secure(ctx context.Context, backend net.Conn) (net.Conn, error) {
+	ctx = observability.WithPublisherProtocol(ctx, string(t.Protocol))
 	if err := t.Validate(); err != nil {
 		return backend, err
 	}
@@ -68,6 +69,7 @@ func (t Transport) Secure(ctx context.Context, backend net.Conn) (net.Conn, erro
 
 // Handshake starts TLS only after the caller has finished native negotiation.
 func (t Transport) Handshake(ctx context.Context, backend net.Conn) (_ net.Conn, result error) {
+	ctx = observability.WithPublisherProtocol(ctx, string(t.Protocol))
 	ctx, finish := observability.PublisherOperation(ctx, "target_tls")
 	defer func() { finish(result) }()
 	if err := t.Validate(); err != nil || t.TLS == nil {
@@ -80,8 +82,8 @@ func (t Transport) Handshake(ctx context.Context, backend net.Conn) (_ net.Conn,
 		verification.NextProtos = []string{"http/1.1"}
 	}
 	secured := tls.Client(backend, verification)
+	defer func() { observability.PublisherTLS(ctx, "target", secured.ConnectionState(), result) }()
 	if err := secured.HandshakeContext(ctx); err != nil {
-		observability.PublisherTLS(ctx, "target", secured.ConnectionState(), err)
 		if ctx.Err() != nil {
 			return backend, context.Cause(ctx)
 		}
@@ -92,13 +94,13 @@ func (t Transport) Handshake(ctx context.Context, backend net.Conn) (_ net.Conn,
 		}
 		return backend, failure.Wrap("negotiate target TLS", failure.TargetUnavailable, errors.Join(ErrTargetTLS, err))
 	}
-	observability.PublisherTLS(ctx, "target", secured.ConnectionState(), nil)
 	return secured, nil
 }
 
 // Preflight opens a disposable connection and sends no login or application
 // bytes. MySQL reads the greeting before its SSLRequest; it is never HTTPS.
 func (t Transport) Preflight(ctx context.Context, address string) (result error) {
+	ctx = observability.WithPublisherProtocol(ctx, string(t.Protocol))
 	ctx, finish := observability.PublisherOperation(ctx, "target_preflight")
 	defer func() { finish(result) }()
 	if err := t.Validate(); err != nil {

@@ -66,6 +66,29 @@ func TestManagedHTTPAuthorizationObservesPendingDenialAndPreservesFailure(t *tes
 			if scenario == "pending" && !strings.Contains(text, `tnl_state="admitted"`) {
 				t.Fatal(text)
 			}
+			families, err := m.Gather()
+			if err != nil {
+				t.Fatal(err)
+			}
+			outcome := map[string]string{"pending": "success", "denied": "denied", "infrastructure": "error"}[scenario]
+			var measured uint64
+			for _, family := range families {
+				if family.GetName() != "tnl_publisher_operation_duration_seconds" {
+					continue
+				}
+				for _, point := range family.Metric {
+					labels := map[string]string{}
+					for _, label := range point.Label {
+						labels[label.GetName()] = label.GetValue()
+					}
+					if labels["tnl_operation"] == "visitor_authorization" && labels["tnl_outcome"] == outcome && labels["tnl_service_protocol"] == "http" {
+						measured += point.GetHistogram().GetSampleCount()
+					}
+				}
+			}
+			if measured != 1 {
+				t.Fatal("managed HTTP authorization timing lost its result or protocol", outcome, measured)
+			}
 		})
 	}
 }

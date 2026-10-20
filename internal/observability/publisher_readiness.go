@@ -22,7 +22,7 @@ func (m *Metrics) initPublisherReadiness() {
 		{"tnl_publisher_target_healthy", "Latest target health decision; independent of publisher lease and configuration validity.", &m.publisherReadinessMetrics.targetHealthy},
 		{"tnl_publisher_configuration_current", "Whether the latest control response matched the current run and approved configuration; target health is separate.", &m.publisherReadinessMetrics.configurationCurrent},
 	} {
-		describe(m.meter, item.name, item.semantics, "gauge", nil)
+		describe(m.meter, item.name, item.semantics, "gauge", nil, string(Component), string(ServiceProtocol), string(AccessPath), string(Exposure))
 		*item.instrument, _ = m.meter.Float64Gauge(item.name, metric.WithDescription(item.semantics))
 	}
 }
@@ -34,7 +34,7 @@ func PublisherReadinessStatus(ctx context.Context, ready, healthy, current bool,
 	if m == nil {
 		return
 	}
-	opts := metric.WithAttributes(identityAttributes(ctx)...)
+	opts := metric.WithAttributes(publisherDataAttributes(ctx)...)
 	value := func(b bool) float64 {
 		if b {
 			return 1

@@ -15,9 +15,11 @@ import (
 )
 
 const (
-	Version          = 1
-	MaxControlBytes  = 64 << 10
-	MaxHeaderBytes   = 1 << 10
+	Version         = 1
+	MaxControlBytes = 64 << 10
+	// seven 256-byte identifiers may each need six JSON bytes per input byte.
+	// include the fixed keys, uint64 counters, timestamps and bounded traceparent.
+	MaxHeaderBytes   = 16 << 10
 	MaxCredentialLen = 4096
 )
 
@@ -83,7 +85,7 @@ func (r PrivatePublisherConnectionRef) Validate() error {
 	if !opaqueid.Valid(r.PrivateServiceID, opaqueid.PrivateServicePrefix) ||
 		!opaqueid.Valid(r.PrivateRunID, opaqueid.PrivateRunPrefix) || r.RunNumber == 0 ||
 		!opaqueid.Valid(r.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || r.ConnectionSlot > 1 ||
-		r.ConnectionAssignmentRevision == 0 || !validPrivateIdentifier(r.RelayServiceID) {
+		r.ConnectionAssignmentRevision == 0 || !validIdentifier(r.RelayServiceID) {
 		return errors.New("tunnelv1: invalid private publisher connection reference")
 	}
 	return nil
@@ -367,16 +369,8 @@ func writeJSONFrame(writer io.Writer, value any, limit int) error {
 }
 
 func readJSONFrame(reader io.Reader, value any, limit int) error {
-	var header [4]byte
-	if _, err := io.ReadFull(reader, header[:]); err != nil {
-		return err
-	}
-	size := binary.BigEndian.Uint32(header[:])
-	if size == 0 || size > uint32(limit) {
-		return errors.New("tunnelv1: frame exceeds limit")
-	}
-	payload := make([]byte, size)
-	if _, err := io.ReadFull(reader, payload); err != nil {
+	payload, err := readFramePayload(reader, limit)
+	if err != nil {
 		return err
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
@@ -388,4 +382,20 @@ func readJSONFrame(reader io.Reader, value any, limit int) error {
 		return errors.New("tunnelv1: trailing JSON value")
 	}
 	return nil
+}
+
+func readFramePayload(reader io.Reader, limit int) ([]byte, error) {
+	var header [4]byte
+	if _, err := io.ReadFull(reader, header[:]); err != nil {
+		return nil, err
+	}
+	size := binary.BigEndian.Uint32(header[:])
+	if size == 0 || size > uint32(limit) {
+		return nil, errors.New("tunnelv1: frame exceeds limit")
+	}
+	payload := make([]byte, size)
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
 }

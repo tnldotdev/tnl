@@ -2,7 +2,6 @@ package tunnelv1
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"io"
 	"math"
@@ -68,35 +67,34 @@ func TestTraceVisitorGoldenFramedWireAndUnknownFields(t *testing.T) {
 }
 
 func TestTraceForwardingMaximumFrameAllFields(t *testing.T) {
-	now := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+	// time.MarshalJSON accepts four-digit years and zone offsets below 24h.
+	// a non-UTC offset and nanoseconds give the longest accepted timestamp.
+	now := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.FixedZone("max", 23*3600+59*60))
 	h := InternalForwardingHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: Version, Kind: InternalForwardingStream,
-		VisitorConnectionID: strings.Repeat("v", 32), PublicURLID: strings.Repeat("u", 32), PublishRunID: strings.Repeat("r", 32), PublishRunNumber: math.MaxUint64,
-		PublisherConnectionID: strings.Repeat("p", 32), ConnectionSlot: 1, ConnectionAssignmentRevision: math.MaxUint64,
-		RelayServiceID: strings.Repeat("s", 32), RelayID: strings.Repeat("i", 32), RelayRunID: strings.Repeat("r", 32), RelayLeaseRevision: math.MaxUint64,
+		VisitorConnectionID: strings.Repeat("\x01", 256), PublicURLID: strings.Repeat("\x01", 256), PublishRunID: strings.Repeat("\x01", 256), PublishRunNumber: math.MaxUint64,
+		PublisherConnectionID: strings.Repeat("\x01", 256), ConnectionSlot: 1, ConnectionAssignmentRevision: math.MaxUint64,
+		RelayServiceID: strings.Repeat("\x01", 256), RelayID: strings.Repeat("\x01", 256), RelayRunID: strings.Repeat("\x01", 256), RelayLeaseRevision: math.MaxUint64,
 		PublicUrlExpiresAt: now, LeaseExpiresAt: now, AccessPending: true}
 	data, err := json.Marshal(h)
 	if err != nil {
 		t.Fatal(err)
 	}
-	padding := MaxHeaderBytes - len(data)
-	if padding < 0 {
+	if len(data) > MaxHeaderBytes {
 		t.Fatalf("all fields need %d bytes, cap is %d", len(data), MaxHeaderBytes)
 	}
-	h.RelayID += strings.Repeat("x", padding)
+	t.Logf("maximum public protocol header: %d JSON bytes", len(data))
 	var wire bytes.Buffer
 	if err := WriteInternalForwardingHeader(&wire, h); err != nil {
 		t.Fatal(err)
 	}
-	if got := binary.BigEndian.Uint32(wire.Bytes()[:4]); got != MaxHeaderBytes {
-		t.Fatal(got)
-	}
 	got, private, err := ReadForwardingHeader(&wire)
-	if err != nil || private != nil || got != h {
-		t.Fatal(got, private, err)
+	roundTrip, marshalErr := json.Marshal(got)
+	if err != nil || marshalErr != nil || private != nil || !bytes.Equal(roundTrip, data) {
+		t.Fatal("maximum public header changed", err, marshalErr)
 	}
-	h.RelayID += "x"
+	h.RelayID += "\x01"
 	if err := WriteInternalForwardingHeader(&wire, h); err == nil {
-		t.Fatal("over-limit frame accepted")
+		t.Fatal("over-limit identifier accepted")
 	}
 }
 
@@ -165,22 +163,23 @@ func TestTracePrivateGoldenAndEveryHeaderValidation(t *testing.T) {
 	}
 }
 
-func TestTracePrivateMaximumFieldsFitExistingFrameCap(t *testing.T) {
-	now := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+func TestTracePrivateMaximumFieldsFitFrameCap(t *testing.T) {
+	now := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.FixedZone("max", 23*3600+59*60))
 	h := PrivateForwardingHeader{PrivateStreamHeader: PrivateStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: 1, Kind: PrivateForwardingStream,
 		PrivateServiceID: testOpaqueID(opaqueid.PrivateServicePrefix), PrivateRunID: testOpaqueID(opaqueid.PrivateRunPrefix), RunNumber: math.MaxUint64,
 		SourceIP: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: math.MaxUint64, ExpiresAt: now,
-		Connector: &ConnectorAdmission{SessionID: testOpaqueID(opaqueid.PrivateConnectorSessionPrefix), IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: strings.Repeat("d", 128), GrantRevision: math.MaxUint64}},
-		ConnectionSlot: 1, RelayServiceID: strings.Repeat("s", 128), RelayID: strings.Repeat("r", 128), RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayLeaseRevision: math.MaxUint64, LeaseExpiresAt: now}
+		Connector: &ConnectorAdmission{SessionID: testOpaqueID(opaqueid.PrivateConnectorSessionPrefix), IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: strings.Repeat("\x01", 128), GrantRevision: math.MaxUint64}},
+		ConnectionSlot: 1, RelayServiceID: strings.Repeat("\x01", 256), RelayID: strings.Repeat("\x01", 256), RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayLeaseRevision: math.MaxUint64, LeaseExpiresAt: now}
 	for _, direct := range []bool{false, true} {
 		if direct {
 			h.Connector = nil
-			h.Direct = &DirectAdmission{IngressID: strings.Repeat("i", 128), IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: math.MaxUint64, DestinationPort: math.MaxUint16}
+			h.Direct = &DirectAdmission{IngressID: strings.Repeat("\x01", 256), IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: math.MaxUint64, DestinationPort: math.MaxUint16}
 		}
 		var wire bytes.Buffer
 		if err := WritePrivateForwardingHeader(&wire, h); err != nil {
 			t.Fatal("max private header no longer fits cap", err)
 		}
+		t.Logf("maximum private protocol header direct=%t: %d JSON bytes", direct, wire.Len()-4)
 		_, got, err := ReadForwardingHeader(&wire)
 		if err != nil || got == nil || got.TraceContext != h.TraceContext || got.Direct == nil && direct {
 			t.Fatal(got, err)
@@ -194,5 +193,63 @@ func TestTracePrivateMaximumFieldsFitExistingFrameCap(t *testing.T) {
 			t.Fatal(decoded, err)
 		}
 		h.Kind = PrivateForwardingStream
+		for _, mutate := range []func(*PrivateForwardingHeader){
+			func(bad *PrivateForwardingHeader) { bad.RelayServiceID += "x" },
+			func(bad *PrivateForwardingHeader) { bad.RelayID += "x" },
+			func(bad *PrivateForwardingHeader) {
+				if bad.Direct != nil {
+					admission := *bad.Direct
+					admission.IngressID += "x"
+					bad.Direct = &admission
+				} else {
+					admission := *bad.Connector
+					admission.DeviceID += "x"
+					bad.Connector = &admission
+				}
+			},
+		} {
+			bad := h
+			mutate(&bad)
+			if err := WritePrivateForwardingHeader(&wire, bad); err == nil || wire.Len() != 0 {
+				t.Fatal("oversized private identifier wrote bytes")
+			}
+		}
+	}
+}
+
+func TestForwardingDispatchSelectedKindCapsAndUnknownFields(t *testing.T) {
+	public := InternalForwardingHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: Version, Kind: InternalForwardingStream,
+		VisitorConnectionID: "v", PublicURLID: "u", PublishRunID: "r", PublishRunNumber: 1, PublisherConnectionID: "p", ConnectionAssignmentRevision: 1,
+		RelayServiceID: "s", RelayID: "i", RelayRunID: "r", RelayLeaseRevision: 1, PublicUrlExpiresAt: time.Now(), LeaseExpiresAt: time.Now()}
+	private := PrivateForwardingHeader{PrivateStreamHeader: PrivateStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: Version, Kind: PrivateForwardingStream,
+		PrivateServiceID: testOpaqueID(opaqueid.PrivateServicePrefix), PrivateRunID: testOpaqueID(opaqueid.PrivateRunPrefix), RunNumber: 1, SourceIP: "192.0.2.1",
+		VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 1, ExpiresAt: time.Now(),
+		Direct: &DirectAdmission{IngressID: "i", IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 1024}},
+		RelayServiceID: "s", RelayID: "i", RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, LeaseExpiresAt: time.Now()}
+	for _, test := range []struct {
+		name   string
+		header any
+		limit  int
+	}{{"public", public, MaxHeaderBytes}, {"private", private, MaxPrivateHeaderBytes}} {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := json.Marshal(test.header)
+			if err != nil {
+				t.Fatal(err)
+			}
+			atLimit := string(data) + strings.Repeat(" ", test.limit-len(data))
+			reader := io.MultiReader(frame(atLimit), strings.NewReader("visitor bytes"))
+			if _, _, err := ReadForwardingHeader(reader); err != nil {
+				t.Fatalf("selected kind exact cap rejected: %v", err)
+			}
+			rest, _ := io.ReadAll(reader)
+			if string(rest) != "visitor bytes" {
+				t.Fatal("overconsumed visitor bytes")
+			}
+			for _, bad := range []string{atLimit + " ", strings.Replace(string(data), `"traceparent":`, `"baggage":"untrusted","traceparent":`, 1), strings.Replace(string(data), goldenTraceParent, "bad", 1)} {
+				if _, _, err := ReadForwardingHeader(frame(bad)); err == nil {
+					t.Fatal("accepted overcap or unknown/bad trace fields")
+				}
+			}
+		})
 	}
 }

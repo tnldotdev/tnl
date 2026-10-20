@@ -13,7 +13,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
-const MaxPrivateHeaderBytes = 2 << 10
+// private forwarding includes up to three configured 256-byte process IDs,
+// each of which may expand sixfold in JSON, plus fixed opaque IDs and metadata.
+const MaxPrivateHeaderBytes = 8 << 10
 
 func validPrivateIdentifier(value string) bool { return validIdentifier(value) && len(value) <= 128 }
 
@@ -230,7 +232,7 @@ func (a ConnectorAdmission) valid() bool {
 }
 
 func (a DirectAdmission) valid() bool {
-	return validPrivateIdentifier(a.IngressID) && opaqueid.Valid(a.IngressRunID, opaqueid.IngressRunPrefix) && a.IngressLeaseRevision > 0 && a.DestinationPort >= 1024
+	return validIdentifier(a.IngressID) && opaqueid.Valid(a.IngressRunID, opaqueid.IngressRunPrefix) && a.IngressLeaseRevision > 0 && a.DestinationPort >= 1024
 }
 
 func (h PrivateStreamHeader) Validate() error {
@@ -275,7 +277,7 @@ func (h PrivateForwardingHeader) Validate() error {
 	if err := h.PrivateStreamHeader.validate(PrivateForwardingStream); err != nil {
 		return err
 	}
-	if h.ConnectionSlot > 1 || !validPrivateIdentifier(h.RelayServiceID) || !validPrivateIdentifier(h.RelayID) ||
+	if h.ConnectionSlot > 1 || !validIdentifier(h.RelayServiceID) || !validIdentifier(h.RelayID) ||
 		!opaqueid.Valid(h.RelayRunID, opaqueid.RelayRunPrefix) || h.RelayLeaseRevision == 0 || h.LeaseExpiresAt.IsZero() {
 		return errors.New("tunnelv1: invalid private forwarding header")
 	}

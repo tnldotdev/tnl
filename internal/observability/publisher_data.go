@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/diagnostic"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
@@ -86,7 +87,7 @@ func PublisherConnectionLifetime(ctx context.Context, transport string, slot int
 			if expected {
 				event = "expected_close"
 				err = nil
-			} else if recovery, ok := ctx.Value(publisherRecoveryKey{}).(*publisherRecovery); ok {
+			} else if recovery, ok := ctx.Value(publisherRecoveryKey{}).(*publisherRecovery); ok && recovery != nil {
 				recovery.mu.Lock()
 				if recovery.lost.IsZero() {
 					recovery.lost = time.Now()
@@ -108,6 +109,14 @@ type publisherRecovery struct {
 // the resulting context with its connection slots and visitor handlers only.
 func WithPublisherRecovery(ctx context.Context) context.Context {
 	return context.WithValue(ctx, publisherRecoveryKey{}, &publisherRecovery{})
+}
+
+// WithPublisherRecoveryFrom shares only the run-local recovery observer. it
+// preserves the receiving context's cancellation, identity, fields and spans.
+// a source without an observer clears any previous run's recovery scope.
+func WithPublisherRecoveryFrom(ctx, owner context.Context) context.Context {
+	recovery, _ := owner.Value(publisherRecoveryKey{}).(*publisherRecovery)
+	return context.WithValue(ctx, publisherRecoveryKey{}, recovery)
 }
 
 func publisherDataAttributes(ctx context.Context) []attribute.KeyValue {
@@ -210,6 +219,7 @@ func PublisherHTTPError(ctx context.Context, err error) {
 // no propagation headers are injected into customer requests.
 func PublisherHTTP(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(WithPublisherProtocol(r.Context(), "http"))
 		ctx, span := FromContext(r.Context()).tracer().Start(r.Context(), "publisher.http", trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(publisherDataAttributes(r.Context())...))
 		span.SetAttributes(Operation.String("publisher.http"), HTTPMethod.String(httpMethod(r.Method)))
 		if id, ok := ctx.Value(visitorKey{}).(string); ok {
@@ -238,7 +248,11 @@ func PublisherHTTP(next http.Handler) http.Handler {
 				err = context.Cause(ctx)
 			}
 			if err == nil && interrupted != nil {
-				err = errors.New("HTTP handler interrupted")
+				if cause, ok := interrupted.(error); ok && origin == "local_service" && errors.Is(cause, http.ErrAbortHandler) {
+					err = diagnostic.Wrap(diagnostic.TargetUnavailable, cause)
+				} else {
+					err = errors.New("HTTP handler interrupted")
+				}
 			}
 			status := writer.status
 			if status == 0 {
@@ -289,7 +303,7 @@ func publisherResponseObserved(ctx context.Context) {
 	if m == nil || !publisherApplicationBytes(ctx, "target_to_visitor") {
 		return
 	}
-	if recovery, ok := ctx.Value(publisherRecoveryKey{}).(*publisherRecovery); ok {
+	if recovery, ok := ctx.Value(publisherRecoveryKey{}).(*publisherRecovery); ok && recovery != nil {
 		recovery.mu.Lock()
 		lost := recovery.lost
 		recovery.lost = time.Time{}

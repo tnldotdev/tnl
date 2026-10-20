@@ -166,6 +166,7 @@ func Run(ctx context.Context, config Config) (result error) {
 	if config.ServiceProtocol != controlv1.Http {
 		return errors.New("publisher: only HTTP uses public URL runs; use a private service for TCP")
 	}
+	ctx = observability.WithPublisherProtocol(ctx, "http")
 	if config.ServiceProtocol == controlv1.Http {
 		if config.TargetTLSName != "" {
 			config.TargetOptions.ServerName = config.TargetTLSName

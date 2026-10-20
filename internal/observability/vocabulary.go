@@ -151,7 +151,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(Operation, "bounded", "compiled operation name; never supplied input, SQL, or a path")
 	add(OutcomeKey, "bounded", "operation result; domain detail belongs in reason, state, or event", string(Success), string(Denied), string(Rejected), string(Timeout), string(Canceled), string(Error))
 	add(Reason, "bounded", "closed domain reason from semantic result classification or lifecycle observer; never error text", append(domainReasons(), "expected", "unexpected", "stale_assignment", "publisher_unavailable", "failed_ready")...)
-	add(ErrorType, "trace_log", "owned failure.Reason or diagnostic code only; unknown errors use unexpected")
+	add(ErrorType, "trace_log", "owned failure.Reason, diagnostic code, or closed tunnel.<code>; unknown errors use unexpected")
 	add(State, "bounded", "closed per-instrument readiness or state-machine value")
 	add(Event, "bounded", "closed per-instrument lifecycle event, including queued, delivered, and dropped")
 	add(CertificateKind, "bounded", "certificate worker domain", "public_url", "relay", "managed_service", "control")
