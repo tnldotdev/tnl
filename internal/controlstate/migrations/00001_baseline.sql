@@ -2280,6 +2280,7 @@ CREATE TABLE control.publisher_group_members (
     public_key bytea NOT NULL UNIQUE CHECK (octet_length(public_key)=32),
     key_id text NOT NULL,
     observed_revision bigint NOT NULL DEFAULT 0 CHECK (observed_revision >= 0),
+    acknowledged_at timestamptz,
     healthy boolean NOT NULL DEFAULT false,
     lease_expires_at timestamptz,
     UNIQUE (group_id, publisher_identity_id),

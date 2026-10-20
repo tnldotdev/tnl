@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
@@ -13,9 +14,12 @@ func runPortPoolMetrics(ctx context.Context, database *controlstate.Database, me
 	defer ticker.Stop()
 	for {
 		attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
-		started := time.Now()
+		attempt, finish := observability.WorkerAttempt(attempt, "capacity.refresh")
 		err := database.RefreshPortPoolMetrics(attempt, metrics)
-		metrics.ObserveOperation("RefreshPortPoolMetrics", err, time.Since(started))
+		if err != nil && ctx.Err() == nil {
+			logOperationalError(attempt, "refresh service port capacity", failure.ServerWorkerFailed, err)
+		}
+		finish(err)
 		cancel()
 		select {
 		case <-ctx.Done():

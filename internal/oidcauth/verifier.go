@@ -101,7 +101,9 @@ func NewVerifier(config VerifierConfig) (Verifier, error) {
 	}, nil
 }
 
-func (v *providerVerifier) Verify(ctx context.Context, raw string) (Identity, error) {
+func (v *providerVerifier) Verify(ctx context.Context, raw string) (_ Identity, retErr error) {
+	ctx, finish := observe(ctx, "oidc.verify")
+	defer func() { finish(retErr) }()
 	if raw == "" || len(raw) > 64<<10 || strings.TrimSpace(raw) != raw {
 		return Identity{}, ErrUnauthenticated
 	}
@@ -112,7 +114,9 @@ func (v *providerVerifier) Verify(ctx context.Context, raw string) (Identity, er
 	return verifyToken(oidc.ClientContext(ctx, v.httpClient), provider, v.clientID, raw, v.keySet)
 }
 
-func (v *providerVerifier) getProvider(ctx context.Context) (*oidc.Provider, error) {
+func (v *providerVerifier) getProvider(ctx context.Context) (_ *oidc.Provider, retErr error) {
+	ctx, finish := observe(ctx, "oidc.discovery")
+	defer func() { finish(retErr) }()
 	select {
 	case v.discovery <- struct{}{}:
 		defer func() { <-v.discovery }()

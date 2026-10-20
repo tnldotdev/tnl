@@ -1,9 +1,11 @@
 package observability
 
 import (
+	"context"
 	"time"
 
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ObserveWebhookProviderSource counts catalog lookups without URL or identity labels.
@@ -145,7 +147,7 @@ func (m *Metrics) ObserveRecoveryAttempt(outcome RecoveryAttemptOutcome) {
 }
 
 func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimOutcome) {
-	if m == nil || kind != "relay" && kind != "public_url" {
+	if m == nil || kind != "relay" && kind != "public_url" && kind != "managed_service" {
 		return
 	}
 	if outcome != CertificateClaimed && outcome != CertificateEmpty && outcome != CertificateError {
@@ -154,15 +156,15 @@ func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimO
 	m.certificateClaims.WithLabelValues(kind, string(outcome)).Inc()
 }
 
-func (m *Metrics) ObserveCertificateOrder(domainKind, plan string) {
-	if m == nil || domainKind != "managed" && domainKind != "custom" || plan != "exact" && plan != "wildcard" {
+func (m *Metrics) ObserveCertificateOrder(kind, domainKind, plan string) {
+	if m == nil || kind != "public_url" && kind != "managed_service" || domainKind != "managed" && domainKind != "custom" || plan != "exact" && plan != "wildcard" {
 		return
 	}
-	m.certificateOrders.WithLabelValues(domainKind, plan).Inc()
+	m.certificateOrders.WithLabelValues(kind, domainKind, plan).Inc()
 }
 
 func (m *Metrics) ObserveCertificateTransition(kind, state string) {
-	if m == nil || kind != "relay" && kind != "public_url" {
+	if m == nil || kind != "relay" && kind != "public_url" && kind != "managed_service" {
 		return
 	}
 	switch state {
@@ -174,11 +176,15 @@ func (m *Metrics) ObserveCertificateTransition(kind, state string) {
 }
 
 func (m *Metrics) ObserveDNSWork(kind, phase string, outcome DNSWorkOutcome, elapsed time.Duration) {
+	m.ObserveDNSWorkContext(context.Background(), kind, phase, outcome, elapsed)
+}
+
+func (m *Metrics) ObserveDNSWorkContext(ctx context.Context, kind, phase string, outcome DNSWorkOutcome, elapsed time.Duration) {
 	if m == nil {
 		return
 	}
 	switch kind {
-	case "authority", "public_url", "managed_service", "public_url_challenge", "relay_challenge":
+	case "authority", "public_url", "managed_service", "public_url_challenge", "managed_service_challenge", "relay_challenge":
 	default:
 		return
 	}
@@ -192,8 +198,10 @@ func (m *Metrics) ObserveDNSWork(kind, phase string, outcome DNSWorkOutcome, ela
 	default:
 		return
 	}
-	m.dnsWork.WithLabelValues(kind, phase, string(outcome)).Observe(elapsed.Seconds())
-	m.completedSpan("dns."+kind+"."+phase, string(outcome), elapsed)
+	ctx, finish := m.completedResult(ctx, "dns."+kind+"."+phase, string(outcome), elapsed)
+	trace.SpanFromContext(ctx).SetAttributes(DNSKind.String(kind), Operation.String(phase))
+	m.dnsWork.WithLabelValues(kind, phase, string(outcome)).ObserveContext(ctx, elapsed.Seconds())
+	finish()
 }
 
 func (m *Metrics) ObserveDNSTransition(kind, state string) {

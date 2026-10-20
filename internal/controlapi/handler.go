@@ -52,6 +52,7 @@ type Config struct {
 	Metrics                           *observability.Metrics
 	Route53CredentialsReadiness       func(context.Context) error
 	ControlReadiness                  func() error
+	AcceptingNewWork                  func() bool
 	IngressReadiness                  func() error
 	RelayReadiness                    func() error
 }

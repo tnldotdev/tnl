@@ -63,7 +63,7 @@ func (h *handler) GetIdentityContext(response http.ResponseWriter, request *http
 	identity, err := h.store.IdentityContext(request.Context(), principal.IdentityID)
 	if err != nil {
 		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
-		operatorlog.Report("read identity context", failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(request.Context(), "read identity context", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	writeJSON(response, http.StatusOK, identityContextResponse(identity))
@@ -77,7 +77,7 @@ func (h *handler) ListTeams(response http.ResponseWriter, request *http.Request)
 	teams, err := h.store.ListTeams(request.Context(), principal.IdentityID)
 	if err != nil {
 		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
-		operatorlog.Report("list teams", failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(request.Context(), "list teams", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	page := authorityv1.TeamPage{Teams: make([]authorityv1.Team, len(teams))}
@@ -136,7 +136,7 @@ func (h *handler) GetTeam(response http.ResponseWriter, request *http.Request, t
 	}
 	if err != nil {
 		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
-		operatorlog.Report("get team", failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(request.Context(), "get team", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	writeJSON(response, http.StatusOK, teamResponse(team))
@@ -317,7 +317,7 @@ func (h *handler) ListTeamDomains(response http.ResponseWriter, request *http.Re
 	}
 	if err != nil {
 		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
-		operatorlog.Report("list team domains", failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(request.Context(), "list team domains", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	page := authorityv1.DomainPage{Domains: make([]authorityv1.Domain, len(domains))}

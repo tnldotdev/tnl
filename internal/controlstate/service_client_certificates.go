@@ -170,8 +170,11 @@ func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, servic
 		return result, err
 	}
 	run, err := privateRunAuthorization(ctx, tx, q, service, runID, token, now)
-	if err != nil || run.RunNumber != number {
-		return result, errors.Join(ErrPrivateServiceAccess, err)
+	if err != nil {
+		return result, err
+	}
+	if run.RunNumber != number {
+		return result, ErrPrivateServiceAccess
 	}
 	digest := sha256.Sum256(der)
 	result, err = recheckDirectServiceVisitor(ctx, tx, service, runID, number, visitor, identity, device, source, digest[:], now)

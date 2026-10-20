@@ -5,10 +5,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/observability"
 
 	"golang.org/x/oauth2"
 )
@@ -82,10 +85,13 @@ func TestServerOwnsProviderFailureClassification(t *testing.T) {
 		status int
 		body   any
 		want   error
-	}{{400, map[string]string{"error": "invalid_grant"}, ErrUnauthenticated}, {400, map[string]string{"error": "access_denied"}, ErrUnauthenticated}, {503, map[string]string{"error": "temporarily_unavailable"}, ErrUnavailable}} {
+	}{{400, map[string]string{"error": "invalid_grant"}, ErrUnauthenticated}, {400, map[string]string{"error": "access_denied"}, ErrUnauthenticated}, {503, map[string]string{"error": "temporarily_unavailable"}, ErrUnavailable}, {503, map[string]string{"error": "invalid_grant"}, ErrUnavailable}, {200, map[string]string{"access_token": "provider-secret", "token_type": "Bearer"}, ErrUnavailable}, {200, map[string]string{"id_token": "", "access_token": "provider-secret", "token_type": "Bearer"}, ErrUnavailable}} {
 		t.Run(http.StatusText(tt.status), func(t *testing.T) {
 			p := newTestProvider(t, "")
 			p.mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Traceparent") != "" {
+					t.Error("identity provider received tnl trace propagation")
+				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tt.status)
 				writeProviderJSON(t, w, tt.body)
@@ -94,8 +100,19 @@ func TestServerOwnsProviderFailureClassification(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.Redeem(t.Context(), "one-use-code", strings.Repeat("n", 43), oauth2.GenerateVerifier()); !errors.Is(err, tt.want) {
+			metrics := observability.New("control")
+			t.Cleanup(func() { _ = metrics.Shutdown(t.Context()) })
+			if _, err := s.Redeem(observability.WithMetrics(t.Context(), metrics), "one-use-code", strings.Repeat("n", 43), oauth2.GenerateVerifier()); !errors.Is(err, tt.want) {
 				t.Fatalf("classification: %v", err)
+			}
+			w := httptest.NewRecorder()
+			metrics.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+			outcome := "error"
+			if tt.want == ErrUnauthenticated {
+				outcome = "denied"
+			}
+			if !strings.Contains(w.Body.String(), `tnl_control_operation_duration_seconds_count{tnl_operation="oidc.redeem",tnl_outcome="`+outcome+`"} 1`) || strings.Contains(w.Body.String(), "provider-secret") {
+				t.Fatal("provider failure metric lost bounded classification")
 			}
 		})
 	}

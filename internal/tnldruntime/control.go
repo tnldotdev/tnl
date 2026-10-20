@@ -76,6 +76,7 @@ func newPublicAPIHandler(
 	controlConfig.Metrics = metrics
 	controlConfig.Route53CredentialsReadiness = route53Readiness
 	controlConfig.ControlReadiness = func() error { return d.readyControl(cfg.Role, time.Now()) }
+	controlConfig.AcceptingNewWork = func() bool { return !d.draining.Load() }
 	if cfg.Role == tnldconfig.RoleStandalone {
 		controlConfig.IngressReadiness = func() error { return d.readyIngress(time.Now()) }
 		controlConfig.RelayReadiness = func() error { return d.readyRelays(cfg.Role, time.Now()) }
@@ -87,7 +88,11 @@ func newPublicAPIHandler(
 		return nil, err
 	}
 	var authorityRoutes authorityapi.Routes
-	seedContext, stopSeeding := context.WithTimeout(context.Background(), 30*time.Second)
+	owner := d.ctx
+	if owner == nil {
+		owner = observability.WithMetrics(context.Background(), metrics)
+	}
+	seedContext, stopSeeding := context.WithTimeout(owner, 30*time.Second)
 	defer stopSeeding()
 	if err := database.SeedHumanAuthentication(seedContext, cfg.ManagedDomain, controlstate.HumanAuthenticationSeeds{Issuer: cfg.OIDCIssuer, Administrators: cfg.InitialAdministrators, TeamOwners: cfg.InitialTeamOwners, DefaultTeam: cfg.DefaultTeam, DefaultTeamMembers: cfg.DefaultTeamMembers}, time.Now()); err != nil {
 		return nil, err

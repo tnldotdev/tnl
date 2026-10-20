@@ -20,7 +20,7 @@ func runExpiredPublishRunCleanup(ctx context.Context, store expiredPublishRunSto
 	return runBatchCleanup(ctx, expiredPublishRunCleanupInterval, store.ExpireSavedPublishRuns, func(closed int, err error) {
 		metrics.ObserveCleanup("expired_publish_runs", closed, false, err)
 		if err != nil && ctx.Err() == nil {
-			logOperationalError("expire publish runs", failure.ServerWorkerFailed, err)
+			logOperationalError(ctx, "expire publish runs", failure.ServerWorkerFailed, err)
 		}
 	})
 }

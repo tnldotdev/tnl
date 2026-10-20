@@ -62,7 +62,7 @@ func (h *handler) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *ht
 		writeManagedCertificateProblem(w, "authorize service client certificate", err)
 		return
 	}
-	observability.AuthorizationDecision(r.Context(), "service_client_certificate", decision.Allowed)
+	observability.AuthorizationAdmission(r.Context(), "service_client_certificate", decision.Allowed, decision.Admitted)
 	writeJSON(w, http.StatusOK, controlv1.ServiceClientCertificateDecision{Allowed: decision.Allowed, Admitted: decision.Admitted, ValidUntil: decision.ValidUntil})
 }
 
@@ -92,6 +92,6 @@ func (h *handler) AuthorizeServiceConnector(w http.ResponseWriter, r *http.Reque
 		writeManagedCertificateProblem(w, "authorize service connector", err)
 		return
 	}
-	observability.AuthorizationDecision(r.Context(), "service_connector", decision.Allowed)
+	observability.AuthorizationAdmission(r.Context(), "service_connector", decision.Allowed, decision.Admitted)
 	writeJSON(w, http.StatusOK, controlv1.ServiceClientCertificateDecision{Allowed: decision.Allowed, Admitted: decision.Admitted, ValidUntil: decision.ValidUntil})
 }

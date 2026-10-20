@@ -112,11 +112,6 @@
       "dimension_policy": "bounded"
     },
     {
-      "key": "tnl.action",
-      "semantics": "closed domain value supplied by the owning semantic observer",
-      "dimension_policy": "bounded"
-    },
-    {
       "key": "tnl.actor_id",
       "semantics": "high-churn correlation only; prohibited as a metric dimension",
       "dimension_policy": "trace_log"
@@ -241,6 +236,7 @@
         "public_url",
         "managed_service",
         "public_url_challenge",
+        "managed_service_challenge",
         "relay_challenge"
       ],
       "semantics": "DNS worker domain",
@@ -281,11 +277,6 @@
       "dimension_policy": "bounded"
     },
     {
-      "key": "tnl.milestone",
-      "semantics": "closed domain value supplied by the owning semantic observer",
-      "dimension_policy": "bounded"
-    },
-    {
       "key": "tnl.operation",
       "semantics": "compiled operation name; never supplied input, SQL, or a path",
       "dimension_policy": "bounded"
@@ -301,11 +292,6 @@
         "error"
       ],
       "semantics": "operation result; domain detail belongs in reason, state, or event",
-      "dimension_policy": "bounded"
-    },
-    {
-      "key": "tnl.phase",
-      "semantics": "closed domain value supplied by the owning semantic observer",
       "dimension_policy": "bounded"
     },
     {
@@ -370,6 +356,7 @@
         "invalid_response",
         "lookup_missing",
         "lookup_unavailable",
+        "not_admitted",
         "not_modified",
         "open_failed",
         "other",
@@ -461,11 +448,6 @@
     },
     {
       "key": "tnl.signal",
-      "semantics": "closed domain value supplied by the owning semantic observer",
-      "dimension_policy": "bounded"
-    },
-    {
-      "key": "tnl.stage",
       "semantics": "closed domain value supplied by the owning semantic observer",
       "dimension_policy": "bounded"
     },
@@ -589,6 +571,38 @@
       ]
     },
     {
+      "name": "tnl_control_certificate_milestone_age_seconds",
+      "semantics": "Time from issuance creation to certificate availability or DNS cleanup; availability does not imply installation.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.certificate_kind",
+        "tnl.event"
+      ],
+      "explicit_bounds": [
+        1,
+        5,
+        10,
+        20,
+        30,
+        45,
+        60,
+        90,
+        120,
+        300,
+        600
+      ]
+    },
+    {
+      "name": "tnl_control_certificate_orders_total",
+      "semantics": "New service certificate orders committed by this control process, excluding idempotent retries and certificate reuse; not a CA issuance quota.",
+      "kind": "counter",
+      "dimensions": [
+        "tnl.certificate_kind",
+        "tnl.certificate_plan",
+        "tnl.domain_kind"
+      ]
+    },
+    {
       "name": "tnl_control_certificate_transitions_total",
       "semantics": "Committed certificate work transitions by kind and resulting state.",
       "kind": "counter",
@@ -603,9 +617,9 @@
       "kind": "histogram",
       "dimensions": [
         "tnl.certificate_kind",
+        "tnl.operation",
         "tnl.outcome",
-        "tnl.reason",
-        "tnl.stage"
+        "tnl.reason"
       ],
       "explicit_bounds": [
         0.001,
@@ -676,8 +690,8 @@
       "kind": "histogram",
       "dimensions": [
         "tnl.dns_kind",
+        "tnl.operation",
         "tnl.outcome",
-        "tnl.phase",
         "tnl.reason"
       ],
       "explicit_bounds": [
@@ -742,39 +756,9 @@
       "semantics": "Publish run placement decisions by action and bounded result.",
       "kind": "counter",
       "dimensions": [
-        "tnl.action",
+        "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
-      ]
-    },
-    {
-      "name": "tnl_control_public_url_certificate_milestone_age_seconds",
-      "semantics": "Time from issuance creation to certificate availability or DNS cleanup; availability does not imply installation.",
-      "kind": "histogram",
-      "dimensions": [
-        "tnl.milestone"
-      ],
-      "explicit_bounds": [
-        1,
-        5,
-        10,
-        20,
-        30,
-        45,
-        60,
-        90,
-        120,
-        300,
-        600
-      ]
-    },
-    {
-      "name": "tnl_control_public_url_certificate_orders_total",
-      "semantics": "New public URL certificate orders committed by this control process, excluding idempotent retries and certificate reuse; not a CA issuance quota.",
-      "kind": "counter",
-      "dimensions": [
-        "tnl.certificate_plan",
-        "tnl.domain_kind"
       ]
     },
     {
@@ -815,7 +799,7 @@
       "semantics": "Unix time of the last successful finalization call or committed delivery; zero before success.",
       "kind": "gauge",
       "dimensions": [
-        "tnl.phase"
+        "tnl.operation"
       ]
     },
     {
@@ -851,8 +835,8 @@
       "semantics": "Usage worker operations by fixed phase and outcome.",
       "kind": "counter",
       "dimensions": [
+        "tnl.operation",
         "tnl.outcome",
-        "tnl.phase",
         "tnl.reason"
       ]
     },
@@ -918,11 +902,45 @@
       ]
     },
     {
+      "name": "tnl_control_publisher_runtime_duration_seconds",
+      "semantics": "Signed publisher runtime inspect/start/renew/stop decisions; identity dimensions attach only after proof verification.",
+      "kind": "histogram",
+      "dimensions": [
+        "tnl.deployment_id",
+        "tnl.operation",
+        "tnl.outcome",
+        "tnl.publisher_group_id",
+        "tnl.publisher_identity_id",
+        "tnl.reason",
+        "tnl.replica_key",
+        "tnl.team_id"
+      ],
+      "explicit_bounds": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        20,
+        30,
+        60,
+        120
+      ]
+    },
+    {
       "name": "tnl_control_routing_history_cleanup_rows_total",
       "semantics": "Committed routing-history cleanup rows by action.",
       "kind": "counter",
       "dimensions": [
-        "tnl.action"
+        "tnl.operation"
       ]
     },
     {
@@ -938,8 +956,14 @@
       "dimensions": []
     },
     {
+      "name": "tnl_control_tcp_port_pool_last_success_timestamp_seconds",
+      "semantics": "Last complete successful inventory refresh; zero before success. Use maximum across control replicas.",
+      "kind": "gauge",
+      "dimensions": []
+    },
+    {
       "name": "tnl_control_tcp_port_pool_ports",
-      "semantics": "Configured, claimed, quarantined and available public TCP ports by ingress pool; use maximum across control replicas.",
+      "semantics": "Fresh committed port inventory; absent after 90 seconds without refresh. Use maximum across control replicas.",
       "kind": "gauge",
       "dimensions": [
         "tnl.ingress_pool",
@@ -985,8 +1009,8 @@
       "semantics": "Request-pool failures by fixed boundary and outcome; acquire has no SQL operation name.",
       "kind": "counter",
       "dimensions": [
+        "tnl.operation",
         "tnl.outcome",
-        "tnl.phase",
         "tnl.reason"
       ]
     },
@@ -1179,7 +1203,7 @@
       "semantics": "Ingress connections rejected before classification by fixed failure stage.",
       "kind": "counter",
       "dimensions": [
-        "tnl.stage"
+        "tnl.operation"
       ]
     },
     {
@@ -1307,9 +1331,9 @@
       "semantics": "Process-local traffic decisions by fixed stage and result; excludes identities and network addresses.",
       "kind": "counter",
       "dimensions": [
+        "tnl.operation",
         "tnl.outcome",
-        "tnl.reason",
-        "tnl.stage"
+        "tnl.reason"
       ]
     },
     {

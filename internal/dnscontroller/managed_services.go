@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 type managedEndpointStore interface {
@@ -15,15 +16,17 @@ type managedEndpointStore interface {
 	WithDNSRecordLock(context.Context, string, func() error) error
 }
 
-func (w *Worker) processManagedEndpoint(ctx context.Context, now time.Time) (bool, error) {
+func (w *Worker) processManagedEndpoint(ctx context.Context, now time.Time) (_ bool, retErr error) {
 	store, ok := w.store.(managedEndpointStore)
 	if !ok {
 		return false, nil
 	}
+	ctx, finish := observability.WorkerAttempt(ctx, "dns.managed_service.attempt")
+	defer func() { finishDNSAttempt(ctx, finish, retErr) }()
 	started := time.Now()
 	work, found, err := store.ClaimManagedEndpointDNSWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
 	if ctx.Err() == nil {
-		observeDNS(w.config.Observer, "managed_service", "claim", started, found, err)
+		observeDNS(ctx, w.config.Observer, "managed_service", "claim", started, found, err)
 	}
 	if err != nil || !found {
 		return found, err
@@ -67,7 +70,7 @@ func (w *Worker) advanceManagedEndpoint(ctx context.Context, store managedEndpoi
 	if ctx.Err() != nil {
 		return context.Cause(ctx)
 	}
-	observeDNS(w.config.Observer, "managed_service", "advance", started, ready, err)
+	observeDNS(ctx, w.config.Observer, "managed_service", "advance", started, ready, err)
 	if err != nil {
 		work.LastError = storedFailureReason(err)
 		work.AvailableAt = w.retryAvailableAt(uint64(work.Attempts), w.now())
@@ -81,7 +84,7 @@ func (w *Worker) advanceManagedEndpoint(ctx context.Context, store managedEndpoi
 	started = time.Now()
 	saved, err := store.SaveManagedEndpointDNSWork(ctx, work, w.now())
 	if ctx.Err() == nil {
-		observeDNS(w.config.Observer, "managed_service", "save", started, true, err)
+		observeDNS(ctx, w.config.Observer, "managed_service", "save", started, true, err)
 	}
 	if err == nil && w.config.Observer != nil && saved.State != initial {
 		w.config.Observer.ObserveDNSTransition("managed_service", string(saved.State))

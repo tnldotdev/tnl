@@ -20,10 +20,10 @@ func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 		ctx = propagation.TraceContext{}.Extract(ctx, propagation.HeaderCarrier(r.Header))
 		ctx, span := m.tracer().Start(ctx, "tnl."+surface+".request", trace.WithSpanKind(trace.SpanKindServer))
 		defer span.End()
-		decision := &atomic.Bool{}
+		decision := &atomic.Int32{}
 		r = r.WithContext(context.WithValue(ctx, decisionKey{}, decision))
 		started := time.Now()
-		response := &controlResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		response := &controlResponseWriter{ResponseWriter: w, status: http.StatusOK, ctx: r.Context()}
 		m.apiInFlight.WithLabelValues(surface).Inc()
 		defer func() {
 			m.apiInFlight.WithLabelValues(surface).Dec()
@@ -37,14 +37,18 @@ func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 				outcome = APIRequestDeadlineExceeded
 			case r.Context().Err() != nil:
 				outcome = APIRequestCanceled
+			case decision.Load() == 3:
+				outcome = APIRequestDraining
 			case response.status >= 500:
 				outcome = APIRequestServerError
 			case response.status == http.StatusUnauthorized || response.status == http.StatusForbidden:
 				outcome = APIRequestDenied
 			case response.status >= 400:
 				outcome = APIRequestClientError
-			case decision.Load():
+			case decision.Load() == 1:
 				outcome = APIRequestDenied
+			case decision.Load() == 2:
+				outcome = APIRequestNotAdmitted
 			}
 			span.SetName(surface + " " + operation)
 			route := operation
@@ -61,14 +65,22 @@ func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 
 type decisionKey struct{}
 
+// DrainingRequest marks an intentional process admission rejection, even when
+// its retryable HTTP response is 503. it is not an infrastructure failure.
+func DrainingRequest(ctx context.Context) {
+	if decision, ok := ctx.Value(decisionKey{}).(*atomic.Int32); ok {
+		decision.Store(3)
+	}
+}
+
 // AuthorizationDecision records the semantic result separately from HTTP status.
 // a valid HTTP 200 response may still deny access. operation is a compiled name.
 func AuthorizationDecision(ctx context.Context, operation string, allowed bool) {
 	result := "denied"
 	if allowed {
 		result = "allowed"
-	} else if denied, ok := ctx.Value(decisionKey{}).(*atomic.Bool); ok {
-		denied.Store(true)
+	} else if denied, ok := ctx.Value(decisionKey{}).(*atomic.Int32); ok {
+		denied.Store(1)
 	}
 	outcome, _ := classifyResult(result)
 	trace.SpanFromContext(ctx).SetAttributes(OutcomeKey.String(string(outcome)))
@@ -77,13 +89,47 @@ func AuthorizationDecision(ctx context.Context, operation string, allowed bool) 
 	}
 }
 
+// AuthorizationAdmission distinguishes a valid credential from capacity/run
+// admission. an allowed visitor that was not admitted is not an access denial.
+func AuthorizationAdmission(ctx context.Context, operation string, allowed, admitted bool) {
+	if !allowed || admitted {
+		AuthorizationDecision(ctx, operation, allowed)
+		return
+	}
+	if decision, ok := ctx.Value(decisionKey{}).(*atomic.Int32); ok {
+		decision.CompareAndSwap(0, 2)
+	}
+	trace.SpanFromContext(ctx).SetAttributes(OutcomeKey.String(string(Rejected)), Reason.String("not_admitted"))
+	if m := FromContext(ctx); m != nil {
+		m.authDecisions.WithLabelValues(operation, "not_admitted").Inc()
+	}
+}
+
 type controlResponseWriter struct {
 	http.ResponseWriter
+	ctx         context.Context
 	status      int
 	wroteHeader bool
 }
 
 func (w *controlResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *controlResponseWriter) ObservabilityContext() context.Context { return w.ctx }
+
+// ResponseContext lets existing problem adapters retain request correlation
+// without retaining requests or changing every authored problem's signature.
+func ResponseContext(w http.ResponseWriter) context.Context {
+	for {
+		if scoped, ok := w.(interface{ ObservabilityContext() context.Context }); ok {
+			return scoped.ObservabilityContext()
+		}
+		wrapper, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return context.Background()
+		}
+		w = wrapper.Unwrap()
+	}
+}
 
 func (w *controlResponseWriter) WriteHeader(status int) {
 	if !w.wroteHeader {

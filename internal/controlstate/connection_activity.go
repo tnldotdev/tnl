@@ -82,7 +82,7 @@ func (t *connectionTracer) TraceAcquireEnd(ctx context.Context, _ *pgxpool.Pool,
 		return
 	}
 	if started, ok := ctx.Value(acquireStartedKey{}).(time.Time); ok {
-		t.queries.metrics.Load().ObserveDatabaseAcquire(data.Err, time.Since(started))
+		t.queries.metrics.Load().ObserveDatabaseAcquireContext(ctx, data.Err, time.Since(started))
 	}
 }
 

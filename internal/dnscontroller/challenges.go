@@ -11,6 +11,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 type ChallengeRecord struct {
@@ -73,21 +74,21 @@ func NewChallengeManager(
 func (m *ChallengeManager) Present(ctx context.Context, publicURLID, authorizationID string) error {
 	started := time.Now()
 	_, err := m.reconcile(ctx, publicURLID, authorizationID, controlstate.ACMEAuthorizationPresenting)
-	observeDNS(m.config.Observer, "public_url_challenge", "provider", started, true, err)
+	observeDNS(ctx, m.config.Observer, observability.CertificateDNSKind(ctx), "provider", started, true, err)
 	return err
 }
 
 func (m *ChallengeManager) Verify(ctx context.Context, publicURLID, authorizationID string) (bool, error) {
 	started := time.Now()
 	verified, err := m.reconcile(ctx, publicURLID, authorizationID, controlstate.ACMEAuthorizationPresented)
-	observeDNS(m.config.Observer, "public_url_challenge", "verify", started, verified, err)
+	observeDNS(ctx, m.config.Observer, observability.CertificateDNSKind(ctx), "verify", started, verified, err)
 	return verified, err
 }
 
 func (m *ChallengeManager) Cleanup(ctx context.Context, publicURLID, authorizationID string) error {
 	started := time.Now()
 	_, err := m.reconcile(ctx, publicURLID, authorizationID, controlstate.ACMEAuthorizationCleaning)
-	observeDNS(m.config.Observer, "public_url_challenge", "cleanup", started, true, err)
+	observeDNS(ctx, m.config.Observer, observability.CertificateDNSKind(ctx), "cleanup", started, true, err)
 	return err
 }
 

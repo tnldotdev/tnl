@@ -123,7 +123,8 @@ func (d *Database) RenewIngress(
 	now time.Time,
 	leaseDuration time.Duration,
 ) (result IngressLease, retErr error) {
-	defer d.observeOperation("RenewIngress", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "RenewIngress")
+	defer func() { finish(retErr) }()
 	if err := validateIngressLeaseIdentity(renewal.IngressLeaseIdentity); err != nil {
 		return IngressLease{}, err
 	}

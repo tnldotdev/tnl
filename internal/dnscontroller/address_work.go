@@ -18,7 +18,7 @@ func (w *Worker) reconcileAddress(ctx context.Context, record AddressRecord, nam
 		zone, err = w.provider.PublishAddress(ctx, record)
 		ipv4, ipv6 = record.IngressIPv4Addresses, record.IngressIPv6Addresses
 	}
-	observeDNS(w.config.Observer, kind, "provider", started, true, err)
+	observeDNS(ctx, w.config.Observer, kind, "provider", started, true, err)
 	if err != nil {
 		return false, err
 	}
@@ -31,6 +31,6 @@ func (w *Worker) reconcileAddress(ctx context.Context, record AddressRecord, nam
 	}
 	started = time.Now()
 	verified, err := w.verifier.VerifyPublicURL(ctx, hostname, ipv4, ipv6, nameservers)
-	observeDNS(w.config.Observer, kind, "verify", started, verified, err)
+	observeDNS(ctx, w.config.Observer, kind, "verify", started, verified, err)
 	return verified, err
 }

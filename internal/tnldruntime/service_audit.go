@@ -133,7 +133,7 @@ func runServiceAuditCleanup(ctx context.Context, store serviceAuditCleanupStore,
 		return int(count), err
 	}, func(_ int, err error) {
 		if err != nil && ctx.Err() == nil {
-			logOperationalError("clean up service audit", failure.ServerWorkerFailed, err)
+			logOperationalError(ctx, "clean up service audit", failure.ServerWorkerFailed, err)
 		}
 	})
 }

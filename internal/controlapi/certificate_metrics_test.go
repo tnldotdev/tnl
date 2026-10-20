@@ -54,7 +54,7 @@ func TestCertificateOrderMetricExcludesIdempotentRetries(t *testing.T) {
 				}
 				response := httptest.NewRecorder()
 				metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-				want := `tnl_control_public_url_certificate_orders_total{tnl_certificate_plan="` + plan + `",tnl_domain_kind="` + string(kind) + `"} 1`
+				want := `tnl_control_certificate_orders_total{tnl_certificate_kind="public_url",tnl_certificate_plan="` + plan + `",tnl_domain_kind="` + string(kind) + `"} 1`
 				if !strings.Contains(response.Body.String(), want) {
 					t.Fatalf("committed order counted incorrectly: missing %s", want)
 				}

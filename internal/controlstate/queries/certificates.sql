@@ -21,6 +21,9 @@ SET contact_email = excluded.contact_email,
     updated_at = GREATEST(control.acme_accounts.updated_at, excluded.updated_at)
 RETURNING *;
 
+-- name: GetManagedCertificateDomainKind :one
+SELECT kind FROM control.domains WHERE id=sqlc.arg(domain_id);
+
 -- name: RotateACMEAccountKey :exec
 UPDATE control.acme_accounts
 SET account_key_ciphertext = sqlc.arg(account_key_ciphertext),

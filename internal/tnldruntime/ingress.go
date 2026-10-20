@@ -26,6 +26,8 @@ import (
 )
 
 type ingressRuntime struct {
+	configuredIdentity string
+	processRunID       string
 	controller         *ingress.Controller
 	server             *ingress.Server
 	forwarder          *ingress.Forwarder
@@ -159,7 +161,7 @@ func (d *daemon) startIngressRuntime(
 	owned := false
 	defer func() {
 		if !owned {
-			flush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			_ = runtime.audit.Close(flush)
 			cancel()
 			if runtime.private != nil {
@@ -177,6 +179,7 @@ func (d *daemon) startIngressRuntime(
 	if err != nil {
 		return fmt.Errorf("create ingress process run ID: %w", err)
 	}
+	runtime.configuredIdentity, runtime.processRunID = runtimeConfig.ingressID, runID
 	routingTable := new(ingress.RoutingTable)
 	var publicServer *ingress.Server
 	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
@@ -186,6 +189,9 @@ func (d *daemon) startIngressRuntime(
 		registration.PrivateConnectorTlsServerName = &runtimeConfig.privateHostname
 	}
 	controller, err := ingress.NewController(ingress.ControllerConfig{
+		Report: func(err error) {
+			logOperationalError(ctx, "renew ingress lease", failure.ServerControlConnectionFailed, err)
+		},
 		LeaseEstablished: runtime.audit.bind,
 		Client:           runtimeConfig.client, RoutingTable: routingTable,
 		Registration:    registration,
@@ -222,7 +228,7 @@ func (d *daemon) startIngressRuntime(
 	// every ingress lease participates in usage coverage, including an empty
 	// private-only identity sharing the public listener. its idle and final
 	// watermarks must not hold public URL usage buckets open.
-	usage, err := ingress.NewUsageReporter(controller, 0, func(err error) { logOperationalError("report ingress usage", failure.ServerWorkerFailed, err) })
+	usage, err := ingress.NewUsageReporter(controller, 0, func(err error) { logOperationalError(ctx, "report ingress usage", failure.ServerWorkerFailed, err) })
 	if err != nil {
 		return err
 	}
@@ -230,7 +236,7 @@ func (d *daemon) startIngressRuntime(
 	runtime.usage = usage
 	if !runtimeConfig.privateOnly {
 		recovery, err = ingress.NewRecoveryReporter(ctx, controller, settings.controlRetryInterval, func(err error) {
-			logOperationalError("report ingress recovery", failure.ServerWorkerFailed, err)
+			logOperationalError(ctx, "report ingress recovery", failure.ServerWorkerFailed, err)
 		})
 		if err != nil {
 			return err
@@ -249,7 +255,7 @@ func (d *daemon) startIngressRuntime(
 		Context:   ctx,
 		TLSConfig: forwardingTLS, ClusterSecret: runtimeConfig.clusterSecret, Observer: metrics,
 		OnSessionClosed: func(relayServiceID, relayID, origin string, cause error) {
-			logOperationalError("close ingress relay session", failure.ServerConnectionFailed, cause)
+			logOperationalError(ctx, "close ingress relay session", failure.ServerConnectionFailed, cause)
 		},
 	})
 	if err != nil {
@@ -269,7 +275,7 @@ func (d *daemon) startIngressRuntime(
 			}
 			route, err := forwarder.PublicURL(entry)
 			if err != nil {
-				logOperationalError("read ingress public URL", failure.ServerIngressFailed, err)
+				logOperationalError(ctx, "read ingress public URL", failure.ServerIngressFailed, err)
 				return ingress.PublicURL{}, ingress.LookupInvalidProjection
 			}
 			return route, ingress.LookupCurrent
@@ -281,7 +287,9 @@ func (d *daemon) startIngressRuntime(
 		MaxControlConnections:     settings.standaloneControlConnectionLimit,
 		MaxRelayConnections:       settings.standaloneRelayConnectionLimit,
 		Metrics:                   metrics, Observer: metrics,
-		OnError: func(err error) { logOperationalError("serve ingress connection", failure.ServerIngressFailed, err) },
+		OnError: func(err error) {
+			logOperationalError(ctx, "serve ingress connection", failure.ServerIngressFailed, err)
+		},
 		OnForwardingFailure: func(publicURLID string, version uint64, visitorID string, reason ingress.ForwardingFailureReason, attempts int) {
 			log.Printf("ingress forwarding failed public_url_id=%s publish_run_number=%d visitor_connection_id=%s reason=%s available_backends=%d",
 				publicURLID, version, visitorID, reason, attempts)

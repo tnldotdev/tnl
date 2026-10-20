@@ -12,6 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/publisheridentity"
 	"github.com/tnldotdev/tnl/internal/publisherprovenance"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -59,6 +61,31 @@ type PublisherRuntimeStatus struct {
 // PublisherRuntime is the sole observation writer. enrollment, key verification,
 // token exchange and preflight group leases never call it.
 func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeRequest) (result PublisherRuntimeResponse, retErr error) {
+	started := time.Now()
+	operation := "publisher_runtime.invalid"
+	switch r.Action {
+	case "inspect", "start", "renew", "stop":
+		operation = "publisher_runtime." + r.Action
+	}
+	ctx, finish := d.observeOperation(ctx, operation)
+	defer func() {
+		err := retErr
+		result := string(observability.ErrorOutcome(err))
+		switch {
+		case errors.Is(err, ErrPublisherRuntimeStale):
+			observability.MarkReason(ctx, "stale")
+			result = "stale"
+			err = failure.Wrap("observe publisher runtime", failure.ServerConflict, err)
+		case errors.Is(err, ErrPublisherDeploymentConflict):
+			result = "rejected"
+			err = failure.Wrap("observe publisher runtime", failure.ServerConflict, err)
+		case errors.Is(err, ErrPublisherIdentity):
+			result = "denied"
+			err = failure.Wrap("observe publisher runtime", failure.Authentication, err)
+		}
+		observability.ObservePublisherRuntime(ctx, r.Action, result, time.Since(started))
+		finish(err)
+	}()
 	run, err := hex.DecodeString(r.ProcessRunID)
 	if err != nil || len(run) != 16 || hex.EncodeToString(run) != r.ProcessRunID || r.ExpectedEpoch < 0 || r.ExpectedEpoch == math.MaxInt64 || (r.Action != "inspect" && r.Action != "start" && r.Action != "renew" && r.Action != "stop") {
 		return result, ErrPublisherIdentity
@@ -118,6 +145,11 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 	if err != nil {
 		return result, ErrPublisherIdentity
 	}
+	identity := observability.Identity{TeamID: team, PublisherGroupID: group, PublisherIdentityID: i.ID}
+	if r.Deployment != nil {
+		identity.DeploymentID, identity.ReplicaKey = r.Deployment.DeploymentId, r.Deployment.ReplicaKey
+	}
+	ctx = observability.AuthenticatedServerScope(ctx, identity, observability.Fields{Component: "control"})
 	if err = q.PrunePublisherAssertions(ctx, controlstatedb.PrunePublisherAssertionsParams{PublisherIdentityID: i.ID, Now: timestamptz(r.Now)}); err != nil {
 		return result, err
 	}

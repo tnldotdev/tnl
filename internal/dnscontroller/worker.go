@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
@@ -80,11 +81,11 @@ type Config struct {
 }
 
 type DNSObserver interface {
-	ObserveDNSWork(kind, phase string, outcome observability.DNSWorkOutcome, elapsed time.Duration)
+	ObserveDNSWorkContext(context.Context, string, string, observability.DNSWorkOutcome, time.Duration)
 	ObserveDNSTransition(kind, state string)
 }
 
-func observeDNS(observer DNSObserver, kind, phase string, started time.Time, ready bool, err error) {
+func observeDNS(ctx context.Context, observer DNSObserver, kind, phase string, started time.Time, ready bool, err error) {
 	if observer == nil {
 		return
 	}
@@ -94,7 +95,7 @@ func observeDNS(observer DNSObserver, kind, phase string, started time.Time, rea
 	} else if !ready {
 		outcome = observability.DNSWorkPending
 	}
-	observer.ObserveDNSWork(kind, phase, outcome, time.Since(started))
+	observer.ObserveDNSWorkContext(ctx, kind, phase, outcome, time.Since(started))
 }
 
 type Worker struct {
@@ -140,14 +141,15 @@ func (w *Worker) Run(ctx context.Context) error {
 		OperationTimeout: w.config.OperationTimeout,
 		IdleInterval:     w.config.PollInterval,
 		Process:          w.processOne,
-		OnError: func(err error) {
-			if ctx.Err() == nil {
-				reason := dnsFailureReason(err)
-				definition, _ := failure.DefinitionFor(reason)
-				w.config.Logger.Error("DNS controller iteration failed", "reason", reason, "action", definition.Action)
-			}
-		},
 	})
+}
+
+func finishDNSAttempt(ctx context.Context, finish func(error), err error) {
+	if err != nil && ctx.Err() == nil {
+		err = failure.Wrap("advance DNS work", dnsFailureReason(err), err)
+		operatorlog.ReportContext(ctx, "advance DNS work", dnsFailureReason(err), "", err)
+	}
+	finish(err)
 }
 
 func (w *Worker) processOne(ctx context.Context) (bool, error) {

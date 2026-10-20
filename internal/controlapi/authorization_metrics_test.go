@@ -15,28 +15,31 @@ import (
 
 type connectorDecisionStore struct {
 	PublicURLStore
-	allowed bool
-	err     error
+	allowed  bool
+	admitted bool
+	err      error
 }
 
 func (s connectorDecisionStore) AuthorizeServiceConnector(context.Context, string, string, string, int64, controlstate.ConnectorVisitor, time.Time) (controlstate.PrivateVisitorValidity, error) {
-	return controlstate.PrivateVisitorValidity{Allowed: s.allowed, ValidUntil: time.Now().Add(time.Minute)}, s.err
+	return controlstate.PrivateVisitorValidity{Allowed: s.allowed, Admitted: s.admitted, ValidUntil: time.Now().Add(time.Minute)}, s.err
 }
 
 func TestConnectorDecisionMetricsDistinguishHTTP200DenialAndStateFailure(t *testing.T) {
 	for _, test := range []struct {
 		name, outcome string
 		allowed       bool
+		admitted      bool
 		err           error
 		status        int
 	}{
-		{"allowed", "success", true, nil, 200},
-		{"denied", "denied", false, nil, 200},
-		{"state failure", "error", false, errors.New("secret database cause"), 500},
+		{"allowed and admitted", "success", true, true, nil, 200},
+		{"allowed not admitted", "rejected", true, false, nil, 200},
+		{"denied", "denied", false, false, nil, 200},
+		{"state failure", "error", false, false, errors.New("secret database cause"), 500},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metrics := observability.New("control")
-			h := &handler{store: connectorDecisionStore{allowed: test.allowed, err: test.err}}
+			h := &handler{store: connectorDecisionStore{allowed: test.allowed, admitted: test.admitted, err: test.err}}
 			mux := http.NewServeMux()
 			mux.HandleFunc("POST /service/{service}/run/{run}", func(w http.ResponseWriter, r *http.Request) {
 				h.AuthorizeServiceConnector(w, r, r.PathValue("service"), r.PathValue("run"))
@@ -56,11 +59,11 @@ func TestConnectorDecisionMetricsDistinguishHTTP200DenialAndStateFailure(t *test
 				t.Fatal("missing semantic request outcome", test.outcome)
 			}
 			if test.err == nil {
-				decision := "denied"
-				if test.allowed {
-					decision = "success"
+				labels := `tnl_operation="service_connector",tnl_outcome="` + test.outcome + `"`
+				if test.allowed && !test.admitted {
+					labels += `,tnl_reason="not_admitted"`
 				}
-				if !strings.Contains(text, `tnl_authorization_decisions_total{tnl_operation="service_connector",tnl_outcome="`+decision+`"} 1`) {
+				if !strings.Contains(text, `tnl_authorization_decisions_total{`+labels+`} 1`) {
 					t.Fatal("missing handler decision")
 				}
 			}

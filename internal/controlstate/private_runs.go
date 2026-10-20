@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
@@ -258,6 +259,7 @@ func privateRunAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Q
 	if !current {
 		return run, ErrPrivateServiceAccess
 	}
+	observability.AuthenticatedServerScope(ctx, observability.Identity{TeamID: run.TeamID, PublisherIdentityID: run.PublisherIdentityID, ServiceID: run.PrivateServiceID}, observability.Fields{Component: "control"})
 	return run, nil
 }
 

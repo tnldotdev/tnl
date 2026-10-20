@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -20,6 +21,9 @@ import (
 )
 
 type daemon struct {
+	ctx                    context.Context
+	processRunID           string
+	draining               atomic.Bool
 	startedAt              time.Time
 	database               *controlstate.Database
 	dnsBackend             dnsBackend
@@ -90,6 +94,7 @@ func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPCli
 	// admitted work drains or the shutdown deadline expires.
 	lifetime, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	d := &daemon{
+		ctx: lifetime, processRunID: rand.Text(),
 		dnsBackend:  dns,
 		serviceHTTP: serviceHTTPClient, clusterSecret: clusterSecret, clusterSecrets: clusterSecrets,
 		relayClientTLS: relayClientTLS, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now().UTC(),
@@ -100,6 +105,7 @@ func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPCli
 		defer func() { _ = metrics.Shutdown(context.Background()) }()
 		ctx = observability.WithMetrics(ctx, metrics)
 		lifetime = observability.WithMetrics(lifetime, metrics)
+		d.ctx = lifetime
 	}
 	defer func() { retErr = errors.Join(retErr, d.shutdown(cfg.DrainTimeout)) }()
 	if cfg.Role.RunsIngress() {
@@ -196,7 +202,7 @@ func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPCli
 			defer cancel()
 			return d.ready(readyCtx, cfg.Role, time.Now()) == nil
 		})
-		server := observability.Serve(metricsListener, withDatabaseDiagnostics(handler, d.database))
+		server := observability.Serve(metricsListener, d.withRoleDiagnostics(withDatabaseDiagnostics(handler, d.database), cfg.Role))
 		metricsListener = nil
 		d.metricsServer = server
 		d.start("serve observability", func() error { return <-server.Done() })
@@ -210,6 +216,9 @@ func serveWithDNSBackend(ctx context.Context, cfg tnldconfig.Config, acmeHTTPCli
 }
 
 func (d *daemon) ready(ctx context.Context, role tnldconfig.Role, now time.Time) error {
+	if d.draining.Load() {
+		return errors.New("process is draining")
+	}
 	if role.RunsControl() {
 		if d.database == nil {
 			return errors.New("control database is not ready")
@@ -238,6 +247,9 @@ func (d *daemon) ready(ctx context.Context, role tnldconfig.Role, now time.Time)
 }
 
 func (d *daemon) readyControl(role tnldconfig.Role, now time.Time) error {
+	if d.draining.Load() {
+		return errors.New("control is draining")
+	}
 	if d.controlServer == nil || d.controlListener == nil {
 		return errors.New("control listener is not ready")
 	}

@@ -156,7 +156,7 @@ func (d *daemon) startStandalone(
 		ConnectionExited:      func(unexpected bool) { metrics.ObservePublisherExit(unexpected) },
 		CapacityRejected:      func() { metrics.IncCapacityRejection("publisher_connections") },
 		Report: func(err error) {
-			logOperationalError("serve standalone relay publisher", failure.ServerConnectionFailed, err)
+			logOperationalError(ctx, "serve standalone relay publisher", failure.ServerConnectionFailed, err)
 		},
 	})
 	if err != nil {

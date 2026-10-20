@@ -15,6 +15,7 @@ type Querier interface {
 	AcceptPrivateServiceInvitation(ctx context.Context, arg AcceptPrivateServiceInvitationParams) (ControlPrivateServiceInvitation, error)
 	AcceptTeamInvitation(ctx context.Context, arg AcceptTeamInvitationParams) (int64, error)
 	AcceptVisitorInvitation(ctx context.Context, arg AcceptVisitorInvitationParams) error
+	AcknowledgePublisherGroupConfiguration(ctx context.Context, arg AcknowledgePublisherGroupConfigurationParams) error
 	ActivateMemberSlug(ctx context.Context, arg ActivateMemberSlugParams) (int64, error)
 	ActiveCompanyMembership(ctx context.Context, arg ActiveCompanyMembershipParams) (bool, error)
 	ActiveTeamSubject(ctx context.Context, arg ActiveTeamSubjectParams) (bool, error)
@@ -189,6 +190,7 @@ type Querier interface {
 	GetIngressUsageReport(ctx context.Context, arg GetIngressUsageReportParams) (ControlIngressUsageReport, error)
 	GetInvitationByIdempotency(ctx context.Context, arg GetInvitationByIdempotencyParams) (GetInvitationByIdempotencyRow, error)
 	GetLocalProjectPrivateService(ctx context.Context, arg GetLocalProjectPrivateServiceParams) (GetLocalProjectPrivateServiceRow, error)
+	GetManagedCertificateDomainKind(ctx context.Context, domainID string) (string, error)
 	GetOpenPublicURLRecoveryEpisode(ctx context.Context, arg GetOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	GetOpenPublishRun(ctx context.Context, publicUrlID string) (ControlPublishRun, error)
 	GetOrganizationTeamByIdempotency(ctx context.Context, arg GetOrganizationTeamByIdempotencyParams) (GetOrganizationTeamByIdempotencyRow, error)
@@ -341,6 +343,7 @@ type Querier interface {
 	ListProjectPublisherGroups(ctx context.Context, arg ListProjectPublisherGroupsParams) ([]ControlProjectPublisherGroup, error)
 	ListPublishRunConnections(ctx context.Context, publishRunID string) ([]ControlPublishRunConnectionSlot, error)
 	ListPublisherGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGrant, error)
+	ListPublisherGroupMemberStatus(ctx context.Context, arg ListPublisherGroupMemberStatusParams) ([]ListPublisherGroupMemberStatusRow, error)
 	ListPublisherGroupServiceGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGroupServiceGrant, error)
 	ListPublisherIdentities(ctx context.Context, arg ListPublisherIdentitiesParams) ([]ControlPublisherIdentity, error)
 	ListReadyPreviewBrowserHostnames(ctx context.Context, arg ListReadyPreviewBrowserHostnamesParams) ([]ListReadyPreviewBrowserHostnamesRow, error)

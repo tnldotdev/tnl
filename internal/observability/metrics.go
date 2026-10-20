@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Metrics owns one process's OTel instruments, providers, and scrape exporter.
@@ -68,6 +70,7 @@ type Metrics struct {
 	certificateDuration         *histogram
 	certificateMilestone        *histogram
 	controlOperations           *histogram
+	publisherRuntime            *histogram
 	ingressOperations           *histogram
 	relayOperations             *histogram
 	databaseQueryDuration       *histogram
@@ -90,7 +93,7 @@ type Metrics struct {
 	cleanupRuns                 *counter
 	cleanupItems                *counter
 	cleanupLastSuccess          *gauge
-	tcpPortPoolCapacity         *gauge
+	portInventory               atomic.Pointer[portInventory]
 	guestTrialStats             *gauge
 	placementDecisions          *counter
 	assignmentReplacements      *counter
@@ -151,8 +154,9 @@ func (metrics *Metrics) initInstruments(role string) {
 	metrics.readinessDuration = newHistogram(m, "tnl_control_publish_run_readiness_duration_seconds", "Time spent checking and publishing publish run readiness; count is the number of attempts.", DurationBucketsSeconds(), "outcome")
 	metrics.readinessAge = newHistogram(m, "tnl_control_publish_run_readiness_age_seconds", "Age of the publish run at a readiness decision; excludes other errors.", []float64{1, 5, 10, 30, 60, 120, 300, 600}, "outcome")
 	metrics.certificateDuration = newHistogram(m, "tnl_control_certificate_work_duration_seconds", "Certificate worker advance and save duration; count is the number of claimed iterations.", DurationBucketsSeconds(), "kind", "stage", "outcome")
-	metrics.certificateMilestone = newHistogram(m, "tnl_control_public_url_certificate_milestone_age_seconds", "Time from issuance creation to certificate availability or DNS cleanup; availability does not imply installation.", []float64{1, 5, 10, 20, 30, 45, 60, 90, 120, 300, 600}, "milestone")
+	metrics.certificateMilestone = newHistogram(m, "tnl_control_certificate_milestone_age_seconds", "Time from issuance creation to certificate availability or DNS cleanup; availability does not imply installation.", []float64{1, 5, 10, 20, 30, 45, 60, 90, 120, 300, 600}, "kind", "milestone")
 	metrics.controlOperations = newHistogram(m, "tnl_control_operation_duration_seconds", "Completed control state operation duration by fixed operation and outcome.", DurationBucketsSeconds(), "operation", "outcome")
+	metrics.publisherRuntime = newHistogram(m, "tnl_control_publisher_runtime_duration_seconds", "Signed publisher runtime inspect/start/renew/stop decisions; identity dimensions attach only after proof verification.", DurationBucketsSeconds(), "operation", "outcome", string(TeamID), string(PublisherGroupID), string(PublisherIdentityID), string(DeploymentID), string(ReplicaKey))
 	metrics.ingressOperations = newHistogram(m, "tnl_ingress_operation_duration_seconds", "Completed ingress operation duration by fixed operation and outcome.", DurationBucketsSeconds(), "operation", "outcome")
 	metrics.relayOperations = newHistogram(m, "tnl_relay_operation_duration_seconds", "Completed relay operation duration by fixed operation and outcome.", DurationBucketsSeconds(), "operation", "outcome")
 	metrics.relayBytes = newCounter(m, "tnl_relay_forwarded_bytes_total", "Wire bytes copied by relay, including preserved PROXY metadata; recorded at stream close.", "kind", "direction")
@@ -165,7 +169,7 @@ func (metrics *Metrics) initInstruments(role string) {
 	metrics.recoveryPending = newGauge(m, "tnl_ingress_recovery_observations_pending", "Recovery observations awaiting a successful or stale response.")
 	metrics.recoveryAttempts = newCounter(m, "tnl_ingress_recovery_observation_attempts_total", "Recovery reporting attempts by bounded outcome.", "outcome")
 	metrics.certificateClaims = newCounter(m, "tnl_control_certificate_claims_total", "Certificate worker claims by certificate kind and outcome.", "kind", "outcome")
-	metrics.certificateOrders = newCounter(m, "tnl_control_public_url_certificate_orders_total", "New public URL certificate orders committed by this control process, excluding idempotent retries and certificate reuse; not a CA issuance quota.", "domain_kind", "plan")
+	metrics.certificateOrders = newCounter(m, "tnl_control_certificate_orders_total", "New service certificate orders committed by this control process, excluding idempotent retries and certificate reuse; not a CA issuance quota.", "kind", "domain_kind", "plan")
 	metrics.certificateTransitions = newCounter(m, "tnl_control_certificate_transitions_total", "Committed certificate work transitions by kind and resulting state.", "kind", "state")
 	metrics.dnsWork = newHistogram(m, "tnl_control_dns_work_duration_seconds", "DNS worker phase duration; count is the number of attempts.", DurationBucketsSeconds(), "kind", "phase", "outcome")
 	metrics.dnsTransitions = newCounter(m, "tnl_control_dns_transitions_total", "Committed DNS work transitions by kind and resulting state.", "kind", "state")
@@ -177,7 +181,7 @@ func (metrics *Metrics) initInstruments(role string) {
 	metrics.cleanupRuns = newCounter(m, "tnl_control_cleanup_runs_total", "Cleanup calls by fixed kind and outcome.", "kind", "outcome")
 	metrics.cleanupItems = newCounter(m, "tnl_control_cleanup_items_total", "Committed items removed by cleanup kind.", "kind")
 	metrics.cleanupLastSuccess = newGauge(m, "tnl_control_cleanup_last_success_timestamp_seconds", "Unix time of last successful cleanup by kind; zero before success.", "kind")
-	metrics.tcpPortPoolCapacity = newGauge(m, "tnl_control_tcp_port_pool_ports", "Configured, claimed, quarantined and available public TCP ports by ingress pool; use maximum across control replicas.", "pool", "state")
+	metrics.registerPortInventory()
 	metrics.guestTrialStats = newGauge(m, "tnl_control_guest_trials_last_24h", "Service-wide trial counts from committed state over the last 24 hours; use max rather than sum across control replicas.", "stage")
 	metrics.placementDecisions = newCounter(m, "tnl_control_placement_decisions_total", "Publish run placement decisions by action and bounded result.", "action", "outcome")
 	metrics.assignmentReplacements = newCounter(m, "tnl_control_connection_assignments_replaced_total", "Committed replacement of connection assignments by fixed reason.", "reason")
@@ -276,14 +280,6 @@ func (m *Metrics) SetGuestTrialStats(issued, allocated, ready, expired, readyLim
 		if count >= 0 {
 			m.guestTrialStats.WithLabelValues(stage).Set(float64(count))
 		}
-	}
-}
-
-func (m *Metrics) SetTCPPortPoolCapacity(pool string, configured, claimed, quarantined, available int64) {
-	for state, count := range map[string]int64{
-		"configured": configured, "claimed": claimed, "quarantined": quarantined, "available": available,
-	} {
-		m.tcpPortPoolCapacity.WithLabelValues(pool, state).Set(float64(count))
 	}
 }
 
@@ -400,7 +396,11 @@ func (m *Metrics) ObserveCertificateWork(stage string, outcome CertificateWorkOu
 }
 
 func (m *Metrics) ObserveCertificateIteration(kind, stage string, outcome CertificateWorkOutcome, duration time.Duration) {
-	if kind != "public_url" && kind != "relay" {
+	m.ObserveCertificateIterationContext(context.Background(), kind, stage, outcome, duration)
+}
+
+func (m *Metrics) ObserveCertificateIterationContext(ctx context.Context, kind, stage string, outcome CertificateWorkOutcome, duration time.Duration) {
+	if m == nil || kind != "public_url" && kind != "relay" && kind != "managed_service" {
 		return
 	}
 	switch stage {
@@ -413,13 +413,15 @@ func (m *Metrics) ObserveCertificateIteration(kind, stage string, outcome Certif
 	default:
 		outcome = CertificateRetry
 	}
-	m.certificateDuration.WithLabelValues(kind, stage, string(outcome)).Observe(duration.Seconds())
-	m.completedSpan("certificate."+kind+"."+stage, string(outcome), duration)
+	ctx, finish := m.completedResult(ctx, "certificate."+kind+"."+stage, string(outcome), duration)
+	trace.SpanFromContext(ctx).SetAttributes(CertificateKind.String(kind), Operation.String(stage))
+	m.certificateDuration.WithLabelValues(kind, stage, string(outcome)).ObserveContext(ctx, duration.Seconds())
+	finish()
 }
 
-func (m *Metrics) ObserveCertificateMilestone(milestone string, age time.Duration) {
-	if milestone != "ready" && milestone != "cleanup" || age < 0 {
+func (m *Metrics) ObserveCertificateMilestone(kind, milestone string, age time.Duration) {
+	if m == nil || kind != "public_url" && kind != "managed_service" || milestone != "ready" && milestone != "cleanup" || age < 0 {
 		return
 	}
-	m.certificateMilestone.WithLabelValues(milestone).Observe(age.Seconds())
+	m.certificateMilestone.WithLabelValues(kind, milestone).Observe(age.Seconds())
 }

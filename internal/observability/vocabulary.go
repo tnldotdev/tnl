@@ -155,7 +155,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(State, "bounded", "closed per-instrument readiness or state-machine value")
 	add(Event, "bounded", "closed per-instrument lifecycle event, including queued, delivered, and dropped")
 	add(CertificateKind, "bounded", "certificate worker domain", "public_url", "relay", "managed_service", "control")
-	add(DNSKind, "bounded", "DNS worker domain", "authority", "public_url", "managed_service", "public_url_challenge", "relay_challenge")
+	add(DNSKind, "bounded", "DNS worker domain", "authority", "public_url", "managed_service", "public_url_challenge", "managed_service_challenge", "relay_challenge")
 	add(CleanupKind, "bounded", "cleanup domain", "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state")
 	add(CapacityResource, "bounded", "admission capacity domain", admissionResources...)
 	add(HTTPMethod, "bounded", "standard HTTP method; unknown methods normalize to _OTHER", "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH", "_OTHER")
@@ -167,7 +167,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	for _, k := range []Key{VisitorConnectionID, RequestID, PublishRunID, PublishRunNumber, PublisherConnectionID, GrantID, ActorID, Revision, ImageHash} {
 		add(k, "trace_log", "high-churn correlation only; prohibited as a metric dimension")
 	}
-	for _, k := range []Key{"tnl.connection_class", "tnl.stage", "tnl.phase", "tnl.action", "tnl.provider", "tnl.public_url_purpose", "tnl.domain_kind", "tnl.certificate_plan", "tnl.milestone", "tnl.ingress_pool", "tnl.database_purpose", "tnl.signal"} {
+	for _, k := range []Key{"tnl.connection_class", "tnl.provider", "tnl.public_url_purpose", "tnl.domain_kind", "tnl.certificate_plan", "tnl.ingress_pool", "tnl.database_purpose", "tnl.signal"} {
 		add(k, "bounded", "closed domain value supplied by the owning semantic observer")
 	}
 	slices.SortFunc(out, func(a, b AttributeDefinition) int { return strings.Compare(string(a.Key), string(b.Key)) })

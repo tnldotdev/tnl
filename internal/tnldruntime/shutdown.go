@@ -13,8 +13,13 @@ import (
 )
 
 func (d *daemon) shutdown(timeout time.Duration) error {
+	d.draining.Store(true)
 	started := time.Now()
-	drainCtx, cancelDrain := context.WithTimeout(context.Background(), timeout)
+	owner := d.ctx
+	if owner == nil {
+		owner = context.Background()
+	}
+	drainCtx, cancelDrain := context.WithTimeout(context.WithoutCancel(owner), timeout)
 	defer cancelDrain()
 	var result error
 	deadline := time.Now().Add(timeout)
@@ -107,7 +112,7 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 			}
 		}
 	}
-	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 6*time.Second)
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(owner), 6*time.Second)
 	defer cancelCleanup()
 	serverErrors := make(chan error, 3)
 	servers := 0

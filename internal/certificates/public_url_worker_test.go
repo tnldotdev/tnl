@@ -703,10 +703,10 @@ type dnsChallengesStub struct {
 
 type certificateMilestoneRecorder struct{ milestones []string }
 
-func (*certificateMilestoneRecorder) ObserveCertificateWork(string, observability.CertificateWorkOutcome, time.Duration) {
+func (*certificateMilestoneRecorder) ObserveCertificateIterationContext(context.Context, string, string, observability.CertificateWorkOutcome, time.Duration) {
 }
 
-func (r *certificateMilestoneRecorder) ObserveCertificateMilestone(milestone string, _ time.Duration) {
+func (r *certificateMilestoneRecorder) ObserveCertificateMilestone(_, milestone string, _ time.Duration) {
 	r.milestones = append(r.milestones, milestone)
 }
 

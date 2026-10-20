@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/authorization"
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/localproxy"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -51,6 +52,11 @@ func (h *handler) authenticatePublisher(w http.ResponseWriter, r *http.Request) 
 		publisherProblem(w, "authenticate publisher", err)
 		return nil, controlstate.PublisherIdentity{}, false
 	}
+	fields := observability.Fields{Component: "control"}
+	if p.Scope.PublicURLID != "" {
+		fields.ServiceProtocol = "http"
+	}
+	*r = *r.WithContext(observability.AuthenticatedServerScope(r.Context(), observability.Identity{TeamID: p.Scope.TeamID, PublisherIdentityID: p.ID, PublicURLID: p.Scope.PublicURLID, ServiceID: p.Scope.PrivateServiceID}, fields))
 	return store, p, true
 }
 

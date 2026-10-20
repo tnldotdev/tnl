@@ -817,7 +817,8 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 }
 
 func (d *Database) ClosePublishRun(ctx context.Context, publishRunID string, token credentials.PublishRunToken, now time.Time) (retErr error) {
-	defer d.observeOperation("ClosePublishRun", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "ClosePublishRun")
+	defer func() { finish(retErr) }()
 	if !validStateText(publishRunID) {
 		return ErrPublishRunCredential
 	}

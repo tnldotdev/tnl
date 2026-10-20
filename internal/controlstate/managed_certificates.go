@@ -133,6 +133,13 @@ func (d *Database) CreatePrivateCertificateIssuance(ctx context.Context, service
 		return result, err
 	}
 	result.NewOrder = created
+	if created {
+		kind, kindErr := q.GetManagedCertificateDomainKind(ctx, row.DomainID.String)
+		if kindErr != nil {
+			return result, kindErr
+		}
+		result.DomainKind = DomainKind(kind)
+	}
 	result.PublisherIdentityID = run.PublisherIdentityID
 	return result, tx.Commit(ctx)
 }
@@ -226,7 +233,13 @@ func (d *Database) MarkPrivateCertificateInstalled(ctx context.Context, service,
 	if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: run.TeamID, ServiceID: service, ServiceKind: "private_service", EventType: "certificate.install", RunID: runID, PublisherIdentityID: run.PublisherIdentityID, OccurredAt: now}, runID+"/"+issuance); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	if run.CertificateIssuanceID.String != issuance {
+		d.activity.metrics.Load().ObserveCertificateTransition("managed_service", "installed")
+	}
+	return nil
 }
 
 func authorizePrivateCertificateOrder(ctx context.Context, tx pgx.Tx, run controlstatedb.ControlPrivateServiceRun, domain string, order controlstatedb.ControlAcmeOrder) error {

@@ -3069,9 +3069,12 @@ components:
       allOf:
         - { $ref: "#/components/schemas/PublisherGroupMember" }
         - type: object
-          required: [observed_revision, healthy]
+          required: [observed_revision, current_revision, snapshot_at, healthy]
           properties:
             observed_revision: { type: integer, format: int64 }
+            current_revision: { type: integer, format: int64 }
+            snapshot_at: { type: string, format: date-time }
+            acknowledged_at: { type: string, format: date-time }
             healthy: { type: boolean }
             lease_expires_at: { type: string, format: date-time }
             runtime: { $ref: "#/components/schemas/PublisherRuntimeStatus" }

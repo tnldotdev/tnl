@@ -2,7 +2,6 @@ package controlstate
 
 import (
 	"context"
-	"errors"
 	"net/netip"
 	"time"
 
@@ -43,8 +42,11 @@ func (d *Database) AuthorizeServiceConnector(ctx context.Context, service, runID
 		return result, err
 	}
 	run, err := privateRunAuthorization(ctx, tx, q, service, runID, token, now)
-	if err != nil || run.RunNumber != number {
-		return result, errors.Join(ErrPrivateServiceAccess, err)
+	if err != nil {
+		return result, err
+	}
+	if run.RunNumber != number {
+		return result, ErrPrivateServiceAccess
 	}
 	result, err = recheckServiceConnector(ctx, tx, service, runID, number, visitor, now)
 	if err != nil {

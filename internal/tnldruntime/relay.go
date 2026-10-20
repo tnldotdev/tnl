@@ -26,15 +26,17 @@ import (
 const relaySessionSetupTimeout = 10 * time.Second
 
 type relayRuntime struct {
-	controller       *relay.Controller
-	registry         *relay.Registry
-	privateRegistry  *relay.PrivateRegistry
-	publisher        *relay.PublisherAcceptor
-	transportTLS     *tls.Config
-	tcpListener      net.Listener
-	udpListener      *muxsession.QUICListener
-	internalListener net.Listener
-	drainOnce        sync.Once
+	configuredIdentity string
+	processRunID       string
+	controller         *relay.Controller
+	registry           *relay.Registry
+	privateRegistry    *relay.PrivateRegistry
+	publisher          *relay.PublisherAcceptor
+	transportTLS       *tls.Config
+	tcpListener        net.Listener
+	udpListener        *muxsession.QUICListener
+	internalListener   net.Listener
+	drainOnce          sync.Once
 }
 
 type relayProcessSettings struct {
@@ -201,6 +203,7 @@ func (d *daemon) startRelayRuntime(
 	if err != nil {
 		return nil, fmt.Errorf("create relay process run ID: %w", err)
 	}
+	runtime.configuredIdentity, runtime.processRunID = runtimeConfig.relayID, runID
 	registry := relay.NewRegistry()
 	privateRegistry := relay.NewPrivateRegistry()
 	privateRegistry.Instrument(runtimeConfig.metrics)
@@ -218,6 +221,9 @@ func (d *daemon) startRelayRuntime(
 			StreamCapacity: settings.streamCapacity,
 		},
 		RenewalInterval: settings.leaseRenewalInterval, RetryInterval: settings.controlRetryInterval,
+		Report: func(err error) {
+			logOperationalError(ctx, "renew relay lease", failure.ServerControlConnectionFailed, err)
+		},
 		CertificateChanged: runtimeConfig.certificateChanged,
 		Load: func() (int64, int64) {
 			publicConnections, publicStreams := registry.Load()
@@ -233,7 +239,7 @@ func (d *daemon) startRelayRuntime(
 				deadline := *current.DrainDeadline
 				runtime.drainOnce.Do(func() {
 					d.background(func() {
-						ctx, cancel := context.WithDeadline(context.Background(), deadline)
+						ctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 						defer cancel()
 						_ = runtime.registry.Drain(ctx)
 						_ = runtime.registry.Close()
@@ -279,7 +285,9 @@ func (d *daemon) startRelayRuntime(
 				runtimeConfig.metrics.IncCapacityRejection("publisher_connections")
 			}
 		},
-		Report: func(err error) { logOperationalError("serve relay publisher", failure.ServerConnectionFailed, err) },
+		Report: func(err error) {
+			logOperationalError(ctx, "serve relay publisher", failure.ServerConnectionFailed, err)
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -309,7 +317,7 @@ func (d *daemon) startRelayRuntime(
 				runtimeConfig.metrics.ObserveRelayStreamRejection(reason)
 			}
 		},
-		Report: func(err error) { logOperationalError("forward through relay", failure.ServerRelayFailed, err) },
+		Report: func(err error) { logOperationalError(ctx, "forward through relay", failure.ServerRelayFailed, err) },
 	})
 	if err != nil {
 		return nil, err
@@ -375,7 +383,7 @@ func serveTLSYamuxSessions(
 				err = accept(ctx, transport)
 			}
 			if err != nil && ctx.Err() == nil {
-				logOperationalError("serve relay TLS/TCP session", failure.ServerConnectionFailed, err)
+				logOperationalError(ctx, "serve relay TLS/TCP session", failure.ServerConnectionFailed, err)
 			}
 		})
 	}
@@ -398,7 +406,7 @@ func serveQUICSessions(
 		}
 		active.Go(func() {
 			if err := accept(ctx, transport); err != nil && ctx.Err() == nil {
-				logOperationalError("serve relay QUIC session", failure.ServerConnectionFailed, err)
+				logOperationalError(ctx, "serve relay QUIC session", failure.ServerConnectionFailed, err)
 			}
 		})
 	}

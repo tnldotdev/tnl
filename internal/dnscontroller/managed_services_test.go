@@ -84,7 +84,7 @@ func TestManagedEndpointDNSUsesOwnedExactRecords(t *testing.T) {
 				if !test.propagated && (phase == "verify" || phase == "advance") {
 					reason = `,tnl_reason="pending"`
 				}
-				want := fmt.Sprintf(`tnl_control_dns_work_duration_seconds_count{tnl_dns_kind="managed_service",tnl_outcome="success",tnl_phase=%q%s} 1`, phase, reason)
+				want := fmt.Sprintf(`tnl_control_dns_work_duration_seconds_count{tnl_dns_kind="managed_service",tnl_operation=%q,tnl_outcome="success"%s} 1`, phase, reason)
 				if !strings.Contains(response.Body.String(), want) {
 					t.Errorf("missing managed DNS stage %s", want)
 				}

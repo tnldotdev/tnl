@@ -300,6 +300,9 @@ func (h *handler) CreatePublishRun(
 	publicURLID controlv1.PublicURLID,
 	_ controlv1.CreatePublishRunParams,
 ) {
+	if !h.acceptingNewWork(response) {
+		return
+	}
 	token, bearerOK := requestBearerToken(request)
 	if !bearerOK {
 		writeBearerProblem(response)

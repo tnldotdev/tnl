@@ -29,7 +29,7 @@ func runGuestPrivateStateCleanup(ctx context.Context, store guestPrivateStateSto
 	}, func(count int, err error) {
 		metrics.ObserveCleanup("guest_private_state", count, false, err)
 		if err != nil && ctx.Err() == nil {
-			logOperationalError("clean up guest private state", failure.ServerWorkerFailed, err)
+			logOperationalError(ctx, "clean up guest private state", failure.ServerWorkerFailed, err)
 		}
 	})
 }

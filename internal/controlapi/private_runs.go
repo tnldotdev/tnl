@@ -48,6 +48,9 @@ func privateRunConnections(rows []controlstate.PrivateRunAssignment) []controlv1
 }
 
 func (h *handler) PreparePrivateServiceRun(w http.ResponseWriter, r *http.Request, serviceID controlv1.PrivateServiceID, _ controlv1.PreparePrivateServiceRunParams) {
+	if !h.acceptingNewWork(w) {
+		return
+	}
 	var body controlv1.PrivateServiceRunDeclaration
 	if decodeJSONLimited(w, r, &body, 2<<20) != nil || body.TrustRevision < 1 {
 		writeProblem(w, 400, controlv1.InvalidRequest, "declare the private service protocol and TLS trust revision")
@@ -91,6 +94,9 @@ func (h *handler) PreparePrivateServiceRun(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *handler) StartManagedServiceRun(w http.ResponseWriter, r *http.Request, service controlv1.PrivateServiceID, run controlv1.PrivateRunID) {
+	if !h.acceptingNewWork(w) {
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	var body controlv1.StartManagedServiceRunJSONRequestBody
 	if decodeJSON(w, r, &body) != nil || body.RunNumber < 1 {

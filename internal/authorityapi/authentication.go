@@ -8,6 +8,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
@@ -53,8 +54,8 @@ func (h *handler) authenticateControlRequest(
 func writeAuthenticationUnavailable(response http.ResponseWriter, operation string, err error) {
 	requestID := writeProblem(response, http.StatusServiceUnavailable, authorityv1.Unavailable, "authentication is unavailable")
 	if err == nil {
-		operatorlog.Report(failure.Operation(operation), failure.ServerAPIInternal, requestID, errors.New("store unavailable"))
+		operatorlog.ReportContext(observability.ResponseContext(response), failure.Operation(operation), failure.ServerAPIInternal, requestID, errors.New("store unavailable"))
 		return
 	}
-	operatorlog.Report(failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
+	operatorlog.ReportContext(observability.ResponseContext(response), failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
 }

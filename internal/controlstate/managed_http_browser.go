@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/httpsubject"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -53,6 +54,7 @@ func (d *Database) lockManagedHTTPRun(ctx context.Context, tx pgx.Tx, auth Manag
 	if !slices.Contains(endpoint.RunIds, auth.RunID) {
 		return ErrPrivateServiceAccess
 	}
+	observability.AuthenticatedServerScope(ctx, observability.Identity{TeamID: run.TeamID, PublisherIdentityID: run.PublisherIdentityID, ServiceID: run.PrivateServiceID}, observability.Fields{Component: "control", ServiceProtocol: "http"})
 	return nil
 }
 

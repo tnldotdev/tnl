@@ -2822,6 +2822,8 @@ type PublisherGroupMember struct {
 
 // PublisherGroupMemberStatus defines model for PublisherGroupMemberStatus.
 type PublisherGroupMemberStatus struct {
+	AcknowledgedAt      *time.Time `json:"acknowledged_at,omitempty"`
+	CurrentRevision     int64      `json:"current_revision"`
 	GroupId             string     `json:"group_id"`
 	GroupName           string     `json:"group_name"`
 	Healthy             bool       `json:"healthy"`
@@ -2832,8 +2834,9 @@ type PublisherGroupMemberStatus struct {
 	PublisherIdentityId string     `json:"publisher_identity_id"`
 
 	// Runtime Latest explicitly started runtime for this immutable publisher identity. A single bounded record survives stop and lease expiry. Active describes the runtime lease, not target reachability or a permanent static IP. Control egress may differ from database-target routing, address family, or NAT. This evidence never grants access or configures an allowlist.
-	Runtime *PublisherRuntimeStatus `json:"runtime,omitempty"`
-	TeamId  string                  `json:"team_id"`
+	Runtime    *PublisherRuntimeStatus `json:"runtime,omitempty"`
+	SnapshotAt time.Time               `json:"snapshot_at"`
+	TeamId     string                  `json:"team_id"`
 }
 
 // PublisherGroupServiceAssignment defines model for PublisherGroupServiceAssignment.

@@ -7,7 +7,32 @@ package controlstatedb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const acknowledgePublisherGroupConfiguration = `-- name: AcknowledgePublisherGroupConfiguration :exec
+UPDATE control.publisher_group_members
+SET observed_revision=$1, healthy=$2, acknowledged_at=$3
+WHERE publisher_identity_id=$4
+`
+
+type AcknowledgePublisherGroupConfigurationParams struct {
+	Revision            int64
+	Healthy             bool
+	AcknowledgedAt      pgtype.Timestamptz
+	PublisherIdentityID string
+}
+
+func (q *Queries) AcknowledgePublisherGroupConfiguration(ctx context.Context, arg AcknowledgePublisherGroupConfigurationParams) error {
+	_, err := q.db.Exec(ctx, acknowledgePublisherGroupConfiguration,
+		arg.Revision,
+		arg.Healthy,
+		arg.AcknowledgedAt,
+		arg.PublisherIdentityID,
+	)
+	return err
+}
 
 const getLocalProjectPrivateService = `-- name: GetLocalProjectPrivateService :one
 SELECT local.source_fingerprint, s.id, s.team_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.trust_revision, s.visitor_revision, s.publisher_pool, s.domain_id, s.certificate_hostname, s.certificate_scope, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at
@@ -135,6 +160,68 @@ func (q *Queries) ListProjectPublisherGroups(ctx context.Context, arg ListProjec
 			&i.Namespace,
 			&i.Public,
 			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPublisherGroupMemberStatus = `-- name: ListPublisherGroupMemberStatus :many
+SELECT g.id AS group_id, g.name AS group_name, m.publisher_identity_id, m.key_id,
+    m.observed_revision, p.revision AS current_revision, m.acknowledged_at,
+    (m.healthy AND m.lease_expires_at>$1 AND m.observed_revision=p.revision)::boolean AS healthy,
+    m.lease_expires_at
+FROM control.project_publisher_groups g
+JOIN control.publisher_group_members m ON m.group_id=g.id
+JOIN control.publisher_identities i ON i.id=m.publisher_identity_id
+JOIN control.applied_projects p ON p.team_id=g.team_id AND p.project_key=g.project_key
+WHERE g.team_id=$2 AND g.project_key=$3
+    AND g.deleted_at IS NULL AND i.revoked_at IS NULL
+ORDER BY g.name,m.publisher_identity_id
+`
+
+type ListPublisherGroupMemberStatusParams struct {
+	Now        pgtype.Timestamptz
+	TeamID     string
+	ProjectKey string
+}
+
+type ListPublisherGroupMemberStatusRow struct {
+	GroupID             string
+	GroupName           string
+	PublisherIdentityID string
+	KeyID               string
+	ObservedRevision    int64
+	CurrentRevision     int64
+	AcknowledgedAt      pgtype.Timestamptz
+	Healthy             bool
+	LeaseExpiresAt      pgtype.Timestamptz
+}
+
+func (q *Queries) ListPublisherGroupMemberStatus(ctx context.Context, arg ListPublisherGroupMemberStatusParams) ([]ListPublisherGroupMemberStatusRow, error) {
+	rows, err := q.db.Query(ctx, listPublisherGroupMemberStatus, arg.Now, arg.TeamID, arg.ProjectKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPublisherGroupMemberStatusRow
+	for rows.Next() {
+		var i ListPublisherGroupMemberStatusRow
+		if err := rows.Scan(
+			&i.GroupID,
+			&i.GroupName,
+			&i.PublisherIdentityID,
+			&i.KeyID,
+			&i.ObservedRevision,
+			&i.CurrentRevision,
+			&i.AcknowledgedAt,
+			&i.Healthy,
+			&i.LeaseExpiresAt,
 		); err != nil {
 			return nil, err
 		}

@@ -145,7 +145,11 @@ func dimensionKey(name, key string) Key {
 		if strings.Contains(name, "guest_trials") {
 			return Event
 		}
-		return "tnl.stage"
+		return Operation
+	case "phase", "action":
+		return Operation
+	case "milestone":
+		return Event
 	default:
 		return Key("tnl." + key)
 	}
@@ -178,6 +182,7 @@ func classifyResult(value string) (Outcome, string) {
 var domainOutcomes = map[string]Outcome{
 	"forwarded": Success, "committed": Success, "placed": Success, "served": Success, "not_modified": Success, "claimed": Success, "empty": Success, "progress": Success, "pending": Success, "busy": Success,
 	"policy_denied":   Denied,
+	"not_admitted":    Rejected,
 	"capacity_denied": Rejected, "capacity": Rejected, "bandwidth": Rejected, "draining": Rejected, "invalid": Rejected, "invalid_projection": Rejected, "insufficient_services": Rejected, "client_error": Rejected, "stale": Rejected,
 	"lookup_missing": Error, "lookup_unavailable": Error, "open_failed": Error, "setup_failed": Error, "committed_failed": Error, "unavailable": Error, "retry": Error, "terminal": Error, "save_failed": Error, "http_error": Error, "server_error": Error, "transport_error": Error, "invalid_response": Error, "other": Error, "expired": Error,
 }

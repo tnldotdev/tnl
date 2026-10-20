@@ -77,7 +77,8 @@ are mutually exclusive. the scope derives `ServiceKind=managed_service|public_ur
 `NormalizeServiceKind` translates the `private_service` wire value.
 `PublisherGroupID` maps the authenticated `group_id`; `PublisherIdentityID`,
 `DeploymentID`, and `ReplicaKey` retain their distinct meanings. only the publisher
-instruments currently allow scoped identity dimensions.
+instruments and the signed control runtime lifecycle instrument allow scoped identity
+dimensions. runtime scope attaches only after control verifies the signing proof.
 
 `WithFields(ctx, Fields)` replaces the protocol/component field set. unknown enum
 values are omitted. `Attributes(ctx, allowed ...Key)` selects identity/protocol
@@ -87,7 +88,11 @@ accepts standard span options, including trace links, for authored finite work.
 its error finish function is idempotent. `PublisherOperation` also records its
 duration exactly once. `ObserveOperationContext` attaches an already measured
 operation interval to its caller context; do not wrap the same boundary in an
-additional span. the older context-free observers create local spans.
+additional span. control state starts `ControlOperation` before transaction work;
+driver query and acquisition spans use that context. DNS and certificate workers
+start finite `WorkerAttempt` spans; an available scheduling span is a link, never
+an invented asynchronous request parent. no request context is stored in worker
+records or database activity snapshots.
 
 publisher byte directions are `visitor_to_target|target_to_visitor`. relay wire
 directions are `visitor_to_publisher|publisher_to_visitor`; ingress keeps its
@@ -102,6 +107,11 @@ detail goes in `tnl.reason`; readiness belongs in `tnl.state`, and queue/ingesti
 lifecycle belongs in `tnl.event`. certificate, DNS, cleanup, and admission domains
 use `tnl.certificate_kind`, `tnl.dns_kind`, `tnl.cleanup_kind`, and
 `tnl.capacity_resource`. there is no generic `kind` label.
+
+worker phases, stages, and actions use `tnl.operation`; certificate milestones use
+`tnl.event`. a successful HTTP 200 authorization response can have outcome `denied`
+or `rejected` with reason `not_admitted`. the latter means the credential was
+allowed but the visitor was not admitted. infrastructure failures remain `error`.
 
 `ErrorOutcome` classifies context cancellation/deadlines, network timeouts, and
 owned failure classes without formatting an error. `FailureCode` exports only an
@@ -207,11 +217,27 @@ matter when reading it:
   use their maximum rather than their sum. process-local counters reset at restart.
   guest trial events count trials, not publish runs or pings. public URL purpose
   counters measure activity by saved purpose, not distinct identities.
+- port inventory refresh runs every 30 seconds with a five-second deadline.
+  `tnl_control_tcp_port_pool_last_success_timestamp_seconds` records only complete
+  successful refreshes. disappeared pools vanish on the next successful refresh;
+  all capacity series disappear after 90 seconds without success. the timestamp
+  remains available to explain stale data. neither scrape nor collection queries
+  PostgreSQL. use `max`, not `sum`, across replicas for both inventory and timestamp.
+- `tnl_control_certificate_orders_total` and
+  `tnl_control_certificate_milestone_age_seconds` cover public URLs and managed
+  services using `tnl.certificate_kind`; there are no public-URL-only aliases.
+  certificate work, claims, transitions, and installation use the same kinds.
+- `tnl_control_publisher_runtime_duration_seconds` measures signed `inspect`,
+  `start`, `renew`, and `stop` with selected authenticated team/group/publisher
+  and reported deployment/replica dimensions. replaced/stopped runtime rejection
+  uses outcome `rejected` and the existing reason `stale`. run IDs, epochs, and
+  signing assertions never become metric labels.
 - operation histograms preserve explicit classic second buckets. benchmark
   `DurationSummaries` selects only histograms ending in `_seconds`, excluding
   non-duration SDK distributions. runtime/process collectors use the supported
   Prometheus bridge for OTLP; application metrics never pass through that bridge.
 
-publisher live payload-byte instruments, complete HTTP streaming instrumentation,
-and additional server caller propagation are separate follow-up work. this shared
-backend does not add tunnel headers or managed-service/database desired-version state.
+publisher live payload-byte instruments and complete HTTP streaming instrumentation
+belong to their data-path owners. this backend does not add tunnel headers or
+managed-service/database desired-version state. see [server readiness](server-readiness.md)
+for the private diagnostic surfaces and lease-loss boundary.

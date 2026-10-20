@@ -8,6 +8,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/internal/problemtype"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -63,7 +64,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.PlacementUnavailable, "relay placement is unavailable")
 	default:
 		requestID := writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
-		operatorlog.Report(failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(observability.ResponseContext(response), failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
 	}
 }
 
@@ -91,7 +92,7 @@ func writeProblem(response http.ResponseWriter, status int, code controlv1.Probl
 
 func writeUnavailableProblem(response http.ResponseWriter, operation failure.Operation, title string, reason failure.Reason, err error) {
 	requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, title)
-	operatorlog.Report(operation, reason, requestID, err)
+	operatorlog.ReportContext(observability.ResponseContext(response), operation, reason, requestID, err)
 }
 
 func newRequestID() string { return problemtype.NewRequestID() }

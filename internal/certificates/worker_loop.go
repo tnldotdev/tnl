@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/dnscontroller"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
@@ -53,22 +53,21 @@ type loopWorker interface {
 func runWorkerLoop(
 	ctx context.Context,
 	worker loopWorker,
-	logger *slog.Logger,
 	operationTimeout, idleInterval time.Duration,
-	failureMessage string,
 ) error {
 	return workerloop.Run(ctx, workerloop.Config{
 		OperationTimeout: operationTimeout,
 		IdleInterval:     idleInterval,
 		Process:          worker.processOne,
-		OnError: func(err error) {
-			if !errors.Is(err, context.Canceled) {
-				reason := certificateFailureReason(err)
-				definition, _ := failure.DefinitionFor(reason)
-				logger.Error(failureMessage, "reason", reason, "action", definition.Action)
-			}
-		},
 	})
+}
+
+func finishCertificateAttempt(ctx context.Context, finish func(error), err error) {
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		err = failure.Wrap("advance certificate work", certificateFailureReason(err), err)
+		operatorlog.ReportContext(ctx, "advance certificate work", certificateFailureReason(err), "", err)
+	}
+	finish(err)
 }
 
 func pollAt(now time.Time, interval time.Duration, retryAfter time.Time) time.Time {

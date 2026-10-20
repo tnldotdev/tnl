@@ -56,7 +56,7 @@ func (h *handler) AuthorizeManagedHTTPVisitor(w http.ResponseWriter, r *http.Req
 		writeManagedCertificateProblem(w, "authorize managed HTTP visitor", err)
 		return
 	}
-	observability.AuthorizationDecision(r.Context(), "managed_http_visitor", result.Allowed)
+	observability.AuthorizationAdmission(r.Context(), "managed_http_visitor", result.Allowed, result.Admitted)
 	writeJSON(w, 200, controlv1.ServiceClientCertificateDecision{Allowed: result.Allowed, Admitted: result.Admitted, ValidUntil: result.ValidUntil})
 }
 

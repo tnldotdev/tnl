@@ -54,7 +54,8 @@ func (d *Database) ReadIngressRoutingTableSnapshot(
 	identity IngressLeaseIdentity,
 	now time.Time,
 ) (result IngressRoutingTableSnapshot, retErr error) {
-	defer d.observeOperation("ReadIngressRoutingTableSnapshot", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "ReadIngressRoutingTableSnapshot")
+	defer func() { finish(retErr) }()
 	if err := validateIngressLeaseIdentity(identity); err != nil {
 		return IngressRoutingTableSnapshot{}, err
 	}
@@ -113,7 +114,8 @@ func (d *Database) ReadIngressRoutingTableEvents(
 	pageSize int,
 	now time.Time,
 ) (result IngressRoutingTablePage, retErr error) {
-	defer d.observeOperation("ReadIngressRoutingTableEvents", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "ReadIngressRoutingTableEvents")
+	defer func() { finish(retErr) }()
 	if err := validateIngressLeaseIdentity(identity); err != nil {
 		return IngressRoutingTablePage{}, err
 	}

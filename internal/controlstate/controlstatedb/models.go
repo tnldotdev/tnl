@@ -1211,6 +1211,7 @@ type ControlPublisherGroupMember struct {
 	PublicKey           []byte
 	KeyID               string
 	ObservedRevision    int64
+	AcknowledgedAt      pgtype.Timestamptz
 	Healthy             bool
 	LeaseExpiresAt      pgtype.Timestamptz
 }

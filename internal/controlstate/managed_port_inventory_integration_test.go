@@ -1,6 +1,7 @@
 package controlstate
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http/httptest"
@@ -70,4 +71,32 @@ func TestIntegrationManagedServicePortInventory(t *testing.T) {
 		t.Fatal("removed a quarantined port", err)
 	}
 	assertCapacity(2, 1, 1, 0)
+	// a complete refresh removes a vanished pool, while failure cannot claim a
+	// newer successful snapshot. scrape remains usable after the pool is closed.
+	if _, err := d.pool.Exec(ctx, `INSERT INTO control.ingress_pools(id,state,created_at,updated_at) VALUES('temporary-pool','disabled',$1,$1)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ConfigureIngressServicePorts(ctx, "temporary-pool", []tcpport.Range{{First: 32000, Last: 32000}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RefreshPortPoolMetrics(ctx, metrics); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.pool.Exec(ctx, `DELETE FROM control.ingress_service_port_ranges WHERE ingress_pool_id='temporary-pool'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RefreshPortPoolMetrics(ctx, metrics); err != nil {
+		t.Fatal(err)
+	}
+	failed, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := d.RefreshPortPoolMetrics(failed, metrics); err == nil {
+		t.Fatal("canceled refresh succeeded")
+	}
+	d.pool.Close()
+	w := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+	if w.Code != 200 || strings.Contains(w.Body.String(), `tnl_ingress_pool="temporary-pool"`) || !strings.Contains(w.Body.String(), "tnl_control_tcp_port_pool_last_success_timestamp_seconds ") {
+		t.Fatal("inventory freshness or disappeared pool incorrect", w.Body.String())
+	}
 }

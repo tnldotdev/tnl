@@ -62,7 +62,7 @@ func (h *handler) deviceError(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, oidcauth.ErrUnavailable) {
 		requestID := writeProblem(w, http.StatusServiceUnavailable, authorityv1.Unavailable, "identity provider is unavailable; reopen the approval URL to retry")
-		operatorlog.Report("authenticate device browser", failure.ServerIdentityProviderUnavailable, requestID, err)
+		operatorlog.ReportContext(observability.ResponseContext(w), "authenticate device browser", failure.ServerIdentityProviderUnavailable, requestID, err)
 		return
 	}
 	writeAuthenticationUnavailable(w, "device login", err)

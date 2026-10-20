@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"log"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -128,6 +129,9 @@ func TestPublicURLWorkerUnconfiguredDNSDefersEveryOrder(t *testing.T) {
 				}
 			}
 			var logs bytes.Buffer
+			previous := log.Writer()
+			log.SetOutput(&logs)
+			defer log.SetOutput(previous)
 			worker, err := NewPublicURLWorker(store, PublicURLConfig{WorkerID: "worker_test", Profile: "tlsserver", HTTPClient: &http.Client{}, IdleInterval: time.Millisecond, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
 			if err != nil {
 				t.Fatal(err)

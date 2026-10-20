@@ -40,6 +40,9 @@ type PublisherGroupMemberStatus struct {
 	PublisherGroupMember
 	Runtime          *PublisherRuntimeStatus `json:"runtime,omitempty"`
 	ObservedRevision int64                   `json:"observed_revision"`
+	CurrentRevision  int64                   `json:"current_revision"`
+	SnapshotAt       time.Time               `json:"snapshot_at"`
+	AcknowledgedAt   *time.Time              `json:"acknowledged_at,omitempty"`
 	Healthy          bool                    `json:"healthy"`
 	LeaseExpiresAt   *time.Time              `json:"lease_expires_at,omitempty"`
 }
@@ -436,7 +439,7 @@ func (d *Database) AcknowledgePublisherGroupConfiguration(ctx context.Context, t
 	if revision < 1 || row.Revision != revision || !bytes.Equal([]byte(row.ConfigurationHash), []byte(hash)) {
 		return ErrProjectConfigurationStale
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.publisher_group_members SET observed_revision=$2,healthy=$3 WHERE publisher_identity_id=$1`, m.PublisherIdentityID, revision, healthy)
+	err = controlstatedb.New(tx).AcknowledgePublisherGroupConfiguration(ctx, controlstatedb.AcknowledgePublisherGroupConfigurationParams{PublisherIdentityID: m.PublisherIdentityID, Revision: revision, Healthy: healthy, AcknowledgedAt: timestamptz(now)})
 	if err != nil {
 		return err
 	}
@@ -444,30 +447,29 @@ func (d *Database) AcknowledgePublisherGroupConfiguration(ctx context.Context, t
 }
 
 func listPublisherGroupMemberStatus(ctx context.Context, tx pgx.Tx, team, project string) ([]PublisherGroupMemberStatus, error) {
-	rows, err := tx.Query(ctx, `SELECT g.id,g.name,m.publisher_identity_id,m.key_id,m.observed_revision,m.healthy AND m.lease_expires_at>now(),m.lease_expires_at FROM control.project_publisher_groups g JOIN control.publisher_group_members m ON m.group_id=g.id JOIN control.publisher_identities p ON p.id=m.publisher_identity_id WHERE g.team_id=$1 AND g.project_key=$2 AND g.deleted_at IS NULL AND p.revoked_at IS NULL ORDER BY g.name,m.publisher_identity_id`, team, project)
+	now := time.Now().UTC()
+	rows, err := controlstatedb.New(tx).ListPublisherGroupMemberStatus(ctx, controlstatedb.ListPublisherGroupMemberStatusParams{TeamID: team, ProjectKey: project, Now: timestamptz(now)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	result := []PublisherGroupMemberStatus{}
-	for rows.Next() {
-		s := PublisherGroupMemberStatus{PublisherGroupMember: PublisherGroupMember{TeamID: team, ProjectKey: project}}
-		if err = rows.Scan(&s.GroupID, &s.GroupName, &s.PublisherIdentityID, &s.KeyID, &s.ObservedRevision, &s.Healthy, &s.LeaseExpiresAt); err != nil {
-			return nil, err
+	for _, row := range rows {
+		s := PublisherGroupMemberStatus{PublisherGroupMember: PublisherGroupMember{TeamID: team, ProjectKey: project, GroupID: row.GroupID, GroupName: row.GroupName, PublisherIdentityID: row.PublisherIdentityID, KeyID: row.KeyID}, ObservedRevision: row.ObservedRevision, CurrentRevision: row.CurrentRevision, Healthy: row.Healthy, SnapshotAt: now}
+		if row.LeaseExpiresAt.Valid {
+			s.LeaseExpiresAt = &row.LeaseExpiresAt.Time
+		}
+		if row.AcknowledgedAt.Valid {
+			s.AcknowledgedAt = &row.AcknowledgedAt.Time
 		}
 		result = append(result, s)
 	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	rows.Close()
 	for i := range result {
-		result[i].Runtime, err = publisherRuntimeStatus(ctx, controlstatedb.New(tx), result[i].PublisherIdentityID, time.Now())
+		result[i].Runtime, err = publisherRuntimeStatus(ctx, controlstatedb.New(tx), result[i].PublisherIdentityID, now)
 		if err != nil {
 			return nil, err
 		}
 		if result[i].Runtime != nil {
-			result[i].Healthy = result[i].Healthy && result[i].Runtime.Active
+			result[i].Healthy = result[i].Healthy && result[i].Runtime.Active && result[i].AcknowledgedAt != nil && !result[i].AcknowledgedAt.Before(result[i].Runtime.StartedAt)
 		}
 	}
 	return result, nil

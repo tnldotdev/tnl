@@ -105,7 +105,7 @@ func (q *queryActivity) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data 
 		err = ctx.Err()
 	}
 	metrics := q.metrics.Load()
-	metrics.ObserveDatabaseQuery(query.operation, err, now.Sub(query.started))
+	metrics.ObserveDatabaseQueryContext(ctx, query.operation, err, now.Sub(query.started))
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if _, exists := q.active[query]; exists {
@@ -137,7 +137,7 @@ func (q *queryActivity) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data 
 	if query.operation == "commit" || query.operation == "rollback" || conn.IsClosed() {
 		if guards := q.guards[conn]; guards != nil {
 			for operation, started := range guards.held {
-				metrics.ObserveDatabaseGuard(operation, err, now.Sub(started))
+				metrics.ObserveDatabaseGuardContext(ctx, operation, err, now.Sub(started))
 			}
 			delete(q.guards, conn)
 		}

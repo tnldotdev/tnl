@@ -8,6 +8,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/operatorlog"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
@@ -24,7 +25,7 @@ func (h *handler) GetAdminServerStatus(response http.ResponseWriter, request *ht
 	counts, err := h.admin.AdminRuntimeCounts(request.Context(), now)
 	if err != nil {
 		requestID := writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
-		operatorlog.Report("read admin server status", failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(request.Context(), "read admin server status", failure.ServerAPIInternal, requestID, err)
 		return
 	}
 	values := []int64{
@@ -183,7 +184,7 @@ func (h *handler) writeAdminStateError(response http.ResponseWriter, operation s
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "relay lease is stale")
 	default:
 		requestID := writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
-		operatorlog.Report(failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(observability.ResponseContext(response), failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
 	}
 }
 

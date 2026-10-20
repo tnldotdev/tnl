@@ -1,6 +1,7 @@
 package controlstate
 
 import (
+	"context"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -34,14 +35,13 @@ func (d *Database) PrometheusMetrics(now time.Time) observability.DatabaseSnapsh
 
 // register this defer before transaction cleanup so the duration and outcome
 // include rollback and any error it adds to the returned error.
-func (d *Database) observeOperation(operation string, err *error) func() {
+func (d *Database) observeOperation(ctx context.Context, operation string) (context.Context, func(error)) {
 	if d == nil || d.activity == nil {
-		return func() {}
+		return ctx, func(error) {}
 	}
 	metrics := d.activity.metrics.Load()
 	if metrics == nil {
-		return func() {}
+		return ctx, func(error) {}
 	}
-	started := time.Now()
-	return func() { metrics.ObserveOperation(operation, *err, time.Since(started)) }
+	return observability.ControlOperation(observability.WithMetrics(ctx, metrics), operation)
 }

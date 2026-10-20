@@ -95,7 +95,9 @@ func (s *Server) CompanyAuthorizationURL(ctx context.Context, state, nonce, veri
 	return u.String(), nil
 }
 
-func (s *Server) Redeem(ctx context.Context, code, nonce, verifier string) (Identity, error) {
+func (s *Server) Redeem(ctx context.Context, code, nonce, verifier string) (_ Identity, retErr error) {
+	ctx, finish := observe(ctx, "oidc.redeem")
+	defer func() { finish(retErr) }()
 	if !validClaim(code, 4096) || !validClaim(nonce, 256) || len(verifier) < 43 || len(verifier) > 128 {
 		return Identity{}, ErrUnauthenticated
 	}
@@ -111,14 +113,14 @@ func (s *Server) Redeem(ctx context.Context, code, nonce, verifier string) (Iden
 			return Identity{}, cause
 		}
 		var rejected *oauth2.RetrieveError
-		if errors.As(err, &rejected) && (rejected.ErrorCode == "invalid_grant" || rejected.ErrorCode == "access_denied") {
+		if errors.As(err, &rejected) && rejected.Response != nil && (rejected.Response.StatusCode == http.StatusBadRequest || rejected.Response.StatusCode == http.StatusForbidden) && (rejected.ErrorCode == "invalid_grant" || rejected.ErrorCode == "access_denied") {
 			return Identity{}, ErrUnauthenticated
 		}
 		return Identity{}, ErrUnavailable
 	}
 	raw, ok := token.Extra("id_token").(string)
-	if !ok {
-		return Identity{}, ErrUnauthenticated
+	if !ok || raw == "" {
+		return Identity{}, ErrUnavailable
 	}
 	id, err := s.verifier.Verify(ctx, raw)
 	if err != nil {

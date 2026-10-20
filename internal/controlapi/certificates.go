@@ -46,7 +46,7 @@ func (h *handler) CreateCertificateIssuance(
 				break
 			}
 		}
-		h.config.Metrics.ObserveCertificateOrder(string(issuance.DomainKind), plan)
+		h.config.Metrics.ObserveCertificateOrder("public_url", string(issuance.DomainKind), plan)
 	}
 	writeJSON(response, http.StatusCreated, certificateIssuanceResponse(issuance))
 }

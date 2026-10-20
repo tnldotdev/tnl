@@ -15,7 +15,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 )
 
@@ -42,7 +44,15 @@ func companySessionID(ctx context.Context, identity string) string {
 	return p.SessionID
 }
 
-func requireTeamSession(ctx context.Context, q *controlstatedb.Queries, team, identity string, now time.Time) error {
+func requireTeamSession(ctx context.Context, q *controlstatedb.Queries, team, identity string, now time.Time) (retErr error) {
+	ctx, finish := observability.ControlOperation(ctx, "company.authorize_session")
+	defer func() {
+		err := retErr
+		if errors.Is(err, ErrAuthorityAccess) {
+			err = failure.Wrap("authorize company session", failure.ServerDenied, err)
+		}
+		finish(err)
+	}()
 	allowed, err := q.CompanySessionAuthorized(ctx, controlstatedb.CompanySessionAuthorizedParams{
 		TeamID: team, IdentityID: identity, SessionID: companySessionID(ctx, identity), Now: timestamptz(now),
 	})

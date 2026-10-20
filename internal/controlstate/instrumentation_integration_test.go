@@ -81,7 +81,7 @@ func TestIntegrationOperationMetricsExport(t *testing.T) {
 			continue
 		}
 		for _, metric := range family.Metric {
-			if len(metric.Label) == 3 && metric.Label[0].GetName() == "tnl_action" && metric.Label[0].GetValue() == "create" && metric.Label[1].GetValue() == "success" && metric.Label[2].GetValue() == "placed" {
+			if len(metric.Label) == 3 && metric.Label[0].GetName() == "tnl_operation" && metric.Label[0].GetValue() == "create" && metric.Label[1].GetValue() == "success" && metric.Label[2].GetValue() == "placed" {
 				placements += metric.GetCounter().GetValue()
 			}
 		}

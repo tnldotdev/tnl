@@ -8,13 +8,17 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/controlstate"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
-func (w *Worker) processPublicURL(ctx context.Context, now time.Time) (bool, error) {
+func (w *Worker) processPublicURL(ctx context.Context, now time.Time) (_ bool, retErr error) {
+	ctx, finish := observability.WorkerAttempt(ctx, "dns.public_url.attempt")
+	var attemptErr error
+	defer func() { finishDNSAttempt(ctx, finish, errors.Join(retErr, attemptErr)) }()
 	started := time.Now()
 	route, found, err := w.store.ClaimDNSPublicURLWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
 	if ctx.Err() == nil {
-		observeDNS(w.config.Observer, "public_url", "claim", started, found, err)
+		observeDNS(ctx, w.config.Observer, "public_url", "claim", started, found, err)
 	}
 	if err != nil || !found {
 		return found, err
@@ -22,6 +26,7 @@ func (w *Worker) processPublicURL(ctx context.Context, now time.Time) (bool, err
 	initial := route.State
 	advanceStarted := time.Now()
 	advanceErr := w.advancePublicURL(ctx, &route, now)
+	attemptErr = advanceErr
 	if advanceErr != nil {
 		if ctx.Err() != nil {
 			return true, ctx.Err()
@@ -31,13 +36,13 @@ func (w *Worker) processPublicURL(ctx context.Context, now time.Time) (bool, err
 	started = time.Now()
 	saved, err := w.store.SaveDNSPublicURLWork(ctx, route, w.now())
 	if ctx.Err() == nil {
-		observeDNS(w.config.Observer, "public_url", "save", started, true, err)
+		observeDNS(ctx, w.config.Observer, "public_url", "save", started, true, err)
 	}
 	if err != nil {
 		return true, err
 	}
 	if ctx.Err() == nil {
-		observeDNS(w.config.Observer, "public_url", "advance", advanceStarted, !saved.AvailableAt.After(now), advanceErr)
+		observeDNS(ctx, w.config.Observer, "public_url", "advance", advanceStarted, !saved.AvailableAt.After(now), advanceErr)
 	}
 	if w.config.Observer != nil && initial != saved.State {
 		w.config.Observer.ObserveDNSTransition("public_url", string(saved.State))

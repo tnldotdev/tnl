@@ -65,7 +65,7 @@ func TestRelayWorkerRetiresAuthorizationWithIncompleteDNSChallenge(t *testing.T)
 	for _, want := range []string{
 		`tnl_control_certificate_claims_total{tnl_certificate_kind="relay",tnl_outcome="success",tnl_reason="claimed"} 2`,
 		`tnl_control_certificate_transitions_total{tnl_certificate_kind="relay",tnl_state="failed"} 1`,
-		`tnl_control_certificate_work_duration_seconds_count{tnl_certificate_kind="relay",tnl_outcome="error",tnl_reason="terminal",tnl_stage="failed"} 1`,
+		`tnl_control_certificate_work_duration_seconds_count{tnl_certificate_kind="relay",tnl_operation="failed",tnl_outcome="error",tnl_reason="terminal"} 1`,
 	} {
 		if !strings.Contains(response.Body.String(), want) {
 			t.Errorf("missing relay certificate metric %q", want)

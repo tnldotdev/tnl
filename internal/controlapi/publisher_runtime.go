@@ -26,6 +26,9 @@ func (h *handler) ObservePublisherRuntime(w http.ResponseWriter, r *http.Request
 		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publisher runtime request")
 		return
 	}
+	if b.Action == controlv1.RuntimeStart && !h.acceptingNewWork(w) {
+		return
+	}
 	// controlproxy replaces RemoteAddr only after trusted-peer validation. raw
 	// forwarding headers are never source evidence at this handler boundary.
 	source, _, _ := net.SplitHostPort(r.RemoteAddr)

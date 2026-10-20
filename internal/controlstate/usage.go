@@ -69,7 +69,8 @@ func (d *Database) ReportIngressUsage(
 	batch IngressUsageBatch,
 	receivedAt time.Time,
 ) (retErr error) {
-	defer d.observeOperation("ReportIngressUsage", &retErr)()
+	ctx, finish := d.observeOperation(ctx, "ReportIngressUsage")
+	defer func() { finish(retErr) }()
 	if err := validateIngressUsageBatch(batch); err != nil {
 		return err
 	}

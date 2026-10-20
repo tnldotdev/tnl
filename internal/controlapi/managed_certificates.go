@@ -69,6 +69,9 @@ func (h *handler) CreatePrivateCertificateIssuance(w http.ResponseWriter, r *htt
 		writeManagedCertificateProblem(w, "issue managed certificate", err)
 		return
 	}
+	if value.NewOrder {
+		h.config.Metrics.ObserveCertificateOrder("managed_service", string(value.DomainKind), "exact")
+	}
 	writeJSON(w, http.StatusCreated, privateCertificateResponse(value))
 }
 

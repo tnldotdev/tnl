@@ -43,21 +43,21 @@ func NewRelayChallengeManager(
 func (m *RelayChallengeManager) Present(ctx context.Context, orderID string) error {
 	started := time.Now()
 	_, err := m.reconcile(ctx, orderID, controlstate.RelayCertificatePresenting)
-	observeDNS(m.observer, "relay_challenge", "provider", started, true, err)
+	observeDNS(ctx, m.observer, "relay_challenge", "provider", started, true, err)
 	return err
 }
 
 func (m *RelayChallengeManager) Verify(ctx context.Context, orderID string) (bool, error) {
 	started := time.Now()
 	verified, err := m.reconcile(ctx, orderID, controlstate.RelayCertificatePresented)
-	observeDNS(m.observer, "relay_challenge", "verify", started, verified, err)
+	observeDNS(ctx, m.observer, "relay_challenge", "verify", started, verified, err)
 	return verified, err
 }
 
 func (m *RelayChallengeManager) Cleanup(ctx context.Context, orderID string) error {
 	started := time.Now()
 	_, err := m.reconcile(ctx, orderID, controlstate.RelayCertificateCleaning)
-	observeDNS(m.observer, "relay_challenge", "cleanup", started, true, err)
+	observeDNS(ctx, m.observer, "relay_challenge", "cleanup", started, true, err)
 	return err
 }
 
