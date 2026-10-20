@@ -92,9 +92,12 @@ func validateCI(configuration TNL) error {
 			}
 			seen[service] = true
 		}
-		if policy.DurationLimit() <= 0 || policy.DurationLimit() > MaxCIMaxDuration {
-			return fmt.Errorf("ci.%s.max_duration must be positive and at most 6h", name)
+		if limit := policy.DurationLimit(); limit < time.Second || limit > MaxCIMaxDuration || limit%time.Second != 0 {
+			return fmt.Errorf("ci.%s.max_duration must be whole seconds between 1s and 6h", name)
 		}
 	}
 	return nil
 }
+
+// ValidateCI checks the policy map against its exact declared service keys.
+func ValidateCI(configuration TNL) error { return validateCI(configuration) }

@@ -71,6 +71,10 @@ const (
 	Revision              Key = "tnl.revision"
 	ImageHash             Key = "tnl.image_hash"
 	MetricOverflow        Key = "otel.metric.overflow"
+	WorkloadSessionID     Key = "tnl.workload_session_id"
+	WorkloadRunID         Key = "tnl.workload_run_id"
+	WorkloadRunAttempt    Key = "tnl.workload_run_attempt"
+	WorkloadCheckRunID    Key = "tnl.workload_check_run_id"
 )
 
 type Role string
@@ -144,7 +148,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	}
 	add(ServiceKindKey, "scoped", "managed service or public URL; private_service wire value normalizes to managed_service", string(ManagedService), string(PublicURL))
 	add(Component, "bounded", "component performing this work; independent of process role", "control", "authority", "private_ingress", "private_relay", "ingress", "relay", "publisher", "client", "accounts", "collector")
-	add(ServiceProtocol, "bounded", "service application protocol", "http", "postgres", "mysql", "tcp")
+	add(ServiceProtocol, "bounded", "service application protocol", "http", "postgres", "mysql", "tcp", "kubernetes")
 	for _, k := range []Key{Transport, TransportPreference} {
 		add(k, "bounded", "selected transport (omit when not selected), or initial preference", "quic", "tls-tcp")
 	}
@@ -170,7 +174,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(TLSVersion, "bounded", "negotiated TLS version", "1.2", "1.3")
 	add(TLSResumed, "bounded", "whether this TLS handshake resumed a session", "true", "false")
 	add(ResponseOrigin, "bounded", "component authoring the HTTP response", "tnl", "local_service")
-	for _, k := range []Key{VisitorConnectionID, RequestID, PublishRunID, PublishRunNumber, PublisherConnectionID, GrantID, ActorID, Revision, ImageHash} {
+	for _, k := range []Key{VisitorConnectionID, RequestID, PublishRunID, PublishRunNumber, PublisherConnectionID, GrantID, ActorID, Revision, ImageHash, WorkloadSessionID, WorkloadRunID, WorkloadRunAttempt, WorkloadCheckRunID} {
 		add(k, "trace_log", "high-churn correlation only; prohibited as a metric dimension")
 	}
 	for _, k := range []Key{"tnl.connection_class", "tnl.provider", "tnl.public_url_purpose", "tnl.domain_kind", "tnl.certificate_plan", "tnl.ingress_pool", "tnl.database_purpose", "tnl.signal"} {

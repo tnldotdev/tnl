@@ -87,11 +87,11 @@ AND EXISTS(SELECT 1 FROM control.private_service_connection_slots slot JOIN cont
 
 -- name: BindManagedHTTPDirectCredential :exec
 UPDATE control.direct_service_visitors SET http_credential_kind=sqlc.arg(kind),http_credential_digest=sqlc.arg(digest),
-    identity_id=NULL,device_id=NULL,certificate_digest=NULL,valid_until=sqlc.arg(valid_until)
+    identity_id=NULL,device_id=NULL,workload_session_id=NULL,certificate_digest=NULL,valid_until=sqlc.arg(valid_until)
 WHERE visitor_connection_id=sqlc.arg(visitor_connection_id);
 
 -- name: ManagedHTTPDirectCredential :one
-SELECT http_credential_kind,http_credential_digest,destination_port,identity_id,device_id FROM control.direct_service_visitors
+SELECT http_credential_kind,http_credential_digest,destination_port,identity_id,device_id,workload_session_id FROM control.direct_service_visitors
 WHERE visitor_connection_id=$1;
 
 -- name: ManagedHTTPAppliedConfiguration :one

@@ -191,6 +191,13 @@
       "action": "leave the tunnel running while certificate issuance retries"
     },
     {
+      "code": "TNL_CLIENT_CI_REPOSITORY_METADATA_UNAVAILABLE",
+      "slug": "ci-repository-metadata-unavailable",
+      "class": "invalid",
+      "message": "ci repository metadata is unavailable for first setup",
+      "action": "configure existing gh authentication with read access to this repository, then run tnl apply again"
+    },
+    {
       "code": "TNL_CLIENT_CONNECT_ACCESS_REQUIRED",
       "slug": "connect-access-required",
       "class": "forbidden",

@@ -482,6 +482,7 @@ type PrivateServiceInventory struct {
 }
 
 type PrivateConnectorSession struct {
+	Subject                                      VisitorSubject
 	ID, PrivateServiceID, IdentityID, Credential string
 	DeviceID                                     string
 	IngressID, IngressAddress, TLSServerName     string
@@ -711,7 +712,7 @@ func privateVisitorRecheckParams(lease IngressLeaseIdentity, serviceID, runID, s
 	runNumber int64, source netip.Addr, now time.Time) controlstatedb.RecheckPrivateServiceVisitorParams {
 	return controlstatedb.RecheckPrivateServiceVisitorParams{
 		PrivateServiceID: serviceID, PrivateRunID: runID, ConnectorSessionID: sessionID,
-		IdentityID: identityID, VisitorConnectionID: visitorID, RunNumber: runNumber,
+		IdentityID: text(identityID), VisitorConnectionID: visitorID, RunNumber: runNumber,
 		ObservedSourceIp: source.Unmap(), Now: timestamptz(now),
 		IngressID: text(lease.IngressID), IngressRunID: text(lease.IngressRunID),
 		IngressLeaseRevision: pgtype.Int8{Int64: int64(lease.IngressLeaseRevision), Valid: true},

@@ -57,7 +57,7 @@ func (d *Database) AuthorizeServiceConnector(ctx context.Context, service, runID
 }
 
 func recheckServiceConnector(ctx context.Context, tx pgx.Tx, service, runID string, number int64, visitor ConnectorVisitor, now time.Time) (PrivateVisitorValidity, error) {
-	params := controlstatedb.RecheckPrivateServiceVisitorParams{Now: timestamptz(now), PrivateServiceID: service, PrivateRunID: runID, RunNumber: number, IdentityID: visitor.IdentityID, VisitorConnectionID: visitor.ConnectionID, ObservedSourceIp: visitor.Source.Unmap()}
+	params := controlstatedb.RecheckPrivateServiceVisitorParams{Now: timestamptz(now), PrivateServiceID: service, PrivateRunID: runID, RunNumber: number, IdentityID: text(visitor.IdentityID), VisitorConnectionID: visitor.ConnectionID, ObservedSourceIp: visitor.Source.Unmap()}
 	err := tx.QueryRow(ctx, `SELECT session.id,session.ingress_id,session.ingress_run_id,session.ingress_lease_revision FROM control.private_visitor_streams stream JOIN control.private_connector_sessions session ON session.id=stream.connector_session_id WHERE stream.visitor_connection_id=$1 AND stream.private_service_id=$2 AND stream.private_run_id=$3 AND stream.identity_id=$4 AND stream.device_id=$5 AND stream.source_ip=$6 AND stream.connector_session_id=$7 AND stream.closed_at IS NULL`, visitor.ConnectionID, service, runID, visitor.IdentityID, visitor.DeviceID, visitor.Source.Unmap(), visitor.SessionID).Scan(&params.ConnectorSessionID, &params.IngressID, &params.IngressRunID, &params.IngressLeaseRevision)
 	if err != nil {
 		return PrivateVisitorValidity{}, publisherLookupError(err, ErrPrivateServiceAccess)

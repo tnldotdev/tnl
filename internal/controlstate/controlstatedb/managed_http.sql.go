@@ -14,7 +14,7 @@ import (
 
 const bindManagedHTTPDirectCredential = `-- name: BindManagedHTTPDirectCredential :exec
 UPDATE control.direct_service_visitors SET http_credential_kind=$1,http_credential_digest=$2,
-    identity_id=NULL,device_id=NULL,certificate_digest=NULL,valid_until=$3
+    identity_id=NULL,device_id=NULL,workload_session_id=NULL,certificate_digest=NULL,valid_until=$3
 WHERE visitor_connection_id=$4
 `
 
@@ -338,7 +338,7 @@ func (q *Queries) ManagedHTTPDirectBinding(ctx context.Context, arg ManagedHTTPD
 }
 
 const managedHTTPDirectCredential = `-- name: ManagedHTTPDirectCredential :one
-SELECT http_credential_kind,http_credential_digest,destination_port,identity_id,device_id FROM control.direct_service_visitors
+SELECT http_credential_kind,http_credential_digest,destination_port,identity_id,device_id,workload_session_id FROM control.direct_service_visitors
 WHERE visitor_connection_id=$1
 `
 
@@ -348,6 +348,7 @@ type ManagedHTTPDirectCredentialRow struct {
 	DestinationPort      int32
 	IdentityID           pgtype.Text
 	DeviceID             pgtype.Text
+	WorkloadSessionID    pgtype.Text
 }
 
 func (q *Queries) ManagedHTTPDirectCredential(ctx context.Context, visitorConnectionID string) (ManagedHTTPDirectCredentialRow, error) {
@@ -359,6 +360,7 @@ func (q *Queries) ManagedHTTPDirectCredential(ctx context.Context, visitorConnec
 		&i.DestinationPort,
 		&i.IdentityID,
 		&i.DeviceID,
+		&i.WorkloadSessionID,
 	)
 	return i, err
 }

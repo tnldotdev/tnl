@@ -9,6 +9,44 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example
 paths:
+  /v1/workload-sessions/github:
+    post:
+      operationId: exchangeGitHubWorkload
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GitHubWorkloadExchange" }
+      responses:
+        "200":
+          description: Retry-stable visitor-only key-bound session; 90 second lease, renew after 30 seconds, fixed absolute deadline
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadSession" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/workload-sessions/{session_id}/renew:
+    parameters:
+      - { name: session_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: renewWorkloadSession
+      security: [{ workloadAuth: [] }]
+      responses:
+        "200":
+          description: Renewed lease within the original execution window
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadSession" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/workload-sessions/{session_id}:
+    parameters:
+      - { name: session_id, in: path, required: true, schema: { type: string } }
+    delete:
+      operationId: revokeWorkloadSession
+      security: [{ workloadAuth: [] }]
+      responses:
+        "204": { description: Workload access revoked }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/service/teams/{team_id}/identity-connections:
     parameters:
       - { name: team_id, in: path, required: true, schema: { type: string } }
@@ -868,6 +906,10 @@ paths:
           $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
+    workloadAuth:
+      type: http
+      scheme: bearer
+      description: Visitor-only workload credential; never a human control session.
     webServiceAuth:
       type: http
       scheme: bearer
@@ -935,6 +977,56 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    GitHubWorkloadExchange:
+      type: object
+      additionalProperties: false
+      required: [team_id, project_key, ci, assertion, public_key, signature]
+      properties:
+        team_id: { type: string, maxLength: 128 }
+        project_key: { type: string, maxLength: 128 }
+        ci: { type: string, maxLength: 32 }
+        assertion: { type: string, minLength: 1, maxLength: 32768 }
+        public_key: { type: string, description: Unpadded base64url Ed25519 public key }
+        signature:
+          {
+            type: string,
+            description: Unpadded base64url signature of the workload exchange digest,
+          }
+        services:
+          { type: array, minItems: 1, maxItems: 32, uniqueItems: true, items: { type: string } }
+    WorkloadSession:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          credential,
+          team_id,
+          project_key,
+          ci,
+          subject,
+          lease_expires_at,
+          expires_at,
+          renew_after,
+          service_ids,
+          run_id,
+          run_attempt,
+          check_run_id,
+        ]
+      properties:
+        id: { type: string, pattern: "^wls_[A-Za-z0-9]{22}$" }
+        credential: { type: string }
+        team_id: { type: string }
+        project_key: { type: string }
+        ci: { type: string }
+        subject: { $ref: "../../control/v1/openapi.yaml#/components/schemas/VisitorSubject" }
+        lease_expires_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        renew_after: { type: string, format: date-time }
+        service_ids: { type: array, maxItems: 32, items: { type: string } }
+        run_id: { type: string }
+        run_attempt: { type: string }
+        check_run_id: { type: string }
     CompanyConnections:
       type: object
       additionalProperties: false

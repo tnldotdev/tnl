@@ -19,6 +19,8 @@ type ProjectConfigurationStore interface {
 
 func projectConfigurationProblem(w http.ResponseWriter, operation string, err error) {
 	switch {
+	case errors.Is(err, controlstate.ErrWorkloadBinding):
+		writeProblem(w, 400, controlv1.InvalidRequest, "ci requires verified GitHub repository and owner IDs; apply from a trusted operator with repository metadata access")
 	case errors.Is(err, controlstate.ErrProjectConfigurationInvalid):
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid normalized project configuration")
 	case errors.Is(err, controlstate.ErrProjectConfigurationStale):

@@ -147,6 +147,21 @@ func (d *Database) DirectServiceVisitorStatus(ctx context.Context, lease Ingress
 				result.State = DirectVisitorAllowed
 			}
 		}
+	} else if httpCredential.WorkloadSessionID.Valid {
+		if err := d.managedHTTPSourceAllowed(ctx, q, service, source); err != nil {
+			return result, err
+		}
+		validity, err := recheckWorkloadDirectVisitor(ctx, tx, service, run, number, visitor, httpCredential.WorkloadSessionID.String, source, nil, now)
+		if err != nil && !errors.Is(err, ErrPrivateServiceAccess) {
+			return result, err
+		}
+		result.ValidUntil = validity.ValidUntil
+		if validity.Allowed {
+			result.State = DirectVisitorAuthenticated
+			if validity.Admitted {
+				result.State = DirectVisitorAllowed
+			}
+		}
 	} else if !httpCredential.IdentityID.Valid {
 		var public bool
 		if err = tx.QueryRow(ctx, `SELECT public FROM control.private_services WHERE id=$1`, service).Scan(&public); err != nil {
@@ -184,7 +199,7 @@ func (d *Database) PromoteDirectServiceVisitor(ctx context.Context, lease Ingres
 	var id string
 	err := d.pool.QueryRow(ctx, `UPDATE control.direct_service_visitors v SET promoted_at=COALESCE(v.promoted_at,$5)
 	    FROM control.private_services service,control.ingress_leases ingress
-	    WHERE v.visitor_connection_id=$1 AND v.ingress_id=$2 AND v.ingress_run_id=$3 AND v.ingress_lease_revision=$4 AND v.closed_at IS NULL AND v.valid_until>$5 AND (v.identity_id IS NOT NULL OR v.http_credential_kind IS NOT NULL)
+	    WHERE v.visitor_connection_id=$1 AND v.ingress_id=$2 AND v.ingress_run_id=$3 AND v.ingress_lease_revision=$4 AND v.closed_at IS NULL AND v.valid_until>$5 AND (v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL OR v.http_credential_kind IS NOT NULL)
 	    AND service.id=v.private_service_id AND service.public AND service.enabled AND service.deleted_at IS NULL
 	    AND ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>$5
 	    RETURNING v.visitor_connection_id`, visitor, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now).Scan(&id)

@@ -229,6 +229,11 @@ func validateCloudTarget(protocol string, target ServiceTarget) error {
 	return nil
 }
 
+// ValidateCloudTarget validates selectors without contacting the provider.
+func ValidateCloudTarget(protocol string, target ServiceTarget) error {
+	return validateCloudTarget(protocol, target)
+}
+
 func validTLSHostname(value string) bool {
 	if len(value) > 253 {
 		return false

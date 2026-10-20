@@ -9,6 +9,77 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/workload/services:
+    get:
+      operationId: listWorkloadServices
+      summary: List only the workload session's currently authorized saved services
+      security: [{ workloadAuth: [] }]
+      responses:
+        "200":
+          description: Current visitor inventory without targets or application credentials
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadServices" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/workload/services/{service_id}/authorization:
+    parameters:
+      - { name: service_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: checkWorkloadService
+      security: [{ workloadAuth: [] }]
+      responses:
+        "200":
+          description: Current permission bounded by lease and absolute deadline
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadServiceAuthorization" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/workload/services/{service_id}/ingress-assignments:
+    parameters:
+      - { name: service_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: createWorkloadIngressAssignments
+      security: [{ workloadAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [idempotency_key]
+              properties:
+                idempotency_key: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        "200":
+          description: Two independently claimable workload-owned assignments
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadIngressAssignments" }
+        default: { $ref: "#/components/responses/Problem" }
+  /v1/workload/services/{service_id}/client-certificate:
+    parameters:
+      - { name: service_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: issueWorkloadServiceClientCertificate
+      security: [{ workloadAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [csr]
+              properties:
+                csr: { type: string, format: byte, maxLength: 11000 }
+      responses:
+        "200":
+          description: Short service-scoped certificate for the workload's existing key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceClientCertificate" }
+        default: { $ref: "#/components/responses/Problem" }
   /v1/browser/managed-login:
     get:
       operationId: beginManagedBrowserLogin
@@ -2578,6 +2649,10 @@ paths:
           $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
+    workloadAuth:
+      type: http
+      scheme: bearer
+      description: Visitor-only workload credential. Never accepted as a control session or publisher credential.
     bearerAuth:
       type: http
       scheme: bearer
@@ -2708,6 +2783,73 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    VisitorSubject:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [human_device, workload_session] }
+        identity_id: { type: string }
+        device_id: { type: string }
+        workload_session_id: { type: string, pattern: "^wls_[A-Za-z0-9]{22}$" }
+      description: Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+    WorkloadServiceAuthorization:
+      type: object
+      additionalProperties: false
+      required: [subject, service_id, valid_until, policy_revision]
+      properties:
+        subject: { $ref: "#/components/schemas/VisitorSubject" }
+        service_id: { type: string }
+        valid_until: { type: string, format: date-time }
+        policy_revision: { type: integer, format: int64 }
+    WorkloadServices:
+      type: object
+      additionalProperties: false
+      required: [services]
+      properties:
+        services:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, service, protocol, managed_tls]
+            properties:
+              id: { type: string }
+              service: { type: string }
+              protocol: { $ref: "#/components/schemas/PrivateServiceProtocol" }
+              managed_tls: { $ref: "#/components/schemas/ManagedServiceTLS" }
+    WorkloadIngressAssignments:
+      type: object
+      additionalProperties: false
+      required: [subject, assignments]
+      properties:
+        subject: { $ref: "#/components/schemas/VisitorSubject" }
+        assignments:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              [
+                id,
+                private_service_id,
+                credential,
+                expires_at,
+                ingress_id,
+                ingress_address,
+                tls_server_name,
+              ]
+            properties:
+              id: { type: string }
+              private_service_id: { type: string }
+              credential: { type: string }
+              expires_at: { type: string, format: date-time }
+              ingress_id: { type: string }
+              ingress_address: { type: string }
+              tls_server_name: { type: string }
     HTTPAuthorizationSubject:
       type: object
       additionalProperties: false
@@ -2818,6 +2960,10 @@ components:
       additionalProperties: false
       required: [publishers, services, oauth, webhooks]
       properties:
+        ci:
+          type: object
+          maxProperties: 32
+          additionalProperties: { $ref: "#/components/schemas/ProjectCI" }
         oauth:
           type: boolean
           default: false
@@ -2846,6 +2992,45 @@ components:
         description: { type: string, maxLength: 1024 }
         domain_id: { type: string }
         public: { type: boolean, default: false }
+    ProjectCI:
+      type: object
+      additionalProperties: false
+      required: [github, services, max_duration_seconds]
+      properties:
+        github: { $ref: "#/components/schemas/ProjectCIGitHub" }
+        services:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items: { type: string }
+        max_duration_seconds: { type: integer, minimum: 1, maximum: 21600, default: 3600 }
+    ProjectCIGitHub:
+      type: object
+      additionalProperties: false
+      description: Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
+      required: [repository, repository_id, repository_owner_id, workflow_ref, ref, events]
+      properties:
+        repository: { type: string, maxLength: 256 }
+        repository_id: { type: string, pattern: "^[1-9][0-9]{0,19}$" }
+        repository_owner_id: { type: string, pattern: "^[1-9][0-9]{0,19}$" }
+        workflow_ref: { type: string, maxLength: 1024 }
+        ref: { type: string, maxLength: 512 }
+        events:
+          { type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: { type: string } }
+        environment: { type: string, maxLength: 256 }
+        job_workflow_ref: { type: string, maxLength: 1024 }
+    ProjectTargetDiscovery:
+      type: object
+      additionalProperties: false
+      required: [type, region]
+      properties:
+        type: { type: string, enum: [eks, rds] }
+        region: { type: string, maxLength: 64 }
+        cluster: { type: string, maxLength: 100 }
+        instance: { type: string, maxLength: 100 }
+        endpoint: { type: string, enum: [writer, reader] }
+      description: Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control and apply never fetch a target, TLS roots, or AWS credentials. EKS requires kubernetes; RDS requires the specified postgres or mysql protocol, verified against provider metadata by the publisher.
     RenamePublisherNamespaceRequest:
       type: object
       additionalProperties: false
@@ -2893,9 +3078,9 @@ components:
         protocol: { $ref: "#/components/schemas/PrivateServiceProtocol" }
         target:
           type: string
-          minLength: 1
           maxLength: 8192
           description: Public targets use the runtime NormalizeTarget rules, including an explicit port and no trailing slash on HTTP/HTTPS origins. Private targets normalize to host:port; private HTTPS origins require target_tls and plaintext HTTP origins forbid it. The publisher uses the approved transport/trust snapshot independently of mandatory managed visitor TLS. Only local publishers may use deferred app (HTTP only), compose:SERVICE:PORT, or docker:CONTAINER:PORT descriptors; control never discovers or executes those targets.
+        target_discovery: { $ref: "#/components/schemas/ProjectTargetDiscovery" }
         public_url: { $ref: "#/components/schemas/ProjectServicePublicURL" }
         target_tls: { $ref: "#/components/schemas/ProjectTargetTLS" }
         access: { $ref: "#/components/schemas/ProjectServiceAccess" }
@@ -3488,8 +3673,8 @@ components:
         worktree_key: { type: string }
     PrivateServiceProtocol:
       type: string
-      enum: [http, tcp, mysql, postgres]
-      x-enum-varnames: [PrivateHttp, Tcp, Mysql, Postgres]
+      enum: [http, tcp, mysql, postgres, kubernetes]
+      x-enum-varnames: [PrivateHttp, Tcp, Mysql, Postgres, Kubernetes]
     PrivateServiceTLS:
       type: object
       additionalProperties: false

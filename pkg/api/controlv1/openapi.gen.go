@@ -479,6 +479,7 @@ func (e PrivateServiceGrantKind) Valid() bool {
 
 // Defines values for PrivateServiceProtocol.
 const (
+	Kubernetes  PrivateServiceProtocol = "kubernetes"
 	Mysql       PrivateServiceProtocol = "mysql"
 	Postgres    PrivateServiceProtocol = "postgres"
 	PrivateHttp PrivateServiceProtocol = "http"
@@ -488,6 +489,8 @@ const (
 // Valid indicates whether the value is a known member of the PrivateServiceProtocol enum.
 func (e PrivateServiceProtocol) Valid() bool {
 	switch e {
+	case Kubernetes:
+		return true
 	case Mysql:
 		return true
 	case Postgres:
@@ -606,6 +609,42 @@ const (
 func (e ProjectServiceAccessTeam) Valid() bool {
 	switch e {
 	case True:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProjectTargetDiscoveryEndpoint.
+const (
+	Reader ProjectTargetDiscoveryEndpoint = "reader"
+	Writer ProjectTargetDiscoveryEndpoint = "writer"
+)
+
+// Valid indicates whether the value is a known member of the ProjectTargetDiscoveryEndpoint enum.
+func (e ProjectTargetDiscoveryEndpoint) Valid() bool {
+	switch e {
+	case Reader:
+		return true
+	case Writer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProjectTargetDiscoveryType.
+const (
+	Eks ProjectTargetDiscoveryType = "eks"
+	Rds ProjectTargetDiscoveryType = "rds"
+)
+
+// Valid indicates whether the value is a known member of the ProjectTargetDiscoveryType enum.
+func (e ProjectTargetDiscoveryType) Valid() bool {
+	switch e {
+	case Eks:
+		return true
+	case Rds:
 		return true
 	default:
 		return false
@@ -1248,6 +1287,24 @@ func (e VisitorGrantKind) Valid() bool {
 	case VisitorGrantKindIdentity:
 		return true
 	case VisitorGrantKindTeam:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VisitorSubjectKind.
+const (
+	HumanDevice     VisitorSubjectKind = "human_device"
+	WorkloadSession VisitorSubjectKind = "workload_session"
+)
+
+// Valid indicates whether the value is a known member of the VisitorSubjectKind enum.
+func (e VisitorSubjectKind) Valid() bool {
+	switch e {
+	case HumanDevice:
+		return true
+	case WorkloadSession:
 		return true
 	default:
 		return false
@@ -2461,8 +2518,30 @@ type ProjectApplicationRate struct {
 	Per   string `json:"per"`
 }
 
+// ProjectCI defines model for ProjectCI.
+type ProjectCI struct {
+	// Github Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
+	Github             ProjectCIGitHub `json:"github"`
+	MaxDurationSeconds int             `json:"max_duration_seconds"`
+	Services           []string        `json:"services"`
+}
+
+// ProjectCIGitHub Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
+type ProjectCIGitHub struct {
+	Environment       *string  `json:"environment,omitempty"`
+	Events            []string `json:"events"`
+	JobWorkflowRef    *string  `json:"job_workflow_ref,omitempty"`
+	Ref               string   `json:"ref"`
+	Repository        string   `json:"repository"`
+	RepositoryId      string   `json:"repository_id"`
+	RepositoryOwnerId string   `json:"repository_owner_id"`
+	WorkflowRef       string   `json:"workflow_ref"`
+}
+
 // ProjectConfiguration Normalized declarative configuration, at most 512 KiB encoded. All local declarations defer allocation to source-bound worktree realization. A project supports at most 256 active enrolled replicas across its groups.
 type ProjectConfiguration struct {
+	Ci *map[string]ProjectCI `json:"ci,omitempty"`
+
 	// Oauth Desired local app-led OAuth integration URL declaration. Control stores the declaration and revision; applying it does not provision a handler on a named publisher group.
 	Oauth      bool                                   `json:"oauth"`
 	Publishers map[string]ProjectPublisherGroup       `json:"publishers"`
@@ -2536,6 +2615,9 @@ type ProjectServiceConfiguration struct {
 	// Target Public targets use the runtime NormalizeTarget rules, including an explicit port and no trailing slash on HTTP/HTTPS origins. Private targets normalize to host:port; private HTTPS origins require target_tls and plaintext HTTP origins forbid it. The publisher uses the approved transport/trust snapshot independently of mandatory managed visitor TLS. Only local publishers may use deferred app (HTTP only), compose:SERVICE:PORT, or docker:CONTAINER:PORT descriptors; control never discovers or executes those targets.
 	Target string `json:"target"`
 
+	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control and apply never fetch a target, TLS roots, or AWS credentials. EKS requires kubernetes; RDS requires the specified postgres or mysql protocol, verified against provider metadata by the publisher.
+	TargetDiscovery *ProjectTargetDiscovery `json:"target_discovery,omitempty"`
+
 	// TargetTls Publisher-to-target TLS trust for http, tcp, postgres, or mysql, independent of mandatory managed visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem. No filesystem path or remote bundle URL is accepted.
 	TargetTls *ProjectTargetTLS `json:"target_tls,omitempty"`
 }
@@ -2562,6 +2644,21 @@ type ProjectServicePublicURL struct {
 	Hostname  *string              `json:"hostname,omitempty"`
 	Limits    *ProjectPublicLimits `json:"limits,omitempty"`
 }
+
+// ProjectTargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control and apply never fetch a target, TLS roots, or AWS credentials. EKS requires kubernetes; RDS requires the specified postgres or mysql protocol, verified against provider metadata by the publisher.
+type ProjectTargetDiscovery struct {
+	Cluster  *string                         `json:"cluster,omitempty"`
+	Endpoint *ProjectTargetDiscoveryEndpoint `json:"endpoint,omitempty"`
+	Instance *string                         `json:"instance,omitempty"`
+	Region   string                          `json:"region"`
+	Type     ProjectTargetDiscoveryType      `json:"type"`
+}
+
+// ProjectTargetDiscoveryEndpoint defines model for ProjectTargetDiscovery.Endpoint.
+type ProjectTargetDiscoveryEndpoint string
+
+// ProjectTargetDiscoveryType defines model for ProjectTargetDiscovery.Type.
+type ProjectTargetDiscoveryType string
 
 // ProjectTargetTLS Publisher-to-target TLS trust for http, tcp, postgres, or mysql, independent of mandatory managed visitor TLS. The protocol selects native negotiation. ca_pem is a CA-only snapshot added to the publisher's system roots. digest is lowercase SHA-256 of "tnl-target-tls/v1", NUL, hostname, NUL, and ca_pem. No filesystem path or remote bundle URL is accepted.
 type ProjectTargetTLS struct {
@@ -3308,6 +3405,17 @@ type VisitorInvitation struct {
 	RevokedAt          *time.Time  `json:"revoked_at,omitempty"`
 }
 
+// VisitorSubject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+type VisitorSubject struct {
+	DeviceId          *string            `json:"device_id,omitempty"`
+	IdentityId        *string            `json:"identity_id,omitempty"`
+	Kind              VisitorSubjectKind `json:"kind"`
+	WorkloadSessionId *string            `json:"workload_session_id,omitempty"`
+}
+
+// VisitorSubjectKind defines model for VisitorSubject.Kind.
+type VisitorSubjectKind string
+
 // WebhookProvider defines model for WebhookProvider.
 type WebhookProvider string
 
@@ -3336,6 +3444,44 @@ type WebhookProviderSourceResponseSource1Kind string
 // WebhookProviderSourceResponse_Source defines model for WebhookProviderSourceResponse.Source.
 type WebhookProviderSourceResponse_Source struct {
 	union json.RawMessage
+}
+
+// WorkloadIngressAssignments defines model for WorkloadIngressAssignments.
+type WorkloadIngressAssignments struct {
+	Assignments []struct {
+		Credential       string    `json:"credential"`
+		ExpiresAt        time.Time `json:"expires_at"`
+		Id               string    `json:"id"`
+		IngressAddress   string    `json:"ingress_address"`
+		IngressId        string    `json:"ingress_id"`
+		PrivateServiceId string    `json:"private_service_id"`
+		TlsServerName    string    `json:"tls_server_name"`
+	} `json:"assignments"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject VisitorSubject `json:"subject"`
+}
+
+// WorkloadServiceAuthorization defines model for WorkloadServiceAuthorization.
+type WorkloadServiceAuthorization struct {
+	PolicyRevision int64  `json:"policy_revision"`
+	ServiceId      string `json:"service_id"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject    VisitorSubject `json:"subject"`
+	ValidUntil time.Time      `json:"valid_until"`
+}
+
+// WorkloadServices defines model for WorkloadServices.
+type WorkloadServices struct {
+	Services []struct {
+		Id string `json:"id"`
+
+		// ManagedTls Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+		ManagedTls ManagedServiceTLS      `json:"managed_tls"`
+		Protocol   PrivateServiceProtocol `json:"protocol"`
+		Service    string                 `json:"service"`
+	} `json:"services"`
 }
 
 // CanonicalHostnameQuery defines model for CanonicalHostnameQuery.
@@ -3613,6 +3759,16 @@ type ListAvailablePublicURLsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// IssueWorkloadServiceClientCertificateJSONBody defines parameters for IssueWorkloadServiceClientCertificate.
+type IssueWorkloadServiceClientCertificateJSONBody struct {
+	Csr []byte `json:"csr"`
+}
+
+// CreateWorkloadIngressAssignmentsJSONBody defines parameters for CreateWorkloadIngressAssignments.
+type CreateWorkloadIngressAssignmentsJSONBody struct {
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
 // SetMaintenanceControlJSONRequestBody defines body for SetMaintenanceControl for application/json ContentType.
 type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 
@@ -3822,6 +3978,12 @@ type EnrollVisitorDeviceJSONRequestBody EnrollVisitorDeviceJSONBody
 
 // AcceptVisitorInvitationJSONRequestBody defines body for AcceptVisitorInvitation for application/json ContentType.
 type AcceptVisitorInvitationJSONRequestBody AcceptVisitorInvitationJSONBody
+
+// IssueWorkloadServiceClientCertificateJSONRequestBody defines body for IssueWorkloadServiceClientCertificate for application/json ContentType.
+type IssueWorkloadServiceClientCertificateJSONRequestBody IssueWorkloadServiceClientCertificateJSONBody
+
+// CreateWorkloadIngressAssignmentsJSONRequestBody defines body for CreateWorkloadIngressAssignments for application/json ContentType.
+type CreateWorkloadIngressAssignmentsJSONRequestBody CreateWorkloadIngressAssignmentsJSONBody
 
 // AsWebhookProviderSourceResponseSource0 returns the union data inside the WebhookProviderSourceResponse_Source as a WebhookProviderSourceResponseSource0
 func (t WebhookProviderSourceResponse_Source) AsWebhookProviderSourceResponseSource0() (WebhookProviderSourceResponseSource0, error) {
@@ -5039,6 +5201,30 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
 	GetWebhookProviderSource(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListWorkloadServices List only the workload session's currently authorized saved services
+	//
+	// Corresponds with GET /v1/workload/services (the `ListWorkloadServices` operationId).
+	ListWorkloadServices(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckWorkloadService performs a POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId) request.
+	CheckWorkloadService(ctx context.Context, serviceId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IssueWorkloadServiceClientCertificateWithBody performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request,
+	// with any type of body and a specified content type.
+	IssueWorkloadServiceClientCertificateWithBody(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IssueWorkloadServiceClientCertificate performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request.
+	// Takes a body of the `application/json` content type.
+	IssueWorkloadServiceClientCertificate(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateWorkloadIngressAssignmentsWithBody performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request,
+	// with any type of body and a specified content type.
+	CreateWorkloadIngressAssignmentsWithBody(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateWorkloadIngressAssignments performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CreateWorkloadIngressAssignments(ctx context.Context, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListMaintenanceControls List maintenance controls
@@ -8102,6 +8288,90 @@ func (c *Client) ListAvailablePublicURLs(ctx context.Context, params *ListAvaila
 // Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
 func (c *Client) GetWebhookProviderSource(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetWebhookProviderSourceRequest(c.Server, provider)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListWorkloadServices List only the workload session's currently authorized saved services
+//
+// Corresponds with GET /v1/workload/services (the `ListWorkloadServices` operationId).
+func (c *Client) ListWorkloadServices(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListWorkloadServicesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CheckWorkloadService performs a POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId) request.
+func (c *Client) CheckWorkloadService(ctx context.Context, serviceId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckWorkloadServiceRequest(c.Server, serviceId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IssueWorkloadServiceClientCertificateWithBody performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) IssueWorkloadServiceClientCertificateWithBody(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueWorkloadServiceClientCertificateRequestWithBody(c.Server, serviceId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IssueWorkloadServiceClientCertificate performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) IssueWorkloadServiceClientCertificate(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIssueWorkloadServiceClientCertificateRequest(c.Server, serviceId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateWorkloadIngressAssignmentsWithBody performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CreateWorkloadIngressAssignmentsWithBody(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateWorkloadIngressAssignmentsRequestWithBody(c.Server, serviceId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateWorkloadIngressAssignments performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CreateWorkloadIngressAssignments(ctx context.Context, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateWorkloadIngressAssignmentsRequest(c.Server, serviceId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14340,6 +14610,161 @@ func NewGetWebhookProviderSourceRequest(server string, provider WebhookProvider)
 	return req, nil
 }
 
+// NewListWorkloadServicesRequest constructs an http.Request for the ListWorkloadServices method
+func NewListWorkloadServicesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workload/services")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCheckWorkloadServiceRequest constructs an http.Request for the CheckWorkloadService method
+func NewCheckWorkloadServiceRequest(server string, serviceId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workload/services/%s/authorization", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewIssueWorkloadServiceClientCertificateRequest calls the generic IssueWorkloadServiceClientCertificate builder with application/json body
+func NewIssueWorkloadServiceClientCertificateRequest(server string, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIssueWorkloadServiceClientCertificateRequestWithBody(server, serviceId, "application/json", bodyReader)
+}
+
+// NewIssueWorkloadServiceClientCertificateRequestWithBody constructs an http.Request for the IssueWorkloadServiceClientCertificate method, with any body, and a specified content type
+func NewIssueWorkloadServiceClientCertificateRequestWithBody(server string, serviceId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workload/services/%s/client-certificate", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCreateWorkloadIngressAssignmentsRequest calls the generic CreateWorkloadIngressAssignments builder with application/json body
+func NewCreateWorkloadIngressAssignmentsRequest(server string, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateWorkloadIngressAssignmentsRequestWithBody(server, serviceId, "application/json", bodyReader)
+}
+
+// NewCreateWorkloadIngressAssignmentsRequestWithBody constructs an http.Request for the CreateWorkloadIngressAssignments method, with any body, and a specified content type
+func NewCreateWorkloadIngressAssignmentsRequestWithBody(server string, serviceId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workload/services/%s/ingress-assignments", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -15660,6 +16085,38 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
 	GetWebhookProviderSourceWithResponse(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*GetWebhookProviderSourceResponse, error)
+
+	// ListWorkloadServicesWithResponse List only the workload session's currently authorized saved services
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workload/services (the `ListWorkloadServices` operationId).
+	ListWorkloadServicesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListWorkloadServicesResponse, error)
+
+	// CheckWorkloadServiceWithResponse performs a POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CheckWorkloadServiceWithResponse(ctx context.Context, serviceId string, reqEditors ...RequestEditorFn) (*CheckWorkloadServiceResponse, error)
+
+	// IssueWorkloadServiceClientCertificateWithBodyWithResponse performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	IssueWorkloadServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error)
+
+	// IssueWorkloadServiceClientCertificateWithResponse performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	IssueWorkloadServiceClientCertificateWithResponse(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error)
+
+	// CreateWorkloadIngressAssignmentsWithBodyWithResponse performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateWorkloadIngressAssignmentsWithBodyWithResponse(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWorkloadIngressAssignmentsResponse, error)
+
+	// CreateWorkloadIngressAssignmentsWithResponse performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CreateWorkloadIngressAssignmentsWithResponse(ctx context.Context, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWorkloadIngressAssignmentsResponse, error)
 }
 
 type ListMaintenanceControlsResponse struct {
@@ -21708,6 +22165,198 @@ func (r GetWebhookProviderSourceResponse) ContentType() string {
 	return ""
 }
 
+type ListWorkloadServicesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WorkloadServices
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListWorkloadServicesResponse) GetJSON200() *WorkloadServices {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListWorkloadServicesResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListWorkloadServicesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListWorkloadServicesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListWorkloadServicesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListWorkloadServicesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CheckWorkloadServiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WorkloadServiceAuthorization
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CheckWorkloadServiceResponse) GetJSON200() *WorkloadServiceAuthorization {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CheckWorkloadServiceResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CheckWorkloadServiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckWorkloadServiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckWorkloadServiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CheckWorkloadServiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type IssueWorkloadServiceClientCertificateResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ServiceClientCertificate
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r IssueWorkloadServiceClientCertificateResponse) GetJSON200() *ServiceClientCertificate {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r IssueWorkloadServiceClientCertificateResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r IssueWorkloadServiceClientCertificateResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IssueWorkloadServiceClientCertificateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IssueWorkloadServiceClientCertificateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IssueWorkloadServiceClientCertificateResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateWorkloadIngressAssignmentsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WorkloadIngressAssignments
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateWorkloadIngressAssignmentsResponse) GetJSON200() *WorkloadIngressAssignments {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateWorkloadIngressAssignmentsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateWorkloadIngressAssignmentsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateWorkloadIngressAssignmentsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateWorkloadIngressAssignmentsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateWorkloadIngressAssignmentsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListMaintenanceControlsWithResponse List maintenance controls
 //
 // Returns a wrapper object for the known response body format(s).
@@ -24177,6 +24826,74 @@ func (c *ClientWithResponses) GetWebhookProviderSourceWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseGetWebhookProviderSourceResponse(rsp)
+}
+
+// ListWorkloadServicesWithResponse List only the workload session's currently authorized saved services
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workload/services (the `ListWorkloadServices` operationId).
+func (c *ClientWithResponses) ListWorkloadServicesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListWorkloadServicesResponse, error) {
+	rsp, err := c.ListWorkloadServices(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListWorkloadServicesResponse(rsp)
+}
+
+// CheckWorkloadServiceWithResponse performs a POST /v1/workload/services/{service_id}/authorization (the `CheckWorkloadService` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CheckWorkloadServiceWithResponse(ctx context.Context, serviceId string, reqEditors ...RequestEditorFn) (*CheckWorkloadServiceResponse, error) {
+	rsp, err := c.CheckWorkloadService(ctx, serviceId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckWorkloadServiceResponse(rsp)
+}
+
+// IssueWorkloadServiceClientCertificateWithBodyWithResponse performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) IssueWorkloadServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error) {
+	rsp, err := c.IssueWorkloadServiceClientCertificateWithBody(ctx, serviceId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueWorkloadServiceClientCertificateResponse(rsp)
+}
+
+// IssueWorkloadServiceClientCertificateWithResponse performs a POST /v1/workload/services/{service_id}/client-certificate (the `IssueWorkloadServiceClientCertificate` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) IssueWorkloadServiceClientCertificateWithResponse(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error) {
+	rsp, err := c.IssueWorkloadServiceClientCertificate(ctx, serviceId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIssueWorkloadServiceClientCertificateResponse(rsp)
+}
+
+// CreateWorkloadIngressAssignmentsWithBodyWithResponse performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateWorkloadIngressAssignmentsWithBodyWithResponse(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWorkloadIngressAssignmentsResponse, error) {
+	rsp, err := c.CreateWorkloadIngressAssignmentsWithBody(ctx, serviceId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateWorkloadIngressAssignmentsResponse(rsp)
+}
+
+// CreateWorkloadIngressAssignmentsWithResponse performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateWorkloadIngressAssignmentsWithResponse(ctx context.Context, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWorkloadIngressAssignmentsResponse, error) {
+	rsp, err := c.CreateWorkloadIngressAssignments(ctx, serviceId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateWorkloadIngressAssignmentsResponse(rsp)
 }
 
 // ParseListMaintenanceControlsResponse parses an HTTP response from a ListMaintenanceControlsWithResponse call
@@ -28374,6 +29091,138 @@ func ParseGetWebhookProviderSourceResponse(rsp *http.Response) (*GetWebhookProvi
 	return response, nil
 }
 
+// ParseListWorkloadServicesResponse parses an HTTP response from a ListWorkloadServicesWithResponse call
+func ParseListWorkloadServicesResponse(rsp *http.Response) (*ListWorkloadServicesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListWorkloadServicesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WorkloadServices
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCheckWorkloadServiceResponse parses an HTTP response from a CheckWorkloadServiceWithResponse call
+func ParseCheckWorkloadServiceResponse(rsp *http.Response) (*CheckWorkloadServiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckWorkloadServiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WorkloadServiceAuthorization
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIssueWorkloadServiceClientCertificateResponse parses an HTTP response from a IssueWorkloadServiceClientCertificateWithResponse call
+func ParseIssueWorkloadServiceClientCertificateResponse(rsp *http.Response) (*IssueWorkloadServiceClientCertificateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IssueWorkloadServiceClientCertificateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ServiceClientCertificate
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateWorkloadIngressAssignmentsResponse parses an HTTP response from a CreateWorkloadIngressAssignmentsWithResponse call
+func ParseCreateWorkloadIngressAssignmentsResponse(rsp *http.Response) (*CreateWorkloadIngressAssignmentsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateWorkloadIngressAssignmentsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WorkloadIngressAssignments
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// ListMaintenanceControls List maintenance controls
@@ -28763,6 +29612,18 @@ type ServerInterface interface {
 	// GetWebhookProviderSource Read one webhook provider source policy
 	// (GET /v1/webhook-providers/{provider}/source)
 	GetWebhookProviderSource(w http.ResponseWriter, r *http.Request, provider WebhookProvider)
+	// ListWorkloadServices List only the workload session's currently authorized saved services
+	// (GET /v1/workload/services)
+	ListWorkloadServices(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/workload/services/{service_id}/authorization)
+	CheckWorkloadService(w http.ResponseWriter, r *http.Request, serviceId string)
+
+	// (POST /v1/workload/services/{service_id}/client-certificate)
+	IssueWorkloadServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId string)
+
+	// (POST /v1/workload/services/{service_id}/ingress-assignments)
+	CreateWorkloadIngressAssignments(w http.ResponseWriter, r *http.Request, serviceId string)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -33114,6 +33975,98 @@ func (siw *ServerInterfaceWrapper) GetWebhookProviderSource(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
+// ListWorkloadServices operation middleware
+func (siw *ServerInterfaceWrapper) ListWorkloadServices(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWorkloadServices(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CheckWorkloadService operation middleware
+func (siw *ServerInterfaceWrapper) CheckWorkloadService(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CheckWorkloadService(w, r, serviceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// IssueWorkloadServiceClientCertificate operation middleware
+func (siw *ServerInterfaceWrapper) IssueWorkloadServiceClientCertificate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.IssueWorkloadServiceClientCertificate(w, r, serviceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateWorkloadIngressAssignments operation middleware
+func (siw *ServerInterfaceWrapper) CreateWorkloadIngressAssignments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateWorkloadIngressAssignments(w, r, serviceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -33234,6 +34187,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/workload/services", wrapper.ListWorkloadServices)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/authorization", wrapper.CheckWorkloadService)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/ingress-assignments", wrapper.CreateWorkloadIngressAssignments)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/client-certificate", wrapper.IssueWorkloadServiceClientCertificate)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/managed-login", wrapper.BeginManagedBrowserLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/private-services/{private_service_id}/http-grants", wrapper.CreateManagedHTTPGrant)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/private-services/{private_service_id}/http-grants/{grant_id}", wrapper.RevokeManagedHTTPGrant)

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/url"
 	"os/exec"
 	"path"
@@ -82,4 +83,24 @@ func (p Project) SourceIdentity(ctx context.Context) (SourceIdentity, error) {
 	fingerprint := hex.EncodeToString(digest[:])
 	label := naming.ProjectDNSLabel(path.Base(remote), filepath.ToSlash(filepath.Dir(relative)))
 	return SourceIdentity{Key: "project-" + fingerprint[:48], Fingerprint: fingerprint, Label: label}, nil
+}
+
+// GitHubRepository infers only github.com origins. source identity remains a
+// separate checkout-independent contract and never carries job credentials.
+func (p Project) GitHubRepository(ctx context.Context) (string, error) {
+	command := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
+	command.Dir = p.Worktree.Root
+	output, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("read ci GitHub origin: %w", err)
+	}
+	remote, err := NormalizeGitRemote(string(output))
+	if err != nil {
+		return "", err
+	}
+	repository, ok := strings.CutPrefix(remote, "github.com/")
+	if !ok || len(strings.Split(repository, "/")) != 2 {
+		return "", errors.New("ci repository inference requires a github.com origin; set ci.github.repository explicitly")
+	}
+	return repository, nil
 }

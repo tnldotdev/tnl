@@ -1575,7 +1575,7 @@ type RecheckPrivateServiceVisitorParams struct {
 	PrivateRunID         string
 	RunNumber            int64
 	ConnectorSessionID   string
-	IdentityID           string
+	IdentityID           pgtype.Text
 	VisitorConnectionID  string
 	ObservedSourceIp     netip.Addr
 	IngressID            pgtype.Text
@@ -1690,7 +1690,7 @@ WHERE id = $2 AND identity_id = $3 AND revoked_at IS NULL
 type RevokePrivateConnectorSessionParams struct {
 	Now        pgtype.Timestamptz
 	ID         string
-	IdentityID string
+	IdentityID pgtype.Text
 }
 
 func (q *Queries) RevokePrivateConnectorSession(ctx context.Context, arg RevokePrivateConnectorSessionParams) (int64, error) {

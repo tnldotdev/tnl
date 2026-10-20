@@ -58,6 +58,7 @@ type Store interface {
 }
 
 type handler struct {
+	workloads *oidcauth.GitHubWorkloadVerifier
 	config    Config
 	store     Store
 	oidc      *oidcauth.Server
@@ -89,6 +90,13 @@ func (r routeRegistrar) HandleFunc(pattern string, handler func(http.ResponseWri
 // Register adds the built-in authority API routes to mux and returns their patterns.
 func Register(mux *http.ServeMux, cfg Config, store Store) (Routes, error) {
 	h := &handler{config: cfg, store: store}
+	if cfg.ControlURL != "" {
+		var err error
+		h.workloads, err = oidcauth.NewGitHubWorkloadVerifier(cfg.ControlURL, cfg.HTTPClient)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if cfg.WebServiceSecret != "" {
 		if cfg.OIDCIssuer == "" {
 			return nil, fmt.Errorf("authorityapi: website identity requires an OIDC issuer")

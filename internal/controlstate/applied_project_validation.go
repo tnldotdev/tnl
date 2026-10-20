@@ -72,8 +72,16 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 			}
 		}
 	}
-	descriptor, err := appliedLocalTargetDescriptor(s.Target, s.Protocol)
-	if err != nil || descriptor && s.Publisher != "local" {
+	descriptor := s.TargetDiscovery != nil
+	var err error
+	if descriptor {
+		if s.Target != "" || s.TargetTLS != nil || s.Publisher == "local" || s.TargetDiscovery.Validate(s.Protocol) != nil {
+			return ErrProjectConfigurationInvalid
+		}
+	} else {
+		descriptor, err = appliedLocalTargetDescriptor(s.Target, s.Protocol)
+	}
+	if err != nil || descriptor && s.TargetDiscovery == nil && s.Publisher != "local" {
 		return ErrProjectConfigurationInvalid
 	}
 	if s.PublicURL != nil && s.Protocol != "http" {

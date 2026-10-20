@@ -284,6 +284,7 @@ type ControlDeviceLogin struct {
 }
 
 type ControlDirectServiceVisitor struct {
+	WorkloadSessionID    pgtype.Text
 	VisitorConnectionID  string
 	PrivateServiceID     string
 	PrivateRunID         string
@@ -751,12 +752,13 @@ type ControlPrivateCertificateRequest struct {
 }
 
 type ControlPrivateConnectorSession struct {
+	WorkloadSessionID            pgtype.Text
 	ControlSessionID             pgtype.Text
 	ID                           string
 	CredentialDigest             []byte
 	PrivateServiceID             string
-	IdentityID                   string
-	DeviceID                     string
+	IdentityID                   pgtype.Text
+	DeviceID                     pgtype.Text
 	AssignedIngressID            string
 	AssignedIngressRunID         string
 	AssignedIngressLeaseRevision int64
@@ -919,13 +921,14 @@ type ControlPrivateServiceVisitorCapacity struct {
 }
 
 type ControlPrivateVisitorStream struct {
+	WorkloadSessionID   pgtype.Text
 	VisitorConnectionID string
 	PrivateServiceID    string
 	PrivateRunID        string
 	RunNumber           int64
 	ConnectorSessionID  string
-	IdentityID          string
-	DeviceID            string
+	IdentityID          pgtype.Text
+	DeviceID            pgtype.Text
 	SourceIp            netip.Addr
 	GrantRevision       int64
 	ValidUntil          pgtype.Timestamptz
@@ -1626,4 +1629,63 @@ type ControlVisitorNetworkHashKey struct {
 	VisitorNetworkHashMasterKeyCiphertext   []byte
 	VisitorNetworkHashMasterKeyStorageKeyID string
 	CreatedAt                               pgtype.Timestamptz
+}
+
+type ControlWorkloadAssertion struct {
+	JtiDigest         []byte
+	AssertionDigest   []byte
+	WorkloadSessionID string
+	ExpiresAt         pgtype.Timestamptz
+}
+
+type ControlWorkloadAudit struct {
+	WorkloadSessionID string
+	Event             string
+	PrivateServiceID  pgtype.Text
+	OccurredAt        pgtype.Timestamptz
+}
+
+type ControlWorkloadClientCertificate struct {
+	CertificateDigest []byte
+	WorkloadSessionID string
+	PrivateServiceID  string
+	CsrDigest         []byte
+	CertificatePem    []byte
+	ExpiresAt         pgtype.Timestamptz
+}
+
+type ControlWorkloadIngressRequest struct {
+	WorkloadSessionID string
+	IdempotencyKey    string
+	PrivateServiceID  string
+	ResultCiphertext  []byte
+	StorageKeyID      string
+}
+
+type ControlWorkloadSession struct {
+	ID                   string
+	TeamID               string
+	ProjectKey           string
+	CiName               string
+	RepositoryID         string
+	RunID                string
+	RunAttempt           string
+	CheckRunID           string
+	PublicKey            []byte
+	RequestDigest        []byte
+	Claims               []byte
+	CredentialDigest     []byte
+	CredentialCiphertext []byte
+	StorageKeyID         string
+	CreatedAt            pgtype.Timestamptz
+	RenewedAt            pgtype.Timestamptz
+	LeaseExpiresAt       pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+	RevokedAt            pgtype.Timestamptz
+}
+
+type ControlWorkloadSessionService struct {
+	WorkloadSessionID string
+	PrivateServiceID  string
+	Service           string
 }

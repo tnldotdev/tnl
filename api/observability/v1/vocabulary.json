@@ -638,7 +638,8 @@
         "http",
         "postgres",
         "mysql",
-        "tcp"
+        "tcp",
+        "kubernetes"
       ],
       "semantics": "service application protocol",
       "dimension_policy": "bounded"
@@ -687,6 +688,26 @@
     },
     {
       "key": "tnl.visitor_connection_id",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.workload_check_run_id",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.workload_run_attempt",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.workload_run_id",
+      "semantics": "high-churn correlation only; prohibited as a metric dimension",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.workload_session_id",
       "semantics": "high-churn correlation only; prohibited as a metric dimension",
       "dimension_policy": "trace_log"
     }

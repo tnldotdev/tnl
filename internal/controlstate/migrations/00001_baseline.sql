@@ -1757,7 +1757,7 @@ CREATE TABLE control.private_services (
     name_scope text NOT NULL DEFAULT '',
     placement_worktree_key text NOT NULL DEFAULT '',
     placement_worktree_label text NOT NULL DEFAULT '',
-    protocol text NOT NULL DEFAULT 'tcp' CHECK (protocol IN ('http', 'tcp', 'mysql', 'postgres')),
+    protocol text NOT NULL DEFAULT 'tcp' CHECK (protocol IN ('http', 'tcp', 'mysql', 'postgres', 'kubernetes')),
     tls_metadata jsonb,
     trust_revision bigint NOT NULL DEFAULT 1 CHECK (trust_revision >= 1),
     visitor_revision bigint NOT NULL DEFAULT 1 CHECK (visitor_revision >= 1),
@@ -1942,6 +1942,68 @@ CREATE TABLE control.private_service_routing_clock (
 );
 INSERT INTO control.private_service_routing_clock(id, updated_at) VALUES (1, now());
 
+-- workload executions are visitor principals, independent of people and
+-- publishers. the unique execution fence prevents a new key stealing a job.
+CREATE TABLE control.workload_sessions (
+    id text PRIMARY KEY CHECK (id ~ '^wls_[A-Za-z0-9]{22}$'),
+    team_id text NOT NULL REFERENCES control.teams(id),
+    project_key text NOT NULL,
+    ci_name text NOT NULL,
+    repository_id text NOT NULL,
+    run_id text NOT NULL,
+    run_attempt text NOT NULL,
+    check_run_id text NOT NULL,
+    public_key bytea NOT NULL CHECK (octet_length(public_key)=32),
+    request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
+    claims jsonb NOT NULL,
+    credential_digest bytea NOT NULL UNIQUE CHECK (octet_length(credential_digest)=32),
+    credential_ciphertext bytea NOT NULL,
+    storage_key_id text NOT NULL,
+    created_at timestamptz NOT NULL,
+    renewed_at timestamptz NOT NULL,
+    lease_expires_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    revoked_at timestamptz,
+    UNIQUE(team_id,project_key,repository_id,run_id,run_attempt,check_run_id),
+    CHECK (expires_at>created_at AND expires_at<=created_at+interval '6 hours'),
+    CHECK (lease_expires_at>created_at AND lease_expires_at<=expires_at)
+);
+CREATE TABLE control.workload_session_services (
+    workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
+    private_service_id text NOT NULL REFERENCES control.private_services(id),
+    service text NOT NULL,
+    PRIMARY KEY(workload_session_id,private_service_id)
+);
+CREATE TABLE control.workload_assertions (
+    jti_digest bytea PRIMARY KEY CHECK (octet_length(jti_digest)=32),
+    assertion_digest bytea NOT NULL CHECK (octet_length(assertion_digest)=32),
+    workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
+    expires_at timestamptz NOT NULL
+);
+CREATE TABLE control.workload_ingress_requests (
+    workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
+    idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+    private_service_id text NOT NULL REFERENCES control.private_services(id),
+    result_ciphertext bytea NOT NULL,
+    storage_key_id text NOT NULL,
+    PRIMARY KEY(workload_session_id,idempotency_key)
+);
+CREATE TABLE control.workload_client_certificates (
+    certificate_digest bytea PRIMARY KEY CHECK (octet_length(certificate_digest)=32),
+    workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
+    private_service_id text NOT NULL REFERENCES control.private_services(id),
+    csr_digest bytea NOT NULL CHECK (octet_length(csr_digest)=32),
+    certificate_pem bytea NOT NULL,
+    expires_at timestamptz NOT NULL,
+    UNIQUE(workload_session_id,private_service_id,csr_digest)
+);
+CREATE TABLE control.workload_audit (
+    workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
+    event text NOT NULL CHECK (event IN ('start','renew','revoke','certificate.issue','assignment.create')),
+    private_service_id text REFERENCES control.private_services(id),
+    occurred_at timestamptz NOT NULL
+);
+
 CREATE TABLE control.visitor_devices (
     id text PRIMARY KEY CHECK (id ~ '^vdev_[A-Za-z0-9]{22}$'),
     identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
@@ -1967,12 +2029,13 @@ CREATE TABLE control.service_client_certificates (
     UNIQUE (private_service_id,device_id,csr_digest)
 );
 CREATE TABLE control.private_connector_sessions (
+    workload_session_id text REFERENCES control.workload_sessions(id),
     control_session_id text REFERENCES control.control_sessions(id),
     id text PRIMARY KEY CHECK (id ~ '^pcs_[A-Za-z0-9]{22}$'),
     credential_digest bytea NOT NULL UNIQUE CHECK (octet_length(credential_digest) = 32),
     private_service_id text NOT NULL REFERENCES control.private_services(id) ON DELETE RESTRICT,
-    identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
-    device_id text NOT NULL REFERENCES control.visitor_devices(id) ON DELETE RESTRICT,
+    identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    device_id text REFERENCES control.visitor_devices(id) ON DELETE RESTRICT,
     assigned_ingress_id text NOT NULL,
     assigned_ingress_run_id text NOT NULL,
     assigned_ingress_lease_revision bigint NOT NULL CHECK (assigned_ingress_lease_revision>=1),
@@ -1984,6 +2047,8 @@ CREATE TABLE control.private_connector_sessions (
     ingress_run_id text,
     ingress_lease_revision bigint,
     revoked_at timestamptz,
+    CHECK ((workload_session_id IS NOT NULL AND identity_id IS NULL AND device_id IS NULL AND control_session_id IS NULL)
+        OR (workload_session_id IS NULL AND identity_id IS NOT NULL AND device_id IS NOT NULL)),
     CHECK (expires_at > created_at AND expires_at <= created_at + interval '15 minutes'),
     CHECK ((bound_at IS NULL AND source_ip IS NULL AND ingress_id IS NULL AND ingress_run_id IS NULL AND ingress_lease_revision IS NULL)
         OR (bound_at IS NOT NULL AND source_ip IS NOT NULL AND ingress_id IS NOT NULL AND ingress_run_id IS NOT NULL AND ingress_lease_revision >= 1)),
@@ -2008,18 +2073,21 @@ CREATE TABLE control.private_ingress_assignment_requests (
 CREATE INDEX private_ingress_assignment_requests_expiring ON control.private_ingress_assignment_requests(expires_at);
 
 CREATE TABLE control.private_visitor_streams (
+    workload_session_id text REFERENCES control.workload_sessions(id),
     visitor_connection_id text PRIMARY KEY CHECK (visitor_connection_id ~ '^vc_[A-Za-z0-9]{22}$'),
     private_service_id text NOT NULL,
     private_run_id text NOT NULL,
     run_number bigint NOT NULL,
     connector_session_id text NOT NULL REFERENCES control.private_connector_sessions(id) ON DELETE RESTRICT,
-    identity_id text NOT NULL,
-    device_id text NOT NULL,
+    identity_id text,
+    device_id text,
     source_ip inet NOT NULL,
     grant_revision bigint NOT NULL CHECK (grant_revision>=1),
     valid_until timestamptz NOT NULL,
     created_at timestamptz NOT NULL,
     closed_at timestamptz,
+    CHECK ((workload_session_id IS NOT NULL AND identity_id IS NULL AND device_id IS NULL)
+        OR (workload_session_id IS NULL AND identity_id IS NOT NULL AND device_id IS NOT NULL)),
     FOREIGN KEY (private_run_id, private_service_id, run_number)
         REFERENCES control.private_service_runs(id, private_service_id, run_number) ON DELETE RESTRICT,
     FOREIGN KEY (device_id, identity_id) REFERENCES control.visitor_devices(id, identity_id) ON DELETE RESTRICT
@@ -2036,6 +2104,7 @@ CREATE INDEX private_visitor_streams_capacity ON control.private_visitor_streams
 -- direct admission starts without an identity. TLS key possession and current
 -- service permission bind the identity before application bytes are forwarded.
 CREATE TABLE control.direct_service_visitors (
+    workload_session_id text REFERENCES control.workload_sessions(id),
     visitor_connection_id text PRIMARY KEY CHECK (visitor_connection_id ~ '^vc_[A-Za-z0-9]{22}$'),
     private_service_id text NOT NULL,
     private_run_id text NOT NULL,
@@ -2057,10 +2126,11 @@ CREATE TABLE control.direct_service_visitors (
     FOREIGN KEY (private_run_id,private_service_id,run_number) REFERENCES control.private_service_runs(id,private_service_id,run_number) ON DELETE RESTRICT,
     FOREIGN KEY (device_id,identity_id) REFERENCES control.visitor_devices(id,identity_id) ON DELETE RESTRICT,
     CHECK ((identity_id IS NULL)=(device_id IS NULL)),
-    CHECK ((identity_id IS NULL)=(certificate_digest IS NULL)),
+    CHECK (((identity_id IS NOT NULL OR workload_session_id IS NOT NULL))=(certificate_digest IS NOT NULL)),
+    CHECK (workload_session_id IS NULL OR (identity_id IS NULL AND device_id IS NULL)),
     CHECK ((http_credential_kind IS NULL)=(http_credential_digest IS NULL)),
     CHECK (http_credential_kind IS NULL OR certificate_digest IS NULL),
-    CHECK (promoted_at IS NULL OR identity_id IS NOT NULL OR http_credential_kind IS NOT NULL)
+    CHECK (promoted_at IS NULL OR identity_id IS NOT NULL OR workload_session_id IS NOT NULL OR http_credential_kind IS NOT NULL)
 );
 CREATE INDEX direct_service_visitors_capacity ON control.direct_service_visitors(private_run_id,valid_until) WHERE closed_at IS NULL;
 CREATE VIEW control.private_service_visitor_capacity AS
@@ -2140,6 +2210,7 @@ CREATE TABLE control.applied_projects (
     updated_at timestamptz NOT NULL,
     PRIMARY KEY (team_id, project_key)
 );
+ALTER TABLE control.workload_sessions ADD FOREIGN KEY(team_id,project_key) REFERENCES control.applied_projects(team_id,project_key);
 CREATE TABLE control.project_publisher_groups (
     ownership text NOT NULL DEFAULT 'team' CHECK (ownership='team'),
     id text PRIMARY KEY,

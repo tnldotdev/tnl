@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -61,6 +62,8 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.publish_runs WHERE request_digest_storage_key_id = $1) +
 			(SELECT count(*) FROM control.private_service_runs WHERE assignment_seed_storage_key_id = $1) +
 			(SELECT count(*) FROM control.private_ingress_assignment_requests WHERE storage_key_id = $1) +
+			(SELECT count(*) FROM control.workload_sessions WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.workload_ingress_requests WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.ingress_transport_issuers WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.ingress_transport_certificates WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.applied_projects WHERE storage_key_id=$1) +
@@ -307,6 +310,13 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		query, column, keyIDColumn, table string
 		context                           func(string) string
 	}{
+		{`SELECT ctid::text,id,credential_ciphertext FROM control.workload_sessions WHERE storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"credential_ciphertext", "storage_key_id", "control.workload_sessions", workloadCredentialContext},
+		{`SELECT ctid::text,workload_session_id || '/' || idempotency_key,result_ciphertext FROM control.workload_ingress_requests WHERE storage_key_id=$1 ORDER BY workload_session_id,idempotency_key FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"result_ciphertext", "storage_key_id", "control.workload_ingress_requests", func(id string) string {
+				session, key, _ := strings.Cut(id, "/")
+				return workloadRequestScope(session, key)
+			}},
 		{`SELECT ctid::text, encode(state_digest,'hex'), verifier_ciphertext FROM control.managed_http_browser_logins
 		  WHERE storage_key_id=$1 ORDER BY state_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"verifier_ciphertext", "storage_key_id", "control.managed_http_browser_logins", func(id string) string { return "browser-access:" + id }},

@@ -70,6 +70,7 @@ const (
 	MemberHostnameDepthExceeded         Reason = "TNL_CLIENT_MEMBER_HOSTNAME_DEPTH_EXCEEDED"
 	InvalidDomainName                   Reason = "TNL_CLIENT_INVALID_DOMAIN_NAME"
 	ProjectConfigInvalid                Reason = "TNL_CLIENT_PROJECT_CONFIG_INVALID"
+	CIRepositoryMetadataUnavailable     Reason = "TNL_CLIENT_CI_REPOSITORY_METADATA_UNAVAILABLE"
 	ObservabilityConfigInvalid          Reason = "TNL_CLIENT_OBSERVABILITY_CONFIG_INVALID"
 	PublisherDeploymentInvalid          Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_INVALID"
 	PublisherDeploymentMetadataInvalid  Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_METADATA_INVALID"
@@ -393,6 +394,10 @@ var definitions = map[Reason]Definition{
 	ProjectConfigInvalid: {
 		Class: Invalid, Message: "tnl could not use the project configuration",
 		Action: "run tnl check and correct the reported setting", Retry: RetryAfterChange,
+	},
+	CIRepositoryMetadataUnavailable: {
+		Class: Invalid, Message: "ci repository metadata is unavailable for first setup",
+		Action: "configure existing gh authentication with read access to this repository, then run tnl apply again", Retry: RetryAfterChange,
 	},
 	ObservabilityConfigInvalid: {
 		Class: Invalid, Message: "operational observability configuration is invalid",

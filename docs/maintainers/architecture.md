@@ -537,6 +537,12 @@ and relay unchanged and terminates in the publisher.
 
 ## place authority decisions
 
+GitHub CI executions use independent visitor workload sessions, with exact saved
+service rights and a fixed execution window. trusted apply binds repository IDs;
+job tokens cannot apply policy or create human control sessions. see
+[workload sessions](workload-sessions.md) for the authority endpoints, native
+adapter, saved cloud selector contract, and private data-plane integration seam.
+
 The authority API owns identities, authentication, teams, memberships,
 invitations, domains, and current authorization decisions.
 

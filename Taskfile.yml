@@ -232,6 +232,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/authorityapi -run='^TestIntegrationControlOwnedDeviceLogin$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
+  go:test:integration:workload:
+    desc: Check GitHub workload sessions, saved policy races, and visitor admission without live GitHub or AWS
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/controlstate ./internal/controlapi -run='^TestIntegrationWorkload' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
   go:test:aws-bootstrap:
     desc: Check publisher bootstrap with signed local AWS HTTPS fixtures
     cmds:

@@ -43,7 +43,7 @@ type ManagedServiceTLS struct {
 }
 
 func (m PrivateServiceMetadata) Validate() error {
-	if m.Protocol != "http" && m.Protocol != "tcp" && m.Protocol != "mysql" && m.Protocol != "postgres" {
+	if m.Protocol != "http" && m.Protocol != "tcp" && m.Protocol != "mysql" && m.Protocol != "postgres" && m.Protocol != "kubernetes" {
 		return ErrPrivateServiceConflict
 	}
 	if m.TLS == nil {

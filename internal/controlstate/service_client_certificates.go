@@ -153,7 +153,7 @@ func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, servic
 	if err != nil {
 		return result, ErrPrivateServiceAccess
 	}
-	identity, device, err := issuer.Identity(leaf, service, now)
+	subject, err := issuer.Subject(leaf, service, now)
 	if err != nil {
 		return result, ErrPrivateServiceAccess
 	}
@@ -177,7 +177,11 @@ func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, servic
 		return result, ErrPrivateServiceAccess
 	}
 	digest := sha256.Sum256(der)
-	result, err = recheckDirectServiceVisitor(ctx, tx, service, runID, number, visitor, identity, device, source, digest[:], now)
+	if subject.WorkloadSessionID != "" {
+		result, err = recheckWorkloadDirectVisitor(ctx, tx, service, runID, number, visitor, subject.WorkloadSessionID, source, digest[:], now)
+	} else {
+		result, err = recheckDirectServiceVisitor(ctx, tx, service, runID, number, visitor, subject.IdentityID, subject.DeviceID, source, digest[:], now)
+	}
 	if err != nil {
 		return result, err
 	}

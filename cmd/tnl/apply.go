@@ -57,6 +57,9 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	} else if !errors.Is(err, controlclient.ErrNotFound) {
 		return err
 	}
+	if err = bindProjectCI(ctx, project, &declaration, existing.Configuration); err != nil {
+		return err
+	}
 	applied, err := session.authenticated.Control.ApplyProjectConfiguration(ctx, source.Key, controlv1.ApplyProjectConfigurationRequest{
 		TeamId: current.team.Id, SourceFingerprint: source.Fingerprint, ExpectedRevision: revision, Configuration: declaration,
 		ProjectLabel: &source.Label,
@@ -123,7 +126,15 @@ func projectDeclaration(ctx context.Context, project projectConfiguration, curre
 				return declaration, err
 			}
 		}
-		if publisher == "local" {
+		cloud := config.TargetType(service) == "eks" || config.TargetType(service) == "rds"
+		if cloud {
+			t := service.Target
+			entry.TargetDiscovery = &controlv1.ProjectTargetDiscovery{Type: controlv1.ProjectTargetDiscoveryType(t.Type), Region: *t.Region, Cluster: t.Cluster, Instance: t.Instance}
+			if t.Endpoint != nil {
+				endpoint := controlv1.ProjectTargetDiscoveryEndpoint(*t.Endpoint)
+				entry.TargetDiscovery.Endpoint = &endpoint
+			}
+		} else if publisher == "local" {
 			// local discovery stays local. this declarative descriptor contains no
 			// checkout path, discovered container address or running app listener.
 			entry.Target = config.TargetType(service)
@@ -151,7 +162,7 @@ func projectDeclaration(ctx context.Context, project projectConfiguration, curre
 		if service.Access != nil {
 			entry.Access = &controlv1.ProjectServiceAccess{Team: controlv1.ProjectServiceAccessTeam(service.Access.Team)}
 		}
-		if service.Target != nil && service.Target.TLS != nil {
+		if !cloud && service.Target != nil && service.Target.TLS != nil {
 			discovered := ""
 			if config.TargetType(service) != "address" && config.TargetType(service) != "app" {
 				resolved, err := projectpublisher.ResolveTarget(ctx, project.Project, name, runtimeTargetResolver)

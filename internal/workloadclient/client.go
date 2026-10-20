@@ -1,0 +1,211 @@
+// package workloadclient is the native visitor authentication adapter for a CI
+// execution. the caller owns its in-memory lifetime and renewal loop.
+package workloadclient
+
+import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
+	"errors"
+	"net/http"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/authorityclient"
+	"github.com/tnldotdev/tnl/internal/controlclient"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/workloadproof"
+	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
+	"github.com/tnldotdev/tnl/pkg/api/controlv1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+)
+
+var ErrNoSession = errors.New("workload exchange has not succeeded")
+
+type Client struct {
+	mu        sync.RWMutex
+	key       ed25519.PrivateKey
+	authority *authorityclient.Client
+	control   *controlclient.Client
+	session   authorityv1.WorkloadSession
+}
+
+// New creates one ephemeral execution key. retain this adapter across exchange
+// retries: a replacement key cannot take over an already-started execution.
+func New(server string, httpClient *http.Client) (*Client, error) {
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	authority, err := authorityclient.New(server, httpClient, "")
+	if err != nil {
+		return nil, err
+	}
+	control, err := controlclient.New(server, httpClient, "")
+	if err != nil {
+		return nil, err
+	}
+	return &Client{key: key, authority: authority, control: control}, nil
+}
+
+func (c *Client) Exchange(ctx context.Context, team, project, ci, assertion string, services []string) (authorityv1.WorkloadSession, error) {
+	digest := sha256.Sum256([]byte(assertion))
+	body := authorityv1.GitHubWorkloadExchange{TeamId: team, ProjectKey: project, Ci: ci, Assertion: assertion, PublicKey: base64.RawURLEncoding.EncodeToString(c.key.Public().(ed25519.PublicKey)), Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(c.key, workloadproof.Digest(team, project, ci, digest, services)))}
+	if services != nil {
+		selected := slices.Clone(services)
+		body.Services = &selected
+	}
+	r, err := c.authority.ExchangeGitHubWorkload(ctx, body)
+	if err != nil {
+		return r, err
+	}
+	if err = validateSession(r); err != nil {
+		return authorityv1.WorkloadSession{}, err
+	}
+	if r.TeamId != team || r.ProjectKey != project || r.Ci != ci {
+		return authorityv1.WorkloadSession{}, invalidSession()
+	}
+	c.mu.Lock()
+	c.session = cloneSession(r)
+	c.mu.Unlock()
+	return r, nil
+}
+
+func validateSession(r authorityv1.WorkloadSession) error {
+	subject := tunnelv1.VisitorSubject{Kind: string(r.Subject.Kind), WorkloadSessionID: r.Id}
+	if subject.Validate() != nil || r.Subject.WorkloadSessionId == nil || *r.Subject.WorkloadSessionId != r.Id || string(r.Subject.Kind) != tunnelv1.VisitorWorkloadSession || r.Subject.IdentityId != nil || r.Subject.DeviceId != nil || len(r.Credential) != 47 || r.Credential[:4] != "wlc_" || !r.LeaseExpiresAt.After(time.Now()) || r.LeaseExpiresAt.After(r.ExpiresAt) || len(r.ServiceIds) > 32 {
+		return invalidSession()
+	}
+	return nil
+}
+func invalidSession() error {
+	return failure.Wrap("read workload session", failure.ServerResponseInvalid, errors.New("invalid workload session response"))
+}
+func (c *Client) Session() (authorityv1.WorkloadSession, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.session.Id == "" {
+		return authorityv1.WorkloadSession{}, ErrNoSession
+	}
+	r := c.session
+	return cloneSession(r), nil
+}
+func (c *Client) Renew(ctx context.Context) (authorityv1.WorkloadSession, error) {
+	r, err := c.Session()
+	if err != nil {
+		return r, err
+	}
+	next, err := c.authority.RenewWorkloadSession(ctx, r.Id, r.Credential)
+	if err != nil {
+		return next, err
+	}
+	if err = validateSession(next); err != nil {
+		return authorityv1.WorkloadSession{}, err
+	}
+	if next.Id != r.Id || next.Credential != r.Credential || next.ExpiresAt.After(r.ExpiresAt) || next.TeamId != r.TeamId || next.ProjectKey != r.ProjectKey {
+		return authorityv1.WorkloadSession{}, invalidSession()
+	}
+	for _, id := range next.ServiceIds {
+		if !slices.Contains(r.ServiceIds, id) {
+			return authorityv1.WorkloadSession{}, invalidSession()
+		}
+	}
+	c.mu.Lock()
+	c.session = cloneSession(next)
+	c.mu.Unlock()
+	return next, nil
+}
+func (c *Client) Revoke(ctx context.Context) error {
+	r, err := c.Session()
+	if err != nil {
+		return err
+	}
+	return c.authority.RevokeWorkloadSession(ctx, r.Id, r.Credential)
+}
+func (c *Client) ListServices(ctx context.Context) (controlv1.WorkloadServices, error) {
+	r, err := c.Session()
+	if err != nil {
+		return controlv1.WorkloadServices{}, err
+	}
+	return c.control.ListWorkloadServices(ctx, r.Credential)
+}
+func (c *Client) CheckService(ctx context.Context, service string) (controlv1.WorkloadServiceAuthorization, error) {
+	r, err := c.Session()
+	if err != nil {
+		return controlv1.WorkloadServiceAuthorization{}, err
+	}
+	return c.control.CheckWorkloadService(ctx, r.Credential, service)
+}
+func (c *Client) CreateIngressAssignments(ctx context.Context, service, key string) (controlv1.WorkloadIngressAssignments, error) {
+	r, err := c.Session()
+	if err != nil {
+		return controlv1.WorkloadIngressAssignments{}, err
+	}
+	return c.control.CreateWorkloadIngressAssignments(ctx, r.Credential, service, key)
+}
+func (c *Client) ServiceClientCertificate(ctx context.Context, service string) (controlv1.ServiceClientCertificate, error) {
+	r, err := c.Session()
+	if err != nil {
+		return controlv1.ServiceClientCertificate{}, err
+	}
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, c.key)
+	if err != nil {
+		return controlv1.ServiceClientCertificate{}, err
+	}
+	return c.control.IssueWorkloadServiceClientCertificate(ctx, r.Credential, service, csr)
+}
+
+// ClientTLSCertificate pairs the short service certificate with the same
+// in-memory workload key. no human enrollment or filesystem key is involved.
+func (c *Client) ClientTLSCertificate(ctx context.Context, service string) (tls.Certificate, error) {
+	issued, err := c.ServiceClientCertificate(ctx, service)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	if issued.PrivateServiceId != service {
+		return tls.Certificate{}, invalidSession()
+	}
+	block, rest := pem.Decode([]byte(issued.CertificatePem))
+	if block == nil || block.Type != "CERTIFICATE" || len(rest) != 0 {
+		return tls.Certificate{}, invalidSession()
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return tls.Certificate{}, failure.Wrap("read workload client certificate", failure.ServerResponseInvalid, err)
+	}
+	public, ok := leaf.PublicKey.(ed25519.PublicKey)
+	if !ok || !public.Equal(c.key.Public()) || !leaf.NotAfter.Equal(issued.ExpiresAt) {
+		return tls.Certificate{}, invalidSession()
+	}
+	return tls.Certificate{Certificate: [][]byte{block.Bytes}, PrivateKey: slices.Clone(c.key), Leaf: leaf}, nil
+}
+
+func cloneSession(r authorityv1.WorkloadSession) authorityv1.WorkloadSession {
+	r.ServiceIds = slices.Clone(r.ServiceIds)
+	if r.Subject.WorkloadSessionId != nil {
+		r.Subject.WorkloadSessionId = new(*r.Subject.WorkloadSessionId)
+	}
+	if r.Subject.IdentityId != nil {
+		r.Subject.IdentityId = new(*r.Subject.IdentityId)
+	}
+	if r.Subject.DeviceId != nil {
+		r.Subject.DeviceId = new(*r.Subject.DeviceId)
+	}
+	return r
+}
+func (c *Client) Subject() (tunnelv1.VisitorSubject, error) {
+	r, err := c.Session()
+	if err != nil {
+		return tunnelv1.VisitorSubject{}, err
+	}
+	return tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorWorkloadSession, WorkloadSessionID: r.Id}, nil
+}
+
+// Sign proves workload key possession for the private connector hello digest.
+func (c *Client) Sign(digest []byte) []byte { return ed25519.Sign(c.key, digest) }

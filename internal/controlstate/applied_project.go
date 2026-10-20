@@ -69,16 +69,18 @@ type ProjectServiceAccess struct {
 	Team bool `json:"team"`
 }
 type ProjectServiceConfiguration struct {
-	Publisher string                   `json:"publisher,omitempty"`
-	Name      string                   `json:"name,omitempty"`
-	Protocol  string                   `json:"protocol,omitempty"`
-	Target    string                   `json:"target"`
-	PublicURL *ProjectServicePublicURL `json:"public_url,omitempty"`
-	TargetTLS *ProjectTargetTLS        `json:"target_tls,omitempty"`
-	Access    *ProjectServiceAccess    `json:"access,omitempty"`
-	HTTP      *config.HTTPService      `json:"http,omitempty"`
+	TargetDiscovery *ProjectTargetDiscovery  `json:"target_discovery,omitempty"`
+	Publisher       string                   `json:"publisher,omitempty"`
+	Name            string                   `json:"name,omitempty"`
+	Protocol        string                   `json:"protocol,omitempty"`
+	Target          string                   `json:"target"`
+	PublicURL       *ProjectServicePublicURL `json:"public_url,omitempty"`
+	TargetTLS       *ProjectTargetTLS        `json:"target_tls,omitempty"`
+	Access          *ProjectServiceAccess    `json:"access,omitempty"`
+	HTTP            *config.HTTPService      `json:"http,omitempty"`
 }
 type ProjectConfiguration struct {
+	CI         map[string]ProjectCI                   `json:"ci,omitempty"`
 	Publishers map[string]ProjectPublisherGroup       `json:"publishers"`
 	Services   map[string]ProjectServiceConfiguration `json:"services"`
 	OAuth      bool                                   `json:"oauth"`
@@ -187,7 +189,7 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 		if s.Protocol == "" {
 			s.Protocol = "http"
 		}
-		if (PrivateServiceMetadata{Protocol: s.Protocol}).Validate() != nil || s.Access != nil && !s.Access.Team || len(s.Target) == 0 || len(s.Target) > 8192 || strings.ContainsAny(s.Target, "\x00\r\n") {
+		if (PrivateServiceMetadata{Protocol: s.Protocol}).Validate() != nil || s.Access != nil && !s.Access.Team || (len(s.Target) == 0 && s.TargetDiscovery == nil) || len(s.Target) > 8192 || strings.ContainsAny(s.Target, "\x00\r\n") {
 			return c, "", ErrProjectConfigurationInvalid
 		}
 		if err := normalizeAppliedProjectService(&s); err != nil {
@@ -196,6 +198,9 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 		c.Services[key] = s
 	}
 	if err = normalizeAppliedProjectIntegrations(&c); err != nil {
+		return c, "", err
+	}
+	if err = normalizeProjectCI(&c); err != nil {
 		return c, "", err
 	}
 	data, err = json.Marshal(c)
@@ -448,6 +453,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		return result, err
 	}
 	if err = recordAppliedGroupConfiguration(ctx, tx, existing, newServices, changedGroups, r.ActorID, next, r.Now); err != nil {
+		return result, err
+	}
+	if err = reconcileWorkloadPolicies(ctx, tx, r, c); err != nil {
 		return result, err
 	}
 	data, _ := json.Marshal(c)

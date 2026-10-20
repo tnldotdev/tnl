@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 const MaxLifetime = 7 * 24 * time.Hour
@@ -133,4 +134,53 @@ func (i *Issuer) Identity(leaf *x509.Certificate, service string, now time.Time)
 		return "", "", ErrInvalidCertificate
 	}
 	return parts[1], parts[2], nil
+}
+
+// IssueWorkload certifies only the job's existing key and one service. the
+// session deadline, revocation and lease are checked again at every admission.
+func (i *Issuer) IssueWorkload(der []byte, service, session string, expires, now time.Time) ([]byte, error) {
+	if i == nil || !opaqueid.Valid(service, opaqueid.PrivateServicePrefix) || !opaqueid.Valid(session, "wls_") || !expires.After(now) {
+		return nil, ErrInvalidCertificate
+	}
+	csr, err := ValidateCSR(der)
+	if err != nil {
+		return nil, err
+	}
+	if expires.After(now.Add(90 * time.Second)) {
+		expires = now.Add(90 * time.Second)
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 159))
+	if err != nil {
+		return nil, err
+	}
+	if serial.Sign() == 0 {
+		serial.SetInt64(1)
+	}
+	uri := &url.URL{Scheme: "tnl", Host: "workload-client", Path: "/" + service + "/" + session}
+	leaf := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "tnl workload client"}, NotBefore: now.Add(-time.Second), NotAfter: expires, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, URIs: []*url.URL{uri}}
+	signed, err := x509.CreateCertificate(rand.Reader, leaf, i.root, csr.PublicKey, i.key)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: signed}), nil
+}
+
+func (i *Issuer) Subject(leaf *x509.Certificate, service string, now time.Time) (tunnelv1.VisitorSubject, error) {
+	if identity, device, err := i.Identity(leaf, service, now); err == nil {
+		return tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: identity, DeviceID: device}, nil
+	}
+	if i == nil || leaf == nil || leaf.IsCA || len(leaf.URIs) != 1 || leaf.NotAfter.Sub(leaf.NotBefore) > 91*time.Second {
+		return tunnelv1.VisitorSubject{}, ErrInvalidCertificate
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(i.root)
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+		return tunnelv1.VisitorSubject{}, ErrInvalidCertificate
+	}
+	u := leaf.URIs[0]
+	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	if u.Scheme != "tnl" || u.Host != "workload-client" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" || u.Opaque != "" || len(parts) != 2 || parts[0] != service || !opaqueid.Valid(parts[1], "wls_") {
+		return tunnelv1.VisitorSubject{}, ErrInvalidCertificate
+	}
+	return tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorWorkloadSession, WorkloadSessionID: parts[1]}, nil
 }

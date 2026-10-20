@@ -299,6 +299,7 @@ func (d *Database) AuthenticatePrivateConnector(ctx context.Context, lease Ingre
 }
 
 type PrivateServiceSelection struct {
+	Subject VisitorSubject
 	PrivateServiceMetadata
 	PrivateServiceID, PrivateRunID, IdentityID, DeviceID string
 	RunNumber                                            int64
@@ -328,6 +329,10 @@ func privateVisitorAccess(ctx context.Context, tx pgx.Tx, serviceID, identityID 
 }
 
 func (d *Database) SelectPrivateServiceRun(ctx context.Context, serviceID, identityID, deviceID string, now time.Time) (result PrivateServiceSelection, retErr error) {
+	return d.SelectVisitorServiceRun(ctx, serviceID, VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: identityID, DeviceID: deviceID}, now)
+}
+
+func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string, subject VisitorSubject, now time.Time) (result PrivateServiceSelection, retErr error) {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -336,15 +341,9 @@ func (d *Database) SelectPrivateServiceRun(ctx context.Context, serviceID, ident
 	if err = lockPrivateAdmission(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
-	if _, _, err = privateVisitorAccess(ctx, tx, serviceID, identityID, now); err != nil {
+	until, _, err := VisitorSubjectAccess(ctx, tx, serviceID, subject, now)
+	if err != nil {
 		return result, err
-	}
-	var current bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.visitor_devices WHERE id=$1 AND identity_id=$2 AND revoked_at IS NULL)`, deviceID, identityID).Scan(&current); err != nil {
-		return result, err
-	}
-	if !current {
-		return result, ErrPrivateServiceAccess
 	}
 	service, err := controlstatedb.New(tx).LockPrivateService(ctx, serviceID)
 	if err != nil {
@@ -372,7 +371,9 @@ func (d *Database) SelectPrivateServiceRun(ctx context.Context, serviceID, ident
 	if err != nil {
 		return result, err
 	}
-	result.PrivateServiceID, result.IdentityID, result.DeviceID = serviceID, identityID, deviceID
+	result.PrivateServiceID, result.IdentityID, result.DeviceID = serviceID, subject.IdentityID, subject.DeviceID
+	result.Subject = subject
+	result.ExpiresAt = minTime(result.ExpiresAt, until)
 	result.PrivateServiceMetadata = privateMetadata(service)
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
@@ -408,15 +409,13 @@ func (d *Database) AuthorizePrivateServiceStream(ctx context.Context, lease Ingr
 	if current.Draining {
 		return result, ErrPrivateServiceAccess
 	}
-	var identity, device, controlSession string
+	var identity, device, controlSession, workload string
 	var sessionExpires, ingressExpires time.Time
-	err = tx.QueryRow(ctx, `SELECT session.identity_id,session.device_id,session.expires_at,ingress.lease_expires_at,COALESCE(session.control_session_id,'') FROM control.private_connector_sessions session
-	    JOIN control.visitor_devices device ON device.id=session.device_id AND device.identity_id=session.identity_id
-	    JOIN control.identities person ON person.id=device.identity_id AND person.disabled_at IS NULL
+	err = tx.QueryRow(ctx, `SELECT COALESCE(session.identity_id,''),COALESCE(session.device_id,''),session.expires_at,ingress.lease_expires_at,COALESCE(session.control_session_id,''),COALESCE(session.workload_session_id,'') FROM control.private_connector_sessions session
 	    JOIN control.ingress_leases ingress ON ingress.ingress_id=session.ingress_id AND ingress.ingress_run_id=session.ingress_run_id AND ingress.ingress_lease_revision=session.ingress_lease_revision
 	    WHERE session.id=$1 AND session.bound_at IS NOT NULL AND session.revoked_at IS NULL AND session.expires_at>$2
-	    AND session.source_ip=$3 AND session.ingress_id=$4 AND session.ingress_run_id=$5 AND session.ingress_lease_revision=$6
-	    AND device.revoked_at IS NULL FOR SHARE OF session,device,person`, sessionID, now, source.Unmap(), lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision)).Scan(&identity, &device, &sessionExpires, &ingressExpires, &controlSession)
+	    AND session.source_ip=$3 AND session.ingress_id=$4 AND session.ingress_run_id=$5 AND session.ingress_lease_revision=$6 AND session.private_service_id=$7
+	    FOR SHARE OF session`, sessionID, now, source.Unmap(), lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), serviceID).Scan(&identity, &device, &sessionExpires, &ingressExpires, &controlSession, &workload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrPrivateServiceAccess
 	}
@@ -424,7 +423,11 @@ func (d *Database) AuthorizePrivateServiceStream(ctx context.Context, lease Ingr
 		return result, err
 	}
 	ctx = WithControlPrincipal(ctx, ControlPrincipal{IdentityID: identity, SessionID: controlSession})
-	until, revision, err := privateVisitorAccess(ctx, tx, serviceID, identity, now)
+	subject := VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: identity, DeviceID: device}
+	if workload != "" {
+		subject = workloadSubject(workload)
+	}
+	until, revision, err := VisitorSubjectAccess(ctx, tx, serviceID, subject, now)
 	if err != nil {
 		return result, err
 	}
@@ -473,8 +476,8 @@ func (d *Database) AuthorizePrivateServiceStream(ctx context.Context, lease Ingr
 			until = deadline
 		}
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.private_visitor_streams(visitor_connection_id,private_service_id,private_run_id,run_number,connector_session_id,identity_id,device_id,source_ip,grant_revision,valid_until,created_at)
-	    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, visitorID, serviceID, runID, number, sessionID, identity, device, source.Unmap(), revision, until, now)
+	_, err = tx.Exec(ctx, `INSERT INTO control.private_visitor_streams(visitor_connection_id,private_service_id,private_run_id,run_number,connector_session_id,identity_id,device_id,source_ip,grant_revision,valid_until,created_at,workload_session_id)
+	    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, visitorID, serviceID, runID, number, sessionID, nullableText(identity), nullableText(device), source.Unmap(), revision, until, now, nullableText(workload))
 	var constraint *pgconn.PgError
 	if errors.As(err, &constraint) && constraint.Code == "23505" {
 		return result, ErrPrivateServiceAccess
@@ -486,6 +489,7 @@ func (d *Database) AuthorizePrivateServiceStream(ctx context.Context, lease Ingr
 		return result, err
 	}
 	result.PrivateServiceSelection = PrivateServiceSelection{PrivateServiceID: serviceID, PrivateRunID: runID, IdentityID: identity, DeviceID: device, RunNumber: number, ExpiresAt: until}
+	result.Subject = subject
 	result.ConnectorSessionID, result.VisitorConnectionID, result.SourceIP, result.GrantRevision, result.ValidUntil = sessionID, visitorID, source.Unmap(), revision, until
 	return result, nil
 }
