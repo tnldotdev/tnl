@@ -31,6 +31,11 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	oauthReady := waitForPublisherReady(t, oauthPublisher)
 	waitForReadyPublisherConnections(t, fixture.inspect, oauthReady.PublicURLID, oauthReady.PublishRunNumber, 2)
 	project := t.TempDir()
+	_, namespace, found := strings.Cut(oauthHost, ".")
+	if !found || namespace == "" {
+		t.Fatalf("OAuth callback hostname has no namespace: %q", oauthHost)
+	}
+	integrationGroup := project + "\x00" + namespace
 	type app struct {
 		name, hostname string
 		callbacks      chan string
@@ -61,7 +66,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		t.Cleanup(target.Close)
 		tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 			Command: clientstate.TunnelCommandPublish, Server: server, Project: project,
-			Service: name, Target: target.URL, IntegrationGroup: oauthHost,
+			Service: name, Target: target.URL, IntegrationGroup: integrationGroup,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -69,7 +74,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		t.Cleanup(func() { _ = tunnel.Finish(context.Background(), nil) })
 		config := fixture.identity.publisherConfig(target.URL, quic, tcp)
 		config.Hostname = hostname
-		config.ObserveResponse = integrationurls.Observer(state, server, oauthHost, oauthHost, tunnel.ID())
+		config.ObserveResponse = integrationurls.Observer(state, server, oauthHost, integrationGroup, tunnel.ID())
 		config.Observe = func(event publisher.Event) error {
 			switch event.Type {
 			case publisher.EventPublicURLAssigned:
