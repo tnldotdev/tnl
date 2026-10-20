@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -404,9 +405,13 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.PrivatePublisherConn
 			return ErrPrivateStream
 		}
 	}
-	managed := publisher.ManagedStream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: b.prepared.target, HTTPRequests: b.prepared.managedHTTPRequests,
-		TLS: &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: b.prepared.managedVisitor(header)}
-	managed.Target = target
+	authority := ""
+	if b.prepared.managedPublic {
+		authority = net.JoinHostPort(b.prepared.managedHostname, strconv.Itoa(int(b.prepared.managedPort)))
+	}
+	managed := publisher.ManagedStream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, HTTPRequests: b.prepared.managedHTTPRequests,
+		Authority: authority,
+		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: b.prepared.managedVisitor(header)}
 	return managed.Forward(ctx, &replayConn{Conn: stream, reader: replay})
 }
 

@@ -22,18 +22,24 @@ import (
 )
 
 type connectCommand struct {
-	Start     connectStartCommand     `cmd:"" default:"withargs" help:"Connect by approved service protocol and access; start is optional and disambiguates command names."`
-	Available connectAvailableCommand `cmd:"" help:"List services this identity can visit."`
-	List      connectListCommand      `cmd:"" help:"List installed local connectors."`
-	Stop      connectJobCommand       `cmd:"" help:"Stop an installed connector without revoking access."`
-	Remove    connectJobCommand       `cmd:"" help:"Remove an installed connector and its remembered port."`
+	Start          connectStartCommand     `cmd:"" default:"withargs" help:"Connect by approved service protocol and access; start is optional and disambiguates command names."`
+	Available      connectAvailableCommand `cmd:"" help:"List services this identity can visit."`
+	List           connectListCommand      `cmd:"" help:"List installed local connectors."`
+	Stop           connectJobCommand       `cmd:"" help:"Stop an installed connector without revoking access."`
+	Remove         connectJobCommand       `cmd:"" help:"Remove an installed connector and its remembered port."`
+	KubeCredential kubeCredentialCommand   `cmd:"" hidden:""`
 }
 
 type connectStartCommand struct {
 	scopedTeamFlags `embed:""`
 	Name            string           `arg:"" name:"name" help:"Configured service name or exact service ID."`
 	Listen          string           `name:"listen" help:"Loopback IP and port; defaults to 127.0.0.1 and the allocated service port."`
-	Protocol        string           `name:"protocol" help:"Require an exact match to the approved service protocol: http, tcp, mysql, or postgres."`
+	Protocol        string           `name:"protocol" help:"Require an exact match: http, tcp, mysql, postgres, or kubernetes."`
+	Kubeconfig      string           `name:"kubeconfig" type:"path" help:"Kubeconfig to register the owned Kubernetes context; defaults to KUBECONFIG or ~/.kube/config."`
+	Namespace       string           `name:"namespace" help:"Default Kubernetes namespace for this context."`
+	KubeUserConfig  string           `name:"kube-user-config" type:"path" help:"Existing kubeconfig containing the explicitly selected bearer-token user."`
+	KubeUser        string           `name:"kube-user" help:"Exact existing Kubernetes user; explicitly permits that user's noninteractive exec plugin."`
+	KubeTokenFile   string           `name:"kube-token-file" type:"path" help:"Private file containing the cluster bearer token."`
 	Foreground      bool             `name:"foreground" help:"Run in this terminal (the default)."`
 	Detach          bool             `name:"detach" help:"Run independently of this terminal without automatic restart."`
 	Install         bool             `name:"install" help:"Keep this connector running with the installed user supervisor."`
@@ -61,7 +67,13 @@ func validateConnectMode(flags connectStartCommand) error {
 		return connectModeError(failure.ConnectModeInvalid)
 	}
 	if flags.Protocol != "" && !config.ValidProtocol(flags.Protocol) {
-		return publisherCLIError("--protocol must be http, tcp, mysql, or postgres")
+		return publisherCLIError("--protocol must be http, tcp, mysql, postgres, or kubernetes")
+	}
+	if (flags.KubeUserConfig == "") != (flags.KubeUser == "") || flags.KubeTokenFile != "" && flags.KubeUser != "" {
+		return publisherCLIError("select --kube-token-file, or both --kube-user-config and --kube-user")
+	}
+	if flags.Detach && flags.Output == statusOutputJSON {
+		return connectModeError(failure.ConnectOutputModeInvalid)
 	}
 	if flags.System {
 		return publisherCLIError("connectors use the user supervisor; --system is only for explicit publishers")
@@ -86,6 +98,9 @@ func validateConnectServiceMode(flags connectStartCommand, service controlv1.Pri
 	if err := validateProfileService(service); err != nil {
 		return err
 	}
+	if config.ProtocolName(service.Protocol) != config.ProtocolKubernetes && (flags.Kubeconfig != "" || flags.Namespace != "" || flags.KubeUserConfig != "" || flags.KubeUser != "" || flags.KubeTokenFile != "") {
+		return publisherCLIError("kubeconfig and namespace options require protocol kubernetes")
+	}
 	if service.Protocol == controlv1.Mysql {
 		if _, err := nativeMySQLRoots(); err != nil {
 			return err
@@ -101,7 +116,7 @@ func validateConnectServiceMode(flags connectStartCommand, service controlv1.Pri
 		if flags.Install || flags.Detach || flags.Foreground || flags.Listen != "" || flags.DetachedChild != "" {
 			return connectModeError(failure.ConnectNativeModeRequired)
 		}
-	} else if flags.Output == statusOutputJSON {
+	} else if flags.Output == statusOutputJSON && config.ProtocolName(service.Protocol) != config.ProtocolKubernetes {
 		return connectModeError(failure.ConnectOutputModeInvalid)
 	}
 	return nil
@@ -309,6 +324,11 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 		if err != nil {
 			return err
 		}
+		if profile.Protocol == config.ProtocolKubernetes {
+			if err := prepareKubernetesConnection(ctx, session, flags, service, &profile, ""); err != nil {
+				return err
+			}
+		}
 		return writeNativeConnection(output, profile, flags.Output, "")
 	}
 	if flags.Detach {
@@ -346,7 +366,7 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 	}
 	var listener net.Listener
 	portProtocol := flags.Protocol
-	if portProtocol == "http" {
+	if portProtocol == "http" || portProtocol == "kubernetes" {
 		portProtocol = "tcp"
 	}
 	if flags.Install {
@@ -378,6 +398,21 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 		if err := registry.InstallConnector(ctx, job); err != nil {
 			return err
 		}
+		if job.Protocol == config.ProtocolKubernetes {
+			profile, err := serviceConnectionProfile(service, nil)
+			if err != nil {
+				return err
+			}
+			if err := prepareKubernetesConnection(ctx, session, flags, service, &profile, job.Target); err != nil {
+				return err
+			}
+			if err := writeNativeConnection(output, profile, flags.Output, job.Target); err != nil {
+				return err
+			}
+			if flags.Output == statusOutputJSON {
+				return nil
+			}
+		}
 		if listener != nil {
 			_ = listener.Close()
 		}
@@ -399,6 +434,14 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 				profile, err := serviceConnectionProfile(controlv1.PrivateService{Id: job.PrivateServiceID, Protocol: controlv1.PrivateServiceProtocol(job.Protocol), Enabled: true, ManagedTls: &endpoint}, nil)
 				if err != nil {
 					return err
+				}
+				if job.Protocol == config.ProtocolKubernetes {
+					if err := prepareKubernetesConnection(ctx, session, flags, service, &profile, job.Target); err != nil {
+						return err
+					}
+					if flags.Output == statusOutputJSON {
+						return writeNativeConnection(output, profile, flags.Output, job.Target)
+					}
 				}
 				return writeNativeConnection(diagnostics, profile, statusOutputHuman, job.Target)
 			}

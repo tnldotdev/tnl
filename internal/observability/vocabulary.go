@@ -38,6 +38,10 @@ const (
 	ServiceKindKey        Key = "tnl.service_kind"
 	Component             Key = "tnl.component"
 	ServiceProtocol       Key = "tnl.service_protocol"
+	KubernetesVerb        Key = "tnl.kubernetes_verb"
+	KubernetesAPIGroup    Key = "tnl.kubernetes_api_group"
+	KubernetesResource    Key = "tnl.kubernetes_resource"
+	KubernetesSubresource Key = "tnl.kubernetes_subresource"
 	Transport             Key = "tnl.transport"
 	TransportPreference   Key = "tnl.transport_preference"
 	AccessPath            Key = "tnl.access_path"
@@ -154,6 +158,9 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(Key("tnl.target_discovery_outcome"), "bounded", "publisher metadata refresh result", "success", "permission", "authentication", "not_found", "not_ready", "unavailable", "metadata", "changed")
 	add(Key("tnl.target_resource_arn"), "trace_log", "validated cloud resource ARN; prohibited as a metric dimension")
 	add(Key("tnl.target_resource_id"), "trace_log", "validated cloud resource identity; prohibited as a metric dimension")
+	for _, k := range []Key{KubernetesVerb, KubernetesAPIGroup, KubernetesResource, KubernetesSubresource} {
+		add(k, "trace_log", "closed Kubernetes request classification; unknown groups/resources normalize to other; no namespace, object name, query, command, or payload")
+	}
 	for _, k := range []Key{Transport, TransportPreference} {
 		add(k, "bounded", "selected transport (omit when not selected), or initial preference", "quic", "tls-tcp")
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/privatetrust"
 )
 
 var ErrTargetTLS = errors.New("target TLS negotiation failed")
@@ -24,8 +25,26 @@ type Transport struct {
 	TLS      *tls.Config
 }
 
+// FromTrust selects the publisher's approved target trust. Kubernetes pins an
+// explicit cluster CA; other protocols retain the target.tls extension semantics.
+func FromTrust(protocol config.ProtocolName, trust *privatetrust.Snapshot) (Transport, error) {
+	transport := Transport{Protocol: protocol}
+	if trust != nil {
+		var err error
+		if protocol == config.ProtocolKubernetes {
+			transport.TLS, err = trust.CAVerifier()
+		} else {
+			transport.TLS, err = trust.Verifier()
+		}
+		if err != nil {
+			return transport, err
+		}
+	}
+	return transport, transport.Validate()
+}
+
 func (t Transport) Validate() error {
-	if !t.Protocol.Valid() || t.TLS != nil && (t.TLS.InsecureSkipVerify || t.TLS.ServerName == "" || t.TLS.VerifyConnection != nil || t.TLS.VerifyPeerCertificate != nil) {
+	if !t.Protocol.Valid() || t.Protocol == config.ProtocolKubernetes && t.TLS == nil || t.TLS != nil && (t.TLS.InsecureSkipVerify || t.TLS.ServerName == "" || t.TLS.VerifyConnection != nil || t.TLS.VerifyPeerCertificate != nil) {
 		return failure.Wrap("validate target transport", failure.InvalidTarget, ErrTargetTLS)
 	}
 	return nil
@@ -78,7 +97,7 @@ func (t Transport) Handshake(ctx context.Context, backend net.Conn) (_ net.Conn,
 	verification := t.TLS.Clone()
 	verification.MinVersion = max(verification.MinVersion, tls.VersionTLS12)
 	verification.NextProtos = nil
-	if t.Protocol == config.ProtocolHTTP {
+	if t.Protocol == config.ProtocolHTTP || t.Protocol == config.ProtocolKubernetes {
 		verification.NextProtos = []string{"http/1.1"}
 	}
 	secured := tls.Client(backend, verification)

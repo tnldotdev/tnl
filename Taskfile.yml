@@ -252,6 +252,18 @@ tasks:
     cmds:
       - go test -race ./internal/targetdiscovery ./internal/rdsroots ./internal/grouppublisher ./internal/privatepublisher ./internal/targettransport ./internal/observability
 
+  go:test:kubernetes:
+    desc: Check native Kubernetes credentials, kubeconfig ownership, and HTTP stream boundaries
+    cmds:
+      - go test -race ./internal/kubeconfig ./internal/kubernetes ./internal/publisher ./internal/targettransport ./internal/tcpconnect ./internal/privatepublisher ./internal/observability ./cmd/tnl -run='Test(ClientGoExec|Credential|EKS|SelectedUser|Prepare|Preflight|SessionPlan|OwnedNamespace|Cleanup|Classification|Kubernetes|NativeProfile|ConnectMode|PublisherLifecycle)' -count=1
+
+  go:test:integration:kubernetes:
+    desc: Run kubectl against a digest-pinned disposable kind cluster (Docker, kubectl, kind v0.30.0)
+    vars:
+      KIND: '{{default "kind" .KIND}}'
+    cmds:
+      - go test -v ./internal/publisher -run='^TestIntegrationKubernetesKubectl$' -count=1 -timeout=8m -args -tnl-test-tier=integration -tnl-kind-binary={{.KIND}}
+
   go:test:publisher-provenance:
     desc: Check signed publisher deployment metadata without external infrastructure
     cmds:

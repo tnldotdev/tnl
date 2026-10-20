@@ -84,11 +84,11 @@ func TestConnectNamesAndRemovedChoices(t *testing.T) {
 
 func TestConnectModeMatrix(t *testing.T) {
 	for _, public := range []bool{false, true} {
-		for _, protocol := range []controlv1.PrivateServiceProtocol{controlv1.PrivateHttp, controlv1.Postgres, controlv1.Mysql, controlv1.Tcp} {
+		for _, protocol := range []controlv1.PrivateServiceProtocol{controlv1.PrivateHttp, controlv1.Postgres, controlv1.Mysql, controlv1.Tcp, controlv1.PrivateServiceProtocol("kubernetes")} {
 			service := controlv1.PrivateService{Id: "psvc_0123456789ABCDEFGHIJKL", Enabled: true, Protocol: protocol, ManagedTls: &controlv1.ManagedServiceTLS{Hostname: "service.example.test", Port: 25443, Public: public}}
 			for _, flags := range []connectStartCommand{{}, {Install: true}, {Detach: true}, {Listen: "127.0.0.1:25443"}, {Stdio: true}, {Output: statusOutputJSON}, {Protocol: "tcp"}} {
 				finite := public && protocol != controlv1.Tcp
-				valid := !(finite && (flags.Install || flags.Detach || flags.Listen != "")) && (!flags.Stdio || protocol == controlv1.Tcp) && (flags.Output != statusOutputJSON || finite) && (flags.Protocol == "" || flags.Protocol == string(protocol))
+				valid := !(finite && (flags.Install || flags.Detach || flags.Listen != "")) && (!flags.Stdio || protocol == controlv1.Tcp) && (flags.Output != statusOutputJSON || finite || protocol == controlv1.PrivateServiceProtocol("kubernetes")) && (flags.Protocol == "" || flags.Protocol == string(protocol))
 				if err := validateConnectServiceMode(flags, service); (err == nil) != valid {
 					t.Fatalf("public=%v protocol=%s flags=%+v: %v", public, protocol, flags, err)
 				}

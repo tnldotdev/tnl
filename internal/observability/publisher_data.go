@@ -263,7 +263,10 @@ func PublisherHTTPError(ctx context.Context, err error) {
 // no propagation headers are injected into customer requests.
 func PublisherHTTP(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r = r.WithContext(WithPublisherProtocol(r.Context(), "http"))
+		fields, _ := r.Context().Value(fieldsKey{}).(Fields)
+		if fields.ServiceProtocol != "kubernetes" {
+			r = r.WithContext(WithPublisherProtocol(r.Context(), "http"))
+		}
 		ctx, span := FromContext(r.Context()).tracer().Start(r.Context(), "publisher.http", trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(publisherDataAttributes(r.Context())...))
 		span.SetAttributes(Operation.String("publisher.http"), HTTPMethod.String(httpMethod(r.Method)))
 		if id, ok := ctx.Value(visitorKey{}).(string); ok {

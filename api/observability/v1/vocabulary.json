@@ -474,6 +474,26 @@
       "dimension_policy": "bounded"
     },
     {
+      "key": "tnl.kubernetes_api_group",
+      "semantics": "closed Kubernetes request classification; unknown groups/resources normalize to other; no namespace, object name, query, command, or payload",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.kubernetes_resource",
+      "semantics": "closed Kubernetes request classification; unknown groups/resources normalize to other; no namespace, object name, query, command, or payload",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.kubernetes_subresource",
+      "semantics": "closed Kubernetes request classification; unknown groups/resources normalize to other; no namespace, object name, query, command, or payload",
+      "dimension_policy": "trace_log"
+    },
+    {
+      "key": "tnl.kubernetes_verb",
+      "semantics": "closed Kubernetes request classification; unknown groups/resources normalize to other; no namespace, object name, query, command, or payload",
+      "dimension_policy": "trace_log"
+    },
+    {
       "key": "tnl.operation",
       "semantics": "compiled operation name; never supplied input, SQL, or a path",
       "dimension_policy": "bounded"

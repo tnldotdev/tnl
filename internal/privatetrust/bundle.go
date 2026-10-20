@@ -55,6 +55,21 @@ type Snapshot struct {
 	Digest   string
 }
 
+// CapturePEM validates publisher-discovered CA-only material through the same
+// canonicalization and digest boundary used by project target.tls settings.
+func CapturePEM(hostname string, data []byte) (Snapshot, error) {
+	if !config.ValidTLSIdentity(hostname) {
+		return Snapshot{}, ErrInvalidBundle
+	}
+	_, canonical, err := decodeBundle(data)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	snapshot := Snapshot{Hostname: canonicalHostname(hostname), PEM: canonical}
+	snapshot.Digest = snapshot.digest()
+	return snapshot, nil
+}
+
 type cachedBundle struct {
 	data    []byte
 	expires time.Time
@@ -299,7 +314,7 @@ func canonicalHostname(host string) string {
 // Verifier builds publisher-to-target trust. custom CA-only bundles add to
 // system roots; neither selection permits plaintext or unverified fallback.
 func (s Snapshot) Verifier() (*tls.Config, error) {
-	if !config.ValidTLSIdentity(s.Hostname) || s.Hostname != canonicalHostname(s.Hostname) || s.Digest != s.digest() || s.System == (len(s.PEM) != 0) {
+	if !s.valid() {
 		return nil, ErrInvalidBundle
 	}
 	roots, err := x509.SystemCertPool()
@@ -318,4 +333,24 @@ func (s Snapshot) Verifier() (*tls.Config, error) {
 		}
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS12, ServerName: s.Hostname, RootCAs: roots}, nil
+}
+
+// CAVerifier restricts an explicit CA snapshot to its cluster roots. a system
+// selection still uses WebPKI; a custom cluster CA cannot fall back to WebPKI.
+func (s Snapshot) CAVerifier() (*tls.Config, error) {
+	if s.System {
+		return s.Verifier()
+	}
+	if !s.valid() {
+		return nil, ErrInvalidBundle
+	}
+	roots, err := parseBundle(s.PEM)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS12, ServerName: s.Hostname, RootCAs: roots}, nil
+}
+
+func (s Snapshot) valid() bool {
+	return config.ValidTLSIdentity(s.Hostname) && s.Hostname == canonicalHostname(s.Hostname) && s.Digest == s.digest() && s.System != (len(s.PEM) != 0)
 }

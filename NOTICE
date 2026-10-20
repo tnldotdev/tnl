@@ -24,3 +24,6 @@ internal/rdsroots/bundles.json in the source tree and embedded in the binary.
 
 The Python ASGI binding directly depends on HTTPX, Starlette, Uvicorn, and
 websockets (BSD-3-Clause). Their distributions provide their license texts.
+
+Kubernetes client configuration and exec credentials use the official client-go
+and apimachinery API types (Apache-2.0), developed by the Kubernetes Authors.

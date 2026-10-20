@@ -129,12 +129,6 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		return err
 	}
 	transport := targettransport.Transport{Protocol: serviceconfig.ProtocolName(approved.Protocol)}
-	if trust != nil {
-		transport.TLS, err = trust.Verifier()
-		if err != nil {
-			return err
-		}
-	}
 	if config.TargetResolver != nil {
 		// cloud trust comes from the exact assigned selector's publisher-side
 		// discovery, never from a local apply or a saved static CA override.
@@ -142,6 +136,11 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			return ErrPrivateStream
 		}
 		transport.TLS = discoveredTLS
+	} else {
+		transport, err = targettransport.FromTrust(serviceconfig.ProtocolName(approved.Protocol), trust)
+		if err != nil {
+			return err
+		}
 	}
 	if err := transport.Validate(); err != nil {
 		return err

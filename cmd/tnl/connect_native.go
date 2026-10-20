@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/kubeconfig"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -48,6 +49,8 @@ type nativeConnectionProfile struct {
 	URL               string                       `json:"url,omitempty"`
 	TLS               string                       `json:"tls"`
 	ServerCAFile      string                       `json:"server_ca_file,omitempty"`
+	Kubeconfig        *kubeconfig.Result           `json:"kubeconfig,omitempty"`
+	Namespace         string                       `json:"namespace,omitempty"`
 }
 
 func serviceConnectionProfile(service controlv1.PrivateService, material *clientstate.ServiceClientMaterial) (nativeConnectionProfile, error) {
@@ -77,6 +80,9 @@ func serviceConnectionProfile(service controlv1.PrivateService, material *client
 	}
 	address := net.JoinHostPort(hostname, strconv.Itoa(endpoint.Port))
 	switch profile.Protocol {
+	case config.ProtocolKubernetes:
+		profile.TLS = "HTTPS; managed tnl hostname; system roots; independent cluster CA verification by publisher"
+		profile.URL = "https://" + address
 	case config.ProtocolHTTP:
 		profile.TLS = "HTTPS with server hostname verification"
 		profile.URL = "https://" + address + "/"
@@ -178,6 +184,15 @@ func writeNativeConnection(output io.Writer, profile nativeConnectionProfile, mo
 	}
 	if profile.ServerCAFile != "" {
 		fields = append(fields, clioutput.Field{Label: "server CA", Value: profile.ServerCAFile})
+	}
+	if kube := profile.Kubeconfig; kube != nil {
+		fields = append(fields, clioutput.Field{Label: "kubeconfig", Value: kube.File}, clioutput.Field{Label: "context", Value: kube.Context})
+		if kube.Namespace != "" {
+			fields = append(fields, clioutput.Field{Label: "namespace", Value: kube.Namespace})
+		}
+		if kube.Qualified {
+			footer = "context name was qualified to preserve an existing installation"
+		}
 	}
 	if material := profile.ClientCertificate; material != nil {
 		fields = append(fields, clioutput.Field{Label: "certificate", Value: material.CertificateFile}, clioutput.Field{Label: "key file", Value: material.KeyFile}, clioutput.Field{Label: "expires", Value: material.ExpiresAt.UTC().Format(time.RFC3339)})

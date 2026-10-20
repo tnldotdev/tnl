@@ -66,7 +66,7 @@ func ResolveServiceTarget(service Service, discovered string) (*Publish, error) 
 	}
 	var normalized string
 	var err error
-	if Protocol(service) == "http" {
+	if Protocol(service) == "http" || Protocol(service) == "kubernetes" {
 		if TargetType(service) == "compose" || TargetType(service) == "docker" {
 			value, err = tcptarget.Normalize(value)
 			if err != nil {
@@ -137,6 +137,9 @@ func validateTarget(service Service) error {
 			return nil
 		}
 	}
+	if protocol == "kubernetes" && (target.Type != "address" || target.TLS == nil) {
+		return errors.New("kubernetes requires an HTTPS address with target.tls, or an eks target")
+	}
 	switch target.Type {
 	case "app":
 	case "address":
@@ -144,10 +147,13 @@ func validateTarget(service Service) error {
 			return errors.New("target.type address requires only address and optional tls")
 		}
 		value := string(*target.Address)
-		if protocol == "http" {
+		if protocol == "http" || protocol == "kubernetes" {
 			normalized, err := NormalizeHTTPServiceTarget(service, value)
 			if err != nil {
 				return fmt.Errorf("target.address: %w", err)
+			}
+			if protocol == "kubernetes" && !strings.HasPrefix(normalized, "https://") {
+				return errors.New("kubernetes requires an HTTPS target address")
 			}
 			if target.TLS != nil && !strings.HasPrefix(normalized, "https://") {
 				return errors.New("target.tls requires an HTTPS address")

@@ -392,7 +392,7 @@ func serveConnections(ctx context.Context, config Config, address *net.TCPAddr, 
 }
 
 func validProtocol(protocol string) bool {
-	return protocol == "http" || protocol == "tcp" || protocol == "mysql" || protocol == "postgres"
+	return protocol == "http" || protocol == "tcp" || protocol == "mysql" || protocol == "postgres" || protocol == "kubernetes"
 }
 
 func openPrivate(ctx context.Context, path *connectorPath, run Run) (result net.Conn, committed bool, err error) {

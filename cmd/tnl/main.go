@@ -334,6 +334,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	parsedCommand := canonicalParsedCommand(parsed.Command())
 	applyTunnelCLIUnits(parsed, &flags)
 	command = clioutput.CommandTitle("tnl", parsedCommand)
+	if parsedCommand == "connect kube-credential" {
+		return runKubeCredential(ctx, flags.Connect.KubeCredential, stdout)
+	}
 	if parsedCommand == "generate" {
 		return runGenerate(ctx, flags, stdout)
 	}

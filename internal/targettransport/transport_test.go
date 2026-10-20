@@ -24,7 +24,7 @@ func TestPreflightNegotiatesOnceWithoutApplicationBytes(t *testing.T) {
 	certificate := certificateSource.TLS.Certificates[0]
 	roots := x509.NewCertPool()
 	roots.AddCert(certificateSource.Certificate())
-	for _, protocol := range []config.ProtocolName{config.ProtocolHTTP, config.ProtocolTCP, config.ProtocolPostgres, config.ProtocolMySQL} {
+	for _, protocol := range []config.ProtocolName{config.ProtocolHTTP, config.ProtocolTCP, config.ProtocolPostgres, config.ProtocolMySQL, config.ProtocolKubernetes} {
 		for _, valid := range []bool{true, false} {
 			t.Run(string(protocol)+map[bool]string{true: "/verified", false: "/wrong-name"}[valid], func(t *testing.T) {
 				listener, err := net.Listen("tcp", "127.0.0.1:0")

@@ -9,7 +9,7 @@ import (
 func TestPublisherLifecycleInstrumentsRetainKnownProtocolAndBoundedFields(t *testing.T) {
 	m := New("publisher")
 	defer m.Shutdown(context.Background())
-	for _, protocol := range []string{"http", "postgres", "mysql", "tcp"} {
+	for _, protocol := range []string{"http", "postgres", "mysql", "tcp", "kubernetes"} {
 		ctx := ReplaceIdentity(WithMetrics(t.Context(), m), Identity{ServiceID: "service-" + protocol})
 		ctx = WithFields(ctx, Fields{AccessPath: "connector", Exposure: "public"})
 		ctx = WithPublisherProtocol(ctx, protocol)
@@ -46,7 +46,7 @@ func TestPublisherLifecycleInstrumentsRetainKnownProtocolAndBoundedFields(t *tes
 			}
 			seen[labels["tnl_service_protocol"]] = true
 		}
-		if len(seen) != 4 {
+		if len(seen) != 5 {
 			t.Fatal("publisher lifecycle metric is not reachable for each accepted protocol", family.GetName(), seen)
 		}
 		want[family.GetName()] = true

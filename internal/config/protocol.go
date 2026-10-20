@@ -5,10 +5,11 @@ package config
 type ProtocolName string
 
 const (
-	ProtocolHTTP     ProtocolName = "http"
-	ProtocolTCP      ProtocolName = "tcp"
-	ProtocolMySQL    ProtocolName = "mysql"
-	ProtocolPostgres ProtocolName = "postgres"
+	ProtocolHTTP       ProtocolName = "http"
+	ProtocolTCP        ProtocolName = "tcp"
+	ProtocolMySQL      ProtocolName = "mysql"
+	ProtocolPostgres   ProtocolName = "postgres"
+	ProtocolKubernetes ProtocolName = "kubernetes"
 )
 
 func (p ProtocolName) Valid() bool { return ValidProtocol(string(p)) }

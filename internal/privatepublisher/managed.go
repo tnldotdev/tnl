@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/privatetrust"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/targettransport"
 	"github.com/tnldotdev/tnl/internal/tcptarget"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -47,7 +48,7 @@ func newManagedPrepared(preparation controlv1.PrivateServiceRunPreparation, appr
 	prepared := &Prepared{Preparation: preparation, target: target, managedHostname: approved.ManagedTls.Hostname, managedPort: uint16(approved.ManagedTls.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
 	prepared.managedPublic = approved.ManagedTls.Public
 	prepared.targetResolver = cfg.TargetResolver
-	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
+	if prepared.managedProtocol == serviceconfig.ProtocolHTTP || prepared.managedProtocol == serviceconfig.ProtocolKubernetes {
 		prepared.managedHTTPRequests, err = publisher.NewManagedHTTPRequestLimits(approved.HttpLimits)
 		if err != nil {
 			return nil, err
@@ -57,12 +58,6 @@ func newManagedPrepared(preparation controlv1.PrivateServiceRunPreparation, appr
 	if err != nil {
 		return nil, err
 	}
-	if trust != nil {
-		prepared.managedTargetTLS, err = trust.Verifier()
-		if err != nil {
-			return nil, err
-		}
-	}
 	if cfg.TargetResolver != nil {
 		if trust != nil {
 			return nil, ErrPrivateStream
@@ -71,6 +66,12 @@ func newManagedPrepared(preparation controlv1.PrivateServiceRunPreparation, appr
 			return nil, ErrPrivateStream
 		}
 		prepared.managedTargetTLS = cfg.resolvedTargetTLS.Clone()
+	} else {
+		transport, err := targettransport.FromTrust(prepared.managedProtocol, trust)
+		if err != nil {
+			return nil, err
+		}
+		prepared.managedTargetTLS = transport.TLS
 	}
 	return prepared, nil
 }

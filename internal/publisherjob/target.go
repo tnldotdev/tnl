@@ -47,7 +47,10 @@ func validateTarget(job *Job) error {
 		}
 		var target string
 		var err error
-		if job.Protocol == config.ProtocolHTTP {
+		if job.Protocol == config.ProtocolHTTP || job.Protocol == config.ProtocolKubernetes {
+			if job.Protocol == config.ProtocolKubernetes && (!strings.HasPrefix(job.Target, "https://") || job.Trust == nil) {
+				return ErrScope
+			}
 			if strings.HasPrefix(job.Target, "https://") && job.Trust == nil || strings.HasPrefix(job.Target, "http://") && job.Trust != nil {
 				return ErrScope
 			}

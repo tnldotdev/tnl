@@ -35,6 +35,8 @@ type ManagedStream struct {
 	Public       bool
 	Hostname     string
 	HTTPRequests *ManagedHTTPRequestLimits
+	Kubernetes   KubernetesLimits
+	Authority    string
 	Target       string
 	TLS          *tls.Config
 	TargetTLS    *tls.Config
@@ -181,6 +183,16 @@ func (s ManagedStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	}
 	if !decision.Allowed || !decision.ValidUntil.After(time.Now()) {
 		return managedAuthorizationError(decision, nil)
+	}
+	if s.Protocol == config.ProtocolKubernetes {
+		if !stop() && setup.Err() != nil {
+			return context.Cause(setup)
+		}
+		if err := visitor.SetDeadline(time.Time{}); err != nil {
+			return err
+		}
+		admissionDone(nil)
+		return s.forwardKubernetes(ctx, secured, ManagedHTTPTarget{Address: s.Target, Transport: transport}, decision)
 	}
 	if s.Protocol == config.ProtocolHTTP {
 		admissionDone(nil)

@@ -54,7 +54,7 @@ func (p Project) captureTrust(ctx context.Context, cache *privatetrust.Cache, na
 		return nil, err
 	}
 	target := string(*publication.Target)
-	if config.Protocol(service) == "http" {
+	if config.Protocol(service) == "http" || config.Protocol(service) == "kubernetes" {
 		origin, err := url.Parse(target)
 		if err != nil || origin.Host == "" {
 			return nil, fmt.Errorf("service %q target TLS requires a target address", name)

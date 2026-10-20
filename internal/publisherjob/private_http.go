@@ -20,7 +20,7 @@ func PrivateTarget(ctx context.Context, job Job) (string, func(), error) {
 	if !job.Protocol.Valid() || job.TargetTLSName != "" || len(job.TargetCAPEM) != 0 {
 		return "", nil, ErrScope
 	}
-	if job.Protocol != config.ProtocolHTTP {
+	if job.Protocol != config.ProtocolHTTP && job.Protocol != config.ProtocolKubernetes {
 		target, err := tcptarget.Normalize(job.Target)
 		if err != nil {
 			return "", nil, ErrScope
@@ -45,19 +45,11 @@ func PrivateTarget(ctx context.Context, job Job) (string, func(), error) {
 // PrivateTransport resolves only the publisher's approved target trust. visitor
 // certificates and service names cannot substitute for target identity.
 func PrivateTransport(job Job) (targettransport.Transport, error) {
-	transport := targettransport.Transport{Protocol: job.Protocol}
-	if job.Trust != nil {
-		var err error
-		transport.TLS, err = job.Trust.Verifier()
-		if err != nil {
-			return transport, err
-		}
-	}
-	return transport, transport.Validate()
+	return targettransport.FromTrust(job.Protocol, job.Trust)
 }
 
 func PreflightPrivate(ctx context.Context, job Job) error {
-	if job.Protocol == config.ProtocolHTTP && (strings.HasPrefix(job.Target, "https://") && job.Trust == nil || strings.HasPrefix(job.Target, "http://") && job.Trust != nil) {
+	if (job.Protocol == config.ProtocolHTTP || job.Protocol == config.ProtocolKubernetes) && (strings.HasPrefix(job.Target, "https://") && job.Trust == nil || strings.HasPrefix(job.Target, "http://") && job.Trust != nil) {
 		return ErrScope
 	}
 	address, close, err := PrivateTarget(ctx, job)
