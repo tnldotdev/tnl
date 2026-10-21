@@ -157,7 +157,7 @@ func (h *handler) ListPrivateServices(w http.ResponseWriter, r *http.Request, pa
 	}
 	page := controlv1.PrivateServicePage{Services: make([]controlv1.PrivateService, 0, len(rows))}
 	for _, row := range rows {
-		page.Services = append(page.Services, privateRecord(row))
+		page.Services = append(page.Services, serviceaccess.Summary(row))
 	}
 	if next != "" {
 		page.NextCursor = &next
@@ -366,8 +366,7 @@ func (h *handler) ListAvailablePrivateServices(w http.ResponseWriter, r *http.Re
 	}
 	page := controlv1.PrivateServicePage{Services: make([]controlv1.PrivateService, 0, len(rows))}
 	for _, row := range rows {
-		entry := privateRecord(controlstate.PrivateServiceRecord{ID: row.ID, TeamID: row.TeamID, Name: row.Name, Enabled: true, CreatedAt: row.CreatedAt, PrivateServiceMetadata: row.PrivateServiceMetadata})
-		entry.TargetTls = nil
+		entry := serviceaccess.Summary(controlstate.PrivateServiceRecord{ID: row.ID, TeamID: row.TeamID, Name: row.Name, Enabled: true, CreatedAt: row.CreatedAt, PrivateServiceMetadata: row.PrivateServiceMetadata})
 		entry.KubernetesAuth = row.KubernetesAuth
 		if row.PrivateRunID != "" {
 			entry.PrivateRunId, entry.RunNumber = &row.PrivateRunID, &row.RunNumber

@@ -30,12 +30,13 @@ compute the standard OIDC `nonce` from the bytes actually sent:
 ```text
 body_digest = base64url_no_padding(SHA256(request_body_bytes))
 nonce = base64url_no_padding(SHA256(UTF8(
-  "tnl.company.actor.v1\n" + METHOD + "\n" + escaped_path + "\n" + body_digest
+  "tnl.company.actor.v1\n" + METHOD + "\n" + request_target + "\n" + body_digest
 )))
 ```
 
-use uppercase HTTP methods, no origin or query in `escaped_path`, and an empty
-body for GET. `controlstate.CompanyActorNonce` implements this formula. serialize
+use uppercase HTTP methods and an empty body for GET. `request_target` is the
+escaped path plus the exact `?query` when present, without an origin.
+`controlstate.CompanyActorNonce` implements this formula. serialize
 the body once, request the issuer token with this nonce, then send those same
 bytes. do not accept a caller's asserted actor or construct company provenance
 from linked-account metadata.
@@ -55,6 +56,14 @@ from linked-account metadata.
 an owner may explicitly grant a contractor invitation or membership exception.
 it permits personal-account sign-in, but does not clear manual suspension or
 removal. sync cannot change that decision or assign admin/owner roles.
+
+`listCompanyAdmissions` returns `{requests, next_cursor?}` with at most 100 rows.
+it includes complete history: pending and decided requests, including previous
+source revisions. follow `?cursor=<next_cursor>` until the cursor is absent.
+order is ascending `created_at`, then bytewise `request_id`; each cursor must
+identify a request in the selected team. sign each page's complete request
+target with a fresh actor assertion. a first-page assertion cannot authorize a
+different cursor. decisions still require the current source revision.
 
 ## consent before enforcement
 

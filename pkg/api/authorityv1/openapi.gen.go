@@ -271,6 +271,7 @@ const (
 	NameUnavailable       ProblemCode = "name_unavailable"
 	NotFound              ProblemCode = "not_found"
 	PolicyRevisionStale   ProblemCode = "policy_revision_stale"
+	ProjectManaged        ProblemCode = "project_managed"
 	RateLimited           ProblemCode = "rate_limited"
 	SourceSignInRequired  ProblemCode = "source_sign_in_required"
 	Unauthenticated       ProblemCode = "unauthenticated"
@@ -300,6 +301,8 @@ func (e ProblemCode) Valid() bool {
 	case NotFound:
 		return true
 	case PolicyRevisionStale:
+		return true
+	case ProjectManaged:
 		return true
 	case RateLimited:
 		return true
@@ -504,6 +507,12 @@ type CertificatePlan struct {
 type ClaimDomainRequest struct {
 	Domain      CanonicalHostname `json:"domain"`
 	MakeDefault *bool             `json:"make_default,omitempty"`
+}
+
+// CompanyAdmissionPage defines model for CompanyAdmissionPage.
+type CompanyAdmissionPage struct {
+	NextCursor *string                   `json:"next_cursor,omitempty"`
+	Requests   []CompanyAdmissionRequest `json:"requests"`
 }
 
 // CompanyAdmissionRequest defines model for CompanyAdmissionRequest.
@@ -1210,6 +1219,9 @@ type RevokeWebsitePrivateServiceInvitationParams struct {
 
 // ListCompanyAdmissionsParams defines parameters for ListCompanyAdmissions.
 type ListCompanyAdmissionsParams struct {
+	// Cursor The previous page's next_cursor, scoped to this team. Omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
 	// XTnlActorToken Fresh configured-issuer ID token; nonce is the operation-bound digest specified by company access. Its OIDC sub resolves the actor. The website credential alone grants no owner authority.
 	XTnlActorToken CompanyActorToken `json:"X-Tnl-Actor-Token"`
 }
@@ -1806,6 +1818,8 @@ type ClientInterface interface {
 	RevokeWebsitePrivateServiceInvitation(ctx context.Context, privateServiceId PrivateServiceID, invitationId externalRef0.PrivateServiceInvitationID, params *RevokeWebsitePrivateServiceInvitationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListCompanyAdmissions performs a GET /v1/service/teams/{team_id}/company-admissions (the `ListCompanyAdmissions` operationId) request.
+	//
+	// Complete admission history, including decided requests and previous company sources. Pages are ordered by created_at then bytewise request_id. Bind the signed actor assertion to the complete path and cursor query on every page.
 	ListCompanyAdmissions(ctx context.Context, teamId string, params *ListCompanyAdmissionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DecideCompanyAdmissionWithBody performs a POST /v1/service/teams/{team_id}/company-admissions/{request_id} (the `DecideCompanyAdmission` operationId) request,
@@ -2879,6 +2893,8 @@ func (c *Client) RevokeWebsitePrivateServiceInvitation(ctx context.Context, priv
 }
 
 // ListCompanyAdmissions performs a GET /v1/service/teams/{team_id}/company-admissions (the `ListCompanyAdmissions` operationId) request.
+//
+// Complete admission history, including decided requests and previous company sources. Pages are ordered by created_at then bytewise request_id. Bind the signed actor assertion to the complete path and cursor query on every page.
 func (c *Client) ListCompanyAdmissions(ctx context.Context, teamId string, params *ListCompanyAdmissionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListCompanyAdmissionsRequest(c.Server, teamId, params)
 	if err != nil {
@@ -5134,6 +5150,33 @@ func NewListCompanyAdmissionsRequest(server string, teamId string, params *ListC
 		return nil, err
 	}
 
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
@@ -6957,6 +7000,8 @@ type ClientWithResponsesInterface interface {
 
 	// ListCompanyAdmissionsWithResponse performs a GET /v1/service/teams/{team_id}/company-admissions (the `ListCompanyAdmissions` operationId) request.
 	//
+	// Complete admission history, including decided requests and previous company sources. Pages are ordered by created_at then bytewise request_id. Bind the signed actor assertion to the complete path and cursor query on every page.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	ListCompanyAdmissionsWithResponse(ctx context.Context, teamId string, params *ListCompanyAdmissionsParams, reqEditors ...RequestEditorFn) (*ListCompanyAdmissionsResponse, error)
 
@@ -8763,13 +8808,13 @@ type ListCompanyAdmissionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]CompanyAdmissionRequest
+	JSON200 *CompanyAdmissionPage
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListCompanyAdmissionsResponse) GetJSON200() *[]CompanyAdmissionRequest {
+func (r ListCompanyAdmissionsResponse) GetJSON200() *CompanyAdmissionPage {
 	return r.JSON200
 }
 
@@ -10825,6 +10870,8 @@ func (c *ClientWithResponses) RevokeWebsitePrivateServiceInvitationWithResponse(
 
 // ListCompanyAdmissionsWithResponse performs a GET /v1/service/teams/{team_id}/company-admissions (the `ListCompanyAdmissions` operationId) request.
 //
+// Complete admission history, including decided requests and previous company sources. Pages are ordered by created_at then bytewise request_id. Bind the signed actor assertion to the complete path and cursor query on every page.
+//
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ListCompanyAdmissionsWithResponse(ctx context.Context, teamId string, params *ListCompanyAdmissionsParams, reqEditors ...RequestEditorFn) (*ListCompanyAdmissionsResponse, error) {
 	rsp, err := c.ListCompanyAdmissions(ctx, teamId, params, reqEditors...)
@@ -12456,7 +12503,7 @@ func ParseListCompanyAdmissionsResponse(rsp *http.Response) (*ListCompanyAdmissi
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []CompanyAdmissionRequest
+		var dest CompanyAdmissionPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -14698,6 +14745,19 @@ func (siw *ServerInterfaceWrapper) ListCompanyAdmissions(w http.ResponseWriter, 
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListCompanyAdmissionsParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
 
 	headers := r.Header
 

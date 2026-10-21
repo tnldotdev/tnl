@@ -22,7 +22,7 @@ type companyAccessStore interface {
 	SetCompanyMembershipDecision(context.Context, controlstate.ControlPrincipal, string, string, bool, bool, bool, time.Time) error
 	SetCompanyInvitationException(context.Context, controlstate.ControlPrincipal, string, string, bool, time.Time) error
 	RequestCompanyAdmission(context.Context, controlstate.ControlPrincipal, string, string, int64, string, time.Time) (controlstate.CompanyAdmissionRequest, error)
-	ListCompanyAdmissions(context.Context, controlstate.ControlPrincipal, string, time.Time) ([]controlstate.CompanyAdmissionRequest, error)
+	ListCompanyAdmissions(context.Context, controlstate.ControlPrincipal, string, string, time.Time) (controlstate.CompanyAdmissionPage, error)
 	DecideCompanyAdmission(context.Context, controlstate.ControlPrincipal, string, string, int64, string, time.Time) error
 	CreateCompanyLoginIntent(context.Context, string, string, string, string, time.Time) (controlstate.CompanyLoginIntent, error)
 	ResolveCompanyLoginIntent(context.Context, string, string, time.Time) (controlstate.CompanyLoginIntent, error)
@@ -57,7 +57,7 @@ func companyOIDCIdentity(i oidcauth.Identity) controlstate.OIDCIdentity {
 }
 
 func (h *handler) companyOwner(w http.ResponseWriter, r *http.Request, body any) (companyAccessStore, bool) {
-	i, nonce, ok := h.verifiedHumanRequest(w, r, body, controlstate.CompanyActorNonce, false)
+	i, nonce, ok := h.verifiedHumanRequest(w, r, body, controlstate.CompanyActorNonce, true)
 	if !ok {
 		return nil, false
 	}
@@ -197,12 +197,16 @@ func (h *handler) SetCompanyInvitationException(w http.ResponseWriter, r *http.R
 	w.WriteHeader(204)
 }
 
-func (h *handler) ListCompanyAdmissions(w http.ResponseWriter, r *http.Request, team string, _ authorityv1.ListCompanyAdmissionsParams) {
+func (h *handler) ListCompanyAdmissions(w http.ResponseWriter, r *http.Request, team string, params authorityv1.ListCompanyAdmissionsParams) {
 	s, ok := h.companyOwner(w, r, nil)
 	if !ok {
 		return
 	}
-	result, err := s.ListCompanyAdmissions(r.Context(), controlstate.ControlPrincipal{}, team, time.Now())
+	after := ""
+	if params.Cursor != nil {
+		after = *params.Cursor
+	}
+	result, err := s.ListCompanyAdmissions(r.Context(), controlstate.ControlPrincipal{}, team, after, time.Now())
 	if err != nil {
 		companyError(w, "list company admissions", err)
 		return

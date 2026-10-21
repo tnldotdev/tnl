@@ -16,6 +16,8 @@ import (
 
 func writeControlStateProblem(response http.ResponseWriter, operation string, err error) {
 	switch {
+	case errors.Is(err, controlstate.ErrProjectManaged):
+		writeProblem(response, http.StatusConflict, authorityv1.ProjectManaged, "resource is managed by project configuration; change the declaration and run tnl apply")
 	case errors.Is(err, controlstate.ErrAuthorityInvalid):
 		writeProblem(response, http.StatusBadRequest, authorityv1.InvalidRequest, "invalid request")
 	case errors.Is(err, controlstate.ErrTeamNotFound), errors.Is(err, controlstate.ErrMembershipNotFound), errors.Is(err, controlstate.ErrInvitationNotFound),

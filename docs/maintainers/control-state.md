@@ -33,6 +33,14 @@ network hash key in `control.visitor_network_hash_keys`. Both are encrypted with
 the storage key and must participate in key rotation. IP-policy and request
 digests elsewhere retain their own ciphertext and storage-key IDs.
 
+storage-key rotation claims every recoverable encrypted row, including visitor
+IP grants, device logins, browser login verifiers, handoffs, and session tokens.
+expired or revoked rows still participate while stored. both browser session
+tokens rotate together because they share one key ID. the completion count
+includes locked rows, so a skipped claim cannot report that the old key is safe
+to remove. test the underlying grant or credential after removing the old key;
+reading a public URL's encrypted policy projection alone is insufficient.
+
 Applied projects store the source fingerprint, expected/current revision,
 encrypted normalized configuration, group scopes, and service assignments.
 Enrollment stores group membership and public signing keys; private signing
@@ -48,6 +56,12 @@ publisher run and are independently deduplicated. The service-audit clock
 preserves cursor commit order. A process crash can lose queued visitor
 observations; this does not undo a committed management fact or relax an
 authorization decision.
+
+`CleanupWorkloads` owns workload assertion deletion and its 30-day history
+retention after assertion expiry. `ExpireVisitorPermissions` expires browser
+permissions and IP grants without pruning workload replay fences. run both
+workers when checking retention: current credentials, retained assertions, and
+dependent visitor records must continue to pin their workload session.
 
 ## acquire locks in one order
 

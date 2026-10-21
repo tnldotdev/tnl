@@ -50,6 +50,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 	err := d.pool.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM control.control_sessions WHERE retry_secret_storage_key_id = $1) +
+			(SELECT count(*) FROM control.device_logins WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.team_invitation_email_deliveries WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.acme_accounts WHERE account_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.service_client_certificate_issuer WHERE storage_key_id=$1) +
@@ -68,6 +69,10 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.ingress_transport_certificates WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.applied_projects WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.managed_http_browser_logins WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.browser_login_attempts WHERE verifier_storage_key_id=$1) +
+			(SELECT count(*) FROM control.browser_access_sessions WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.browser_access_handoffs WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.visitor_ip_grants WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.publisher_namespace_renames WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.ingress_routing_table_events WHERE policy_storage_key_id = $1)
 	`, previousKeyID).Scan(&count)
@@ -310,6 +315,18 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		query, column, keyIDColumn, table string
 		context                           func(string) string
 	}{
+		{`SELECT ctid::text, 'device-login:' || encode(credential_digest,'hex'), payload FROM control.device_logins
+		  WHERE storage_key_id=$1 ORDER BY credential_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"payload", "storage_key_id", "control.device_logins", func(scope string) string { return scope }},
+		{`SELECT ctid::text, public_url_id || ':' || id, prefix_ciphertext FROM control.visitor_ip_grants
+		  WHERE storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"prefix_ciphertext", "storage_key_id", "control.visitor_ip_grants", func(id string) string { return "visitor-ip-grant:" + id }},
+		{`SELECT ctid::text, encode(state_digest,'hex'), verifier_ciphertext FROM control.browser_login_attempts
+		  WHERE verifier_storage_key_id=$1 ORDER BY state_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"verifier_ciphertext", "verifier_storage_key_id", "control.browser_login_attempts", func(id string) string { return "browser-access:" + id }},
+		{`SELECT ctid::text, encode(token_digest,'hex'), cookie_ciphertext FROM control.browser_access_handoffs
+		  WHERE storage_key_id=$1 ORDER BY token_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"cookie_ciphertext", "storage_key_id", "control.browser_access_handoffs", func(id string) string { return "browser-access:" + id }},
 		{`SELECT ctid::text,id,credential_ciphertext FROM control.workload_sessions WHERE storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"credential_ciphertext", "storage_key_id", "control.workload_sessions", workloadCredentialContext},
 		{`SELECT ctid::text,workload_session_id || '/' || idempotency_key,result_ciphertext FROM control.workload_ingress_requests WHERE storage_key_id=$1 ORDER BY workload_session_id,idempotency_key FOR UPDATE SKIP LOCKED LIMIT $2`,
@@ -357,7 +374,45 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 				WHERE ctid=$3::tid AND `+source.keyIDColumn+`=$4`, ciphertext, keyID, rowID, previousKeyID)
 			return err
 		}); err != nil {
-			return 0, fmt.Errorf("controlstate: rotate private IP policy: %w", err)
+			return 0, fmt.Errorf("rotate stored secrets in %s: %w", source.table, err)
+		}
+	}
+	// both browser tokens share one key ID; rotate them together under one row
+	// claim so readers can never observe tokens encrypted with different keys.
+	if remaining > 0 {
+		rows, err := tx.Query(ctx, `SELECT ctid::text, token_digest, access_ciphertext, refresh_ciphertext
+			FROM control.browser_access_sessions WHERE storage_key_id=$1 ORDER BY token_digest FOR UPDATE SKIP LOCKED LIMIT $2`, previousKeyID, remaining)
+		if err != nil {
+			return 0, fmt.Errorf("claim browser session secrets: %w", err)
+		}
+		type tokens struct {
+			rowID                   string
+			digest, access, refresh []byte
+		}
+		claimed, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (tokens, error) {
+			var value tokens
+			err := row.Scan(&value.rowID, &value.digest, &value.access, &value.refresh)
+			return value, err
+		})
+		if err != nil {
+			return 0, err
+		}
+		for _, value := range claimed {
+			for _, token := range []*[]byte{&value.access, &value.refresh} {
+				plain, _, err := d.openSecret(previousKeyID, browserContext(value.digest), *token)
+				if err != nil {
+					return 0, fmt.Errorf("open browser session secret for rotation: %w", err)
+				}
+				*token, err = d.sealSecret(browserContext(value.digest), plain)
+				if err != nil {
+					return 0, err
+				}
+			}
+			if _, err := tx.Exec(ctx, `UPDATE control.browser_access_sessions SET access_ciphertext=$1,refresh_ciphertext=$2,storage_key_id=$3 WHERE ctid=$4::tid AND storage_key_id=$5`, value.access, value.refresh, d.storageKey.CurrentID(), value.rowID, previousKeyID); err != nil {
+				return 0, fmt.Errorf("rotate browser session secrets: %w", err)
+			}
+			rotated++
+			remaining--
 		}
 	}
 	if err := rotate(`SELECT ctid::text,ingress_id,ingress_run_id,ingress_lease_revision,tls_server_name,private_key_ciphertext

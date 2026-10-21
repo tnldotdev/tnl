@@ -2503,7 +2503,7 @@ type PrivateServiceMetadata struct {
 // PrivateServiceName defines model for PrivateServiceName.
 type PrivateServiceName = string
 
-// PrivateServicePage defines model for PrivateServicePage.
+// PrivateServicePage At most 100 service summaries. Inventory preserves identity, placement, source and selection hints but never includes publisher-only target_tls or http_limits. Fetch an exact service for its approved publisher trust and limits.
 type PrivateServicePage struct {
 	NextCursor *PrivateServiceID `json:"next_cursor,omitempty"`
 	Services   []PrivateService  `json:"services"`

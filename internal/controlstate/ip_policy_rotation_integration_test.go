@@ -10,8 +10,162 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/tnldotdev/tnl/internal/controlstate/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/ippolicy"
 )
+
+func TestIntegrationStorageRotationVisitorIPGrant(t *testing.T) {
+	d, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "rotation_visitor_grant")
+	request := oidcRouteRequest(t, d, now)
+	u, err := d.CreatePublicURL(t.Context(), request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants, err := d.MutateVisitorIPs(t.Context(), u.ID, request.ActingIdentityID, "set", "", []VisitorIPGrantInput{{Prefix: "192.0.2.0/24"}}, now)
+	if err != nil || len(grants) != 1 {
+		t.Fatal(grants, err)
+	}
+	d.Close()
+	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
+	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkLockedRotationCount(t, rotating, `SELECT id FROM control.visitor_ip_grants FOR UPDATE`)
+	if err := rotating.CompleteStorageKeyRotation(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	rotating.Close()
+	reopened, err := Open(t.Context(), databaseURL, newKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(reopened.Close)
+	listed, err := reopened.MutateVisitorIPs(t.Context(), u.ID, request.ActingIdentityID, "list", "", nil, now)
+	if err != nil || len(listed) != 1 || listed[0] != grants[0] {
+		t.Fatalf("underlying visitor grant after retiring key A = %+v, %v", listed, err)
+	}
+	q := controlstatedb.New(reopened.pool)
+	url, err := q.LockPublicURLForRun(t.Context(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for source, want := range map[string]bool{"192.0.2.7": true, "192.0.3.7": false} {
+		allowed, _, err := reopened.visitorIPAllowed(t.Context(), q, url, source, now)
+		if err != nil || allowed != want {
+			t.Fatalf("grant authorization for %s = %t, %v", source, allowed, err)
+		}
+	}
+}
+
+func TestIntegrationStorageRotationDeviceLogin(t *testing.T) {
+	d, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "rotation_device_login")
+	login, credential, err := d.CreateDeviceLogin(t.Context(), DeviceLoginOptions{}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Close()
+	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
+	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkLockedRotationCount(t, rotating, `SELECT credential_digest FROM control.device_logins FOR UPDATE`)
+	if err := rotating.CompleteStorageKeyRotation(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	rotating.Close()
+	reopened, err := Open(t.Context(), databaseURL, newKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(reopened.Close)
+	polled, err := reopened.PollDeviceLogin(t.Context(), credential, now)
+	if err != nil || polled.UserCode != login.UserCode || polled.Status != DevicePending {
+		t.Fatalf("device login after retiring key A = %+v, %v", polled, err)
+	}
+}
+
+func checkLockedRotationCount(t *testing.T, d *Database, lock string) {
+	t.Helper()
+	tx, err := d.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err := tx.Exec(t.Context(), lock); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		n, err := d.ReencryptStorageSecrets(t.Context(), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+	if remaining, err := d.countPreviousStorageSecrets(t.Context()); err != nil || remaining != 1 {
+		t.Fatalf("locked encrypted row omitted from rotation completion count: remaining=%d err=%v", remaining, err)
+	}
+}
+
+func TestIntegrationStorageRotationBrowserSecrets(t *testing.T) {
+	d, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "rotation_browser_secrets")
+	r := oidcRouteRequest(t, d, now)
+	u := createTestPublicURL(t, d, r, now)
+	auth := browserTestAuthentication(t, d, u.ID, now)
+	binding := bytes.Repeat([]byte{7}, 32)
+	verifier := strings.Repeat("v", 43)
+	state, err := d.BeginBrowserLogin(t.Context(), "", u.ID, "/settings", "nonce-at-least-sixteen", verifier, binding, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued := browserTestControlSession(t, d, r.ActingIdentityID, now)
+	handoff, err := d.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{PublicURLID: u.ID, PublishRunID: auth.PublishRunID, ReturnPath: "/settings"}, BrowserAccessSession{
+		IdentityID: r.ActingIdentityID, DisplayName: "Example user", AccessToken: issued.AccessToken.String(), RefreshToken: issued.RefreshToken.String(),
+		AccessExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(24 * time.Hour),
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Close()
+	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32))
+	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		n, err := rotating.ReencryptStorageSecrets(t.Context(), 1)
+		if err != nil || n > 1 {
+			t.Fatal("unbounded or failed rotation", n, err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+	if n, err := rotating.countPreviousStorageSecrets(t.Context()); err != nil || n != 0 {
+		t.Fatal("browser secret rotation did not converge", n, err)
+	}
+	rotating.Close()
+	reopened, err := Open(t.Context(), databaseURL, newKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(reopened.Close)
+	login, err := reopened.ConsumeBrowserLogin(t.Context(), state, binding, now)
+	if err != nil || login.Verifier != verifier {
+		t.Fatal("browser verifier failed after key retirement", err)
+	}
+	cookie, _, _, _, _, err := reopened.RedeemBrowserHandoff(t.Context(), auth, handoff.Token, now)
+	if err != nil {
+		t.Fatal("browser handoff failed after key retirement", err)
+	}
+	session, err := reopened.BrowserSession(t.Context(), u.ID, cookie, now)
+	if err != nil || session.AccessToken != issued.AccessToken.String() || session.RefreshToken != issued.RefreshToken.String() {
+		t.Fatal("browser access/refresh pair failed after key retirement", err)
+	}
+}
 
 func TestIntegrationSignedInIPPolicySurvivesStorageKeyRotation(t *testing.T) {
 	database, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "private_policy_rotation")

@@ -77,16 +77,9 @@ func (a *appRuntime) privateWorkerConfiguration(ctx context.Context, project pro
 	if err != nil {
 		return projectpublisher.Configuration{}, err
 	}
-	services, err := auth.Control.ListPrivateServices(ctx, current.team.Id)
+	saved, err := auth.Control.GetPrivateService(ctx, realized.ServiceId)
 	if err != nil {
 		return projectpublisher.Configuration{}, err
-	}
-	var saved controlv1.PrivateService
-	for _, candidate := range services {
-		if candidate.Id == realized.ServiceId {
-			saved = candidate
-			break
-		}
 	}
 	if saved.Id != realized.ServiceId || saved.TeamId != current.team.Id || !saved.Enabled {
 		return projectpublisher.Configuration{}, nativeauth.ErrScope

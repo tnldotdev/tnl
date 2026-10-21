@@ -3921,9 +3921,11 @@ components:
     PrivateServicePage:
       type: object
       additionalProperties: false
+      description: At most 100 service summaries. Inventory preserves identity, placement, source and selection hints but never includes publisher-only target_tls or http_limits. Fetch an exact service for its approved publisher trust and limits.
       required: [services]
       properties:
-        services: { type: array, items: { $ref: "#/components/schemas/PrivateService" } }
+        services:
+          { type: array, maxItems: 100, items: { $ref: "#/components/schemas/PrivateService" } }
         next_cursor: { $ref: "#/components/schemas/PrivateServiceID" }
     CreatePrivateServiceGrantRequest:
       type: object

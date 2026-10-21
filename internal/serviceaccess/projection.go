@@ -48,6 +48,13 @@ func Service(record controlstate.PrivateServiceRecord) controlv1.PrivateService 
 	return result
 }
 
+// Summary preserves service identity and selection fields without publisher-only
+// target trust or HTTP limits. callers needing approved trust fetch one service.
+func Summary(record controlstate.PrivateServiceRecord) controlv1.PrivateService {
+	record.TLS, record.HTTPLimits = nil, nil
+	return Service(record)
+}
+
 func Grant(grant controlstate.PrivateServiceGrant) controlv1.PrivateServiceGrant {
 	result := controlv1.PrivateServiceGrant{Id: grant.ID, PrivateServiceId: grant.PrivateServiceID,
 		Kind: controlv1.PrivateServiceGrantKind(grant.Kind), CreatedAt: grant.CreatedAt,

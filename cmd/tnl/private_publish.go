@@ -230,7 +230,10 @@ func runPrivatePublish(ctx context.Context, flags publishCommand, output, diagno
 						if flags.Domain != "" && domain.Id != savedDomain.Id {
 							return nativeauth.ErrScope
 						}
-						service = item
+						service, err = session.authenticated.Control.GetPrivateService(ctx, item.Id)
+						if err != nil {
+							return err
+						}
 					}
 				}
 			}

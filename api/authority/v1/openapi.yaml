@@ -480,13 +480,18 @@ paths:
     get:
       operationId: listCompanyAdmissions
       security: [{ webServiceAuth: [] }]
+      description: Complete admission history, including decided requests and previous company sources. Pages are ordered by created_at then bytewise request_id. Bind the signed actor assertion to the complete path and cursor query on every page.
+      parameters:
+        - name: cursor
+          in: query
+          description: The previous page's next_cursor, scoped to this team. Omit for the first page.
+          schema: { type: string, pattern: "^caq_[A-Za-z0-9]{22}$" }
       responses:
         "200":
-          description: Control-owned admission requests
+          description: At most 100 control-owned admission requests and a cursor when more remain
           content:
             application/json:
-              schema:
-                { type: array, items: { $ref: "#/components/schemas/CompanyAdmissionRequest" } }
+              schema: { $ref: "#/components/schemas/CompanyAdmissionPage" }
         default: { $ref: "#/components/responses/Problem" }
   /v1/service/teams/{team_id}/company-admissions/{request_id}:
     parameters:
@@ -1400,6 +1405,16 @@ components:
       properties:
         active: { $ref: "#/components/schemas/IdentityConnection" }
         setup: { $ref: "#/components/schemas/IdentityConnection" }
+    CompanyAdmissionPage:
+      type: object
+      additionalProperties: false
+      required: [requests]
+      properties:
+        requests:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/CompanyAdmissionRequest" }
+        next_cursor: { type: string, pattern: "^caq_[A-Za-z0-9]{22}$" }
     CompanyAdmissionRequest:
       type: object
       additionalProperties: false
@@ -2227,6 +2242,7 @@ components:
               verified_email_required,
               not_found,
               conflict,
+              project_managed,
               rate_limited,
               unavailable,
               internal,

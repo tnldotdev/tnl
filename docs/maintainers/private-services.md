@@ -48,6 +48,14 @@ adopt a similarly named service from another project or group, and they do not
 need manager permission to read a target-free endpoint. An explicit service ID,
 including with `--no-config`, continues to select from visitor inventory.
 
+control-session management lists, visitor lists, and signed-human authority
+management lists return at most 100 service summaries per page. summaries keep
+IDs, placement, source bindings, protocol, managed TLS, and run-selection hints;
+they omit publisher-only `target_tls` and `http_limits`. native publisher setup
+fetches the selected service's exact management record before comparing target
+trust. inventory discovery must fit the bounded native client even when every
+service has a large approved CA bundle.
+
 ## connect with the service's approved protocol
 
 ```console
