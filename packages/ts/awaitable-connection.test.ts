@@ -9,6 +9,20 @@ vi.mock("./src/internal/launcher.js", () => ({ resolveNativeBinary: native.resol
 // reuse the response queue for direct async IPC; synchronous reads still use
 // the installed native reader and never dispatch a prepare operation.
 vi.mock("./src/internal/connection_ipc.js", () => ({
+  async prepareExternal(file: string, name: string) {
+    const { stdout } = await native.async("/installed/matching/tnl", [
+      "--no-telemetry",
+      "runtime",
+      "connections",
+      "prepare",
+      "--handle",
+      file,
+      "--service",
+      name,
+    ]);
+    const value: unknown = JSON.parse(stdout);
+    return value;
+  },
   ownerIPC: async (file: string) => ({
     async prepare(name: string) {
       const { stdout } = await native.async("/installed/matching/tnl", [
@@ -98,6 +112,16 @@ afterEach(() => {
 });
 
 describe("awaitable root connection handles", () => {
+  test("an explicit handle stays bound when another caller changes the environment", async () => {
+    vi.stubEnv("TNL_CONNECTION_HANDLE", "/private/first/handle.json");
+    const { connectionHandle } = await import("./src/internal/connection.js");
+    const first = connectionHandle("database", vi.fn());
+    vi.stubEnv("TNL_CONNECTION_HANDLE", "/private/second/handle.json");
+    await first;
+    expect(native.async.mock.calls.at(-1)?.[1]).toContain("/private/first/handle.json");
+    expect({ ...first }).toHaveProperty("port");
+    expect(native.sync.mock.calls.at(-1)?.[1]).toContain("/private/first/handle.json");
+  });
   test("a sibling synchronous settings read dispatches only prepared read and no provider/control preparation", async () => {
     const { connectionHandle } = await import("./src/internal/connection.js");
     await connectionHandle("database", vi.fn());

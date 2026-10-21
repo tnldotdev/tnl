@@ -136,6 +136,7 @@ async function createPreparedServiceUntraced(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending = Promise.resolve();
   let closing: Promise<void> | undefined;
+  const lifetime = new AbortController();
   const enqueue = (operation: () => Promise<void>) => {
     const result = pending.catch(() => {}).then(operation);
     pending = result;
@@ -254,6 +255,7 @@ async function createPreparedServiceUntraced(
   const close = (): Promise<void> => {
     if (closing !== undefined) return closing;
     closed = true;
+    lifetime.abort(new TnlError("sdk.registration_stale"));
     clearTimeout(timer);
     process.off("beforeExit", beforeExit);
     onClose();
@@ -281,7 +283,7 @@ async function createPreparedServiceUntraced(
     register: (listener: LocalHTTPServer) =>
       operation("sdk.app.register", () =>
         enqueue(async () => {
-          await setTarget(await listeningTarget(listener), listener);
+          await setTarget(await listeningTarget(listener, { signal: lifetime.signal }), listener);
         }),
       ),
     close,

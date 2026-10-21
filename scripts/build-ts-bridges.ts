@@ -28,6 +28,17 @@ const lazyNodeImports: Plugin = {
   },
 };
 
+// the bridge itself stays external: its relative require is rooted in internal/.
+const connectionBridge: Plugin = {
+  name: "connection-bridge",
+  setup(builder) {
+    builder.onResolve({ filter: /^\.\/internal\/connection_bridge\.js$/ }, (args) => ({
+      path: args.path,
+      external: true,
+    }));
+  },
+};
+
 for (const entry of ["index", "workload", "internal/connection"]) {
   await build({
     entryPoints: [path.join(source, `${entry}.ts`)],
@@ -42,6 +53,7 @@ for (const entry of ["index", "workload", "internal/connection"]) {
     plugins: [
       sharedErrors(entry === "internal/connection" ? "../errors.js" : "./errors.js"),
       lazyNodeImports,
+      connectionBridge,
     ],
   });
 }

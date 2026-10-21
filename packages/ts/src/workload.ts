@@ -1,4 +1,4 @@
-import { createRequire } from "node:module";
+import { loadConnection } from "./internal/connection_bridge.js";
 
 /** install once in server setup; the callback reads the current request. */
 export type WorkloadOptions = Readonly<
@@ -8,10 +8,7 @@ export type WorkloadOptions = Readonly<
   )
 >;
 
-const loadConnection = createRequire(import.meta.url);
 export function configureWorkload(options: WorkloadOptions): void {
-  const { configureWorkload: configure } = loadConnection(
-    "./internal/connection.cjs",
-  ) as typeof import("./internal/connection.js");
+  const { configureWorkload: configure } = loadConnection();
   configure(options);
 }

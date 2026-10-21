@@ -8,12 +8,18 @@ export default defineConfig(({ mode }) => ({
     ? {
         resolve: {
           alias: [
+            {
+              find: /^\.\/internal\/connection_bridge\.js$/,
+              replacement: fileURLToPath(
+                new URL("packages/ts/test-helper/source-connection-bridge.ts", import.meta.url),
+              ),
+            },
             // internal tests normally exercise dist too; coverage deliberately uses the
             // same source graph as the public aliases below. Framework subprocesses
             // still resolve the built package, outside Vitest's coverage instrumentation.
             {
-              find: /^\.\/dist\/internal\/(dev|runtime)\.js$/,
-              replacement: `${sourceDirectory}internal/$1.ts`,
+              find: /^\.\/dist\/(errors|internal\/[a-z_-]+)\.js$/,
+              replacement: `${sourceDirectory}$1.ts`,
             },
             {
               find: /^@tnldotdev\/tnl\/next$/,
@@ -22,6 +28,10 @@ export default defineConfig(({ mode }) => ({
             {
               find: /^@tnldotdev\/tnl\/vite$/,
               replacement: `${sourceDirectory}vite.ts`,
+            },
+            {
+              find: /^@tnldotdev\/tnl\/workload$/,
+              replacement: `${sourceDirectory}workload.ts`,
             },
             {
               find: /^@tnldotdev\/tnl$/,

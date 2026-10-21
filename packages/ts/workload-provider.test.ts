@@ -27,6 +27,60 @@ const oidc: Workload = {
   acquisition: { method: "callback", audience: "trusted-audience" },
 };
 
+test.each(["never", "late"])(
+  "callback acquisition is bounded even when it resolves %s",
+  async (mode) => {
+    const { configureWorkload, acquireAssertion } =
+      await import("./src/internal/workload_provider.js");
+    let finish: ((token: string) => void) | undefined;
+    let entered: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    configureWorkload({
+      name: "worker",
+      token: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+          entered?.();
+        }),
+    });
+    const controller = new AbortController();
+    const reason = new DOMException("acquisition deadline", "TimeoutError");
+    const acquiring = acquireAssertion("worker", oidc, directory, controller.signal);
+    await started;
+    controller.abort(reason);
+    if (mode === "late") finish?.("late.private.assertion");
+    const outcome = await Promise.race([
+      acquiring.then(
+        () => "accepted",
+        (error: unknown) => error,
+      ),
+      new Promise((resolve) => setTimeout(() => resolve("still waiting"), 100)),
+    ]);
+    expect(outcome).toBe(reason);
+  },
+);
+
+test("the SDK's ten-second acquisition deadline rejects a callback that never settles", async () => {
+  const { configureWorkload, acquireAssertion } =
+    await import("./src/internal/workload_provider.js");
+  let finish: ((token: string) => void) | undefined;
+  configureWorkload({
+    name: "worker",
+    token: () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  });
+  const started = performance.now();
+  await expect(
+    acquireAssertion("worker", oidc, directory, new AbortController().signal),
+  ).rejects.toMatchObject({ name: "TimeoutError" });
+  expect(performance.now() - started).toBeGreaterThanOrEqual(9900);
+  finish?.("assertion.after.deadline");
+}, 12_000);
+
 test("generic callback registration is fixed, request-scoped, and never verifies or routes using untrusted JWT claims", async () => {
   const { configureWorkload, acquireAssertion } =
     await import("./src/internal/workload_provider.js");

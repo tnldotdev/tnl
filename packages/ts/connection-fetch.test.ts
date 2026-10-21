@@ -1,7 +1,31 @@
 import { createServer } from "node:https";
 import { createSecureContext } from "node:tls";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { managedFetch, parseConnection } from "./src/internal/connection.js";
+
+test.each(["failed", "cancelled", "uncooperative"])(
+  "upload ownership ends when preparation is %s",
+  async (mode) => {
+    const cancel = vi.fn();
+    const upload = new ReadableStream<Uint8Array>({ cancel });
+    const controller = new AbortController();
+    const reason = new Error("preparation stopped");
+    const fetch = managedFetch("https://api.tnl.invalid", async (signal) => {
+      if (mode === "failed") throw reason;
+      if (mode === "uncooperative") {
+        queueMicrotask(() => controller.abort(reason));
+        return new Promise<never>(() => {});
+      }
+      controller.abort(reason);
+      signal?.throwIfAborted();
+      throw reason;
+    });
+    await expect(
+      fetch("/upload", { method: "POST", body: upload, signal: controller.signal }),
+    ).rejects.toBe(reason);
+    expect(cancel).toHaveBeenCalledOnce();
+  },
+);
 
 // public, self-signed test material, used only by this loopback fixture.
 const key = `-----BEGIN PRIVATE KEY-----
@@ -72,6 +96,9 @@ test("HTTP keeps the managed origin, Host and SNI while dialing verified loopbac
     );
     expect(response.status).toBe(201);
     expect(response.url).toBe(`${origin}/echo`);
+    const cloned = response.clone();
+    expect(cloned.url).toBe(response.url);
+    expect(await cloned.text()).toBe("application-body");
     expect(await response.text()).toBe("application-body");
     expect(visits).toEqual([
       { host: "api.tnl.invalid:8443", authorization: "Bearer application-owned" },

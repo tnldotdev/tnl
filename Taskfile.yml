@@ -785,7 +785,13 @@ tasks:
     desc: Check native connection snapshots, verified workload owner selection, streaming fetch and provider acquisition
     deps: [js:build]
     cmds:
-      - pnpm exec vitest run packages/ts/connection.test.ts packages/ts/awaitable-connection.test.ts packages/ts/connection-fetch.test.ts packages/ts/connection-ipc.test.ts packages/ts/connection-owner-recovery.test.ts packages/ts/workload-native.test.ts packages/ts/workload-provider.test.ts packages/ts/workload-contract.test.ts
+      - pnpm exec vitest run packages/ts/connection.test.ts packages/ts/awaitable-connection.test.ts packages/ts/connection-fetch.test.ts packages/ts/connection-ipc.test.ts packages/ts/connection-installed.test.ts packages/ts/connection-owner-recovery.test.ts packages/ts/workload-native.test.ts packages/ts/workload-provider.test.ts packages/ts/workload-contract.test.ts packages/ts/service-metadata.test.ts
+
+  js:test:frameworks:
+    desc: Check app preparation and real Node, Bun, Vite and Next framework lifetimes
+    deps: [js:build]
+    cmds:
+      - pnpm exec vitest run packages/ts/app-runtime.test.ts packages/ts/bun.test.ts packages/ts/vite.test.ts packages/ts/next.test.ts packages/ts/runtime.test.ts
 
   installer:test:
     desc: Test the shell installer without accessing GitHub or client state

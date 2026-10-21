@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { connect as connectTCP } from "node:net";
 import * as path from "node:path";
-import { Pool, buildConnector, type Dispatcher } from "undici";
+import { Pool, buildConnector, fetch as transportFetch, type Dispatcher } from "undici/index.js";
 import { TnlCleanupError, TnlError } from "../errors.js";
 import type {
   TnlConnectionHandle,
@@ -12,7 +12,8 @@ import type {
   TnlFetch,
 } from "../project.js";
 import { awaitableConnection } from "./awaitable_connection.js";
-import { ownerIPC, type OwnerIPC } from "./connection_ipc.js";
+import { ownerIPC, prepareExternal, type OwnerIPC } from "./connection_ipc.js";
+import { cancellable } from "./cancellation.js";
 import { usesWorkload, selectWorkload, acquireAssertion } from "./workload_provider.js";
 export { configureWorkload } from "./workload_provider.js";
 import { resolveNativeBinary } from "./launcher.js";
@@ -72,7 +73,6 @@ const identities = new Map<
   string,
   Promise<{ context: unknown; binding: string; expires?: number }>
 >();
-const externalIPC = new Map<string, Promise<OwnerIPC>>();
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
 async function prepareIPC(
@@ -242,31 +242,17 @@ async function rollbackOwner(key: string, owner: OwnedConnection, error: unknown
   }
 }
 
-function prepare(name: string): Promise<Prepared> {
-  return operation("sdk.connect", () => prepareUntraced(name));
+function prepare(name: string, externalFile?: string): Promise<Prepared> {
+  return operation("sdk.connect", () => prepareUntraced(name, externalFile));
 }
 
-async function prepareUntraced(name: string): Promise<Prepared> {
+async function prepareUntraced(name: string, externalFile: string | undefined): Promise<Prepared> {
   const base = cacheKey();
-  const binary = resolveNativeBinary();
-  const externalFile = process.env.TNL_CONNECTION_HANDLE;
   if (externalFile !== undefined) {
     readArgs(externalFile, name);
-    let ipc = externalIPC.get(externalFile);
-    if (ipc === undefined) {
-      if (externalIPC.size >= 32) throw new TnlError("sdk.connection_unavailable");
-      ipc = ownerIPC(externalFile);
-      externalIPC.set(externalFile, ipc);
-    }
-    let loaded: OwnerIPC;
-    try {
-      loaded = await ipc;
-    } catch (cause) {
-      if (externalIPC.get(externalFile) === ipc) externalIPC.delete(externalFile);
-      throw cause;
-    }
-    return parsePrepared(await loaded.prepare(name), name, externalFile);
+    return parsePrepared(await prepareExternal(externalFile, name), name, externalFile);
   }
+  const binary = resolveNativeBinary();
   let key = base;
   let assertion: string | undefined;
   let context: unknown;
@@ -726,12 +712,14 @@ export function managedFetch(
     );
     if (active + running >= 64) throw new TnlError("sdk.connection_unavailable");
     active++;
+    let request: Request | undefined;
+    let dispatched = false;
     try {
       const requestOptions: RequestInit & { duplex?: "half" } = {
         ...init,
         ...(init?.body instanceof ReadableStream ? { duplex: "half" } : {}),
       };
-      const request = new Request(
+      request = new Request(
         input instanceof Request ? input : new URL(String(input), `${url}/`),
         requestOptions,
       );
@@ -739,7 +727,8 @@ export function managedFetch(
       request.headers.set("host", new URL(url).host);
       const lifetime = request.signal;
       lifetime.throwIfAborted();
-      const snapshot = await current(lifetime);
+      const snapshot = await cancellable(lifetime, () => current(lifetime));
+      lifetime.throwIfAborted();
       if (snapshot.url !== url || snapshot.ssl === undefined || snapshot.expires <= Date.now())
         throw new TnlError("sdk.response_invalid");
       // unknown older snapshots never authorize reuse of a prior transport.
@@ -785,29 +774,104 @@ export function managedFetch(
         poolKey = nextKey;
       }
       if (dispatcher === undefined) throw new TnlError("sdk.connection_unavailable");
-      const options: RequestInit & { dispatcher: Dispatcher } = {
+      const options = {
         dispatcher,
-        redirect: "manual",
+        redirect: "manual" as const,
         signal: lifetime,
       };
-      return await globalThis.fetch(request, options);
+      // bun's global fetch ignores undici dispatchers. own the same transport on
+      // both runtimes so the managed origin can never fall back to a direct dial.
+      const body = request.body;
+      async function* upload() {
+        if (body === null) return;
+        const reader = body.getReader();
+        try {
+          for (;;) {
+            const chunk = await reader.read();
+            if (chunk.done) return;
+            yield chunk.value;
+          }
+        } finally {
+          await reader.cancel().catch(() => {});
+          reader.releaseLock();
+        }
+      }
+      dispatched = true;
+      const response = await transportFetch(request.url, {
+        ...options,
+        method: request.method,
+        headers: [...request.headers],
+        cache: request.cache,
+        credentials: request.credentials,
+        integrity: request.integrity,
+        keepalive: request.keepalive,
+        mode: request.mode,
+        referrer: request.referrer,
+        referrerPolicy: request.referrerPolicy,
+        ...(body === null ? {} : { body: upload(), duplex: "half" }),
+      });
+      const reader = response.body?.getReader();
+      const stream =
+        reader === undefined
+          ? null
+          : new ReadableStream<Uint8Array>({
+              async pull(controller) {
+                try {
+                  const chunk = await reader.read();
+                  if (chunk.done) {
+                    controller.close();
+                    reader.releaseLock();
+                  } else controller.enqueue(chunk.value);
+                } catch (error) {
+                  controller.error(error);
+                  reader.releaseLock();
+                }
+              },
+              async cancel(reason: unknown) {
+                try {
+                  await reader.cancel(reason);
+                } finally {
+                  reader.releaseLock();
+                }
+              },
+            });
+      const result = new Response(stream, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: [...response.headers],
+      });
+      return responseIdentity(result, response.url, response.type);
+    } catch (error) {
+      if (!dispatched && request?.body !== null && request?.body !== undefined)
+        void request.body.cancel(error).catch(() => {});
+      throw error;
     } finally {
       active--;
     }
   };
 }
 
-function settings(name: string, snapshot: Snapshot): Settings {
+function responseIdentity(response: Response, url: string, type: string): Response {
+  const clone = response.clone.bind(response);
+  Object.defineProperties(response, {
+    url: { value: url },
+    type: { value: type },
+    clone: { value: () => responseIdentity(clone(), url, type) },
+  });
+  return response;
+}
+
+function settings(name: string, snapshot: Snapshot, externalFile?: string): Settings {
   if (snapshot.protocol === "tcp")
     return Object.freeze({ host: snapshot.host, port: snapshot.port });
   if (snapshot.protocol === "http" && snapshot.url !== undefined) {
-    const key = JSON.stringify([cacheKey(), name, snapshot.url]);
+    const key = JSON.stringify([cacheKey(), name, snapshot.url, externalFile]);
     let fetch = fetches.get(key);
     if (fetch === undefined) {
       if (fetches.size >= 32) throw new TnlError("sdk.connection_unavailable");
       fetch = managedFetch(snapshot.url, async (signal) => {
         signal?.throwIfAborted();
-        const current = await waitForPreparation(prepare(name), signal);
+        const current = await waitForPreparation(prepare(name, externalFile), signal);
         signal?.throwIfAborted();
         return current.snapshot;
       });
@@ -866,26 +930,27 @@ export function connectionHandle(
   updateProject: (project: ProjectRuntime) => void,
 ): TnlConnectionHandle<Settings> {
   if (!validServiceName(name)) throw new TnlError("sdk.configuration_invalid");
-  let verifiedFile: string | undefined;
+  const externalFile = process.env.TNL_CONNECTION_HANDLE;
   const result = (prepared: Prepared) => {
-    verifiedFile = prepared.file;
     updateProject(prepared.project);
-    return settings(name, prepared.snapshot);
+    return settings(name, prepared.snapshot, externalFile);
   };
   return awaitableConnection(
     () => {
-      if (usesWorkload()) {
-        if (verifiedFile === undefined) throw new TnlError("sdk.connection_unprepared");
+      if (externalFile !== undefined) {
         return result(
           parsePrepared(
-            machineSync(resolveNativeBinary(), readArgs(verifiedFile, name)),
+            machineSync(resolveNativeBinary(), readArgs(externalFile, name)),
             name,
-            verifiedFile,
+            externalFile,
           ),
         );
       }
+      // a module-shared handle must not select the last request's identity.
+      // await yields plain settings; sync workload settings need an explicit file.
+      if (usesWorkload()) throw new TnlError("sdk.connection_unprepared");
       return result(readPrepared(name));
     },
-    async () => result(await prepare(name)),
+    async () => result(await prepare(name, externalFile)),
   );
 }

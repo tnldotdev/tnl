@@ -66,15 +66,20 @@ const credentials = {
 ```
 
 The immediate handle is awaitable. Awaiting prepares only the requested service
-and returns a plain, read-only settings snapshot. PostgreSQL and MySQL settings
-contain only `host: "127.0.0.1"`, the actual local `port`, and
-`ssl: { servername, rejectUnauthorized: true, ca? }`. The native connector owns
+and returns a plain, read-only settings snapshot. PostgreSQL settings contain
+`host: "127.0.0.1"`, the actual local `port`, and
+`ssl: { servername, rejectUnauthorized: true, ca? }`. MySQL settings use the managed
+hostname, `ssl.verifyIdentity: true`, and a `stream` factory that dials loopback;
+each returned MySQL `ssl` object remains mutable for ordinary driver setup.
+The native connector owns
 admission and client certificates, including for public services. The application
 supplies its database account settings. `tnl.services` keeps the managed hostname
 and public port.
 
-Property reads and `{ ...database }` work synchronously after an awaited preparation
-in this process, or when `TNL_CONNECTION_HANDLE` selects a prepared native owner.
+Property reads and `{ ...database }` work synchronously after a human connection's
+awaited preparation in this process, or when `TNL_CONNECTION_HANDLE` selects a
+prepared native owner. A handle captures an explicitly supplied file when created;
+later changes to that environment variable do not rebind it.
 This supports an ordinary Drizzle Kit config without top-level await:
 
 ```ts
@@ -148,6 +153,12 @@ HTTP returns a readonly `{url, fetch}` snapshot. Each fetch resolves the current
 verified owner, preserves application `Authorization`, streams bodies, and returns
 redirects without following or replaying them.
 
+Keep the awaited settings for that request. A module-shared workload handle has no
+synchronous current caller: its property reads and spreads fail with
+`sdk.connection_unprepared`, even after an await. An explicit prepared
+`TNL_CONNECTION_HANDLE` supports synchronous settings within that owner's scope.
+The SDK never treats the last completed request as the next caller's identity.
+
 Generic OIDC callbacks register a fixed request-scoped source during server setup,
 before creating connection handles:
 
@@ -162,14 +173,16 @@ configureWorkload({
 ```
 
 The callback runs for each request; it must read the current caller's context.
+Acquisition stops waiting after ten seconds, including when a callback never
+settles. A token returned after that deadline cannot start or select an owner.
 `{name, tokenFile}` selects an explicit bounded file that is reread each time.
 Issuer trust and permissions come from control's saved workload policy.
 
-This HTTP path needs no native binary or local connector. A prepared
-`TNL_CONNECTION_HANDLE` retains the native path for every protocol. Database and
-other native-protocol connections still require that normal local connection
-owner. Browser metadata remains address-only; the workload configuration subpath
-is server-only.
+HTTP uses the same native owner as the other protocols. The SDK owns its Undici
+transport on Node and Bun; it never falls back to dialing the managed address
+directly. Canceling a request while preparing its connection releases the upload
+body. Browser metadata remains address-only; absent optional services return
+`undefined`, and the workload configuration subpath is server-only.
 
 Read the [quickstart](https://tnl.dev/docs),
 [Next.js and Vite setup](https://tnl.dev/docs/frameworks),
