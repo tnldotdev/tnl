@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miekg/dns"
 	"github.com/tnldotdev/tnl/internal/benchworkload"
+	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
@@ -46,7 +46,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 	case "app", "app-2", "app-3", "app-4":
 		runSeparatedApp(t, ctx, component)
 	case "publishers", "publishers-2", "publishers-3", "publishers-4":
-		runSeparatedPublishers(t, ctx, routes, slices.Index(separatedPublisherComponents(), component))
+		runSeparatedPublishers(t, ctx, routes, rate, slices.Index(separatedPublisherComponents(), component))
 	case "visitor-1", "visitor-2", "visitor-3", "visitor-4":
 		runSeparatedVisitor(t, ctx, component, rate)
 	case "control-a", "control-b", "ingress-a", "ingress-b", "relay-a", "relay-b", "relay-a-2", "relay-b-2":
@@ -71,6 +71,13 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 		options := integrationProcessOptions{acmeHTTPClient: client,
 			serviceHTTPClient: splitTestServiceHTTPClient(t, separatedRoots(t, "roots.pem"), "control:9443"),
 			relayClientTLS:    separatedRelayTLS(t), owner: newRuntimeTopology(t)}
+		if cfg.Role.RunsControl() {
+			secure, err := staticServerTLS(cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			startIntegrationControlProxy(t, options.owner, "0.0.0.0:443", cfg.ControlListen, secure)
+		}
 		process := startIntegrationProcessWithOptions(t, cfg, options)
 		defer captureSeparatedFailure(t, component)
 		waitForProcessReady(t, process)
@@ -140,43 +147,7 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 }
 
 func runSeparatedPebble(t *testing.T, ctx context.Context) {
-	var address net.IP
-	waitForIntegrationCondition(t, 10*time.Second, func(context.Context) (bool, error) {
-		ips, err := net.LookupIP("ingress")
-		if err != nil {
-			return false, err
-		}
-		for _, ip := range ips {
-			if ip.To4() != nil {
-				address = ip.To4()
-				break
-			}
-		}
-		return address != nil, nil
-	})
-	handler := dns.HandlerFunc(func(w dns.ResponseWriter, request *dns.Msg) {
-		message := new(dns.Msg)
-		message.SetReply(request)
-		message.Authoritative = true
-		for _, question := range request.Question {
-			if question.Qtype == dns.TypeA {
-				message.Answer = append(message.Answer, &dns.A{Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 1}, A: address})
-			}
-		}
-		_ = w.WriteMsg(message)
-	})
-	listener, err := net.Listen("tcp", "127.0.0.1:8053")
-	if err != nil {
-		t.Fatal(err)
-	}
-	packet, err := net.ListenPacket("udp", "127.0.0.1:8053")
-	if err != nil {
-		_ = listener.Close()
-		t.Fatal(err)
-	}
-	startOwnedDNSServer(t, &dns.Server{Listener: listener, Handler: handler})
-	startOwnedDNSServer(t, &dns.Server{PacketConn: packet, Handler: handler})
-	command := exec.Command("pebble", "-config", "/load/pebble-config.json", "-strict=false", "-dnsserver", "127.0.0.1:8053")
+	command := exec.Command("pebble", "-config", "/load/pebble-config.json", "-strict=false", "-dnsserver", "dns:53")
 	command.Env = append(os.Environ(), "PEBBLE_AUTHZREUSE=0", "PEBBLE_VA_ALWAYS_VALID=0", "PEBBLE_VA_NOSLEEP=1", "PEBBLE_WFE_NONCEREJECT=0")
 	command.Stdout, command.Stderr = os.Stdout, os.Stderr
 	process, err := startOwnedCommand(command, nil)
@@ -289,7 +260,7 @@ func TestSeparatedPublisherIndexesCoverRoutesAndTransports(t *testing.T) {
 	}
 }
 
-func runSeparatedPublishers(t *testing.T, ctx context.Context, count, shard int) {
+func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shard int) {
 	separatedWrite(t, separatedPublisherShardKey(shard, "concurrency"), runtimeLoadAdmission.PublisherConcurrency)
 	if !separatedRead(t, ctx, "publish.start", nil) {
 		return
@@ -313,15 +284,30 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, shard int)
 	var fallbacks atomic.Int64
 	client := separatedHTTP(t)
 	inspect := inspectStandaloneTestDatabase(t, testutil.PostgresURL(t))
+	rateRequests := 0
+	if !*runtimeLoadCapacityOnly {
+		// shutdown retains only half the URLs, so each remaining publisher
+		// must allow the full selected visitor request rate.
+		rateRequests = max(rate, 160)
+	}
 	if *runtimeLoadTrace {
 		traceRuntimeCertificateHTTP(t, client, time.Now())
 	}
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	state, err := clientstate.Open(ctx, stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveRuntimeOIDCSession(t, state, "https://control."+separatedDomain, testutil.PostgresURL(t), "routes."+separatedDomain)
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
 	group, err := benchworkload.OpenPublishers(ctx, benchworkload.PublisherConfig{
-		Server: "https://control." + separatedDomain, LoginToken: testLoginToken,
-		Domain: "routes." + separatedDomain, StateRoot: filepath.Join(t.TempDir(), "state"), Target: "http://127.0.0.1:8080",
+		Server: "https://control." + separatedDomain,
+		Domain: "routes." + separatedDomain, StateRoot: stateRoot, Target: "http://127.0.0.1:8080",
 		HTTPClient: client, RelayTLS: separatedRelayTLS(t), AllowedIPPrefixes: prefixes,
 		Transport: transport, Parallel: 4, StartParallel: max(1, *runtimeLoadStartParallel/len(separatedPublisherComponents())),
-		Concurrency:  runtimeLoadAdmission.PublisherConcurrency,
+		Concurrency: runtimeLoadAdmission.PublisherConcurrency, RateRequests: rateRequests,
 		ReadyTimeout: *runtimeLoadReadyTimeout, StopTimeout: 10 * time.Second, DrainTime: time.Second,
 		OnActivationFailure: func(index int) {
 			if err := captureSeparatedPublisherFailure(inspect, index); err != nil {

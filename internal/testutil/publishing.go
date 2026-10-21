@@ -25,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/muxsession"
 	"github.com/tnldotdev/tnl/internal/opaqueid"
+	"github.com/tnldotdev/tnl/internal/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/tunnel"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
@@ -68,7 +69,6 @@ type PublishingFixture struct {
 	URL         string
 	CAFile      string
 	AccessToken string
-	LoginToken  string
 	Namespace   string
 }
 
@@ -109,11 +109,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 	if err != nil {
 		t.Fatal(err)
 	}
-	login, err := credentials.NewLoginToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixture.AccessToken, fixture.LoginToken = access.String(), login.String()
+	fixture.AccessToken = access.String()
 	relayAddress := publishingRelay(t, tlsConfig)
 
 	const teamID = "tm_0000000000000000000001"
@@ -141,10 +137,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/discovery", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, controlv1.ControlDiscovery{ManagedDomain: "routes.example", Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{controlv1.LoginToken}}})
-	})
-	mux.HandleFunc("POST /v1/auth/token", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, authorityv1.ControlSessionResponse{AccessToken: fixture.AccessToken, Identity: identity, AccessExpiresAt: now.Add(time.Hour)})
+		writeJSON(w, controlv1.ControlDiscovery{ManagedDomain: "routes.example", Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{controlv1.Oidc}}})
 	})
 	mux.HandleFunc("GET /v1/identity", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, identity) })
 	mux.HandleFunc("GET /v1/teams/{team}", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, team) })
@@ -181,7 +174,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 		setup := controlv1.PublishRunSetup{
 			PublicUrl: route, PublishRunToken: token.String(),
 			PublishRun:      controlv1.PublishRun{Id: id, PublicUrlId: route.Id, TeamId: teamID, PublishRunNumber: 1, ExpiresAt: now.Add(time.Hour), State: controlv1.PublishRunStateStarting},
-			CertificatePlan: controlv1.CertificatePlan{CacheKey: route.CanonicalHostname, Scope: route.CanonicalHostname, Identifiers: []string{route.CanonicalHostname}, ChallengeMethod: controlv1.TlsAlpn01},
+			CertificatePlan: controlv1.CertificatePlan{CacheKey: route.CanonicalHostname, Scope: route.CanonicalHostname, Identifiers: []string{route.CanonicalHostname}, ChallengeMethod: controlv1.Dns01},
 		}
 		for slot := range 2 {
 			setup.PublisherConnections = append(setup.PublisherConnections, controlv1.ConnectionAssignment{
@@ -201,6 +194,31 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 	mux.HandleFunc("POST /v1/publish-runs/{session}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		setup := lookup(r)
 		writeJSON(w, controlv1.PublishRunHeartbeat{PublishRun: setup.PublishRun, PublisherConnections: setup.PublisherConnections})
+	})
+	mux.HandleFunc("POST /v1/publish-runs/{session}/service-observations", func(w http.ResponseWriter, r *http.Request) {
+		setup := lookup(r)
+		var batch struct {
+			PublishRunNumber int64                      `json:"publish_run_number"`
+			Events           []serviceaudit.Observation `json:"events"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, serviceaudit.MaxPayloadBytes)).Decode(&batch); err != nil {
+			problem(w, err)
+			return
+		}
+		if setup.PublishRun.Id == "" || batch.PublishRunNumber != setup.PublishRun.PublishRunNumber ||
+			r.Header.Get("Authorization") != "Bearer "+setup.PublishRunToken || len(batch.Events) > serviceaudit.MaxBatch {
+			t.Error("audit fixture request did not match the current publish run")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		for _, event := range batch.Events {
+			if event.Validate() != nil || event.RunID != setup.PublishRun.Id || event.RunNumber != batch.PublishRunNumber || event.ServiceID != setup.PublicUrl.Id {
+				t.Error("audit fixture observation did not match the current service")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+		}
+		writeJSON(w, map[string]int{"accepted": len(batch.Events), "duplicates": 0})
 	})
 	mux.HandleFunc("POST /v1/publish-runs/{session}/certificate-issuances", func(w http.ResponseWriter, r *http.Request) {
 		setup := lookup(r)

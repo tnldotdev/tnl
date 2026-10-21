@@ -1,0 +1,9 @@
+{
+	admin off
+}
+{$TNL_CONTROL_HOSTNAME} {
+	reverse_proxy {$TNL_CONTROL_BACKEND} {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto https
+	}
+}

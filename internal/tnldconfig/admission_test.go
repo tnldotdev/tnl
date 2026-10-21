@@ -13,8 +13,6 @@ func TestIndependentAdmissionLimits(t *testing.T) {
 		value func(Config) int
 	}{
 		{"client-hello-connection-limit", func(c Config) int { return c.ClientHelloConnectionLimit }},
-		{"challenge-connection-limit", func(c Config) int { return c.ChallengeConnectionLimit }},
-		{"challenge-hostname-connection-limit", func(c Config) int { return c.ChallengeHostnameConnectionLimit }},
 		{"standalone-control-connection-limit", func(c Config) int { return c.StandaloneControlConnectionLimit }},
 		{"standalone-relay-connection-limit", func(c Config) int { return c.StandaloneRelayConnectionLimit }},
 	} {

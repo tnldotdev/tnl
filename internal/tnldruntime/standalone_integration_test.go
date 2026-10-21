@@ -22,10 +22,13 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	controlCertificate := certificateAuthority.issueServer(t, "control.tnl.test")
 	relayCertificate := certificateAuthority.issueServer(t, "relay.tnl.test")
 	publicAddress := unusedTCPAddress(t)
+	publicControlAddress := unusedTCPAddress(t)
 	metricsAddress := unusedTCPAddress(t)
 	cfg := tnldconfig.Config{
-		Role: tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
-		ControlListen: "127.0.0.1:1", PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
+		ServicePortRanges: integrationServicePorts(t),
+		Role:              tnldconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
+		ControlListen: unusedTCPAddress(t), PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
+		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: unusedUDPAddress(t), InternalRelayListen: "127.0.0.1:1",
 		ServerDomain: "tnl.test", ManagedDomain: "tunnels.test",
 		ControlTLSCertificateFile: controlCertificate.certificateFile,
@@ -33,12 +36,12 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		RelayTLSCertificateFile:   relayCertificate.certificateFile,
 		RelayTLSPrivateKeyFile:    relayCertificate.privateKeyFile,
 		ACMEDirectoryURL:          acmeServer.URL + "/directory", ACMEEmail: "operator@example.test",
-		ACMEAcceptTerms: true, ACMEProfile: "tlsserver", LoginToken: testLoginToken,
+		ACMEAcceptTerms: true, ACMEProfile: "tlsserver", OIDCIssuer: testOIDCIssuer, OIDCClientID: "server",
 		PublicURLCertificateWorkers: 4,
 		StorageKey:                  testStorageKey,
 		AccessTokenLifetime:         5 * time.Minute, RefreshTokenLifetime: time.Hour,
 		VisitorConnectionLimit: 100, PublisherConnectionLimit: 10,
-		ClientHelloConnectionLimit: 1024, ChallengeConnectionLimit: 1024, ChallengeHostnameConnectionLimit: 8,
+		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 3 * time.Second,
@@ -49,6 +52,11 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	serviceClient := splitTestServiceHTTPClient(t, certificateAuthority.roots, cfg.PrivateControlListen)
+	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startIntegrationControlProxy(t, nil, publicControlAddress, cfg.ControlListen, controlTLS)
 	process := startIntegrationProcess(t, cfg, acmeServer.Client(), serviceClient)
 	waitForProcessReady(t, process)
 	metricsResponse, err := http.Get("http://" + metricsAddress + "/metrics")
@@ -76,7 +84,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{RootCAs: certificateAuthority.roots, MinVersion: tls.VersionTLS13},
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return new(net.Dialer).DialContext(ctx, network, publicAddress)
+			return new(net.Dialer).DialContext(ctx, network, publicControlAddress)
 		},
 	}
 	t.Cleanup(transport.CloseIdleConnections)
@@ -114,7 +122,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	`).Scan(&relayServices, &relayLeases, &ingressLeases); err != nil {
 		t.Fatal(err)
 	}
-	if relayServices != 2 || relayLeases != 2 || ingressLeases != 1 {
+	if relayServices != 2 || relayLeases != 2 || ingressLeases != 2 {
 		t.Fatalf("standalone topology = %d relay services, %d relay leases, %d ingress leases", relayServices, relayLeases, ingressLeases)
 	}
 
@@ -146,7 +154,7 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	controlConfig.ACMEEmail = "operator@example.test"
 	controlConfig.ACMEAcceptTerms = true
 	controlConfig.ACMEProfile = "tlsserver"
-	controlConfig.LoginToken = testLoginToken
+	controlConfig.OIDCIssuer, controlConfig.OIDCClientID = testOIDCIssuer, "server"
 	controlConfig.StorageKey = testStorageKey
 	controlConfig.AccessTokenLifetime = 5 * time.Minute
 	controlConfig.RefreshTokenLifetime = time.Hour

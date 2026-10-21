@@ -128,9 +128,7 @@ type integrationRoute53 struct {
 
 func newIntegrationRoute53(t *testing.T, zoneID, domain string) *integrationRoute53 {
 	t.Helper()
-	if *integrationDNSChild == "" {
-		t.Fatal("Route 53 fixture requires the isolated, network-restricted test subprocess")
-	}
+	testutil.RequireOneOfTestTiers(t, testutil.TestTierDNS, testutil.TestTierBinary)
 	f := &integrationRoute53{
 		address: "127.0.0.1:53", zoneID: zoneID,
 		zone: &integrationDNSZone{
@@ -159,6 +157,9 @@ func newIntegrationRoute53(t *testing.T, zoneID, domain string) *integrationRout
 	}))
 	cleanupIntegrationHTTPServer(t, f.server, nil)
 	t.Setenv("AWS_ENDPOINT_URL_ROUTE_53", f.server.URL)
+	t.Setenv("AWS_ACCESS_KEY_ID", "tnl-integration-only")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "tnl-integration-only")
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 	return f
 }
 

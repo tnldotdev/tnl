@@ -1,0 +1,11 @@
+{
+	admin off
+	auto_https off
+}
+https://control.127.0.0.1.nip.io:8445 {
+	tls /etc/tnl/local.crt /etc/tnl/local.key
+	reverse_proxy tnld:8080 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto https
+	}
+}

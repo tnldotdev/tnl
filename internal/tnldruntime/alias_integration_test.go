@@ -21,6 +21,15 @@ import (
 
 func startIntegrationURLWorker(t *testing.T, worker integrationurls.Publisher) <-chan publisher.Event {
 	t.Helper()
+	prepare := worker.Prepare
+	worker.Prepare = func(ctx context.Context) (integrationurls.Snapshot, error) {
+		snapshot, err := prepare(ctx)
+		if err != nil {
+			return snapshot, err
+		}
+		snapshot.Config, err = prepareIntegrationPublisher(ctx, snapshot.Config)
+		return snapshot, err
+	}
 	ready := make(chan publisher.Event, 4)
 	worker.Report = func(event publisher.Event, err error) {
 		if err != nil {
@@ -133,6 +142,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 			t.Fatal(err)
 		}
 		aliasConfig := fixture.identity.publisherConfig(target.URL, quic, tcp)
+		aliasConfig.PreserveSavedURLTarget = true
 		aliasConfig.Purpose = controlv1.Alias
 		aliasConfig.Hostname, aliasConfig.ObserveResponse = aliasHost, config.ObserveResponse
 		worker := integrationurls.AliasPublisher(state, store, selection, tunnel.ID(), aliasConfig, nil)
@@ -140,7 +150,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 	}
 	first := waitIntegrationURLWorkerReady(t, apps[0].ready)
 	waitForReadyPublisherConnections(t, fixture.inspect, first.PublicURLID, first.PublishRunNumber, 2)
-	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
+	waitForIngressRoutingCurrent(t, fixture.inspect, 2)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +194,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		t.Fatal("handoff did not replace the alias publish run")
 	}
 	waitForReadyPublisherConnections(t, fixture.inspect, second.PublicURLID, second.PublishRunNumber, 2)
-	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
+	waitForIngressRoutingCurrent(t, fixture.inspect, 2)
 	if _, body := visit("https://" + aliasHost + "/"); body != "feature" {
 		t.Fatal("forced handoff did not reach the selected worktree")
 	}
@@ -197,8 +207,12 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 	}
 	third := waitIntegrationURLWorkerReady(t, apps[0].ready)
 	waitForReadyPublisherConnections(t, fixture.inspect, third.PublicURLID, third.PublishRunNumber, 2)
-	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
+	waitForIngressRoutingCurrent(t, fixture.inspect, 2)
 	if _, body := visit("https://" + aliasHost + "/"); body != "main" {
 		t.Fatal("release did not restore the primary checkout")
+	}
+	saved, err := fixture.identity.routes.GetPublicURL(t.Context(), third.PublicURLID)
+	if err != nil || saved.Target != "" || saved.Purpose != controlv1.Alias || saved.Ephemeral {
+		t.Fatalf("alias handoff exposed a worktree target or changed saved URL identity: %+v, %v", saved, err)
 	}
 }

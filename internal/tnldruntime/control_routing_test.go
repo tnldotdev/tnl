@@ -57,7 +57,7 @@ func TestPublicAPISurfacesFollowRegisteredRoutes(t *testing.T) {
 			}
 			response := httptest.NewRecorder()
 			metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-			if !strings.Contains(response.Body.String(), `operation="`+test.identityOperation+`",outcome="client_error",surface="`+test.identitySurface+`"`) {
+			if !strings.Contains(response.Body.String(), `http_request_method="GET",http_route="`+strings.TrimPrefix(test.identityOperation, "GET ")+`",tnl_component="`+test.identitySurface+`",tnl_outcome="denied"`) {
 				t.Fatal("identity surface missing from metrics")
 			}
 		})
@@ -108,7 +108,7 @@ func TestPrivateAPISurfacesFollowTheirRouters(t *testing.T) {
 		{"POST /internal/v1/ingresses/register", "private_ingress"},
 		{"POST /internal/v1/relays/register", "private_relay"},
 	} {
-		if !strings.Contains(response.Body.String(), `tnl_control_api_request_duration_seconds_count{operation="`+test.operation+`",outcome="client_error",surface="`+test.surface+`"}`) {
+		if !strings.Contains(response.Body.String(), `tnl_api_request_duration_seconds_count{http_request_method="POST",http_route="`+strings.TrimPrefix(test.operation, "POST ")+`",tnl_component="`+test.surface+`",tnl_outcome="rejected",tnl_reason="client_error"}`) {
 			t.Fatalf("private %s surface missing from completed request metrics", test.surface)
 		}
 	}

@@ -18,7 +18,7 @@ func runEphemeralPublicURLCleanup(ctx context.Context, store ephemeralPublicURLS
 	return runBatchCleanup(ctx, ephemeralPublicURLCleanupInterval, store.DeleteExpiredEphemeralPublicURLs, func(deleted int, err error) {
 		metrics.ObserveCleanup("ephemeral_public_urls", deleted, false, err)
 		if err != nil && ctx.Err() == nil {
-			logOperationalError("clean up ephemeral public URLs", failure.ServerWorkerFailed, err)
+			logOperationalError(ctx, "clean up ephemeral public URLs", failure.ServerWorkerFailed, err)
 		}
 	})
 }
