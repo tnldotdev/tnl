@@ -125,6 +125,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	address := listener.Addr().String()
 	_ = listener.Close()
 	connectCtx, stopConnect := context.WithCancel(t.Context())
+	defer stopConnect()
 	if len(applied.Services) != 1 || applied.Services[0].ServiceId == nil {
 		t.Fatal("missing private service binding")
 	}
