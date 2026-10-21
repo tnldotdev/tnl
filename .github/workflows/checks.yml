@@ -145,9 +145,10 @@ jobs:
       - name: Check Python SDK
         run: task py:check
 
-      - name: Build and verify installed wheels
+      - name: Build and verify installed release packages
         run: |
           task release:snapshot
+          task release:npm-package
           task py:build
 
   framework-compatibility:

@@ -755,14 +755,24 @@ tasks:
     cmds:
       - pnpm run pack
 
+  js:test:packaging:
+    desc: Check manifest-driven npm export targets
+    cmds:
+      - pnpm exec vitest run scripts/npm-artifacts.test.ts
+
   release:snapshot:
     desc: Build release archives, checksums, and SBOMs without publishing or signing
     cmds:
       - goreleaser release --snapshot --clean --skip=sign
 
   release:npm-package:
-    desc: Package the tnl release binaries for npm
+    desc: Build and check npm release tarballs in installed npm and pnpm consumers
+    preconditions:
+      - sh: test -s dist/artifacts.json && test -s dist/metadata.json
+        msg: Run task release:snapshot before packaging npm release artifacts
     cmds:
+      - task: js:test:packaging
+      - task: js:build
       - node scripts/pack-tnl.ts dist/npm
       - node scripts/verify-tnl-install.ts dist/npm
 

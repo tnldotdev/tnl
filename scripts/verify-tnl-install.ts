@@ -7,6 +7,7 @@ import process from "node:process";
 import { promisify } from "node:util";
 import { nativeTargets } from "../packages/ts/src/internal/native-targets.ts";
 import { npmPackageMetadataSchema } from "./npm-artifacts.ts";
+import { verifyNpmConsumer } from "./npm-consumer.ts";
 import { parseJSON } from "./validation.ts";
 
 const directoryArgument = process.argv[2];
@@ -26,11 +27,17 @@ const native = metadata.packages.filter((entry) => entry.name === target.package
 assert.equal(launcher.length, 1, "expected one launcher package");
 assert.equal(native.length, 1, `expected one ${target.packageName} package`);
 assert(launcher[0]?.kind === "launcher" && native[0]?.kind === "native");
+const nativeTarballs = Object.fromEntries(
+  metadata.packages
+    .filter((entry) => entry.kind === "native")
+    .map((entry) => [entry.name, `file:${path.join(packageDirectory, entry.tarball)}`]),
+);
 
 for (const manager of ["npm", "pnpm"] as const) {
   const consumer = await mkdtemp(path.join(tmpdir(), `tnl-${manager}-consumer-`));
   try {
-    // packing checks the launcher dependency map; install the matching native tarball offline.
+    // install unmodified release tarballs. all native dependencies resolve locally;
+    // third-party runtime dependencies use the package manager's normal registry.
     await writeFile(
       path.join(consumer, "package.json"),
       JSON.stringify({
@@ -41,26 +48,27 @@ for (const manager of ["npm", "pnpm"] as const) {
         optionalDependencies: {
           [native[0].name]: `file:${path.join(packageDirectory, native[0].tarball)}`,
         },
+        overrides: nativeTarballs,
       }),
     );
+    if (manager === "pnpm") {
+      await writeFile(
+        path.join(consumer, "pnpm-workspace.yaml"),
+        JSON.stringify({ packages: [], autoInstallPeers: false, overrides: nativeTarballs }),
+      );
+    }
     const args =
       manager === "npm"
         ? [
             "install",
-            "--offline",
             "--ignore-scripts",
+            "--legacy-peer-deps",
             "--no-audit",
             "--no-fund",
             "--cache",
             path.join(consumer, ".cache"),
           ]
-        : [
-            "install",
-            "--offline",
-            "--ignore-scripts",
-            "--store-dir",
-            path.join(consumer, ".store"),
-          ];
+        : ["install", "--ignore-scripts", "--store-dir", path.join(consumer, ".store")];
     await run(manager, args, consumer);
     const { stdout } = await run(
       path.join(consumer, "node_modules", ".bin", "tnl"),
@@ -72,24 +80,9 @@ for (const manager of ["npm", "pnpm"] as const) {
       () => readFile(path.join(consumer, "node_modules", ".bin", "tnld")),
       /ENOENT/,
     );
-    await run(
-      process.execPath,
-      [
-        "--input-type=module",
-        "--eval",
-        `
-      const [{ tnl }, { defineConfig }, { withTnl }, { default: vite }] = await Promise.all([
-        import("@tnldotdev/tnl"), import("@tnldotdev/tnl/config"),
-        import("@tnldotdev/tnl/next"), import("@tnldotdev/tnl/vite"),
-      ]);
-      const config = { tunnel: { allowAllIPs: true }, services: { web: { protocol: "http", target: { type: "app" } } } };
-      if (tnl.port !== 3000 || tnl.services !== undefined || tnl.dev !== false || typeof tnl.prepare !== "function" || typeof tnl.open !== "function" ||
-          defineConfig(config) !== config || typeof withTnl !== "function" || typeof vite !== "function") {
-        throw new Error("release package exports are invalid");
-      }
-    `,
-      ],
-      consumer,
+    await verifyNpmConsumer(consumer);
+    process.stdout.write(
+      `${manager}: release launcher, native version and public exports passed\n`,
     );
   } finally {
     await rm(consumer, { force: true, recursive: true });

@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import * as z from "zod";
 
 export const packageKindSchema = z.enum(["launcher", "native"]);
@@ -33,3 +34,33 @@ export const packageManifestSchema = z.looseObject({
 });
 
 export type PackageManifest = z.infer<typeof packageManifestSchema>;
+
+// check every conditional target, including declarations and browser/require branches
+// that a single Node import would not visit. the manifest owns the export inventory.
+export function assertExportTargets(
+  manifest: PackageManifest,
+  packedFiles: ReadonlySet<string>,
+): void {
+  assert(manifest.exports, `${manifest.name} must define public exports`);
+  let targets = 0;
+  function visit(value: unknown): void {
+    if (typeof value === "string") {
+      assert(
+        value.startsWith("./") &&
+          !value.includes("\\") &&
+          value
+            .slice(2)
+            .split("/")
+            .every((part) => !["", ".", "..", "node_modules"].includes(part)),
+        `${manifest.name} has an invalid export target: ${value}`,
+      );
+      assert(packedFiles.has(value.slice(2)), `${manifest.name} is missing export target ${value}`);
+      targets++;
+    } else if (value !== null) {
+      assert(typeof value === "object", `${manifest.name} has an invalid export condition`);
+      for (const nested of Object.values(value)) visit(nested);
+    }
+  }
+  visit(manifest.exports);
+  assert(targets > 0, `${manifest.name} must define public export targets`);
+}

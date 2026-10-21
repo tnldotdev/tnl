@@ -72,6 +72,7 @@ uncommitted generated changes also appear as drift. `format-check` only checks;
 | npm exports and tarballs                   | `pnpm run pack`                                              | Built package dependencies                                                                                           |
 | Python ASGI and socket contract            | `task py:check`                                              | Go, pinned Python, uv, and pnpm; locked dependencies, real native owner, and wheel source/type-marker checks         |
 | Local release snapshot                     | `task package`                                               | Builds and checks packages; does not publish                                                                         |
+| Actual npm release tarballs                | `task release:npm-package`                                   | `task release:snapshot` first; installs the generated tarballs with npm and pnpm                                     |
 | Deployed release check                     | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain                                                          |
 
 For native client trace propagation and bounded flush, run
@@ -130,6 +131,24 @@ mise exec -- pnpm exec vitest run packages/ts/vite.test.ts
 
 Run `mise exec -- task js:check` to build once and run the JavaScript checks
 used in CI, including package verification.
+
+`task js:pack` checks a source npm pack. to check the release packer and its
+installed consumers without publishing, run:
+
+```console
+GOMAXPROCS=2 GOFLAGS=-p=2 mise exec -- task release:snapshot
+GOMAXPROCS=2 GOFLAGS=-p=2 mise exec -- task release:npm-package
+```
+
+the second Task builds the SDK, packages all four native targets from the real
+snapshot archives, and installs the release launcher and host native tarball in
+independent npm and pnpm consumers. both consumers check every public export,
+including Node ESM/CommonJS workload imports and browser restrictions. native
+dependencies resolve from local tarballs; third-party runtime dependencies need
+registry access. packing checks all manifest export targets, executable modes,
+binary hashes, and legal files. only the host native executable runs locally.
+the Checks workflow reuses its Python job's snapshot for this release-package check.
+the Vercel fixture builds its own packages and does not qualify this release path.
 
 For the opt-in emitted Vercel Node function check, see
 [local Vercel qualification](docs/maintainers/vercel-functions.md). its Tasks use
