@@ -468,6 +468,8 @@ CREATE TABLE project_journals (
     last_sequence INTEGER NOT NULL DEFAULT 0 CHECK (last_sequence >= 0),
     last_app_sequence INTEGER NOT NULL DEFAULT 0 CHECK (last_app_sequence >= 0 AND last_app_sequence <= last_sequence),
     last_observed_at INTEGER,
+    event_count INTEGER NOT NULL DEFAULT 0 CHECK (event_count >= 0),
+    event_bytes INTEGER NOT NULL DEFAULT 0 CHECK (event_bytes >= 0),
     app_services_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(app_services_json) AND json_type(app_services_json) = 'array')
 ) STRICT;
 
@@ -482,17 +484,29 @@ CREATE TABLE project_events (
 ) STRICT;
 
 -- +goose StatementBegin
+-- retain exact budgets without rescanning history while it is below both limits.
 CREATE TRIGGER project_event_retention AFTER INSERT ON project_events BEGIN
     UPDATE project_events SET stored_bytes = length(CAST(NEW.payload_json AS BLOB)) + length(CAST(json_quote(NEW.event_type) AS BLOB)) + 128
         WHERE project_root = NEW.project_root AND sequence = NEW.sequence;
-    DELETE FROM project_events WHERE project_root = NEW.project_root AND sequence <= (
-        SELECT max(sequence) FROM (
+    UPDATE project_journals SET event_count = event_count + 1,
+        event_bytes = event_bytes + (SELECT stored_bytes FROM project_events WHERE project_root = NEW.project_root AND sequence = NEW.sequence)
+        WHERE project_root = NEW.project_root;
+    DELETE FROM project_events WHERE project_root = NEW.project_root AND sequence <= CASE
+        WHEN (SELECT event_count > 2048 OR event_bytes > 8388608 FROM project_journals WHERE project_root = NEW.project_root)
+        THEN (SELECT max(sequence) FROM (
             SELECT sequence,
                 row_number() OVER (ORDER BY sequence DESC) AS count,
                 sum(stored_bytes) OVER (ORDER BY sequence DESC) AS bytes
             FROM project_events WHERE project_root = NEW.project_root
-        ) WHERE count > 2048 OR bytes > 8388608
-    );
+        ) WHERE count > 2048 OR bytes > 8388608)
+        ELSE 0 END;
+END;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE TRIGGER project_event_removed AFTER DELETE ON project_events BEGIN
+    UPDATE project_journals SET event_count = event_count - 1, event_bytes = event_bytes - OLD.stored_bytes
+        WHERE project_root = OLD.project_root;
 END;
 -- +goose StatementEnd
 

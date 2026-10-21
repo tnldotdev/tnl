@@ -239,6 +239,8 @@ type ProjectJournal struct {
 	LastSequence    int64
 	LastAppSequence int64
 	LastObservedAt  sql.NullInt64
+	EventCount      int64
+	EventBytes      int64
 	AppServicesJson string
 }
 

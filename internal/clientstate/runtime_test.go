@@ -254,6 +254,9 @@ func TestRuntimeRetentionCountBytesAndAuthoredStaleCursor(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if row.EventCount != retained || row.EventBytes != used {
+				t.Fatalf("retention accounting drift: count %d/%d, bytes %d/%d", row.EventCount, retained, row.EventBytes, used)
+			}
 			firstSequence, err := cursorSequence(latest.Events[0].Cursor, row.CursorEpoch)
 			if err != nil {
 				t.Fatal(err)
@@ -266,6 +269,47 @@ func TestRuntimeRetentionCountBytesAndAuthoredStaleCursor(t *testing.T) {
 				t.Fatalf("future cursor accepted: %v", err)
 			}
 		})
+	}
+}
+
+func TestRuntimeRetentionAccountingFollowsTransactionAndProject(t *testing.T) {
+	database := openFileDatabase(t, filepath.Join(t.TempDir(), "state"))
+	project, other := t.TempDir(), t.TempDir()
+	for _, root := range []string{project, other} {
+		if _, err := database.CommitRuntimeUpdate(t.Context(), root, RuntimeUpdate{Type: "retained", Payload: json.RawMessage(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := database.queries.GetRuntimeProject(t.Context(), project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := database.db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(t.Context(), "DELETE FROM project_events WHERE project_root = ?", project); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := database.queries.GetRuntimeProject(t.Context(), project)
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatal("rolled-back eviction changed the journal budget", err)
+	}
+	if _, err := database.db.ExecContext(t.Context(), "DELETE FROM project_journals WHERE project_root = ?", project); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CommitRuntimeUpdate(t.Context(), project, RuntimeUpdate{Type: "retained", Payload: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{project, other} {
+		row, err := database.queries.GetRuntimeProject(t.Context(), root)
+		if err != nil || row.EventCount != 1 || row.EventBytes != before.EventBytes {
+			t.Fatal("project deletion changed another or recreated journal's budget", err)
+		}
 	}
 }
 

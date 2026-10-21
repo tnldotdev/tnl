@@ -13,7 +13,7 @@ import (
 const advanceRuntimeProject = `-- name: AdvanceRuntimeProject :one
 UPDATE project_journals SET last_sequence = last_sequence + 1, last_observed_at = ?1
 WHERE project_root = ?2
-RETURNING project_root, cursor_epoch, last_sequence, last_app_sequence, last_observed_at, app_services_json
+RETURNING project_root, cursor_epoch, last_sequence, last_app_sequence, last_observed_at, event_count, event_bytes, app_services_json
 `
 
 type AdvanceRuntimeProjectParams struct {
@@ -30,6 +30,8 @@ func (q *Queries) AdvanceRuntimeProject(ctx context.Context, arg AdvanceRuntimeP
 		&i.LastSequence,
 		&i.LastAppSequence,
 		&i.LastObservedAt,
+		&i.EventCount,
+		&i.EventBytes,
 		&i.AppServicesJson,
 	)
 	return i, err
@@ -45,7 +47,7 @@ func (q *Queries) EnsureRuntimeProject(ctx context.Context, projectRoot string) 
 }
 
 const getRuntimeProject = `-- name: GetRuntimeProject :one
-SELECT project_root, cursor_epoch, last_sequence, last_app_sequence, last_observed_at, app_services_json FROM project_journals WHERE project_root = ?1
+SELECT project_root, cursor_epoch, last_sequence, last_app_sequence, last_observed_at, event_count, event_bytes, app_services_json FROM project_journals WHERE project_root = ?1
 `
 
 func (q *Queries) GetRuntimeProject(ctx context.Context, projectRoot string) (ProjectJournal, error) {
@@ -57,6 +59,8 @@ func (q *Queries) GetRuntimeProject(ctx context.Context, projectRoot string) (Pr
 		&i.LastSequence,
 		&i.LastAppSequence,
 		&i.LastObservedAt,
+		&i.EventCount,
+		&i.EventBytes,
 		&i.AppServicesJson,
 	)
 	return i, err
