@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
@@ -24,7 +23,7 @@ func TestOrdinaryAuthenticationNeverPromptsForMissingOrExpiredCredentials(t *tes
 				old.RefreshExpiresAt = time.Now().Add(-time.Minute)
 				f.save(t, old)
 			}
-			f.config.LoginToken = func() (credentials.LoginToken, error) { t.Error("ordinary authentication prompted"); return "", nil }
+			f.config.ObserveLogin = func(clientstate.AuthOperation) error { t.Error("ordinary authentication prompted"); return nil }
 			f.config.OpenURL = func(string) error { t.Error("ordinary authentication opened a browser"); return nil }
 			f.config.Diagnostics = nil
 			_, err := Authenticate(t.Context(), f.config)
@@ -64,7 +63,7 @@ func TestIssuedCheckpointCanInstallWithoutAnotherExchange(t *testing.T) {
 		t.Error("issued checkpoint attempted a token exchange")
 		return nil, errors.New("unexpected request")
 	})
-	op, err := beginOperation(t.Context(), f.store, "login_token")
+	op, err := beginOperation(t.Context(), f.store, "device_code")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +95,7 @@ func TestCancelAndLogoutRevokeIdleIssuedCheckpoint(t *testing.T) {
 				}
 				return &http.Response{StatusCode: 204, Body: http.NoBody}, nil
 			})
-			op, err := beginOperation(t.Context(), f.store, "login_token")
+			op, err := beginOperation(t.Context(), f.store, "device_code")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -145,7 +144,7 @@ func TestCancelledCredentialDoesNotReplayUncertainRefresh(t *testing.T) {
 		}
 		return nil, errors.New("unexpected request")
 	})
-	op, err := beginOperation(t.Context(), f.store, "login_token")
+	op, err := beginOperation(t.Context(), f.store, "device_code")
 	if err != nil {
 		t.Fatal(err)
 	}

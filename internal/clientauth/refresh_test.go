@@ -10,7 +10,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/authorityclient"
 	"github.com/tnldotdev/tnl/internal/clientstate"
-	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
@@ -232,7 +231,7 @@ func TestForcedRefreshFailureNeverPromptsOrChangesSession(t *testing.T) {
 			})
 			f.save(t, old)
 			prompts := 0
-			f.config.LoginToken = func() (credentials.LoginToken, error) { prompts++; return "", errors.New("unexpected login") }
+			f.config.ObserveLogin = func(clientstate.AuthOperation) error { prompts++; return errors.New("unexpected login") }
 			source := f.source(t)
 			token, err := source.accessToken(t.Context(), true, old.AccessToken)
 			if token != "" || err == nil || test.want != nil && !errors.Is(err, test.want) || prompts != 0 {

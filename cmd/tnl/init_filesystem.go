@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 )
 
@@ -106,7 +105,7 @@ func ensureTnlGitignore(root string) (bool, error) {
 	path := filepath.Join(root, ".gitignore")
 	data, err := readInitFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		if err := createInitFile(path, []byte("# tnl\n.tnl/\n")); err != nil {
+		if err := createInitFile(path, []byte("# tnl\n"+tnlLocalIgnoreRule+"\n")); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -114,16 +113,33 @@ func ensureTnlGitignore(root string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == ".tnl" || strings.TrimSpace(line) == ".tnl/" {
-			return false, nil
+	lines := strings.SplitAfter(string(data), "\n")
+	newline := "\n"
+	if bytes.Contains(data, []byte("\r\n")) {
+		newline = "\r\n"
+	}
+	found := false
+	for i, line := range lines {
+		rule := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		// only the exact tnl-marked block is ours to narrow. preserve all
+		// other rules, comments, whitespace, and each existing line ending.
+		if i > 0 && strings.TrimSuffix(strings.TrimSuffix(lines[i-1], "\n"), "\r") == "# tnl" &&
+			(rule == ".tnl/" || rule == "/.tnl/") {
+			lines[i] = tnlLocalIgnoreRule + strings.TrimPrefix(line, rule)
+			rule = tnlLocalIgnoreRule
 		}
+		found = found || rule == tnlLocalIgnoreRule
 	}
-	replacement := slices.Clone(data)
-	if len(replacement) != 0 && replacement[len(replacement)-1] != '\n' {
-		replacement = append(replacement, '\n')
+	replacement := []byte(strings.Join(lines, ""))
+	if !found {
+		if len(replacement) != 0 && replacement[len(replacement)-1] != '\n' {
+			replacement = append(replacement, newline...)
+		}
+		replacement = append(replacement, []byte("# tnl"+newline+tnlLocalIgnoreRule+newline)...)
 	}
-	replacement = append(replacement, []byte("# tnl\n.tnl/\n")...)
+	if bytes.Equal(data, replacement) {
+		return false, nil
+	}
 	if err := replaceRecognizedInitFile(path, data, replacement); err != nil {
 		return false, err
 	}

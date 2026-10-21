@@ -41,7 +41,7 @@ func TestAuthOperationPrivateCheckpointAndCancellation(t *testing.T) {
 		t.Fatal("private checkpoint serialized")
 	}
 	var stored []byte
-	if err := db.db.QueryRowContext(t.Context(), "SELECT stored_private FROM auth_operations WHERE operation_id = ?", id).Scan(&stored); err != nil {
+	if err := db.db.QueryRowContext(t.Context(), "SELECT stored_private FROM login_operations WHERE operation_id = ?", id).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	// macOS seals in Keychain; other platforms use the existing private-file protector.
@@ -61,7 +61,7 @@ func TestAuthOperationPrivateCheckpointAndCancellation(t *testing.T) {
 		t.Fatalf("stale checkpoint was accepted: %v", err)
 	}
 	got, err = store.AuthOperation(t.Context(), id)
-	if err != nil || got.Phase != AuthCancelled || len(got.Private) != 0 {
+	if err != nil || got.Phase != AuthCancelled || !bytes.Equal(got.Private, secret) {
 		t.Fatalf("cancelled operation = %s, %v", got.Phase, err)
 	}
 	other, err := db.Server(t.Context(), "https://other.example")

@@ -3,20 +3,12 @@
 package clientstate
 
 import (
-	"bytes"
 	"context"
+	"errors"
 )
 
-type plaintextSecretProtector struct{}
+func defaultProtection() ProtectionMode { return ProtectionFile }
 
-func (plaintextSecretProtector) Seal(_ context.Context, _ string, value []byte) ([]byte, error) {
-	return bytes.Clone(value), nil
-}
-
-func (plaintextSecretProtector) Open(_ context.Context, _ string, value []byte) ([]byte, error) {
-	return bytes.Clone(value), nil
-}
-
-func newSecretProtector(_, _ string) secretProtector {
-	return plaintextSecretProtector{}
+func platformWrappingKey(context.Context, string, bool) ([]byte, error) {
+	return nil, errors.New("clientstate: Keychain protection requires macOS")
 }

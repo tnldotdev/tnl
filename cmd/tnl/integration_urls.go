@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/inspection"
 	"github.com/tnldotdev/tnl/internal/integrationurls"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
@@ -23,8 +24,8 @@ import (
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-// control records a loopback target; integration URL requests are handled directly
-// after visitor TLS terminates in the publisher, without dialing this target.
+// control stores a fixed placeholder for integration URLs. workers handle
+// requests directly after visitor TLS ends at the publisher and never dial it.
 const integrationURLTarget = "http://127.0.0.1:1"
 
 func projectIntegrationOrigin(ctx context.Context, state *clientstate.Database, project projectconfig.Project, server, namespace, purpose string) (projectmeta.IntegrationOrigin, error) {
@@ -62,7 +63,7 @@ func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, pro
 func integrationURLConfig(services publisherServices, hostname string, purpose controlv1.PublicURLPurpose) publisher.Config {
 	config := services.config(integrationURLTarget, []string{}, publisher.ApplicationLimits{Concurrency: 32})
 	config.Hostname, config.PublicURLScope, config.Ephemeral = hostname, services.publicURLScope, false
-	config.Purpose = purpose
+	config.Purpose, config.ServiceProtocol, config.InspectionMode = purpose, controlv1.Http, inspection.None
 	return config
 }
 
@@ -79,8 +80,12 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 	lastReport := time.Time{}
 	integrationURLPublisher := integrationurls.Publisher{
 		State: state, Store: services.state, Server: services.authenticated.ServerEndpoint, Hostname: oauth.Hostname,
-		Prepare: func(context.Context) (integrationurls.Snapshot, error) {
-			config := integrationURLConfig(services, oauth.Hostname, controlv1.Oauth)
+		Prepare: func(ctx context.Context) (integrationurls.Snapshot, error) {
+			config, err := nativeIntegrationConfig(ctx, state, services, oauth.Hostname, controlv1.Oauth)
+			if err != nil {
+				return integrationurls.Snapshot{}, err
+			}
+			config.OnWarning = publishWarning(tunnel, output)
 			config.Handler = integrationurls.OAuthHandler(state, services.authenticated.ServerEndpoint, oauth.Hostname, func() {
 				if telemetry != nil {
 					telemetry.Report(newIntegrationTelemetry(telemetryOAuthRedirected, ""))
@@ -268,8 +273,12 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 					telemetry.Report(newIntegrationTelemetry(telemetryWebhookReached, telemetryWebhookDelivery(mode)))
 				}
 			}
-			config := integrationURLConfig(services, origin.Hostname, controlv1.Webhooks)
+			config, err := nativeIntegrationConfig(ctx, state, services, origin.Hostname, controlv1.Webhooks, prefixes)
+			if err != nil {
+				return integrationurls.Snapshot{}, err
+			}
 			config.Handler, config.AllowedIPPrefixes = handler, prefixes
+			config.OnWarning = publishWarning(tunnel, output)
 			return integrationurls.Snapshot{Config: config, Revision: revision}, nil
 		},
 		Revision: func(ctx context.Context) (string, error) {

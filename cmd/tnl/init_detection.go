@@ -24,11 +24,17 @@ func initProjectRoot(ctx context.Context, cwd string) (string, error) {
 	}
 	boundary := absolute
 	if worktree.IsGit {
+		// compare the starting directory with Git's canonical worktree root.
+		if canonical, err := filepath.EvalSymlinks(absolute); err == nil {
+			absolute = canonical
+		}
 		boundary = worktree.Root
 	}
 	for directory := absolute; ; directory = filepath.Dir(directory) {
-		if info, statErr := os.Stat(filepath.Join(directory, "package.json")); statErr == nil && !info.IsDir() {
-			return directory, nil
+		for _, marker := range []string{"package.json", "pyproject.toml"} {
+			if info, statErr := os.Stat(filepath.Join(directory, marker)); statErr == nil && !info.IsDir() {
+				return directory, nil
+			}
 		}
 		if directory == boundary {
 			break

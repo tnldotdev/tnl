@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,12 +13,54 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/diagnostic"
+	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
+	"github.com/tnldotdev/tnl/internal/publisherjob"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
 )
 
-func TestConfigPathDoesNotEvaluateTypeScript(t *testing.T) {
+func TestPublicationInputsRejectApplicationAuthSettings(t *testing.T) {
+	for _, extension := range []string{"json", "yaml", "ts"} {
+		t.Run(extension, func(t *testing.T) {
+			root := t.TempDir()
+			name := "tnl." + extension
+			if extension == "ts" {
+				name = "tnl.config.ts"
+			}
+			path := filepath.Join(root, name)
+			for _, extra := range []string{"", `,"auth":{}`} {
+				source := `{"services":{"api":{"target":{"type":"address","address":"https://api.example","tls":{}` + extra + `}}}}`
+				if extension == "ts" {
+					source = "export default " + source
+				} else {
+					source = `{"version":1,"tnl":` + source + `}`
+				}
+				if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+					t.Fatal(err)
+				}
+				_, err := projectconfig.Resolve(t.Context(), projectconfig.Selection{Path: path}, root, [32]byte{})
+				if (err != nil) != (extra != "") {
+					t.Fatalf("application auth must fail strict project loading: %v", err)
+				}
+			}
+		})
+	}
+	for _, input := range []struct {
+		body string
+		out  any
+	}{
+		{`{"target":"https://api.example","target_auth":{}}`, new(controlv1.ProjectServiceConfiguration)},
+		{`{"target":"https://api.example","target_auth":{}}`, new(publisherjob.Job)},
+		{`{"secrets":[]}`, new(publisherjob.GroupBinding)},
+	} {
+		if err := httpjson.Decode(json.NewDecoder(strings.NewReader(input.body)), input.out); err == nil {
+			t.Fatal("retired settings were silently ignored", input.body)
+		}
+	}
+}
+
+func TestCheckEvaluatesConfigurationWithoutStateOrTelemetry(t *testing.T) {
 	directory := t.TempDir()
 	stateRoot := filepath.Join(directory, "state")
 	t.Setenv("TNL_STATE_DIR", stateRoot)
@@ -33,16 +76,16 @@ export default {};`
 
 	var stdout, stderr bytes.Buffer
 	var events []telemetryPayload
-	if err := run(t.Context(), []string{"config", "path"}, &stdout, &stderr, func(string) telemetryReporter {
+	if err := run(t.Context(), []string{"check"}, &stdout, &stderr, func(string) telemetryReporter {
 		return telemetryReporterFunc(func(event telemetryPayload) { events = append(events, event) })
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 || events[0].Command != "config" || events[0].Action != "path" || events[1].Event != telemetryCommandCompleted {
-		t.Fatalf("config path telemetry = %+v", events)
+	if len(events) != 0 {
+		t.Fatalf("check opened telemetry = %+v", events)
 	}
 	want, err := clioutput.Render(clioutput.Frame{
-		Command: "tnl config path", State: "selected", Blocks: []clioutput.Block{clioutput.Text(configPath)},
+		Command: "tnl check", State: "valid", Blocks: []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "path", Value: configPath})},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,18 +93,11 @@ export default {};`
 	if got := stdout.String(); got != want+"\n" {
 		t.Fatalf("config path output = %q, want %q", got, want+"\n")
 	}
-	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
-		t.Fatalf("config path evaluated tnl.config.ts: %v", err)
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("check did not evaluate tnl.config.ts: %v", err)
 	}
 	if _, err := os.Stat(stateRoot); !os.IsNotExist(err) {
 		t.Fatalf("config path created client state: %v", err)
-	}
-	stdout.Reset()
-	if err := run(t.Context(), []string{"config", "check", "--state-dir", stateRoot}, &stdout, &stderr); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(markerPath); err != nil {
-		t.Fatalf("config check did not evaluate tnl.config.ts: %v", err)
 	}
 }
 
@@ -69,8 +105,10 @@ func TestProjectConfigurationUsesStateSpecificWorktreeLabelEverywhere(t *testing
 	directory := t.TempDir()
 	configPath := filepath.Join(directory, "tnl.config.ts")
 	source := `export default ({worktree}: any) => ({
-  tunnel: {name: worktree.label.fullLabel},
-  publish: {target: 3000},
+  services: {web: {
+    publicURL: {hostname: worktree.label.fullLabel + ".example.test"},
+    target: {type: "address", address: 3000},
+  }},
 });`
 	if err := os.WriteFile(configPath, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
@@ -91,16 +129,16 @@ func TestProjectConfigurationUsesStateSpecificWorktreeLabelEverywhere(t *testing
 		t.Fatal(err)
 	}
 	if first.Worktree.Label.FullLabel == "" || first.Worktree.Label != repeated.Worktree.Label ||
-		first.Worktree.Label == second.Worktree.Label || first.Config.Tunnel == nil || first.Config.Tunnel.Name == nil ||
-		*first.Config.Tunnel.Name != first.Worktree.Label.FullLabel {
+		first.Worktree.Label == second.Worktree.Label || first.Config.Services["web"].Tunnel == nil || first.Config.Services["web"].Tunnel.PublicURL == nil ||
+		*first.Config.Services["web"].Tunnel.PublicURL != "https://"+first.Worktree.Label.FullLabel+".example.test" {
 		t.Fatalf("worktree labels = %q, %q, %q; config = %#v", first.Worktree.Label.FullLabel, repeated.Worktree.Label.FullLabel, second.Worktree.Label.FullLabel, first.Config)
 	}
 	publish := publishCommand{}
 	if err := first.applyPublish(&publish); err != nil {
 		t.Fatal(err)
 	}
-	if publish.Name != first.Worktree.Label.FullLabel {
-		t.Fatalf("publish name = %q, worktree label = %q", publish.Name, first.Worktree.Label.FullLabel)
+	if publish.PublicURL != "https://"+first.Worktree.Label.FullLabel+".example.test" {
+		t.Fatalf("publish URL = %q, worktree label = %q", publish.PublicURL, first.Worktree.Label.FullLabel)
 	}
 }
 
@@ -125,21 +163,21 @@ func TestBarePublishUsesStableDirectoryNameWithoutConfiguration(t *testing.T) {
 	}
 }
 
-func TestCredentialPublishDoesNotInheritProjectVisitorPolicy(t *testing.T) {
+func TestEnrolledPublishDoesNotInheritProjectVisitorPolicy(t *testing.T) {
 	name := "project-url"
-	allowAllIPs := true
+	access := &config.Access{Mode: "anonymous"}
 	ephemeral := true
 	limit := 20
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		Tunnel:   &config.Tunnel{Name: &name, AllowAllIPs: &allowAllIPs, Ephemeral: &ephemeral, Limits: &config.Limits{Concurrency: &limit}},
-		Services: config.Services{"api": {}, "web": {}},
+		Tunnel:   &config.Tunnel{Access: access, Ephemeral: &ephemeral, Limits: &config.Limits{HTTP: &config.WorkLimits{Concurrency: &limit}}},
+		Services: config.Services{"api": {}, "web": {Name: &name, Tunnel: &config.Tunnel{}}},
 	}}}
-	flags := publishCommand{PublishCredential: "tnl_publish_example"}
+	flags := publishCommand{PublisherID: "pub_0123456789abcdefghijkl", Protocol: "http"}
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	if flags.Service != "" || flags.Target != "" || flags.Name != "" || flags.PublicURL != "" || flags.AllowAllIPs || flags.Ephemeral || flags.Concurrency == nil || *flags.Concurrency != limit {
-		t.Fatalf("credential publish inherited a project URL or visitor policy: %#v", flags)
+	if flags.Service != "" || flags.Target != "" || flags.Name != "" || flags.PublicURL != "" || flags.access != nil || flags.Ephemeral || flags.Concurrency != nil {
+		t.Fatalf("enrolled publish inherited a project URL or visitor policy: %#v", flags)
 	}
 }
 
@@ -152,25 +190,25 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parser.Parse([]string{"publish", "--allow-ip", "198.51.100.0/24"}); err != nil {
+	if _, err := parser.Parse([]string{"publish", "--ip", "198.51.100.0/24"}); err != nil {
 		t.Fatal(err)
 	}
 	projectServer := "https://project.example"
 	projectName := "project"
-	allowAllIPs := true
+	access := &config.Access{Mode: "anonymous"}
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		Server:  &projectServer,
-		Tunnel:  &config.Tunnel{Name: &projectName, AllowAllIPs: &allowAllIPs},
-		Publish: &config.Publish{Target: &target},
+		Server:   &projectServer,
+		Tunnel:   &config.Tunnel{Access: access},
+		Services: config.Services{"web": {Name: &projectName, Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: &target}}},
 	}}}
 	if err := project.applyPublish(&flags.Publish); err != nil {
 		t.Fatal(err)
 	}
 	if flags.Publish.ServerURL != "https://environment.example" || flags.Publish.Name != "environment-name" ||
 		flags.Publish.selectedTeam != "environment-team" ||
-		flags.Publish.PublicURL != "" || flags.Publish.Target != "3000" || flags.Publish.AllowAllIPs ||
-		!reflect.DeepEqual(flags.Publish.AllowIP, []string{"198.51.100.0/24"}) {
+		flags.Publish.PublicURL != "" || flags.Publish.Target != "3000" || !reflect.DeepEqual(flags.Publish.access, access) ||
+		len(flags.Publish.IP) != 1 || flags.Publish.IP[0] != "198.51.100.0/24" {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
 }
@@ -180,7 +218,7 @@ func TestInspectionServiceAndFlagPrecedence(t *testing.T) {
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
 		Inspection: &config.Inspection{Mode: &rootMode}, Services: config.Services{"web": {
-			Inspection: &config.Inspection{Mode: &serviceMode}, Publish: &config.Publish{Target: &target},
+			Inspection: &config.Inspection{Mode: &serviceMode}, Target: &config.ServiceTarget{Type: "address", Address: &target},
 		}},
 	}}}
 	for _, tc := range []struct {
@@ -222,7 +260,7 @@ func TestProjectConfigurationResolvesNamedServiceAndBuiltInHostname(t *testing.T
 			Config: config.TNL{
 				Server: &rootServer, Team: &serviceTeam,
 				Services: map[string]config.Service{
-					"web": {Publish: &config.Publish{Target: &target}},
+					"web": {Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: &target}},
 				},
 			},
 		},
@@ -275,6 +313,26 @@ func TestProjectConfigurationRequiresServiceWhenAmbiguous(t *testing.T) {
 	}
 }
 
+func TestPrivateTCPProjectPublishDoesNotSelectAPublicURL(t *testing.T) {
+	protocol := "tcp"
+	target := config.Target("127.0.0.1:5432")
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
+		"orders": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target}},
+	}}}}
+	for _, install := range []bool{false, true} {
+		flags := publishCommand{Target: "orders"}
+		var err error
+		if install {
+			err = project.applyInstalledService(&flags)
+		} else {
+			err = project.applyPublish(&flags)
+		}
+		if err != nil || flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Service != "orders" || flags.Protocol != "tcp" || flags.Target != string(target) || install && flags.ServiceName != "orders" {
+			t.Fatalf("private TCP service fell through public URL publication: install=%t flags=%+v err=%v", install, flags, err)
+		}
+	}
+}
+
 func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	worktree := namedTestWorktree(t.TempDir(), "tnl")
 	current := teamContext{
@@ -318,16 +376,16 @@ func TestProjectOpenAndDomainUseServiceOverridesAndCLIExplicitFalse(t *testing.T
 	project := projectConfiguration{Project: projectconfig.Project{
 		Worktree: namedTestWorktree(t.TempDir(), "shop"),
 		Config: config.TNL{
-			Tunnel: &config.Tunnel{Domain: &rootDomain, Open: &configuredOpen},
+			Tunnel: &config.Tunnel{Domain: &rootDomain},
 			Services: config.Services{
-				"web": {Tunnel: &config.Tunnel{Domain: &serviceDomain, Name: &name}},
-				"api": {},
+				"web": {Tunnel: &config.Tunnel{Domain: &serviceDomain, Name: &name}, HTTP: &config.HTTPService{Open: &configuredOpen}},
+				"api": {HTTP: &config.HTTPService{Open: &configuredOpen}},
 			},
 		},
 	}}
 	target := config.Target("3000")
-	project.Config.Services["web"] = config.Service{Tunnel: project.Config.Services["web"].Tunnel, Publish: &config.Publish{Target: &target}}
-	project.Config.Services["api"] = config.Service{Publish: &config.Publish{Target: &target}}
+	project.Config.Services["web"] = config.Service{Tunnel: project.Config.Services["web"].Tunnel, HTTP: &config.HTTPService{Open: &configuredOpen}, Target: &config.ServiceTarget{Type: "address", Address: &target}}
+	project.Config.Services["api"] = config.Service{Tunnel: &config.Tunnel{}, HTTP: &config.HTTPService{Open: &configuredOpen}, Target: &config.ServiceTarget{Type: "address", Address: &target}}
 	for _, test := range []struct {
 		service, wantDomain, wantName string
 	}{
@@ -446,7 +504,7 @@ func TestServicesInheritProjectServerAndTeam(t *testing.T) {
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
 		Server: &rootServer, Team: &rootTeam,
 		Services: config.Services{
-			"api": {Publish: &config.Publish{Target: &target}},
+			"api": {Target: &config.ServiceTarget{Type: "address", Address: &target}},
 			"web": {},
 		},
 	}}}
@@ -504,9 +562,9 @@ func TestPublishRejectsProjectSelectedExplicitToken(t *testing.T) {
 
 func TestTargetCAIsBoundToConfiguredTarget(t *testing.T) {
 	target := config.Target("https://api.internal:443")
-	caFile := "/run/secrets/target_ca"
+	caFile := "certs/target-ca.pem"
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		Publish: &config.Publish{Target: &target, TargetCAFile: &caFile},
+		Services: config.Services{"web": {Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{CAFile: &caFile}}}},
 	}}}
 	configured := publishCommand{tunnelFlags: tunnelFlags{PublicURL: "https://app.example"}}
 	if err := project.applyPublish(&configured); err != nil || configured.Target != string(target) || configured.TargetCAFile != caFile {
@@ -518,26 +576,47 @@ func TestTargetCAIsBoundToConfiguredTarget(t *testing.T) {
 	}
 }
 
-func TestProjectDatabaseServiceAppliesProtocolAndTargetTLS(t *testing.T) {
-	protocol, name, tlsName, caFile, targetTLS := "postgres", "orders", "db.internal", "./ca.pem", true
+func TestProjectPrivateServiceKeepsTargetTLSInPublisherFlags(t *testing.T) {
+	protocol, name, tlsName := "postgres", "orders", "db.internal"
 	target := config.Target("db.internal:5432")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
-		"web": {}, "orders": {Tunnel: &config.Tunnel{Name: &name},
-			Publish: &config.Publish{Protocol: &protocol, Target: &target, TargetTLS: &targetTLS, TargetTLSName: &tlsName, TargetCAFile: &caFile}},
+		"web": {}, "orders": {Name: &name,
+			Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &target, TLS: &config.TargetTLS{ServerName: &tlsName}}},
 	}}}}
 	flags := publishCommand{Target: "orders"}
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	if flags.Service != "orders" || flags.Name != "orders" || flags.Protocol != "postgres" || flags.Target != string(target) ||
-		!flags.TargetTLS || flags.TargetTLSName != tlsName || flags.TargetCAFile != caFile {
+	if flags.Service != "orders" || flags.Name != "" || flags.Protocol != "postgres" || flags.Target != string(target) ||
+		flags.TargetTLSName != tlsName || flags.TargetCAFile != "" || flags.TargetTLS == nil || !*flags.TargetTLS {
 		t.Fatalf("database service = %#v", flags)
 	}
-	if err := validateTCPPublishOptions(flags, controlv1.Postgres); err != nil {
+	if err := validateTCPPublishOptions(flags, "postgres"); err != nil {
 		t.Fatal(err)
 	}
-	flags = publishCommand{Target: "orders", Protocol: "mysql", TargetTLS: true, TargetTLSName: "other.internal", tunnelFlags: tunnelFlags{TargetCAFile: "other.pem"}}
-	if err := project.applyPublish(&flags); err != nil || flags.Protocol != "mysql" || flags.TargetTLSName != "other.internal" || flags.TargetCAFile != "other.pem" {
-		t.Fatalf("explicit overrides = %#v, %v", flags, err)
+	fileBacked := publishCommand{Target: "orders", PublisherFile: "publisher.json", remoteFlags: remoteFlags{ServerURL: "https://control.example"}}
+	if err := project.applyPublish(&fileBacked); err != nil || fileBacked.Service != "orders" || fileBacked.Target != string(target) || fileBacked.Protocol != "postgres" || fileBacked.Name != "" {
+		t.Fatalf("file-backed configured private service = %+v, %v", fileBacked, err)
+	}
+}
+
+func TestNamedTargetTrustContradictionsFailBeforePublisherSetup(t *testing.T) {
+	protocol, hostname, ca := "postgres", "db.internal", "certs/root.pem"
+	address := config.Target("127.0.0.1:5432")
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Services: config.Services{
+		"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{ServerName: &hostname, CAFile: &ca}}},
+	}}}}
+	disabled := false
+	for _, flags := range []publishCommand{
+		{Target: "db", TargetTLS: &disabled},
+		{Target: "db", TargetTLSName: "other.internal"},
+		{Target: "db", tunnelFlags: tunnelFlags{TargetCAFile: "other.pem"}},
+	} {
+		if err := project.applyPublish(&flags); err == nil {
+			t.Fatal("contradictory named target trust accepted")
+		}
+	}
+	if err := validateTCPPublishOptions(publishCommand{Target: "https://localhost:443", TargetTLS: &disabled}, "http"); err == nil {
+		t.Fatal("HTTPS target accepted an explicit TLS disable")
 	}
 }

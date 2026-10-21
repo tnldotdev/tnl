@@ -19,7 +19,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/oidcauth"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 	"github.com/tnldotdev/tnl/pkg/api/controlv1"
-	"golang.org/x/oauth2"
 )
 
 const (
@@ -31,17 +30,15 @@ const (
 var ErrAuthenticationTimeout = errors.New("clientauth: authentication timed out")
 
 type Config struct {
+	Team                 string
 	ServerEndpoint       string
 	State                *clientstate.Database
 	AccessToken          string
 	HTTPClient           *http.Client
 	Diagnostics          io.Writer
 	OpenURL              func(string) error
-	LoginToken           func() (credentials.LoginToken, error)
 	AuthenticationPrompt func(oidcauth.Prompt) error
 	ObserveLogin         func(clientstate.AuthOperation) error
-	ForceLoginToken      bool
-	LoginFlow            string
 	LoginTimeout         time.Duration
 }
 
@@ -268,92 +265,6 @@ func (s *tokenSource) lock(ctx context.Context) error {
 
 func (s *tokenSource) unlock() {
 	<-s.serialize
-}
-
-func (s *tokenSource) login(ctx context.Context, beforeRedeem ...func() error) (clientstate.ControlSession, error) {
-	var before func() error
-	if len(beforeRedeem) != 0 {
-		before = beforeRedeem[0]
-	}
-	discovery := s.control.discovery
-	useOIDC := authenticationMethodAvailable(discovery, controlv1.Oidc) && !s.config.ForceLoginToken
-	if useOIDC {
-		if discovery.Authentication.Oidc == nil {
-			return clientstate.ControlSession{}, errors.New("clientauth: control returned inconsistent OIDC authentication facts")
-		}
-		oidc := discovery.Authentication.Oidc
-		flow := string(oidc.LoginFlow)
-		if s.config.LoginFlow != "" {
-			flow = s.config.LoginFlow
-		}
-		timeout := s.config.LoginTimeout
-		if timeout == 0 {
-			timeout = defaultInteractiveLoginTimeout
-		}
-		loginCtx, cancel := context.WithTimeout(ctx, timeout)
-		result, err := oidcauth.Login(loginCtx, oidcauth.Config{
-			Issuer: oidc.Issuer, ClientID: oidc.ClientId,
-			LoginFlow: flow, Scopes: slices.Clone(oidc.Scopes),
-			HTTPClient: s.control.rawHTTP, OpenURL: s.config.OpenURL, Prompt: s.config.AuthenticationPrompt,
-			BeforeRedeem: before,
-		}, s.config.Diagnostics)
-		cancel()
-		if err != nil {
-			if interactiveAuthenticationTimedOut(ctx, err) {
-				return clientstate.ControlSession{}, fmt.Errorf("%w: %w", ErrAuthenticationTimeout, err)
-			}
-			return clientstate.ControlSession{}, err
-		}
-		if before != nil {
-			if err := before(); err != nil {
-				return clientstate.ControlSession{}, err
-			}
-		}
-		issued, err := s.control.rawAuthority.ExchangeOIDC(ctx, result.IDToken)
-		if err != nil {
-			return clientstate.ControlSession{}, fmt.Errorf("exchange OIDC login: %w", err)
-		}
-		stored, err := authoritySession(issued, "", time.Time{})
-		if err != nil {
-			return clientstate.ControlSession{}, err
-		}
-		return stored, nil
-	}
-	if !authenticationMethodAvailable(discovery, controlv1.LoginToken) {
-		return clientstate.ControlSession{}, errors.New("clientauth: authority does not support an available interactive authentication method")
-	}
-	if s.config.LoginToken == nil {
-		return clientstate.ControlSession{}, failure.Wrap("read login token", failure.LoginTerminalRequired, errors.New("login-token authentication requires an interactive terminal"))
-	}
-	loginToken, err := s.config.LoginToken()
-	if err != nil {
-		return clientstate.ControlSession{}, err
-	}
-	if before != nil {
-		if err := before(); err != nil {
-			return clientstate.ControlSession{}, err
-		}
-	}
-	issued, err := s.control.rawAuthority.Exchange(ctx, loginToken)
-	if err != nil {
-		return clientstate.ControlSession{}, fmt.Errorf("exchange login token: %w", err)
-	}
-	stored, err := authoritySession(issued, "", time.Time{})
-	if err != nil {
-		return clientstate.ControlSession{}, err
-	}
-	return stored, nil
-}
-
-func interactiveAuthenticationTimedOut(ctx context.Context, err error) bool {
-	if ctx.Err() != nil {
-		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	var retrieval *oauth2.RetrieveError
-	return errors.As(err, &retrieval) && retrieval.ErrorCode == "expired_token"
 }
 
 func refreshSession(

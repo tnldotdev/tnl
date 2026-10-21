@@ -38,13 +38,13 @@ func (s *Store) ControlSession(ctx context.Context) (ControlSession, bool, error
 	if stored.SessionID == "" {
 		return ControlSession{}, true, errors.New("clientstate: saved control session is invalid")
 	}
-	accessToken, err := s.secrets.Open(ctx, controlSessionContext(stored.SessionID, "access"), stored.StoredAccessToken)
+	accessToken, err := s.secrets.Open(ctx, controlSessionContext(stored.SessionID, "access"), stored.AccessTokenCiphertext)
 	if err != nil {
 		return ControlSession{}, true, err
 	}
 	refreshToken, err := s.secrets.Open(
 		ctx,
-		controlSessionContext(stored.SessionID, "refresh"), stored.StoredRefreshToken,
+		controlSessionContext(stored.SessionID, "refresh"), stored.RefreshTokenCiphertext,
 	)
 	if err != nil {
 		return ControlSession{}, true, err
@@ -78,8 +78,8 @@ func (s *Store) SaveControlSession(ctx context.Context, session ControlSession) 
 	}
 	if err := s.database.queries.UpsertControlSession(ctx, clientstatedb.UpsertControlSessionParams{
 		ServerOrigin: s.controlEndpoint, SessionID: session.SessionID,
-		StoredAccessToken: accessToken, AccessExpiresAt: session.AccessExpiresAt.UTC().UnixNano(),
-		StoredRefreshToken: refreshToken, RefreshExpiresAt: timeUnixNano(session.RefreshExpiresAt),
+		AccessTokenCiphertext: accessToken, AccessExpiresAt: session.AccessExpiresAt.UTC().UnixNano(),
+		RefreshTokenCiphertext: refreshToken, RefreshExpiresAt: timeUnixNano(session.RefreshExpiresAt),
 		UpdatedAt: s.database.now().UTC().UnixNano(),
 	}); err != nil {
 		return fmt.Errorf("clientstate: save control session: %w", err)

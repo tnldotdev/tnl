@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/url"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/authorityclient"
@@ -12,21 +13,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/credentials"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/oidcauth"
-	"github.com/tnldotdev/tnl/pkg/api/controlv1"
-	"golang.org/x/oauth2"
+	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
 )
 
 type loginCheckpoint struct {
-	Issuer    string
-	ClientID  string
-	Scopes    []string
-	Challenge oidcauth.DeviceChallenge
-	Assertion string
-	Session   *clientstate.ControlSession
-}
-
-func (p loginCheckpoint) config(httpConfig Config) oidcauth.Config {
-	return oidcauth.Config{Issuer: p.Issuer, ClientID: p.ClientID, Scopes: p.Scopes, HTTPClient: httpConfig.HTTPClient}
+	PollingCredential string
+	Session           *clientstate.ControlSession
 }
 
 func authStore(ctx context.Context, config Config) (*clientstate.Store, error) {
@@ -68,7 +60,7 @@ func StartLogin(ctx context.Context, config Config) (clientstate.AuthOperation, 
 		return clientstate.AuthOperation{}, err
 	}
 	facts := resolved.discovery.Authentication.Oidc
-	if facts == nil || facts.LoginFlow != controlv1.DeviceCode || config.ForceLoginToken {
+	if facts == nil {
 		return clientstate.AuthOperation{}, failure.Wrap("start device login", failure.AuthMethodUnavailable, errors.New("device login is unavailable"))
 	}
 	config.ServerEndpoint = resolved.serverEndpoint
@@ -76,7 +68,14 @@ func StartLogin(ctx context.Context, config Config) (clientstate.AuthOperation, 
 	if err != nil {
 		return clientstate.AuthOperation{}, err
 	}
-	op, operationLock, created, err := startOperation(ctx, store, "device_code", true)
+	if config.Team == "" {
+		if team, found, err := store.SelectedTeam(ctx); err != nil {
+			return clientstate.AuthOperation{}, err
+		} else if found {
+			config.Team = team
+		}
+	}
+	op, operationLock, created, err := startOperation(ctx, store, "device_code", true, config.Team)
 	if err != nil {
 		return op, err
 	}
@@ -84,15 +83,37 @@ func StartLogin(ctx context.Context, config Config) (clientstate.AuthOperation, 
 	if !created {
 		return op, operationError(op)
 	}
-	p := loginCheckpoint{Issuer: facts.Issuer, ClientID: facts.ClientId, Scopes: facts.Scopes}
+	if err := cleanupCancelledOperations(ctx, config, store); err != nil {
+		return op, finishOperation(ctx, store, &op, clientstate.AuthRecoveryRequired, err)
+	}
+	p := loginCheckpoint{}
 	if err := checkpoint(ctx, store, &op, clientstate.AuthRedeeming, p); err != nil {
 		return op, err
 	}
-	p.Challenge, err = oidcauth.StartDevice(ctx, p.config(config))
+	selection := authorityv1.StartDeviceLoginRequest{}
+	if config.Team != "" {
+		selection.Team = &config.Team
+	} else if saved, found, err := store.SelectedTeam(ctx); err != nil {
+		return op, err
+	} else if found {
+		selection.Team = &saved
+	}
+	if session, found, err := store.ControlSession(ctx); err != nil {
+		return op, err
+	} else if found && session.RefreshExpiresAt.After(time.Now()) && !session.RefreshPending {
+		selection.RefreshToken = &session.RefreshToken
+	}
+	challenge, err := resolved.rawAuthority.StartDeviceLogin(ctx, selection)
 	if err != nil {
 		return op, finishOperation(ctx, store, &op, clientstate.AuthRecoveryRequired, err)
 	}
-	op.ApprovalURL, op.UserCode, op.ExpiresAt, op.Interval = p.Challenge.ApprovalURL, p.Challenge.UserCode, p.Challenge.ExpiresAt, p.Challenge.Interval
+	approval, parseErr := url.Parse(challenge.ApprovalUrl)
+	controlURL, _ := url.Parse(resolved.serverEndpoint)
+	if parseErr != nil || approval.Scheme != "https" || approval.Host != controlURL.Host || approval.User != nil || approval.Fragment != "" || approval.Path != "/v1/auth/device/approve" || len(challenge.PollingCredential) != 43 || len(challenge.UserCode) != 13 || !challenge.ExpiresAt.After(time.Now()) || challenge.ExpiresAt.After(time.Now().Add(11*time.Minute)) || challenge.IntervalSeconds < 1 || challenge.IntervalSeconds > 30 {
+		return op, finishOperation(ctx, store, &op, clientstate.AuthRecoveryRequired, errors.New("invalid control device challenge"))
+	}
+	p.PollingCredential = challenge.PollingCredential
+	op.ApprovalURL, op.UserCode, op.ExpiresAt, op.Interval = challenge.ApprovalUrl, challenge.UserCode, challenge.ExpiresAt, time.Duration(challenge.IntervalSeconds)*time.Second
 	op.NextPollAt = time.Now().Add(op.Interval)
 	if err := checkpoint(ctx, store, &op, clientstate.AuthPending, p); err != nil {
 		return op, err
@@ -101,7 +122,7 @@ func StartLogin(ctx context.Context, config Config) (clientstate.AuthOperation, 
 }
 
 func beginOperation(ctx context.Context, store *clientstate.Store, method string) (clientstate.AuthOperation, error) {
-	op, lock, _, err := startOperation(ctx, store, method, false)
+	op, lock, _, err := startOperation(ctx, store, method, false, "")
 	if lock != nil {
 		defer lock.Close()
 	}
@@ -110,12 +131,12 @@ func beginOperation(ctx context.Context, store *clientstate.Store, method string
 
 // startOperation locks a new operation before publishing its initial state.
 // joining callers release the credential lock before waiting for that operation.
-func startOperation(ctx context.Context, store *clientstate.Store, method string, reuse bool) (clientstate.AuthOperation, *clientstate.Lock, bool, error) {
+func startOperation(ctx context.Context, store *clientstate.Store, method string, reuse bool, team string) (clientstate.AuthOperation, *clientstate.Lock, bool, error) {
 	id, err := clientstate.NewAuthOperationID()
 	if err != nil {
 		return clientstate.AuthOperation{}, nil, false, err
 	}
-	op := clientstate.AuthOperation{ID: id, Method: method, Phase: clientstate.AuthPending, ExpiresAt: time.Now().Add(defaultInteractiveLoginTimeout), Revision: 1}
+	op := clientstate.AuthOperation{ID: id, Method: method, Team: team, Phase: clientstate.AuthPending, ExpiresAt: time.Now().Add(defaultInteractiveLoginTimeout), Revision: 1}
 	operationLock, err := clientstate.LockAuthOperationContext(ctx, store, id)
 	if err != nil {
 		return op, nil, false, err
@@ -132,7 +153,7 @@ func startOperation(ctx context.Context, store *clientstate.Store, method string
 			_ = operationLock.Close()
 			return op, nil, false, err
 		}
-		if found && current.Method == method && (current.Phase != clientstate.AuthPending || current.ExpiresAt.After(time.Now())) {
+		if found && current.Method == method && current.Team == team && current.ExpiresAt.After(time.Now()) {
 			_ = operationLock.Close()
 			// a published challenge remains readable while a separate waiter polls;
 			// start must not wait for that command to finish.
@@ -193,7 +214,10 @@ func checkpoint(ctx context.Context, store *clientstate.Store, op *clientstate.A
 func finishOperation(ctx context.Context, store *clientstate.Store, op *clientstate.AuthOperation, phase clientstate.AuthPhase, cause error) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), issuedSessionCleanupTimeout)
 	defer cancel()
-	op.Phase, op.Private = phase, nil
+	op.Phase = phase
+	if phase != clientstate.AuthRecoveryRequired {
+		op.Private = nil
+	}
 	if err := store.UpdateAuthOperation(cleanupCtx, op); err != nil {
 		if errors.Is(err, clientstate.ErrAuthOperationChanged) {
 			current, readErr := readOperation(cleanupCtx, store, op.ID)
@@ -239,11 +263,8 @@ func CancelLogin(ctx context.Context, config Config, id string) (clientstate.Aut
 			_ = lock.Close()
 			return op, cleanupCancelledOperation(ctx, config, store, &op)
 		}
-		if op.Phase == clientstate.AuthCompleted || operationError(op) != nil {
+		if op.Phase == clientstate.AuthCompleted || operationError(op) != nil && op.Phase != clientstate.AuthRecoveryRequired {
 			return op, nil
-		}
-		if op.Phase != clientstate.AuthIssued {
-			op.Private = nil
 		}
 		op.Phase = clientstate.AuthCancelled
 		err = store.UpdateAuthOperation(ctx, &op)
@@ -281,8 +302,21 @@ func cleanupCancelledOperation(ctx context.Context, config Config, store *client
 	if err := json.Unmarshal(op.Private, &p); err != nil {
 		return err
 	}
+	if p.PollingCredential != "" {
+		authority, err := authorityclient.New(op.Server, config.HTTPClient, "")
+		if err != nil {
+			return err
+		}
+		err = authority.CancelDeviceLogin(ctx, p.PollingCredential)
+		if err != nil && !errors.Is(err, authorityclient.ErrUnauthenticated) {
+			return err
+		}
+		op.Private = nil
+		return store.UpdateAuthOperation(ctx, op)
+	}
 	if p.Session == nil {
-		return nil
+		op.Private = nil
+		return store.UpdateAuthOperation(ctx, op)
 	}
 	authority, err := authorityclient.New(op.Server, config.HTTPClient, "")
 	if err != nil {
@@ -385,7 +419,7 @@ func WaitLogin(ctx context.Context, config Config, id string, timeout time.Durat
 		if op.Phase == clientstate.AuthCompleted {
 			return op, nil
 		}
-		if op.Phase == clientstate.AuthRedeeming || op.Phase == clientstate.AuthExchanging {
+		if op.Phase == clientstate.AuthRedeeming {
 			return op, finishOperation(waitCtx, store, &op, clientstate.AuthRecoveryRequired, nil)
 		}
 		var p loginCheckpoint
@@ -393,7 +427,7 @@ func WaitLogin(ctx context.Context, config Config, id string, timeout time.Durat
 			return op, finishOperation(waitCtx, store, &op, clientstate.AuthRecoveryRequired, err)
 		}
 		switch op.Phase {
-		case clientstate.AuthPending:
+		case clientstate.AuthPending, clientstate.AuthExchanging:
 			if !op.ExpiresAt.After(time.Now()) {
 				return op, finishOperation(waitCtx, store, &op, clientstate.AuthExpired, nil)
 			}
@@ -410,67 +444,49 @@ func WaitLogin(ctx context.Context, config Config, id string, timeout time.Durat
 				}
 				continue
 			}
-			if err := checkpoint(waitCtx, store, &op, clientstate.AuthRedeeming, p); err != nil {
-				return op, err
-			}
-			assertion, pollErr := oidcauth.PollDevice(waitCtx, p.config(config), p.Challenge)
-			var provider *oauth2.RetrieveError
-			if errors.As(pollErr, &provider) {
-				switch provider.ErrorCode {
-				case "authorization_pending", "slow_down":
-					if provider.ErrorCode == "slow_down" {
-						op.Interval += 5 * time.Second
-					}
-					op.NextPollAt = time.Now().Add(op.Interval)
-					persistCtx, stop := context.WithTimeout(context.WithoutCancel(waitCtx), issuedSessionCleanupTimeout)
-					err := checkpoint(persistCtx, store, &op, clientstate.AuthPending, p)
-					stop()
-					if err != nil {
-						return op, err
-					}
-					continue
-				case "access_denied":
-					return op, finishOperation(waitCtx, store, &op, clientstate.AuthDenied, pollErr)
-				case "expired_token":
-					return op, finishOperation(waitCtx, store, &op, clientstate.AuthExpired, pollErr)
-				}
-			}
-			if pollErr != nil {
-				return op, finishOperation(waitCtx, store, &op, clientstate.AuthRecoveryRequired, pollErr)
-			}
-			p.Assertion = assertion
-			persistCtx, stop := context.WithTimeout(context.WithoutCancel(waitCtx), issuedSessionCleanupTimeout)
-			err = checkpoint(persistCtx, store, &op, clientstate.AuthCredentialReceived, p)
-			stop()
-			if err != nil {
-				return op, err
-			}
-		case clientstate.AuthCredentialReceived:
-			if _, err := oidcauth.VerifyDevice(waitCtx, p.config(config), p.Challenge, p.Assertion); err != nil {
-				if errors.Is(err, oidcauth.ErrUnavailable) {
-					return op, failure.Wrap("verify login assertion", failure.AuthProviderUnavailable, err)
-				}
-				if errors.Is(err, oidcauth.ErrUnauthenticated) {
-					return op, finishOperation(waitCtx, store, &op, clientstate.AuthDenied, err)
-				}
+			if err := checkpoint(waitCtx, store, &op, clientstate.AuthExchanging, p); err != nil {
 				return op, err
 			}
 			resolved, err := resolveControl(waitCtx, config.ServerEndpoint, config.HTTPClient)
 			if err != nil {
 				return op, err
 			}
-			if err := checkpoint(waitCtx, store, &op, clientstate.AuthExchanging, p); err != nil {
+			result, err := resolved.rawAuthority.PollDeviceLogin(waitCtx, p.PollingCredential)
+			if err != nil {
+				if errors.Is(err, authorityclient.ErrUnauthenticated) {
+					return op, finishOperation(waitCtx, store, &op, clientstate.AuthDenied, err)
+				}
+				// polling is idempotent at control, including lost successful responses.
 				return op, err
 			}
-			issued, err := resolved.rawAuthority.ExchangeOIDC(waitCtx, p.Assertion)
+			if result.Status == authorityv1.DeviceLoginResultStatusPending && result.Session == nil {
+				op.NextPollAt = time.Now().Add(op.Interval)
+				if err := checkpoint(waitCtx, store, &op, clientstate.AuthPending, p); err != nil {
+					return op, err
+				}
+				continue
+			}
+			if result.Status == authorityv1.DeviceLoginResultStatusCancelled {
+				return op, finishOperation(waitCtx, store, &op, clientstate.AuthCancelled, nil)
+			}
+			if result.Status == authorityv1.DeviceLoginResultStatusDenied {
+				return op, finishOperation(waitCtx, store, &op, clientstate.AuthDenied, nil)
+			}
+			if result.Status != authorityv1.DeviceLoginResultStatusApproved || result.Session == nil {
+				return op, errors.New("invalid control device result")
+			}
+			session, err := authoritySession(*result.Session, "", time.Time{})
 			if err != nil {
 				return op, finishOperation(waitCtx, store, &op, clientstate.AuthRecoveryRequired, err)
 			}
-			session, err := authoritySession(issued, "", time.Time{})
-			if err != nil {
-				return op, finishOperation(waitCtx, store, &op, clientstate.AuthRecoveryRequired, err)
+			p.Session = &session
+			if result.Session.Identity.DefaultTeamId != nil {
+				for _, membership := range result.Session.Identity.Memberships {
+					if membership.TeamId == *result.Session.Identity.DefaultTeamId {
+						op.SelectedTeamID = membership.TeamId
+					}
+				}
 			}
-			p.Session, p.Assertion = &session, ""
 			persistCtx, stop := context.WithTimeout(context.WithoutCancel(waitCtx), issuedSessionCleanupTimeout)
 			err = checkpoint(persistCtx, store, &op, clientstate.AuthIssued, p)
 			stop()
@@ -524,8 +540,7 @@ func installSession(ctx context.Context, store *clientstate.Store, op *clientsta
 	return nil
 }
 
-// Login is explicit convenience authentication. device login uses the same
-// durable operation as start/wait; self-host tokens and PKCE remain opt-in.
+// Login uses the same durable control-owned operation as start/wait.
 func Login(ctx context.Context, config Config) (*Client, error) {
 	if config.Diagnostics == nil {
 		config.Diagnostics = io.Discard
@@ -535,7 +550,7 @@ func Login(ctx context.Context, config Config) (*Client, error) {
 		return nil, err
 	}
 	config.ServerEndpoint = resolved.serverEndpoint
-	if facts := resolved.discovery.Authentication.Oidc; facts != nil && facts.LoginFlow == controlv1.DeviceCode && !config.ForceLoginToken && config.LoginFlow != oidcauth.LoginFlowAuthorizationCodePKCE {
+	{
 		op, err := StartLogin(ctx, config)
 		if err != nil {
 			return nil, err
@@ -553,57 +568,6 @@ func Login(ctx context.Context, config Config) (*Client, error) {
 			_ = config.OpenURL(op.ApprovalURL)
 		}
 		if _, err := WaitLogin(ctx, config, op.ID, config.LoginTimeout); err != nil {
-			return nil, err
-		}
-	} else {
-		store, err := authStore(ctx, config)
-		if err != nil {
-			return nil, err
-		}
-		method := "login_token"
-		if resolved.discovery.Authentication.Oidc != nil && !config.ForceLoginToken {
-			method = "authorization_code_pkce"
-		}
-		if method == "login_token" && !authenticationMethodAvailable(resolved.discovery, controlv1.LoginToken) {
-			return nil, failure.Wrap("select login method", failure.AuthMethodUnavailable, errors.New("login token is unavailable"))
-		}
-		op, lock, _, err := startOperation(ctx, store, method, false)
-		if err != nil {
-			return nil, err
-		}
-		defer lock.Close()
-		attempted := false
-		beforeRedeem := func() error {
-			if err := checkpoint(ctx, store, &op, clientstate.AuthRedeeming, loginCheckpoint{}); err != nil {
-				return err
-			}
-			attempted = true
-			return nil
-		}
-		source := tokenSource{control: resolved, config: config, store: store}
-		session, err := source.login(ctx, beforeRedeem)
-		if err != nil {
-			var provider *oauth2.RetrieveError
-			if errors.As(err, &provider) {
-				switch provider.ErrorCode {
-				case "access_denied":
-					return nil, finishOperation(ctx, store, &op, clientstate.AuthDenied, err)
-				case "expired_token":
-					return nil, finishOperation(ctx, store, &op, clientstate.AuthExpired, err)
-				}
-			}
-			if !attempted {
-				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), issuedSessionCleanupTimeout)
-				defer cancel()
-				op.Phase, op.Private = clientstate.AuthCancelled, nil
-				return nil, errors.Join(err, store.UpdateAuthOperation(cleanupCtx, &op))
-			}
-			return nil, finishOperation(ctx, store, &op, clientstate.AuthRecoveryRequired, err)
-		}
-		if err := checkpoint(ctx, store, &op, clientstate.AuthIssued, loginCheckpoint{Session: &session}); err != nil {
-			return nil, errors.Join(err, cleanupIssuedSession(ctx, resolved, session))
-		}
-		if err := installSession(ctx, store, &op, resolved, session); err != nil {
 			return nil, err
 		}
 	}

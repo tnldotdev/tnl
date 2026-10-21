@@ -38,11 +38,15 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 		commands[command.Path()] = true
 	}
 	for _, command := range []string{
-		"init", "publish", "status", "wait", "watch", "auth status", "auth login start", "auth login wait", "auth login inspect", "auth login cancel", "auth logout",
-		"config path", "config check", "config generate", "telemetry on", "telemetry off", "telemetry status",
+		"init", "publish", "status", "wait", "watch", "ping", "auth status", "auth login start", "auth login wait", "auth login inspect", "auth login cancel", "auth logout",
+		"check", "generate", "telemetry on", "telemetry off", "telemetry status",
 		"team current", "team list", "team use", "team create", "team members", "team invite create",
 		"team invite list", "team invite revoke", "team join", "team member set-role", "team member remove",
-		"domain claim", "domain default", "domain list", "domain status", "domain release", "url list", "url delete",
+		"domain claim", "domain default", "domain list", "domain status", "domain release", "url list", "url inventory", "url available", "url delete",
+		"url access show", "url access set", "auth browser", "team feedback get", "team feedback set",
+		"share invite create", "share invite accept", "share invite list", "share invite revoke",
+		"publisher enroll", "publisher setup", "publisher provision", "publisher current", "publisher list", "publisher revoke", "publisher grant add", "publisher grant revoke",
+		"service install", "service start", "service stop", "service remove", "service list", "detached list", "detached stop",
 		"admin server status", "admin relays list", "admin relays drain", "admin maintenance list",
 		"admin maintenance allow", "admin maintenance block",
 	} {
@@ -50,11 +54,38 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 			t.Fatalf("command %q missing from help model", command)
 		}
 	}
+	// service serve and runtime commands are implementation interfaces, not public help.
+	for _, args := range [][]string{{"service", "serve"}, {"runtime", "serve", "--directory", t.TempDir()}, {"runtime", "owner-endpoint", "--directory", t.TempDir()}} {
+		if _, err := parser.Parse(args); err != nil {
+			t.Fatalf("hidden %v command cannot be invoked: %v", args, err)
+		}
+	}
 	if _, err := parser.Parse([]string{"host", "list"}); err == nil {
 		t.Fatal("obsolete host command was accepted")
 	}
 	if _, err := parser.Parse([]string{"route", "list"}); err == nil {
 		t.Fatal("obsolete route command was accepted")
+	}
+	if _, err := parser.Parse([]string{"compose", "up"}); err == nil {
+		t.Fatal("compose lifecycle command was accepted")
+	}
+	if _, err := parser.Parse([]string{"publish", "3000", "--bg"}); err == nil {
+		t.Fatal("obsolete --bg flag was accepted")
+	}
+}
+
+func TestInstallRequiresASavedURLSelectorBeforeProjectState(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "user-state")
+	service := filepath.Join(t.TempDir(), "service-state")
+	var output, diagnostics bytes.Buffer
+	err := run(t.Context(), []string{"publish", "orders", "--install", "--state-dir", state, "--system-state-dir", service}, &output, &diagnostics)
+	if reason, ok := failure.Of(err); !ok || reason.Reason() != failure.InvalidTunnelFlags {
+		t.Fatalf("project state opened before service preflight: %v", err)
+	}
+	for _, path := range []string{state, service} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("install preflight created %s: %v", path, err)
+		}
 	}
 }
 
@@ -111,7 +142,7 @@ func TestTunnelHelpExplainsIPPolicyAndTeamSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := strings.Join(strings.Fields(output.String()), " ")
-	for _, want := range []string{"your current IP is also allowed", "every IP", "--team", "--server"} {
+	for _, want := range []string{"--anonymous", "--ip", "--team", "--server"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("publish help missing %q:\n%s", want, output.String())
 		}
@@ -195,10 +226,10 @@ func TestPublishHostnameOptions(t *testing.T) {
 	}
 }
 
-func TestPublishFromDockerEnvironmentWithoutProjectConfig(t *testing.T) {
+func TestPublishFromEnrollmentEnvironmentWithoutProjectConfig(t *testing.T) {
 	t.Setenv("TNL_TARGET", "")
 	t.Setenv("TNL_PUBLIC_URL", "")
-	t.Setenv("TNL_CREDENTIAL", "tnl_publish_example")
+	t.Setenv("TNL_ENROLL_KEY", "pen_0123456789abcdefghijkl.example")
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
@@ -209,7 +240,7 @@ func TestPublishFromDockerEnvironmentWithoutProjectConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if canonicalParsedCommand(parsed.Command()) != "publish <service-or-target>" || flags.Publish.Target != "" ||
-		flags.Publish.PublicURL != "" || flags.Publish.PublishCredential != "tnl_publish_example" {
+		flags.Publish.PublicURL != "" || flags.Publish.EnrollmentKey != "pen_0123456789abcdefghijkl.example" {
 		t.Fatalf("environment publish command %q = %#v", parsed.Command(), flags.Publish)
 	}
 	if err := (projectConfiguration{}).applyPublish(&flags.Publish); err != nil || flags.Publish.Name != "" {
@@ -217,18 +248,29 @@ func TestPublishFromDockerEnvironmentWithoutProjectConfig(t *testing.T) {
 	}
 }
 
-func TestCredentialCommandsSelectOptionalServiceAndURLFilters(t *testing.T) {
+func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 	for _, test := range []struct {
 		args []string
 		want string
 	}{
-		{[]string{"url", "credential", "create", "--target", "http://app:3000"}, "url credential create <service-or-public-url-id>"},
-		{[]string{"url", "credential", "create", "--ephemeral", "--expires-in", "7d"}, "url credential create <service-or-public-url-id>"},
-		{[]string{"url", "credential", "create", "api", "--output", "json"}, "url credential create <service-or-public-url-id>"},
-		{[]string{"url", "credential", "create", "url_0123456789abcdefghijkl"}, "url credential create <service-or-public-url-id>"},
-		{[]string{"url", "credential", "list"}, "url credential list <public-url-id>"},
-		{[]string{"url", "credential", "list", "url_0123456789abcdefghijkl"}, "url credential list <public-url-id>"},
-		{[]string{"url", "credential", "revoke", "upc_0123456789abcdefghijkl", "--output", "json"}, "url credential revoke <credential-id>"},
+		{[]string{"publisher", "enroll", "--namespace"}, "publisher enroll <public-url-id>"},
+		{[]string{"publisher", "enroll", "url_0123456789abcdefghijkl"}, "publisher enroll <public-url-id>"},
+		{[]string{"publisher", "list"}, "publisher list"},
+		{[]string{"publisher", "revoke", "pub_0123456789abcdefghijkl"}, "publisher revoke <publisher-id>"},
+		{[]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--namespace"}, "publisher grant add <publisher-id>"},
+		{[]string{"publisher", "grant", "revoke", "pub_0123456789abcdefghijkl", "pgr_0123456789abcdefghijkl"}, "publisher grant revoke <publisher-id> <grant-id>"},
+		{[]string{"url", "access", "show", "orders.example"}, "url access show <url>"},
+		{[]string{"url", "access", "set", "orders.example", "restricted", "--ip", "192.0.2.1"}, "url access set <url> <mode>"},
+		{[]string{"auth", "browser", "app.example"}, "auth browser <url>"},
+		{[]string{"team", "feedback", "set", "signed_in"}, "team feedback set <authors>"},
+		{[]string{"share", "invite", "create", "app.example", "--email", "reviewer@example.com"}, "share invite create <url>"},
+		{[]string{"share", "invite", "accept", "secret"}, "share invite accept <secret>"},
+		{[]string{"share", "invite", "list", "app.example"}, "share invite list <url>"},
+		{[]string{"share", "invite", "revoke", "app.example", "inv_1"}, "share invite revoke <url> <invitation-id>"},
+		{[]string{"service", "start", "orders"}, "service start <job>"},
+		{[]string{"service", "stop", "orders"}, "service stop <job>"},
+		{[]string{"runtime", "endpoint", "--directory", "/tmp/project", "--service", "web"}, "runtime endpoint"},
+		{[]string{"runtime", "owner-endpoint", "--directory", "/tmp/project"}, "runtime owner-endpoint"},
 	} {
 		var flags cli
 		parser, err := kong.New(&flags)
@@ -237,30 +279,29 @@ func TestCredentialCommandsSelectOptionalServiceAndURLFilters(t *testing.T) {
 		}
 		parsed, err := parser.Parse(test.args)
 		if err != nil {
-			t.Fatalf("parse credential command %v: %v", test.args, err)
+			t.Fatalf("parse command %v: %v", test.args, err)
 		}
 		if got := canonicalParsedCommand(parsed.Command()); got != test.want {
-			t.Fatalf("credential command %v = %q, want %q", test.args, got, test.want)
+			t.Fatalf("command %v = %q, want %q", test.args, got, test.want)
 		}
 	}
 }
 
 func TestTunnelCLIUnitOverridesConflictingEnvironmentUnit(t *testing.T) {
 	t.Setenv("TNL_NAME", "environment-name")
-	t.Setenv("TNL_ALLOW_ALL_IPS", "true")
 	var flags cli
 	parser, err := kong.New(&flags)
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"publish", "3000", "--public-url", "https://api.example", "--allow-ip", "192.0.2.1"}
+	args := []string{"publish", "3000", "--public-url", "https://api.example", "--ip", "current"}
 	parsed, err := parser.Parse(args)
 	if err != nil {
 		t.Fatal(err)
 	}
 	applyTunnelCLIUnits(parsed, &flags)
-	if flags.Publish.Name != "" || flags.Publish.PublicURL != "https://api.example" || flags.Publish.AllowAllIPs ||
-		len(flags.Publish.AllowIP) != 1 {
+	if flags.Publish.Name != "" || flags.Publish.PublicURL != "https://api.example" ||
+		len(flags.Publish.IP) != 1 || flags.Publish.IP[0] != "current" {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
 }
@@ -271,7 +312,7 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"publish", "3000", "--allow-all-ips=false", "--ephemeral=false"}
+	args := []string{"publish", "3000", "--ephemeral=false"}
 	parsed, err := parser.Parse(args)
 	if err != nil {
 		t.Fatal(err)
@@ -279,9 +320,9 @@ func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	applyTunnelCLIUnits(parsed, &flags)
 	configured := true
 	applyTunnelConfiguration(&flags.Publish.tunnelFlags, &config.Tunnel{
-		AllowAllIPs: &configured, Ephemeral: &configured,
+		Ephemeral: &configured,
 	})
-	if flags.Publish.AllowAllIPs || flags.Publish.Ephemeral {
+	if flags.Publish.Ephemeral {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
 }
@@ -314,22 +355,6 @@ func TestResolvePublishHostnameUsesNamespace(t *testing.T) {
 	label, found := strings.CutSuffix(generated, ".chase-abc.tnl.dev")
 	if !found || strings.Count(label, "-") != 1 || generatedScope != controlv1.Member {
 		t.Fatalf("generated route = %q, %q", generated, generatedScope)
-	}
-}
-
-func TestParseLoginInput(t *testing.T) {
-	token, err := credentials.NewLoginToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := parseLoginInput([]byte(token.String() + "\n"))
-	if err != nil || parsed != token {
-		t.Fatalf("token = %q, error = %v", parsed, err)
-	}
-	if _, err := parseLoginInput([]byte("invalid-token")); err == nil {
-		t.Fatal("invalid login token was accepted")
-	} else if reason, _, ok := failure.Describe(err); !ok || reason != failure.LoginTokenInvalid {
-		t.Fatalf("invalid login token reason = %q, %v", reason, err)
 	}
 }
 
@@ -366,7 +391,7 @@ func TestBarePublishReachesCanonicalDispatch(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	stateDir := filepath.Join(t.TempDir(), "state")
 	err := run(t.Context(), []string{"--no-config", "publish", "--state-dir", stateDir, "--server", "http://control.example"}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), "target is required as an argument or publish.target in project configuration") {
+	if err == nil || !strings.Contains(err.Error(), "pass a target or select a configured service") {
 		t.Fatalf("run error = %v", err)
 	}
 	if reason, _, ok := failure.Describe(err); !ok || reason != failure.MissingTarget {
@@ -543,7 +568,8 @@ func TestClientErrorFramesHaveBoundedHelpAndStableCodes(t *testing.T) {
 		var output bytes.Buffer
 		writeCommandError(&output, failure.Wrap("test client failure", entry.Code, errors.New("secret-token")))
 		text := output.String()
-		if !strings.Contains(text, failure.HelpURL(entry.Code, "")) {
+		unwrapped := strings.NewReplacer(" ", "", "\n", "", "|", "").Replace(text)
+		if !strings.Contains(unwrapped, failure.HelpURL(entry.Code, "")) {
 			// each client error must be reachable even when its internal cause is not.
 			t.Fatalf("missing help for %s: %q", entry.Code, text)
 		}

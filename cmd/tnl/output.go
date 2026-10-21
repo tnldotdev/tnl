@@ -20,12 +20,11 @@ import (
 type publishEventType string
 
 const (
-	publishEventStarting  publishEventType = "starting"
-	publishEventReady     publishEventType = "ready"
-	publishEventWarning   publishEventType = "warning"
-	publishEventCurrentIP publishEventType = "current_ip"
-	publishEventError     publishEventType = "error"
-	publishEventStopped   publishEventType = "stopped"
+	publishEventStarting publishEventType = "starting"
+	publishEventReady    publishEventType = "ready"
+	publishEventWarning  publishEventType = "warning"
+	publishEventError    publishEventType = "error"
+	publishEventStopped  publishEventType = "stopped"
 )
 
 type publishOutputMode string
@@ -43,7 +42,6 @@ type publishEvent struct {
 	Target           string           `json:"target,omitempty"`
 	URL              string           `json:"url,omitempty"`
 	PublishRunNumber uint64           `json:"publish_run_number,omitempty"`
-	IP               string           `json:"ip,omitempty"`
 	Message          string           `json:"message,omitempty"`
 	Code             string           `json:"code,omitempty"`
 	HelpURL          string           `json:"help_url,omitempty"`
@@ -54,6 +52,8 @@ type publishEvent struct {
 }
 
 type publishOutput struct {
+	delegatedLifecycle    bool
+	detachedCtx           context.Context
 	mode                  publishOutputMode
 	stdout                io.Writer
 	stderr                io.Writer
@@ -70,9 +70,9 @@ type publishOutput struct {
 	blocked               uint64
 	command               string
 	target                string
-	current               string
 	demo                  bool
 	guestDemo             bool
+	guestShare            string
 	openURL               func(string) error
 }
 
@@ -187,6 +187,9 @@ func (o *publishOutput) starting(tunnelID, target string) error {
 	defer o.mu.Unlock()
 	o.tunnelID = tunnelID
 	o.target = target
+	if o.detachedCtx != nil {
+		detachedPublicationStarting(o.detachedCtx)
+	}
 	if o.mode == publishOutputHuman {
 		return nil
 	}
@@ -221,14 +224,15 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			if o.guestDemo {
 				fields = append(fields, clioutput.Field{Label: "guest trial", Value: "15 min / about 5 MiB across runs"})
 			}
-			if o.current != "" {
-				fields = append(fields, clioutput.Field{Label: "automatically allowed IP", Value: o.current})
-			}
 			if o.fallbackPublicURL == publishRunNumber {
 				fields = append(fields, clioutput.Field{Label: "transport", Value: "TLS/TCP fallback"})
 			}
+			label := url
+			if label == "" {
+				label = "private service"
+			}
 			blocks := []clioutput.Block{clioutput.Flow(
-				clioutput.FlowNode{Label: url},
+				clioutput.FlowNode{Label: label},
 				clioutput.FlowNode{Label: "tnl"},
 				clioutput.FlowNode{Label: o.target},
 			)}
@@ -237,6 +241,12 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			}
 			if err := writeHumanFrame(o.stderr, o.command, "ready", footer, blocks...); err != nil {
 				return err
+			}
+			if o.guestDemo && o.guestShare != "" {
+				// a guest link is a one-time credential, not a diagram field or log.
+				if _, err := io.WriteString(o.stdout, url+"/__tnl/share/"+o.guestShare+"\n"); err != nil {
+					return err
+				}
 			}
 			if openErr != nil {
 				presented := presentFailure(failure.Wrap("open browser", failure.BrowserOpenFailed, openErr))
@@ -269,25 +279,21 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			)
 		}
 	}
+	if o.detachedCtx != nil {
+		detachedPublicationReady(o.detachedCtx)
+	}
 	return nil
 }
 
 // openPublicURL releases the output lock while DNS and the browser opener run.
 func (o *publishOutput) openPublicURL(url string) error {
+	if o.guestDemo && o.guestShare != "" {
+		url += "/__tnl/share/" + o.guestShare
+	}
 	o.mu.Unlock()
 	err := o.openURL(url)
 	o.mu.Lock()
 	return err
-}
-
-func (o *publishOutput) currentIP(ip string) error {
-	if o.mode == publishOutputHuman {
-		o.mu.Lock()
-		o.current = ip
-		o.mu.Unlock()
-		return nil
-	}
-	return o.emit(publishEvent{Type: publishEventCurrentIP, IP: ip})
 }
 
 func (o *publishOutput) setDemo() {
@@ -299,6 +305,12 @@ func (o *publishOutput) setDemo() {
 func (o *publishOutput) setGuestDemo() {
 	o.mu.Lock()
 	o.guestDemo = true
+	o.mu.Unlock()
+}
+
+func (o *publishOutput) setGuestShare(token string) {
+	o.mu.Lock()
+	o.guestShare = token
 	o.mu.Unlock()
 }
 
@@ -340,6 +352,9 @@ func (o *publishOutput) failed(err error) error {
 }
 
 func (o *publishOutput) finish(ctx context.Context, result error) error {
+	if o.delegatedLifecycle {
+		return result
+	}
 	cause := context.Cause(ctx)
 	if result == nil {
 		result = cause

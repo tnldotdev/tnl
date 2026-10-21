@@ -1,0 +1,43 @@
+package tcpconnect
+
+import (
+	"context"
+
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+)
+
+// ControlConfig provides subject-bound hooks for native connection owners.
+// assignments are one-use; a failed slot must not release its healthy sibling.
+type ControlConfig struct {
+	Signer     func(context.Context, string) (Signer, error)
+	Assignment func(context.Context, string, tunnelv1.VisitorSubject, uint8) (Assignment, error)
+	Resolve    func(context.Context, string) (Run, error)
+	Release    func(context.Context, string) error
+	Close      func() error
+}
+
+func (ControlConfig) String() string   { return "private connector control configuration" }
+func (ControlConfig) GoString() string { return "private connector control configuration" }
+
+type configuredControl struct{ config ControlConfig }
+
+func NewControlWithConfig(config ControlConfig) (Control, error) {
+	if config.Signer == nil || config.Assignment == nil || config.Resolve == nil || config.Release == nil || config.Close == nil {
+		return nil, ErrPrivateConnection
+	}
+	return &configuredControl{config}, nil
+}
+
+func (c *configuredControl) PrivateConnectorSigner(ctx context.Context, identity string) (Signer, error) {
+	return c.config.Signer(ctx, identity)
+}
+func (c *configuredControl) PrivateConnectorAssignment(ctx context.Context, service string, subject tunnelv1.VisitorSubject, slot uint8) (Assignment, error) {
+	return c.config.Assignment(ctx, service, subject, slot)
+}
+func (c *configuredControl) ResolvePrivateService(ctx context.Context, service string) (Run, error) {
+	return c.config.Resolve(ctx, service)
+}
+func (c *configuredControl) ReleasePrivateConnectorAssignment(ctx context.Context, session string) error {
+	return c.config.Release(ctx, session)
+}
+func (c *configuredControl) Close() error { return c.config.Close() }

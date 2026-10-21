@@ -36,6 +36,8 @@ var (
 // AuthOperation contains only browser-safe operation information. private
 // checkpoints are sealed separately and never serialized by output adapters.
 type AuthOperation struct {
+	Team            string        `json:"team,omitempty"`
+	SelectedTeamID  string        `json:"selected_team_id,omitempty"`
 	ID              string        `json:"operation_id"`
 	Server          string        `json:"server"`
 	Method          string        `json:"method"`
@@ -121,7 +123,7 @@ func (s *Store) ActiveAuthOperation(ctx context.Context) (AuthOperation, bool, e
 	return op, err == nil, err
 }
 
-func (s *Store) decodeAuthOperation(ctx context.Context, row clientstatedb.AuthOperation) (AuthOperation, error) {
+func (s *Store) decodeAuthOperation(ctx context.Context, row clientstatedb.LoginOperation) (AuthOperation, error) {
 	id := row.OperationID
 	var op AuthOperation
 	if err := json.Unmarshal([]byte(row.PublicJson), &op); err != nil {
@@ -245,14 +247,19 @@ func (s *Store) InstallAuthSession(ctx context.Context, op *AuthOperation, sessi
 		return ErrAuthOperationChanged
 	}
 	if err := q.UpsertControlSession(ctx, clientstatedb.UpsertControlSessionParams{
-		ServerOrigin: s.controlEndpoint, SessionID: session.SessionID, StoredAccessToken: access,
-		StoredRefreshToken: refresh, AccessExpiresAt: timeUnixNano(session.AccessExpiresAt),
+		ServerOrigin: s.controlEndpoint, SessionID: session.SessionID, AccessTokenCiphertext: access,
+		RefreshTokenCiphertext: refresh, AccessExpiresAt: timeUnixNano(session.AccessExpiresAt),
 		RefreshExpiresAt: timeUnixNano(session.RefreshExpiresAt), UpdatedAt: s.database.now().UnixNano(),
 	}); err != nil {
 		return err
 	}
 	if err := q.SetSelectedServer(ctx, sql.NullString{String: s.controlEndpoint, Valid: true}); err != nil {
 		return err
+	}
+	if op.SelectedTeamID != "" {
+		if err := q.SetSelectedTeam(ctx, clientstatedb.SetSelectedTeamParams{TeamID: sql.NullString{String: op.SelectedTeamID, Valid: true}, Now: s.database.now().UTC().UnixNano(), Origin: s.controlEndpoint}); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err

@@ -23,8 +23,8 @@ func TestPublisherLimitsMergeAndFlagPrecedence(t *testing.T) {
 	period := config.Duration(time.Minute)
 	target := config.Target("3000")
 	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{
-		Tunnel:   &config.Tunnel{Limits: &config.Limits{Requests: &requests, Rate: &config.Rate{Requests: &rateRequests, Per: &period}}},
-		Services: config.Services{"web": {Tunnel: &config.Tunnel{Limits: &config.Limits{Concurrency: &concurrency}}, Publish: &config.Publish{Target: &target}}},
+		Tunnel:   &config.Tunnel{Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &requests, Rate: &config.Rate{Count: &rateRequests, Per: &period}}}},
+		Services: config.Services{"web": {Tunnel: &config.Tunnel{Limits: &config.Limits{HTTP: &config.WorkLimits{Concurrency: &concurrency}}}, Target: &config.ServiceTarget{Type: "address", Address: &target}}},
 	}}}
 	if err := project.applyPublish(&flags.Publish); err != nil {
 		t.Fatal(err)
@@ -65,5 +65,28 @@ func TestRetiredRequestLimitFlagIsNotAccepted(t *testing.T) {
 	}
 	if _, err := parser.Parse([]string{"publish", "3000", "--request-limit=5"}); err == nil {
 		t.Fatal("retired request-limit flag was accepted")
+	}
+}
+
+func TestEnrolledPublishNeverInheritsRootPublicURLLimits(t *testing.T) {
+	httpTotal, tcpTotal, burst := 80, 5, 3
+	count, period := 2, config.Duration(time.Second)
+	project := projectConfiguration{Project: projectconfig.Project{Config: config.TNL{Tunnel: &config.Tunnel{Limits: &config.Limits{
+		HTTP: &config.WorkLimits{Total: &httpTotal},
+		TCP:  &config.WorkLimits{Total: &tcpTotal, Rate: &config.Rate{Count: &count, Per: &period, Burst: &burst}},
+	}}}}}
+	flags := publishCommand{PublisherID: "pub_example"}
+	if err := project.applyPublish(&flags); err != nil {
+		t.Fatal(err)
+	}
+	if flags.Requests != nil {
+		t.Fatal("unknown enrolled protocol inherited the HTTP lifetime cap")
+	}
+	if err := applyProtocolLimits(&flags.tunnelFlags, "postgres"); err != nil {
+		t.Fatal(err)
+	}
+	limits := flags.limits()
+	if limits.Requests != 0 || limits.RateRequests != 0 || limits.RatePer != 0 || limits.RateBurst != 0 {
+		t.Fatalf("raw enrolled publication inherited root public URL limits: %+v", limits)
 	}
 }

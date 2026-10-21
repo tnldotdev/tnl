@@ -1,7 +1,7 @@
 -- name: ClaimWebhookReceiver :execrows
-INSERT INTO webhook_owners (server_origin, integration_group, name, tunnel_id)
-SELECT t.server_origin, t.integration_group, e.name, t.id
-FROM local_tunnels t JOIN webhook_endpoints e ON e.tunnel_id = t.id AND e.service = t.service
+INSERT INTO webhook_owners (server_origin, primary_project_root, integration_namespace, name, tunnel_id)
+SELECT t.server_origin, t.primary_project_root, t.integration_namespace, e.name, t.id
+FROM local_tunnels t JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.service = t.service
 WHERE t.id = sqlc.arg(tunnel_id) AND t.server_origin = sqlc.arg(server_origin)
   AND t.integration_group = sqlc.arg(integration_group) AND e.name = sqlc.arg(name)
   AND e.fingerprint = sqlc.arg(fingerprint) AND t.state = 'ready'
@@ -23,14 +23,14 @@ DELETE FROM webhook_owners WHERE server_origin = sqlc.arg(server_origin)
 -- name: ExclusiveWebhookReceiver :one
 SELECT t.id, t.server_origin, t.integration_group, t.hostname, t.target, t.public_url_id, t.publish_run_number
 FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
-JOIN webhook_endpoints e ON e.tunnel_id = t.id AND e.name = owner.name AND e.service = t.service
+JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.name = owner.name AND e.service = t.service
 WHERE owner.server_origin = sqlc.arg(server_origin) AND owner.integration_group = sqlc.arg(integration_group)
   AND owner.name = sqlc.arg(name) AND e.fingerprint = sqlc.arg(fingerprint)
   AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now);
 
 -- name: GetWebhookHostname :one
 SELECT hostname FROM integration_url_hostnames
-WHERE server_origin = sqlc.arg(server_origin) AND project_key = sqlc.arg(project_key)
+WHERE server_origin = sqlc.arg(server_origin) AND primary_project_root = sqlc.arg(project_key)
   AND namespace = sqlc.arg(namespace) AND purpose = 'hooks';
 
 -- name: WebhookOwnerID :one
@@ -44,7 +44,7 @@ WHERE server_origin = sqlc.arg(server_origin) AND integration_group = sqlc.arg(i
   AND name = sqlc.arg(name);
 
 -- name: ReadyExclusiveReceiver :one
-SELECT COUNT(*) FROM local_tunnels t JOIN webhook_endpoints e ON e.tunnel_id = t.id AND e.service = t.service
+SELECT COUNT(*) FROM local_tunnels t JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.service = t.service
 WHERE t.id = sqlc.arg(tunnel_id) AND t.server_origin = sqlc.arg(server_origin)
   AND t.integration_group = sqlc.arg(integration_group) AND e.name = sqlc.arg(name)
   AND e.fingerprint = sqlc.arg(fingerprint) AND t.state = 'ready'

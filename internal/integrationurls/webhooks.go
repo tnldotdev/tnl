@@ -61,7 +61,7 @@ func newWebhooks(ctx context.Context, state *clientstate.Database, server, group
 	providers := map[string]bool{}
 	for _, definition := range definitions {
 		if definition.Service != "" {
-			services[definition.Service] = config.Service{}
+			services[definition.Service] = config.Service{Tunnel: &config.Tunnel{}}
 		}
 		if definition.SourceIPs == nil {
 			providers[definition.Provider] = true

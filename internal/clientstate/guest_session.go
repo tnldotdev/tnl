@@ -31,7 +31,7 @@ func (s *Store) GuestSession(ctx context.Context) (GuestSession, bool, error) {
 	if err != nil {
 		return GuestSession{}, false, failure.Wrap("read guest demo state", failure.ClientStateUnavailable, err)
 	}
-	access, err := s.secrets.Open(ctx, guestSessionContext(stored.GuestID), stored.StoredAccessToken)
+	access, err := s.secrets.Open(ctx, guestSessionContext(stored.GuestID), stored.AccessTokenCiphertext)
 	if err != nil {
 		return GuestSession{}, true, failure.Wrap("open guest demo credential", failure.ClientStateUnavailable, err)
 	}
@@ -55,7 +55,7 @@ func (s *Store) SaveGuestSession(ctx context.Context, session GuestSession) erro
 		return failure.Wrap("protect guest demo credential", failure.ClientStateUnavailable, err)
 	}
 	if err := s.database.queries.SaveGuestSession(ctx, clientstatedb.SaveGuestSessionParams{
-		ServerOrigin: s.controlEndpoint, GuestID: session.GuestID, StoredAccessToken: access,
+		ServerOrigin: s.controlEndpoint, GuestID: session.GuestID, AccessTokenCiphertext: access,
 		TeamID: session.TeamID, MembershipID: session.MembershipID,
 		DomainID: session.DomainID, Namespace: session.Namespace,
 		ExpiresAt: session.ExpiresAt.UnixNano(),

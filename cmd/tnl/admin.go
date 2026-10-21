@@ -187,7 +187,7 @@ func withRemoteAdminClient(ctx context.Context, flags remoteFlags, command strin
 	}
 	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
 		ServerEndpoint: serverURL, State: state, AccessToken: flags.AccessToken,
-		Diagnostics: diagnostics, LoginToken: loginTokenPrompt(os.Stdin, diagnostics),
+		Diagnostics:          diagnostics,
 		AuthenticationPrompt: authenticationPrompt(diagnostics, command),
 		OpenURL:              interactiveBrowserOpener(os.Stdin),
 	})

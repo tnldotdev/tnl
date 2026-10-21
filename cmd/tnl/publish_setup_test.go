@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -24,42 +26,38 @@ func (l *testClientIPLookup) ClientIP(context.Context) (controlv1.ClientIPRespon
 	return l.response, l.err
 }
 
-func TestResolveIPPolicyDefaultsToCurrentIPAndAddsExplicitPrefixes(t *testing.T) {
+func TestResolveVisitorAccessNeverAddsAnImplicitIP(t *testing.T) {
+	lookup := &testClientIPLookup{err: errors.New("unexpected IP lookup")}
+	for _, tc := range []struct {
+		configured *config.Access
+		anonymous  bool
+		mode       controlv1.VisitorAccessMode
+		prefixes   []string
+		explicit   bool
+	}{
+		{mode: controlv1.Restricted},
+		{anonymous: true, mode: controlv1.Anonymous, explicit: true},
+		{configured: &config.Access{IP: []string{"192.0.2.0/24"}}, mode: controlv1.Restricted, prefixes: []string{"192.0.2.0/24"}, explicit: true},
+	} {
+		policy, err := resolveVisitorAccess(t.Context(), lookup, tc.configured, tc.anonymous, nil)
+		if err != nil || policy.access != tc.mode || policy.explicit != tc.explicit || !slices.Equal(policy.prefixes, tc.prefixes) {
+			t.Fatalf("policy=%+v, want=%+v, error=%v", policy, tc, err)
+		}
+	}
+	if lookup.calls != 0 {
+		t.Fatalf("implicit current-IP lookup: %d calls", lookup.calls)
+	}
+}
+
+func TestResolveVisitorAccessUsesCurrentIPOnlyWhenExplicit(t *testing.T) {
 	lookup := &testClientIPLookup{response: controlv1.ClientIPResponse{Ip: "192.0.2.4"}}
-	policy, err := resolveIPPolicy(t.Context(), lookup, []string{"198.51.100.8/24"}, false)
-	if err != nil {
-		t.Fatal(err)
+	policy, err := resolveVisitorAccess(t.Context(), lookup, nil, false, []string{"current", "198.51.100.8/24"})
+	if err != nil || policy.access != controlv1.Restricted || !reflect.DeepEqual(policy.prefixes, []string{"192.0.2.4/32", "198.51.100.0/24"}) || lookup.calls != 1 {
+		t.Fatalf("policy=%+v, calls=%d, error=%v", policy, lookup.calls, err)
 	}
-	want := []string{"192.0.2.4/32", "198.51.100.0/24"}
-	if policy.current != "192.0.2.4" || !reflect.DeepEqual(policy.prefixes, want) || lookup.calls != 1 {
-		t.Fatalf("policy = %#v, calls = %d", policy, lookup.calls)
-	}
-}
-
-func TestResolveIPPolicyDoesNotDuplicateExplicitCurrentIP(t *testing.T) {
-	lookup := &testClientIPLookup{response: controlv1.ClientIPResponse{Ip: "192.0.2.4"}}
-	policy, err := resolveIPPolicy(t.Context(), lookup, []string{"192.0.2.4/32"}, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"192.0.2.4/32"}
-	if policy.current != "192.0.2.4" || !reflect.DeepEqual(policy.prefixes, want) || lookup.calls != 1 {
-		t.Fatalf("policy = %#v, calls = %d", policy, lookup.calls)
-	}
-}
-
-func TestResolveIPPolicyPublicDoesNotLookUpCurrentIP(t *testing.T) {
-	lookup := &testClientIPLookup{err: errors.New("must not be called")}
-	policy, err := resolveIPPolicy(t.Context(), lookup, nil, true)
-	if err != nil || policy.prefixes == nil || len(policy.prefixes) != 0 || policy.current != "" || lookup.calls != 0 {
-		t.Fatalf("policy = %#v, calls = %d, error = %v", policy, lookup.calls, err)
-	}
-}
-
-func TestResolveIPPolicyFailsWhenCurrentIPCannotBeResolved(t *testing.T) {
-	lookup := &testClientIPLookup{err: errors.New("unavailable")}
-	if _, err := resolveIPPolicy(t.Context(), lookup, nil, false); err == nil {
-		t.Fatal("current-IP lookup failure was accepted")
+	lookup.err = errors.New("unavailable")
+	if _, err := resolveVisitorAccess(t.Context(), lookup, nil, false, []string{"current"}); err == nil {
+		t.Fatal("explicit current-IP lookup failure was accepted")
 	}
 }
 
@@ -121,14 +119,12 @@ func TestPublishHostnameScopeMatrix(t *testing.T) {
 func TestManagedAndCustomDefaultURLShapes(t *testing.T) {
 	for _, test := range []struct {
 		name, mode, teamKind, domainKind, teamName, domain, want, scope string
-		builtin                                                         bool
 	}{
-		{"builtin_managed", "simple", "personal", "managed", "local-administrator", "routes.example.test", "app.routes.example.test", "shared", true},
-		{"personal_managed", "simple", "personal", "managed", "alex", "routes.example.test", "app.alex.routes.example.test", "member", false},
-		{"organization_managed", "simple", "organization", "managed", "studio", "routes.example.test", "app.alex.studio.routes.example.test", "member", false},
-		{"personal_custom", "simple", "personal", "custom", "alex", "dev.example.test", "app.dev.example.test", "shared", false},
-		{"organization_custom", "simple", "organization", "custom", "studio", "studio.example.test", "app.alex.studio.example.test", "member", false},
-		{"hosted_generated", "generated", "organization", "managed", "studio", "tnl.dev", "app.ecstatic-penguin.tnl.dev", "member", false},
+		{"personal_managed", "simple", "personal", "managed", "alex", "routes.example.test", "app.alex.routes.example.test", "member"},
+		{"organization_managed", "simple", "organization", "managed", "studio", "routes.example.test", "app.alex.studio.routes.example.test", "member"},
+		{"personal_custom", "simple", "personal", "custom", "alex", "dev.example.test", "app.dev.example.test", "shared"},
+		{"organization_custom", "simple", "organization", "custom", "studio", "studio.example.test", "app.alex.studio.example.test", "member"},
+		{"hosted_generated", "generated", "organization", "managed", "studio", "tnl.dev", "app.ecstatic-penguin.tnl.dev", "member"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			current := teamContext{
@@ -137,7 +133,7 @@ func TestManagedAndCustomDefaultURLShapes(t *testing.T) {
 					MemberSlug: "alex", ManagedLabel: "ecstatic-penguin"},
 				domains: []authorityv1.Domain{{Id: "domain", Kind: authorityv1.DomainKind(test.domainKind),
 					CanonicalDomain: test.domain, State: authorityv1.DomainStateReady}},
-				mode: naming.ManagedURLMode(test.mode), builtin: test.builtin,
+				mode: naming.ManagedURLMode(test.mode),
 			}
 			hostname, _, scope, err := resolvePublishHostname("", "app", "", current)
 			if err != nil || hostname != test.want || string(scope) != test.scope {

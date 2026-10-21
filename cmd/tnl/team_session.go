@@ -38,7 +38,6 @@ type teamContext struct {
 	membership authorityv1.Membership
 	domains    []authorityv1.Domain
 	mode       naming.ManagedURLMode
-	builtin    bool
 }
 
 type teamSession struct {
@@ -67,7 +66,7 @@ func openTeamSession(ctx context.Context, flags remoteFlags, command string, dia
 	}
 	authenticated, err := clientauth.Authenticate(ctx, clientauth.Config{
 		ServerEndpoint: serverURL, State: database, AccessToken: flags.AccessToken,
-		Diagnostics: diagnostics, LoginToken: loginTokenPrompt(os.Stdin, diagnostics),
+		Diagnostics:          diagnostics,
 		AuthenticationPrompt: authenticationPrompt(diagnostics, command),
 		OpenURL:              interactiveBrowserOpener(os.Stdin),
 	})
@@ -98,8 +97,7 @@ func (s *teamSession) current(ctx context.Context) (teamContext, error) {
 	if err != nil {
 		return teamContext{}, err
 	}
-	current := teamContext{team: team, membership: membership,
-		builtin: s.identity.Identity.Administrator && team.Kind == authorityv1.Personal && team.Id == s.identity.PersonalTeamId}
+	current := teamContext{team: team, membership: membership}
 	if s.authenticated != nil {
 		current.mode = naming.ManagedURLMode(s.authenticated.Discovery.ManagedUrlMode)
 	}
@@ -137,7 +135,7 @@ func (s *teamSession) currentMembership(ctx context.Context) (authorityv1.Member
 	}
 	membership, found := membershipForTeam(s.identity.Memberships, teamID)
 	if !found {
-		teamID = s.identity.PersonalTeamId
+		teamID = s.initialTeam()
 		membership, found = membershipForTeam(s.identity.Memberships, teamID)
 		if !found {
 			return authorityv1.Membership{}, failure.Wrap("select personal team", failure.TeamNotFound,
@@ -150,6 +148,13 @@ func (s *teamSession) currentMembership(ctx context.Context) (authorityv1.Member
 	return membership, nil
 }
 
+func (s *teamSession) initialTeam() string {
+	if s.identity.DefaultTeamId != nil && *s.identity.DefaultTeamId != "" {
+		return *s.identity.DefaultTeamId
+	}
+	return s.identity.PersonalTeamId
+}
+
 func (s *teamSession) resolveMembership(ctx context.Context, team string) (authorityv1.Membership, error) {
 	if team == "" {
 		selected, found, err := s.store.SelectedTeam(ctx)
@@ -159,7 +164,7 @@ func (s *teamSession) resolveMembership(ctx context.Context, team string) (autho
 		if found {
 			team = selected
 		} else {
-			team = s.identity.PersonalTeamId
+			team = s.initialTeam()
 		}
 	}
 	var matches []authorityv1.Membership
