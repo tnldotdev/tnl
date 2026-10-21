@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clientauth"
 	"github.com/tnldotdev/tnl/internal/clientstate"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/controlclient"
 	"github.com/tnldotdev/tnl/internal/projectconfig"
 	"github.com/tnldotdev/tnl/internal/projectmeta"
 	"github.com/tnldotdev/tnl/pkg/api/authorityv1"
@@ -137,6 +138,11 @@ func (r *projectMetadataResolver) Generate(ctx context.Context) (projectmeta.Met
 			// the source-bound visitor lookup provides the current endpoint and
 			// exposure. never infer managed exposure from protocol or local config.
 			assigned, lookupErr := client.Control.GetProjectPrivateService(ctx, source.Key, name, controlv1.GetProjectPrivateServiceParams{TeamId: serviceContext.team.Id, SourceFingerprint: source.Fingerprint})
+			if errors.Is(lookupErr, controlclient.ErrNotFound) {
+				// local startup does not apply remote services. include their
+				// endpoints only after control has a current visitor projection.
+				continue
+			}
 			if lookupErr != nil {
 				return projectmeta.Metadata{}, fmt.Errorf("read applied remote service %q: %w", name, lookupErr)
 			}

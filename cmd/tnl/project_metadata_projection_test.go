@@ -35,6 +35,7 @@ func TestRemoteProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t
 	requests := 0
 	hostname := "review.tnl.dev"
 	protocol, public := "http", false
+	status := http.StatusOK
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/projects/"+source.Key+"/private-services/web" || r.URL.Query().Get("team_id") != "team_1" || r.URL.Query().Get("source_fingerprint") != source.Fingerprint {
@@ -43,6 +44,15 @@ func TestRemoteProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			code := "forbidden"
+			if status == http.StatusNotFound {
+				code = "not_found"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "message": "service unavailable"})
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "psvc_web", "team_id": "team_1", "name": "web", "protocol": protocol, "enabled": true, "managed_tls": map[string]any{"hostname": hostname, "port": 20001, "public": public}, "target_tls": map[string]any{"hostname": "private.internal", "pem": "private-target-trust-must-not-leak"}})
 	}))
 	defer server.Close()
@@ -75,6 +85,15 @@ func TestRemoteProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t
 	_, err = resolver.Generate(t.Context())
 	if err == nil || !strings.Contains(err.Error(), `service "web": service hostname must be a canonical hostname`) {
 		t.Fatalf("invalid remote metadata lost its validation error: %v", err)
+	}
+	status = http.StatusNotFound
+	metadata, err = resolver.Generate(t.Context())
+	if err != nil || len(metadata.Services) != 0 {
+		t.Fatalf("unapplied remote service prevented local metadata: %+v %v", metadata, err)
+	}
+	status = http.StatusForbidden
+	if _, err := resolver.Generate(t.Context()); err == nil {
+		t.Fatal("remote authorization failure was treated as an unapplied service")
 	}
 }
 

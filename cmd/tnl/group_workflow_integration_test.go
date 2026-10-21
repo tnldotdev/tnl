@@ -124,21 +124,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	if serviceID == "" {
 		t.Fatal("apply did not create the private HTTP service")
 	}
-	cliCall(t, t.Context(), []string{"--config", configuration, "config", "generate", "--state-dir", person})
-	metadata, err := os.ReadFile(filepath.Join(root, ".tnl", "local", "project.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	public, err := projectmeta.Parse(metadata)
-	if err != nil || len(public.Services) != 2 || public.Services["web"].URL == "" || public.Services["publicapi"].URL == "" || bytes.Contains(metadata, []byte(target.URL)) {
-		t.Fatalf("browser metadata leaked private service state: %v", err)
-	}
-	if _, found := public.Services["api"]; found {
-		t.Fatal("private HTTP received public browser metadata")
-	}
-	if _, found := public.Services["internal"]; found {
-		t.Fatal("private app listener received browser metadata")
-	}
+	cliCall(t, t.Context(), []string{"--config", configuration, "generate"})
 	runtimeCtx, stopRuntime := context.WithCancel(t.Context())
 	runtimeDone := make(chan error, 1)
 	go func() { runtimeDone <- runRuntimeServe(runtimeCtx, runtimeOptions{Directory: root, StateDir: person}) }()
@@ -171,6 +157,17 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	var assignment privateprotocol.Assignment
 	if err := privateprotocol.Call(t.Context(), appEndpoint, "POST", "/v1/prepare", privateprotocol.Prepare{Version: 1, Service: web, Directory: root, Framework: "node", Owner: owner, PID: os.Getpid()}, &assignment); err != nil {
 		t.Fatal(err)
+	}
+	metadata, err := os.ReadFile(filepath.Join(root, ".tnl", "local", "project.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := projectmeta.Parse(metadata)
+	if err != nil || len(public.Services) != 3 || public.Services["web"].URL == "" || public.Services["publicapi"].URL == "" || public.Services["api"].URL == "" || public.Services["api"].Public || bytes.Contains(metadata, []byte(target.URL)) {
+		t.Fatalf("browser metadata lost endpoint scope or leaked a target: %v", err)
+	}
+	if _, found := public.Services["internal"]; found {
+		t.Fatal("private app listener received browser metadata")
 	}
 	if err := privateprotocol.Call(t.Context(), appEndpoint, "POST", "/v1/register", privateprotocol.Registration{Version: 1, RegistrationID: assignment.RegistrationID, Owner: owner, Target: target.URL}, nil); err != nil {
 		t.Fatal(err)
@@ -495,7 +492,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	if err := json.Unmarshal(audit, &page); err != nil || len(page.Events) == 0 {
 		t.Fatalf("real control audit was not readable: %v", err)
 	}
-	t.Log("CLI apply -> real local public app/webhook and private app readiness/traffic -> two signed group tasks running public.Run and privatepublisher.Publish -> authenticated connect -> private HTTP bytes; public-only config generation and audit read passed")
+	t.Log("CLI apply -> real local public app/webhook and private app readiness/traffic -> two signed group tasks running public.Run and privatepublisher.Publish -> authenticated connect -> private HTTP bytes; portable generation, runtime endpoint metadata, and audit read passed")
 }
 
 type cliWorkflow struct {

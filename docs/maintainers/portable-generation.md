@@ -37,6 +37,11 @@ HTTPS URL pattern. Missing runtime preparation raises a diagnostic. Browser
 imports do not read local files. Ignored `.tnl/local/project.json` carries values
 only, and the runtime writer never produces a declaration.
 
+Local startup omits remote services that have no current visitor projection in
+control, so an unapplied remote declaration does not block local listeners.
+Applied remote endpoints still come from control; other lookup failures remain
+errors.
+
 `TnlConnectionRegistry` defines the Node-only native connection result boundary.
 PostgreSQL and MySQL return `{host, port, ssl}`. `ssl.servername` selects the
 managed service identity and `ssl.rejectUnauthorized` is always `true`. The
